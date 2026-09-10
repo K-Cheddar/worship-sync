@@ -7,6 +7,10 @@ import {
   PopoverContent,
 } from "@/components/ui/Popover";
 import { findSongMatchSuggestions } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
+import {
+  getServicePlanSongRefLabel,
+  libraryServicePlanSongRef,
+} from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { cn } from "../../utils/cnHelper";
 import type { ServicePlanSongReference } from "../../types/servicePlan";
 import { SERVICE_PLAN_SONG_ICON_CLASS } from "./servicePlanChipStyles";
@@ -91,28 +95,29 @@ const ServicePlanSongSuggestionPopover = ({
               <p className="px-1 text-[11px] text-gray-400">
                 {suggestions.length === 1 ? "Closest match" : "Closest matches"}
               </p>
-              {suggestions.map(({ song }) => (
-                <Button
-                  key={song._id}
-                  type="button"
-                  variant="tertiary"
-                  className="max-md:min-h-0 w-full justify-start gap-1.5 px-1.5 py-1 text-left"
-                  onClick={() => {
-                    onSelectSong({
-                      kind: "library",
-                      songId: song._id,
-                      songName: song.name,
-                    });
-                    onOpenChange(false);
-                  }}
-                >
-                  <Music
-                    className={cn("size-3.5 shrink-0", SERVICE_PLAN_SONG_ICON_CLASS)}
-                    aria-hidden
-                  />
-                  <span className="min-w-0 truncate text-sm">{song.name}</span>
-                </Button>
-              ))}
+              {suggestions.map(({ song }) => {
+                const songRef = libraryServicePlanSongRef(song);
+                return (
+                  <Button
+                    key={song._id}
+                    type="button"
+                    variant="tertiary"
+                    className="max-md:min-h-0 w-full justify-start gap-1.5 px-1.5 py-1 text-left"
+                    onClick={() => {
+                      onSelectSong(songRef);
+                      onOpenChange(false);
+                    }}
+                  >
+                    <Music
+                      className={cn("size-3.5 shrink-0", SERVICE_PLAN_SONG_ICON_CLASS)}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 truncate text-sm">
+                      {getServicePlanSongRefLabel(songRef)}
+                    </span>
+                  </Button>
+                );
+              })}
             </div>
           ) : (
             <p className="px-1 text-sm text-gray-300">

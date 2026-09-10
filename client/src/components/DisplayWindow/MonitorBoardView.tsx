@@ -4,8 +4,12 @@ import DisplayTimer from "./DisplayTimer";
 import { useSelector } from "../../hooks";
 import { MONITOR_BAND_CLOCK_TIMER_PX } from "../../constants";
 import { useContext, useMemo } from "react";
-import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import {
+  selectDisplayOutputs,
+  selectDisplayOutputsLoaded,
+} from "../../store/displayOutputsSlice";
+import {
+  isDisplayChromeReady,
   resolveDisplaySettings,
   resolveOutputDefaults,
 } from "../../utils/displaySettings";
@@ -40,6 +44,7 @@ const MonitorBoardView = ({
   outputId = "monitor",
 }: MonitorBoardViewProps) => {
   const registryOutputs = useSelector(selectDisplayOutputs);
+  const registryLoaded = useSelector(selectDisplayOutputsLoaded);
   // Same override source as the normal layout, so one physical screen cannot
   // disagree with itself between presentation and board mode.
   const pairedDeviceSettings = useContext(GlobalInfoContext)?.device?.settings;
@@ -66,7 +71,20 @@ const MonitorBoardView = ({
         ),
       [legacyMonitorSettings, outputId, screenOverrides, registryOutputs],
     );
-  const showBand = showClock || showTimer;
+  // Same first-paint gate as DisplayWindow: shipped defaults are on.
+  const effectiveShowClock = isDisplayChromeReady(
+    registryLoaded,
+    screenOverrides?.showClock,
+  )
+    ? showClock
+    : false;
+  const effectiveShowTimer = isDisplayChromeReady(
+    registryLoaded,
+    screenOverrides?.showTimer,
+  )
+    ? showTimer
+    : false;
+  const showBand = effectiveShowClock || effectiveShowTimer;
 
   return (
     <div className="flex h-full w-full flex-col bg-black">
@@ -84,10 +102,12 @@ const MonitorBoardView = ({
           style={{ height: MONITOR_BAND_CLOCK_TIMER_PX * scale }}
         >
           <div className="flex h-full min-w-0 flex-1 items-center justify-start">
-            {showClock && <DisplayClock fontSize={clockFontSize * scale} />}
+            {effectiveShowClock && (
+              <DisplayClock fontSize={clockFontSize * scale} />
+            )}
           </div>
           <div className="flex h-full min-w-0 flex-1 items-center justify-end">
-            {showTimer && (
+            {effectiveShowTimer && (
               <DisplayTimer
                 fontSize={timerFontSize * scale}
               />

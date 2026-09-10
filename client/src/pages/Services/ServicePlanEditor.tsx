@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   Check,
@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Share2,
   Undo2,
+  Upload,
 } from "lucide-react";
 import {
   Button,
@@ -25,6 +26,7 @@ import {
 import Checkbox from "../../components/Checkbox/Checkbox";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
+import Select from "../../components/Select/Select";
 import TimePicker from "../../components/TimePicker/TimePicker";
 import ServicePlanRolePickerContent from "../../components/ServicePlanRolePickerContent";
 import {
@@ -38,11 +40,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/Popover";
 import {
   Sheet,
   SheetContent,
@@ -95,11 +92,18 @@ import {
   getTeamMicrophoneRows,
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
-import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import {
+  getServicePlanningImportDataFromUrl,
+  type ServicePlanningImportData,
+} from "../../containers/Overlays/eventParser";
 import {
   buildServicePlanSectionsFromImport,
   buildServicePlanSourceImport,
 } from "./servicePlanFromImport";
+import { parsePlanningCenterPdfText } from "./planningCenterPdfParser";
+import { extractTextFromPdfFile } from "./extractPdfText";
+import PlanningCenterAccountImportFields from "./PlanningCenterAccountImportFields";
+import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   refreshServicePlanFromImport,
@@ -151,7 +155,9 @@ import {
 } from "../servicePublicNotesTeam";
 import {
   readServicePlanHideNotes,
+  readServicePlanImportSource,
   writeServicePlanHideNotes,
+  writeServicePlanImportSource,
 } from "./servicePlanViewPreferences";
 import type {
   TeamRosterMember,
@@ -162,6 +168,7 @@ import type {
 } from "../../api/authTypes";
 import type {
   ServicePlan,
+  ServicePlanImportSource,
   ServicePlanPayload,
   ServicePlanSection,
   ServicePlanSongReference,
@@ -191,6 +198,23 @@ const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
 
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
+const SERVICE_PLAN_IMPORT_SOURCE_OPTIONS = [
+  { value: "servicePlanning", label: "Service Planning" },
+  { value: "planningCenter", label: "Planning Center account" },
+  { value: "planningCenterPdf", label: "Planning Center PDF" },
+];
+
+const servicePlanImportSourceLabel = (source: ServicePlanImportSource): string => {
+  if (source === "planningCenterPdf") return "Planning Center PDF";
+  if (source === "planningCenter") return "Planning Center";
+  return "Service Planning";
+};
+
+const parseImportSourceValue = (value: string): ServicePlanImportSource => {
+  if (value === "planningCenterPdf") return "planningCenterPdf";
+  if (value === "planningCenter") return "planningCenter";
+  return "servicePlanning";
+};
 /** Live-row tracking needs second resolution; nothing else here does. */
 const LIVE_CLOCK_ACTIVE_MS = 1_000;
 /** Enough to catch midnight rollover and the service window opening. */
@@ -389,7 +413,12 @@ const ServicePlanEditor = ({
   initialEditing = false,
   occurrenceSwitcher,
 }: ServicePlanEditorProps) => {
-  const { churchId, access, churchBranding } = useContext(GlobalInfoContext) || {};
+  const { churchId, access, churchBranding, churchIntegrations } =
+    useContext(GlobalInfoContext) || {};
+  const planningCenterConnected = Boolean(
+    churchIntegrations?.planningCenter?.enabled &&
+    churchIntegrations?.planningCenter?.connected,
+  );
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const dispatch = useDispatch();
@@ -457,16 +486,17 @@ const ServicePlanEditor = ({
   // Otherwise a fast click can create a local draft that the initial response
   // immediately replaces.
   const [loading, setLoading] = useState(Boolean(churchId && planKey));
-  const [defaultPlanTemplate, setDefaultPlanTemplate] =
-    useState<ServicePlanTemplate | null>(null);
-  const [defaultPlanTemplateLoading, setDefaultPlanTemplateLoading] =
-    useState(false);
-  const [defaultPlanTemplateMissing, setDefaultPlanTemplateMissing] =
-    useState(false);
-  const defaultTemplateAppliedPlanKeyRef = useRef("");
+  const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [planTemplatesLoading, setPlanTemplatesLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [importSource, setImportSource] = useState<ServicePlanImportSource>(
+    readServicePlanImportSource,
+  );
   const [importUrl, setImportUrl] = useState("");
+  const [importPcoServiceTypeId, setImportPcoServiceTypeId] = useState("");
+  const [importPcoPlanId, setImportPcoPlanId] = useState("");
   const [importing, setImporting] = useState(false);
+  const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
   const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
     DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
@@ -577,42 +607,35 @@ const ServicePlanEditor = ({
   // actually moving. See LIVE_CLOCK_* below.
 
   useEffect(() => {
-    setDefaultPlanTemplate(null);
-    setDefaultPlanTemplateMissing(false);
-    if (!churchId || !defaultPlanTemplateId || !canEdit) {
-      setDefaultPlanTemplateLoading(false);
+    if (!churchId || !canEdit) {
+      setPlanTemplates([]);
+      setPlanTemplatesLoading(false);
       return undefined;
     }
 
     let cancelled = false;
-    setDefaultPlanTemplateLoading(true);
+    setPlanTemplatesLoading(true);
     listServicePlanTemplates(churchId)
       .then((response) => {
-        if (cancelled) return;
-        const template =
-          response.templates.find(
-            (candidate) => candidate.templateId === defaultPlanTemplateId,
-          ) || null;
-        setDefaultPlanTemplate(template);
-        setDefaultPlanTemplateMissing(!template);
+        if (!cancelled) setPlanTemplates(response.templates);
       })
       .catch((error) => {
         if (cancelled) return;
-        setDefaultPlanTemplateMissing(true);
+        setPlanTemplates([]);
         showApiErrorToast(
           showToast,
           error,
-          "Could not load the default plan template. Try again.",
+          "Could not load plan templates. Try again.",
         );
       })
       .finally(() => {
-        if (!cancelled) setDefaultPlanTemplateLoading(false);
+        if (!cancelled) setPlanTemplatesLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [canEdit, churchId, defaultPlanTemplateId, showToast]);
+  }, [canEdit, churchId, showToast]);
 
   useEffect(() => {
     setPlan(null);
@@ -627,7 +650,6 @@ const ServicePlanEditor = ({
     setImportPreview(null);
     setPublicUrls(null);
     setConflictPlan(null);
-    defaultTemplateAppliedPlanKeyRef.current = "";
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
     setIsEditing(initialEditing);
@@ -668,41 +690,6 @@ const ServicePlanEditor = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planKey, churchId]);
-
-  // The service's default template is the durable link between its recurring
-  // plan structure and scheduled positions. Apply it only after confirming
-  // that this occurrence has no saved plan; the normal autosave then creates
-  // the dated plan without another weekly template or role-selection step.
-  useEffect(() => {
-    if (
-      !canEdit ||
-      loading ||
-      defaultPlanTemplateLoading ||
-      !defaultPlanTemplate ||
-      plan ||
-      sections !== null ||
-      defaultTemplateAppliedPlanKeyRef.current === planKey
-    ) {
-      return;
-    }
-    defaultTemplateAppliedPlanKeyRef.current = planKey;
-    setSections(cloneSectionsFromTemplate(defaultPlanTemplate.sections));
-    setPlanName(occurrence.name || service.name || "");
-    setSourceImport(undefined);
-    setDraftChangeVersion((version) => version + 1);
-    resetDraftHistory();
-  }, [
-    canEdit,
-    defaultPlanTemplate,
-    defaultPlanTemplateLoading,
-    loading,
-    occurrence.name,
-    plan,
-    planKey,
-    resetDraftHistory,
-    sections,
-    service.name,
-  ]);
 
   // Assignment suggestions are church-wide, not per-occurrence, so this loads
   // once per church rather than resetting on every occurrence switch.
@@ -991,6 +978,17 @@ const ServicePlanEditor = ({
     setIsEditing(true);
   };
 
+  const applySavedTemplate = (template: ServicePlanTemplate) => {
+    updateDraft({
+      sections: cloneSectionsFromTemplate(template.sections),
+      ...(planName
+        ? {}
+        : { planName: occurrence.name || service.name || "" }),
+    });
+    setIsEditing(true);
+    showToast(`Applied "${template.name}".`, "success");
+  };
+
   /**
    * An import is meant to be reviewed in full, so it always lands on "All
    * teams" with notes shown. The team filter is shared with the public plan
@@ -1012,76 +1010,196 @@ const ServicePlanEditor = ({
     writeServicePlanHideNotes(checked);
   };
 
-  const openImportUpdates = () => {
-    setImportUrl(
-      sourceImport?.source === "servicePlanning" ? sourceImport.sourceUrl : "",
-    );
+  const handleImportSourceChange = (value: string) => {
+    const next = parseImportSourceValue(value);
+    setImportSource(next);
+    writeServicePlanImportSource(next);
+  };
+
+  const openPlanningCenterPdfPicker = () => {
+    handleImportSourceChange("planningCenterPdf");
+    // Keep this in the same user-gesture turn as the menu click so the OS
+    // file dialog is allowed to open.
+    planningCenterPdfInputRef.current?.click();
+  };
+
+  const openImportSourceForm = (source: ServicePlanImportSource) => {
+    handleImportSourceChange(source);
+    if (source === "planningCenterPdf") {
+      openPlanningCenterPdfPicker();
+      return;
+    }
     setShowImport(true);
   };
 
-  const handleImportFromServicePlanning = async () => {
-    const trimmedUrl = importUrl.trim();
-    if (!trimmedUrl) return;
-    setImporting(true);
-    try {
-      const data = await getServicePlanningImportDataFromUrl(trimmedUrl);
-      const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs);
-      const hasElements = importedSections.some((section) => section.elements.length > 0);
-      const hasSourceTiming = importedSections.some((section) =>
-        section.elements.some((element) => Boolean(element.startTime)),
-      );
-      // Preserve the source's actual schedule when the printout provides it.
-      // Older printouts without time columns still receive our normal
-      // occurrence-time anchor as a useful starting point.
-      const freshImportSections =
-        hasElements && !hasSourceTiming
-          ? applyPlanAnchorStartTime(
-            importedSections,
-            occurrenceLocalTime(occurrence.startsAt, planTimezone),
-          )
-          : importedSections;
-      // A plan with no items yet has nothing to reconcile — a draft started
-      // from scratch carries one empty section, which would otherwise survive
-      // the refresh and leave a stray blank section above the imported ones.
-      const nextSections =
-        hasPlanContent && sections
-          ? refreshServicePlanFromImport(sections, importedSections, {
-            ...refreshOptions,
-            // Only plans imported before item-level provenance existed can have
-            // their unmarked items regarded as source-owned, and then only when
-            // removal was chosen. On a tracked plan those are operator items.
-            treatUnmarkedItemsAsSource:
-              refreshOptions.removeMissing && isLegacyUntrackedImport,
-          })
-          : freshImportSections;
-      // One draft update, so undo reverts the whole import rather than peeling
-      // it back a field at a time. The occurrence being planned names the plan
-      // — the imported source's own plan label (its own date/service, not
-      // necessarily this one) is provenance info only, kept on
-      // sourceImport.planLabel, never the name.
-      const nextSourceImport = buildServicePlanSourceImport(data, trimmedUrl);
-      if (hasPlanContent && sections) {
-        setImportPreview({
-          currentSections: sections,
-          sections: nextSections,
-          sourceImport: nextSourceImport,
-          summary: summarizeServicePlanImport(sections, nextSections),
-        });
-        setShowImport(false);
-        return;
-      }
-      applyImportedDraft({
+  const openImportUpdates = () => {
+    const preferredSource =
+      sourceImport?.source === "planningCenterPdf" ||
+        sourceImport?.source === "planningCenter" ||
+        sourceImport?.source === "servicePlanning"
+        ? sourceImport.source
+        : readServicePlanImportSource();
+    if (preferredSource === "planningCenterPdf") {
+      openPlanningCenterPdfPicker();
+      return;
+    }
+    setImportSource(preferredSource);
+    writeServicePlanImportSource(preferredSource);
+    setImportUrl(
+      preferredSource === "servicePlanning" &&
+        sourceImport?.source === "servicePlanning"
+        ? sourceImport.sourceUrl
+        : preferredSource === "servicePlanning"
+          ? importUrl
+          : "",
+    );
+    if (sourceImport?.source === "planningCenter") {
+      setImportPcoServiceTypeId(sourceImport.planningCenterServiceTypeId || "");
+      setImportPcoPlanId(sourceImport.planningCenterPlanId || "");
+    }
+    setShowImport(true);
+  };
+
+  const applyImportedPlanData = (
+    data: ServicePlanningImportData,
+    source: ServicePlanImportSource,
+    nextSourceUrl: string,
+    sourceExtras: {
+      planningCenterServiceTypeId?: string;
+      planningCenterPlanId?: string;
+    } = {},
+  ) => {
+    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs);
+    const hasElements = importedSections.some((section) => section.elements.length > 0);
+    const hasSourceTiming = importedSections.some((section) =>
+      section.elements.some((element) => Boolean(element.startTime)),
+    );
+    // Preserve the source's actual schedule when the printout provides it.
+    // Older printouts without time columns still receive our normal
+    // occurrence-time anchor as a useful starting point.
+    const freshImportSections =
+      hasElements && !hasSourceTiming
+        ? applyPlanAnchorStartTime(
+          importedSections,
+          occurrenceLocalTime(occurrence.startsAt, planTimezone),
+        )
+        : importedSections;
+    // A plan with no items yet has nothing to reconcile — a draft started
+    // from scratch carries one empty section, which would otherwise survive
+    // the refresh and leave a stray blank section above the imported ones.
+    const nextSections =
+      hasPlanContent && sections
+        ? refreshServicePlanFromImport(sections, importedSections, {
+          ...refreshOptions,
+          // Only plans imported before item-level provenance existed can have
+          // their unmarked items regarded as source-owned, and then only when
+          // removal was chosen. On a tracked plan those are operator items.
+          treatUnmarkedItemsAsSource:
+            refreshOptions.removeMissing && isLegacyUntrackedImport,
+        })
+        : freshImportSections;
+    // One draft update, so undo reverts the whole import rather than peeling
+    // it back a field at a time. The occurrence being planned names the plan
+    // — the imported source's own plan label (its own date/service, not
+    // necessarily this one) is provenance info only, kept on
+    // sourceImport.planLabel, never the name.
+    const nextSourceImport = buildServicePlanSourceImport(
+      data,
+      nextSourceUrl,
+      source,
+      sourceExtras,
+    );
+    if (hasPlanContent && sections) {
+      setImportPreview({
+        currentSections: sections,
         sections: nextSections,
-        planName: occurrence.name || service.name || "",
         sourceImport: nextSourceImport,
+        summary: summarizeServicePlanImport(sections, nextSections),
       });
       setShowImport(false);
-      setImportUrl("");
-      setIsEditing(true);
-      showAllTeamNotesForReview();
-      showToast("Imported from Service Planning. Review the plan.", "success");
+      return;
+    }
+    applyImportedDraft({
+      sections: nextSections,
+      planName: occurrence.name || service.name || "",
+      sourceImport: nextSourceImport,
+    });
+    setShowImport(false);
+    setImportUrl("");
+    setIsEditing(true);
+    showAllTeamNotesForReview();
+    showToast(
+      `Imported from ${servicePlanImportSourceLabel(source)}. Review the plan.`,
+      "success",
+    );
+  };
+
+  const handlePlanningCenterPdfSelected = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await extractTextFromPdfFile(file);
+      const data = parsePlanningCenterPdfText(text);
+      applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not import from Service Planning.");
+      showApiErrorToast(
+        showToast,
+        error,
+        "Could not import from Planning Center PDF.",
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleImportPlan = async () => {
+    const usingPcoAccount = importSource === "planningCenter";
+    const trimmedUrl = importUrl.trim();
+    if (importSource === "planningCenterPdf") {
+      openPlanningCenterPdfPicker();
+      return;
+    }
+    if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
+      return;
+    if (!usingPcoAccount && !trimmedUrl) return;
+    setImporting(true);
+    const sourceLabel = servicePlanImportSourceLabel(importSource);
+    try {
+      let data: ServicePlanningImportData;
+      let nextSourceUrl = "";
+      let sourceExtras: {
+        planningCenterServiceTypeId?: string;
+        planningCenterPlanId?: string;
+      } = {};
+
+      if (usingPcoAccount && churchId) {
+        const imported = await getPlanningCenterPlanImport(
+          churchId,
+          importPcoServiceTypeId,
+          importPcoPlanId,
+        );
+        data = {
+          planLabel: imported.planLabel,
+          sections: imported.sections,
+          teamAssignments: imported.teamAssignments,
+        };
+        nextSourceUrl = imported.sourceUrl;
+        sourceExtras = {
+          planningCenterServiceTypeId: imported.serviceTypeId,
+          planningCenterPlanId: imported.planId,
+        };
+      } else {
+        data = await getServicePlanningImportDataFromUrl(trimmedUrl);
+        nextSourceUrl = trimmedUrl;
+      }
+
+      applyImportedPlanData(data, importSource, nextSourceUrl, sourceExtras);
+    } catch (error) {
+      showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
     } finally {
       setImporting(false);
     }
@@ -1111,7 +1229,10 @@ const ServicePlanEditor = ({
     setImportUrl("");
     setIsEditing(true);
     showAllTeamNotesForReview();
-    showToast("Imported from Service Planning. Review the plan.", "success");
+    showToast(
+      `Imported from ${servicePlanImportSourceLabel(importPreview.sourceImport.source)}. Review the plan.`,
+      "success",
+    );
   };
 
   const updateRefreshOption = (
@@ -1325,14 +1446,23 @@ const ServicePlanEditor = ({
   // Starter actions stay available both before a plan exists and after every
   // section has been removed. A fresh "Start from scratch" draft still has one
   // empty section, so it does not bounce back into this empty state.
-  const initializingDefaultPlan = Boolean(
-    canEdit &&
-    defaultPlanTemplateId &&
-    !plan &&
-    sections === null &&
-    (defaultPlanTemplateLoading || defaultPlanTemplate),
+  const defaultPlanTemplate =
+    planTemplates.find(
+      (template) => template.templateId === defaultPlanTemplateId,
+    ) || null;
+  const defaultPlanTemplateMissing = Boolean(
+    defaultPlanTemplateId && !planTemplatesLoading && !defaultPlanTemplate,
   );
-  const loadingInitialContent = loading || initializingDefaultPlan;
+  const templatesForService = useMemo(() => {
+    const forThisService = planTemplates.filter(
+      (template) => template.serviceId === service.serviceId,
+    );
+    const other = planTemplates.filter(
+      (template) => template.serviceId !== service.serviceId,
+    );
+    return [...forThisService, ...other];
+  }, [planTemplates, service.serviceId]);
+  const loadingInitialContent = loading;
   const hasSections = Boolean(sections && sections.length > 0);
   /** Whether the draft holds anything an import would have to reconcile. */
   const hasPlanContent = Boolean(
@@ -1550,7 +1680,9 @@ const ServicePlanEditor = ({
    * additions rather than untracked source items.
    */
   const isLegacyUntrackedImport = Boolean(
-    sourceImport?.source === "servicePlanning" &&
+    (sourceImport?.source === "servicePlanning" ||
+      sourceImport?.source === "planningCenterPdf" ||
+      sourceImport?.source === "planningCenter") &&
     sections?.length &&
     !sections.some(
       (section) =>
@@ -2054,14 +2186,68 @@ const ServicePlanEditor = ({
               <p className="max-w-md text-sm text-gray-400">
                 {defaultPlanTemplateMissing
                   ? "The default template is unavailable. Choose another template here or update Service setup."
-                  : "Start from a saved template, build from a blank plan, or import one from Service Planning."}
+                  : "Apply a saved template, build from a blank plan, or import from Service Planning or Planning Center."}
               </p>
             </>
           ) : null}
           <div className="flex flex-wrap justify-center gap-2">
-            <Button type="button" onClick={() => setTemplateModal("apply")}>
-              Apply a template
-            </Button>
+            <DropdownMenu>
+              <div className="inline-flex">
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="rounded-r-none border-r-0"
+                  disabled={planTemplatesLoading}
+                  onClick={() => {
+                    if (defaultPlanTemplate) {
+                      applySavedTemplate(defaultPlanTemplate);
+                      return;
+                    }
+                    setTemplateModal("apply");
+                  }}
+                >
+                  {defaultPlanTemplate
+                    ? `Apply ${defaultPlanTemplate.name}`
+                    : "Apply a template"}
+                </Button>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    className="rounded-l-none border-l-2 border-l-gray-500 px-2"
+                    svg={ChevronDown}
+                    iconSize="sm"
+                    disabled={planTemplatesLoading}
+                    aria-haspopup="menu"
+                    aria-label="Choose a template"
+                  />
+                </DropdownMenuTrigger>
+              </div>
+              <DropdownMenuContent align="center" className="min-w-56">
+                <DropdownMenuLabel className="text-xs font-normal text-gray-400">
+                  Apply template
+                </DropdownMenuLabel>
+                {templatesForService.length === 0 ? (
+                  <DropdownMenuItem
+                    onSelect={() => setTemplateModal("apply")}
+                  >
+                    Browse templates…
+                  </DropdownMenuItem>
+                ) : (
+                  templatesForService.map((template) => (
+                    <DropdownMenuItem
+                      key={template.templateId}
+                      onSelect={() => applySavedTemplate(template)}
+                    >
+                      {template.name}
+                      {template.templateId === defaultPlanTemplateId
+                        ? " (default)"
+                        : ""}
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               variant="secondary"
@@ -2069,51 +2255,52 @@ const ServicePlanEditor = ({
             >
               Start from scratch
             </Button>
-            <Popover open={showImport} onOpenChange={setShowImport}>
-              <PopoverTrigger asChild>
+            <DropdownMenu>
+              <div className="inline-flex">
                 <Button
                   type="button"
                   variant="secondary"
-                  isSelected={showImport}
-                  aria-expanded={showImport}
-                  aria-haspopup="dialog"
+                  className="rounded-r-none border-r-0"
+                  isSelected={showImport || importing}
+                  disabled={importing}
+                  onClick={() => openImportSourceForm(importSource)}
                 >
-                  Import from Service Planning
+                  {importing
+                    ? "Importing…"
+                    : `Import from ${servicePlanImportSourceLabel(importSource)}`}
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="center"
-                sideOffset={8}
-                className="w-[min(24rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"
-              >
-                <div className="flex flex-col gap-2 text-left">
-                  <Input
-                    label="Planning URL"
-                    placeholder="https://..."
-                    value={importUrl}
-                    disabled={importing}
-                    onChange={(value) => setImportUrl(String(value))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void handleImportFromServicePlanning();
-                      }
-                    }}
-                  />
-                  <p className="text-xs text-gray-400">
-                    Sections and items are imported as a starting point — review
-                    and edit everything before saving.
-                  </p>
+                <DropdownMenuTrigger asChild>
                   <Button
                     type="button"
-                    onClick={() => void handleImportFromServicePlanning()}
-                    disabled={importing || !importUrl.trim()}
+                    variant="secondary"
+                    className="rounded-l-none border-l-2 border-l-gray-400 px-2"
+                    svg={ChevronDown}
+                    iconSize="sm"
+                    isSelected={showImport || importing}
+                    disabled={importing}
+                    aria-haspopup="menu"
+                    aria-label="Choose import source"
+                  />
+                </DropdownMenuTrigger>
+              </div>
+              <DropdownMenuContent align="center" className="min-w-56">
+                <DropdownMenuLabel className="text-xs font-normal text-gray-400">
+                  Import from
+                </DropdownMenuLabel>
+                {SERVICE_PLAN_IMPORT_SOURCE_OPTIONS.map((option) => (
+                  <DropdownMenuItem
+                    key={option.value}
+                    onSelect={() => {
+                      openImportSourceForm(
+                        parseImportSourceValue(option.value),
+                      );
+                    }}
                   >
-                    {importing ? "Importing…" : "Import plan"}
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       ) : null}
@@ -2556,101 +2743,178 @@ const ServicePlanEditor = ({
         {planToolbar}
       </div>
 
-      {canEdit && hasSections ? (
+      {canEdit ? (
         <Sheet open={showImport} onOpenChange={setShowImport}>
           <SheetContent side="right" className="w-full max-w-lg gap-0">
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2">
                 <RefreshCw className="size-5 text-cyan-400" aria-hidden />
-                Import updates
+                {hasPlanContent ? "Import updates" : "Import plan"}
               </SheetTitle>
               <SheetDescription>
-                Choose what to refresh from Service Planning. Local item order,
-                roster links, and outline history stay in place.
+                {hasPlanContent
+                  ? `Choose what to refresh from ${servicePlanImportSourceLabel(importSource)}. Local item order, roster links, and outline history stay in place.`
+                  : `Import from ${servicePlanImportSourceLabel(importSource)}. Review everything before saving.`}
               </SheetDescription>
             </SheetHeader>
             <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-5">
-              <Input
-                label="Planning URL"
-                placeholder="https://..."
-                value={importUrl}
+              <Select
+                label="Import from"
+                options={SERVICE_PLAN_IMPORT_SOURCE_OPTIONS}
+                value={importSource}
                 disabled={importing}
-                onChange={(value) => setImportUrl(String(value))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleImportFromServicePlanning();
+                onChange={(value) => {
+                  const next = parseImportSourceValue(value);
+                  if (next === "planningCenterPdf") {
+                    openPlanningCenterPdfPicker();
+                    setShowImport(false);
+                    return;
                   }
+                  handleImportSourceChange(next);
                 }}
               />
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium text-gray-100">
-                  Update from Service Planning
-                </legend>
-                <div className="grid gap-2 pt-1 sm:grid-cols-2">
-                  <Checkbox
-                    label="Titles and content"
-                    checked={refreshOptions.updateTitles}
+              {importSource === "planningCenterPdf" ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-400">
+                    Choose a Planning Center order-of-service PDF. WorshipSync
+                    reads the plan text from the file.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    svg={Upload}
+                    iconSize="sm"
                     disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("updateTitles", checked)}
-                  />
-                  <Checkbox
-                    label="Assigned to"
-                    checked={refreshOptions.updateAssignments}
-                    disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("updateAssignments", checked)}
-                  />
-                  <Checkbox
-                    label="Start times and durations"
-                    checked={refreshOptions.updateTiming}
-                    disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("updateTiming", checked)}
-                  />
-                  <Checkbox
-                    label="Notes"
-                    checked={refreshOptions.updateNotes}
-                    disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("updateNotes", checked)}
-                  />
-                  <Checkbox
-                    label="Add new source items"
-                    checked={refreshOptions.addMissing}
-                    disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("addMissing", checked)}
-                  />
-                  <Checkbox
-                    label="Remove source items no longer listed"
-                    checked={refreshOptions.removeMissing}
-                    disabled={importing}
-                    onCheckedChange={(checked) => updateRefreshOption("removeMissing", checked)}
-                  />
+                    onClick={openPlanningCenterPdfPicker}
+                  >
+                    {importing ? "Importing…" : "Choose PDF"}
+                  </Button>
                 </div>
-              </fieldset>
-              <p className="text-xs text-gray-400">
-                Removing items is off by default. Turn it on only when this
-                Service Planning plan is the source of truth.
-              </p>
-              {isLegacyUntrackedImport ? (
+              ) : importSource === "planningCenter" ? (
+                churchId && planningCenterConnected ? (
+                  <PlanningCenterAccountImportFields
+                    churchId={churchId}
+                    disabled={importing}
+                    serviceTypeId={importPcoServiceTypeId}
+                    planId={importPcoPlanId}
+                    onServiceTypeIdChange={setImportPcoServiceTypeId}
+                    onPlanIdChange={setImportPcoPlanId}
+                  />
+                ) : (
+                  <p className="text-xs text-amber-100/90">
+                    Connect Planning Center in Integrations first, then return
+                    here to import a plan.
+                  </p>
+                )
+              ) : (
+                <Input
+                  label="Planning URL"
+                  placeholder="https://..."
+                  value={importUrl}
+                  disabled={importing}
+                  onChange={(value) => setImportUrl(String(value))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void handleImportPlan();
+                    }
+                  }}
+                />
+              )}
+              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium text-gray-100">
+                    Update from {servicePlanImportSourceLabel(importSource)}
+                  </legend>
+                  <div className="grid gap-2 pt-1 sm:grid-cols-2">
+                    <Checkbox
+                      label="Titles and content"
+                      checked={refreshOptions.updateTitles}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("updateTitles", checked)}
+                    />
+                    <Checkbox
+                      label="Assigned to"
+                      checked={refreshOptions.updateAssignments}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("updateAssignments", checked)}
+                    />
+                    <Checkbox
+                      label="Start times and durations"
+                      checked={refreshOptions.updateTiming}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("updateTiming", checked)}
+                    />
+                    <Checkbox
+                      label="Notes"
+                      checked={refreshOptions.updateNotes}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("updateNotes", checked)}
+                    />
+                    <Checkbox
+                      label="Add new source items"
+                      checked={refreshOptions.addMissing}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("addMissing", checked)}
+                    />
+                    <Checkbox
+                      label="Remove source items no longer listed"
+                      checked={refreshOptions.removeMissing}
+                      disabled={importing}
+                      onCheckedChange={(checked) => updateRefreshOption("removeMissing", checked)}
+                    />
+                  </div>
+                </fieldset>
+              ) : null}
+              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+                <p className="text-xs text-gray-400">
+                  Removing items is off by default. Turn it on only when this
+                  imported plan is the source of truth.
+                </p>
+              ) : null}
+              {hasPlanContent && isLegacyUntrackedImport ? (
                 <p className="text-xs text-amber-200">
                   This plan was imported before source tracking. If you remove
                   missing items, current unmarked items will be treated as
-                  Service Planning items for this refresh.
+                  imported items for this refresh.
                 </p>
               ) : null}
-              <Button
-                type="button"
-                svg={RefreshCw}
-                iconSize="sm"
-                color="#22d3ee"
-                onClick={() => void handleImportFromServicePlanning()}
-                disabled={importing || !importUrl.trim()}
-              >
-                {importing ? "Importing…" : "Apply updates"}
-              </Button>
+              {importSource !== "planningCenterPdf" ? (
+                <Button
+                  type="button"
+                  svg={hasPlanContent ? RefreshCw : undefined}
+                  iconSize="sm"
+                  color={hasPlanContent ? "#22d3ee" : undefined}
+                  onClick={() => void handleImportPlan()}
+                  disabled={
+                    importing ||
+                    (importSource === "planningCenter"
+                      ? !planningCenterConnected ||
+                      !importPcoServiceTypeId ||
+                      !importPcoPlanId
+                      : !importUrl.trim())
+                  }
+                >
+                  {importing
+                    ? "Importing…"
+                    : hasPlanContent
+                      ? "Apply updates"
+                      : "Import plan"}
+                </Button>
+              ) : null}
             </div>
           </SheetContent>
         </Sheet>
       ) : null}
+
+      <input
+        ref={planningCenterPdfInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="sr-only"
+        aria-label="Planning Center PDF"
+        onChange={(event) => void handlePlanningCenterPdfSelected(event)}
+      />
 
       {importPreview ? (
         <ServicePlanImportReviewWindow

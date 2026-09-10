@@ -2852,6 +2852,140 @@ describe("presentationSlice", () => {
       );
     });
 
+    it("updateStreamFromRemote snapshots prev when the same slide.id is re-transmitted", () => {
+      const liveSlide = {
+        id: "same-slide",
+        type: "Media" as const,
+        name: "Chorus",
+        boxes: [{ id: "b1", words: "Same lyric" }],
+      };
+      const store = createStore({
+        presentation: {
+          ...legacyInitialState(),
+          streamInfo: {
+            ...legacyInitialState().streamInfo,
+            slide: liveSlide,
+            name: "Chorus",
+            type: "song",
+            time: 100,
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote(
+          createPresentation({
+            type: "song",
+            name: "Chorus",
+            slide: {
+              ...liveSlide,
+              boxes: [{ id: "b1", words: "Same lyric" }],
+            },
+            time: 200,
+            displayType: "stream",
+          }),
+        ),
+      );
+
+      const state = legacy(store.getState().presentation);
+      expect(state.prevStreamInfo.slide?.id).toBe("same-slide");
+      expect(state.prevStreamInfo.slide?.boxes?.[0]?.words).toBe("Same lyric");
+      expect(state.streamInfo.slide?.id).toBe("same-slide");
+      expect(state.streamInfo.time).toBe(200);
+      // Independent snapshot so DisplayWindow can compare prev/current boxes.
+      expect(state.prevStreamInfo.slide).not.toBe(state.streamInfo.slide);
+    });
+
+    it("ItemSlides empty clears before a song re-send keep the live slide for prev snapshot", () => {
+      const liveSlide = {
+        id: "same-slide",
+        type: "Media" as const,
+        name: "Chorus",
+        boxes: [{ id: "b1", words: "Same lyric" }],
+      };
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          type: "song",
+          name: "Chorus",
+          slide: liveSlide,
+          displayType: "stream",
+        } as never),
+      );
+
+      // ItemSlides order ahead of every non-bible send (including same-slide re-clicks).
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "",
+          text: "",
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfo({
+          text: "",
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          type: "song",
+          name: "Chorus",
+          slide: {
+            ...liveSlide,
+            boxes: [{ id: "b1", words: "Same lyric" }],
+          },
+          displayType: "stream",
+        } as never),
+      );
+
+      const state = legacy(store.getState().presentation);
+      expect(state.streamInfo.type).toBe("song");
+      expect(state.streamInfo.slide?.id).toBe("same-slide");
+      expect(state.prevStreamInfo.slide?.boxes?.[0]?.words).toBe("Same lyric");
+    });
+
+    it("updateProjectorFromRemote snapshots prev when the same slide.id is re-transmitted", () => {
+      const liveSlide = {
+        id: "same-slide",
+        type: "Media" as const,
+        name: "Chorus",
+        boxes: [{ id: "b1", words: "Same lyric" }],
+      };
+      const store = createStore({
+        presentation: {
+          ...legacyInitialState(),
+          projectorInfo: {
+            ...legacyInitialState().projectorInfo,
+            slide: liveSlide,
+            name: "Chorus",
+            type: "song",
+            time: 100,
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateProjectorFromRemote(
+          createPresentation({
+            type: "song",
+            name: "Chorus",
+            slide: {
+              ...liveSlide,
+              boxes: [{ id: "b1", words: "Same lyric" }],
+            },
+            time: 200,
+            displayType: "projector",
+          }),
+        ),
+      );
+
+      const state = legacy(store.getState().presentation);
+      expect(state.prevProjectorInfo.slide?.boxes?.[0]?.words).toBe(
+        "Same lyric",
+      );
+      expect(state.projectorInfo.time).toBe(200);
+    });
+
     it("updateStreamFromRemote preserves bible text for bible snapshots", () => {
       const store = createStore({
         presentation: {

@@ -26,12 +26,15 @@ import {
   OUTLINE_SMOOTH_SCROLL_MS,
   buildOutlineSlideSections,
   buildOutlineVirtualRows,
+  captureOutlineScrollAnchor,
   findOutlineRowIndexForItem,
   getControllerItemPath,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
   getPrefetchItemIds,
   prepareItemForEditor,
+  resolveOutlineScrollTopFromAnchor,
+  type OutlineScrollAnchor,
   type OutlineSlideSection,
 } from "../../utils/outlineSlideSections";
 import ItemSlide from "./ItemSlide";
@@ -255,18 +258,27 @@ const OutlineItemSlidesScroller = ({
   const isInitialAnchoringRef = useRef(false);
   const ignorePinRef = useRef(true);
   const pinRafRef = useRef<number | null>(null);
-  const pinnedAnchorOffsetRef = useRef<number | null>(null);
+  const viewportAnchorRef = useRef<OutlineScrollAnchor | null>(null);
 
   const readRowOffset = useCallback((rowIndex: number) => {
     if (rowIndex < 0) return null;
     return virtualizerRef.current.getOffsetForIndex(rowIndex)?.[0] ?? null;
   }, []);
 
-  const readSectionOffset = useCallback((listId: string | undefined) => {
-    if (!listId) return null;
-    const rowIndex = findOutlineRowIndexForItem(rowsRef.current, listId);
-    return readRowOffset(rowIndex);
-  }, [readRowOffset]);
+  const readRowStart = useCallback(
+    (index: number) => virtualizerRef.current.getOffsetForIndex(index)?.[0] ?? 0,
+    [],
+  );
+
+  const captureViewportAnchor = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    viewportAnchorRef.current = captureOutlineScrollAnchor(
+      rowsRef.current,
+      readRowStart,
+      element.scrollTop,
+    );
+  }, [readRowStart, scrollRef]);
 
   const beginIgnorePin = useCallback((durationMs = OUTLINE_SCROLL_SETTLE_MS) => {
     ignorePinRef.current = true;
@@ -276,11 +288,9 @@ const OutlineItemSlidesScroller = ({
     ignorePinTimerRef.current = window.setTimeout(() => {
       ignorePinTimerRef.current = null;
       ignorePinRef.current = false;
-      pinnedAnchorOffsetRef.current = readSectionOffset(
-        lastPinnedListIdRef.current,
-      );
+      captureViewportAnchor();
     }, durationMs);
-  }, [readSectionOffset]);
+  }, [captureViewportAnchor]);
 
   const extendInitialAnchoring = useCallback(() => {
     isInitialAnchoringRef.current = true;
@@ -299,9 +309,6 @@ const OutlineItemSlidesScroller = ({
       if (!item) return;
       beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
       lastPinnedListIdRef.current = listId;
-      // Re-base drift tracking on the new item so a rows rebuild does not yank
-      // scroll toward the previous pin while selection keep-in-view runs.
-      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
       setBrowsePinListId(listId);
       dispatch(setActiveItemInList(listId));
       const doc = docsById.get(item._id);
@@ -326,7 +333,6 @@ const OutlineItemSlidesScroller = ({
       navigate,
       outlineItems,
       controllerBasePath,
-      readSectionOffset,
     ],
   );
 
@@ -334,17 +340,18 @@ const OutlineItemSlidesScroller = ({
     const scrollTop = scrollRef.current?.scrollTop ?? 0;
     return getPinnedListIdFromRowOffsets(
       rowsRef.current,
-      (index) => virtualizerRef.current.getOffsetForIndex(index)?.[0] ?? 0,
+      readRowStart,
       scrollTop,
     );
-  }, [scrollRef]);
+  }, [readRowStart, scrollRef]);
 
-  // Manual scroll only updates prefetch focus. It must not change the selected
-  // item/slide — that stays until an explicit slide click or left-list select.
+  // Keep a viewport row anchor for geometry rebuilds. Manual scroll also updates
+  // prefetch focus, but must not change the selected item/slide.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
     const onScroll = () => {
+      captureViewportAnchor();
       if (!didInitialScrollRef.current || ignorePinRef.current) return;
       if (pinRafRef.current != null) return;
       pinRafRef.current = window.requestAnimationFrame(() => {
@@ -363,7 +370,7 @@ const OutlineItemSlidesScroller = ({
         pinRafRef.current = null;
       }
     };
-  }, [readPinnedListId, scrollRef]);
+  }, [captureViewportAnchor, readPinnedListId, scrollRef]);
 
   useEffect(() => {
     return () => {
@@ -419,9 +426,9 @@ const OutlineItemSlidesScroller = ({
           behavior: "smooth",
         });
       }
-      pinnedAnchorOffsetRef.current = offset;
+      captureViewportAnchor();
     },
-    [beginIgnorePin, readRowOffset, scrollRef],
+    [beginIgnorePin, captureViewportAnchor, readRowOffset, scrollRef],
   );
 
   const applyPinnedScroll = useCallback(
@@ -520,28 +527,41 @@ const OutlineItemSlidesScroller = ({
     return () => observer.disconnect();
   }, [applyPinnedScroll, extendInitialAnchoring, scrollRef]);
 
-  // After the initial anchor window, only correct drift when content above the
-  // pin grows (prefetch), instead of hard-jumping back to the selection.
+  // After the initial anchor window, restore the visible row when virtual
+  // geometry rebuilds (remote doc updates, prefetch, tile-height sync). Do not
+  // pin to selection — the operator may have scrolled elsewhere. Selection
+  // keep-in-view still runs afterward when the chosen slide changes.
   useLayoutEffect(() => {
     if (!didInitialScrollRef.current || isInitialAnchoringRef.current) return;
-    const listId = lastPinnedListIdRef.current;
-    const nextOffset = readSectionOffset(listId);
-    const prevOffset = pinnedAnchorOffsetRef.current;
-    pinnedAnchorOffsetRef.current = nextOffset;
-    // Selection / programmatic scrolls own the viewport; do not stack a pin yank.
-    if (ignorePinRef.current) return;
-    const element = scrollRef.current;
-    if (
-      prevOffset == null ||
-      nextOffset == null ||
-      !element ||
-      Math.abs(nextOffset - prevOffset) < 1
-    ) {
-      return;
-    }
-    beginIgnorePin();
-    element.scrollTop += nextOffset - prevOffset;
-  }, [beginIgnorePin, readSectionOffset, rows, scrollRef]);
+
+    const restore = () => {
+      const element = scrollRef.current;
+      const anchor = viewportAnchorRef.current;
+      if (!element || !anchor) {
+        captureViewportAnchor();
+        return false;
+      }
+      const nextTop = resolveOutlineScrollTopFromAnchor(
+        rowsRef.current,
+        readRowStart,
+        anchor,
+      );
+      if (nextTop != null && Math.abs(element.scrollTop - nextTop) >= 1) {
+        element.scrollTop = nextTop;
+      }
+      captureViewportAnchor();
+      return true;
+    };
+
+    if (restore()) return;
+
+    // Parent scroll ref can lag one frame behind child layout (same race as
+    // initial anchor). Retry once after refs attach.
+    const rafId = window.requestAnimationFrame(() => {
+      restore();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [captureViewportAnchor, readRowStart, rows, scrollRef, tileRowHeight]);
 
   // Left-list / route item changes: update browse pin only. Scrolling to the
   // selection is owned by the activeItemListId + selectedSlide effect below so
@@ -558,9 +578,8 @@ const OutlineItemSlidesScroller = ({
       beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
     }
     lastPinnedListIdRef.current = selectedItemListId;
-    pinnedAnchorOffsetRef.current = readSectionOffset(selectedItemListId);
     setBrowsePinListId(selectedItemListId);
-  }, [beginIgnorePin, readSectionOffset, selectedItemListId]);
+  }, [beginIgnorePin, selectedItemListId]);
 
   // Single scroll authority for selection changes after the initial anchor.
   // Avoid stacking virtualizer smooth + keepElementInView smooth, and wait out
@@ -595,7 +614,7 @@ const OutlineItemSlidesScroller = ({
         parent,
         shouldScrollToCenter: true,
       });
-      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
+      captureViewportAnchor();
       return;
     }
 
@@ -620,7 +639,7 @@ const OutlineItemSlidesScroller = ({
         parent: scrollParent,
         shouldScrollToCenter: true,
       });
-      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
+      captureViewportAnchor();
     };
 
     const outerRaf = window.requestAnimationFrame(() => {
@@ -634,7 +653,7 @@ const OutlineItemSlidesScroller = ({
   }, [
     activeItemListId,
     beginIgnorePin,
-    readSectionOffset,
+    captureViewportAnchor,
     scrollRef,
     selectedSlide,
   ]);

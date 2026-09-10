@@ -1689,6 +1689,15 @@ export const presentationSlice = createSlice({
         if (!action.payload.text?.trim() && stream.info.type === "bible") {
           continue;
         }
+        // Same as FromRemote: ItemSlides clears formatted ahead of every song/free send.
+        // With nothing live, applying that clear sets type "free" and slide null — then
+        // updateStream's prev snapshot has no boxes, so same-text re-clicks always fade in.
+        if (
+          !action.payload.text?.trim() &&
+          !stream.info.formattedTextDisplayInfo?.text?.trim()
+        ) {
+          continue;
+        }
         const t = serverNow();
         stream.prevInfo.formattedTextDisplayInfo =
           stream.info.formattedTextDisplayInfo;
@@ -2106,23 +2115,22 @@ export const presentationSlice = createSlice({
           // timestamp is bookkeeping (e.g. a freshly reconciled blank slot) and
           // must never clear what is live.
           if (incoming > 0 && (current === 0 || incoming > current)) {
-            const sameSlide =
-              info.slide?.id != null && slot.info.slide?.id === info.slide.id;
-            if (!sameSlide) {
-              slot.prevInfo.slide =
-                slot.type === "stream"
-                  ? copyStreamSlide(slot.info.slide)
-                  : slot.info.slide;
-              slot.prevInfo.name = slot.info.name;
-              slot.prevInfo.type = slot.info.type;
-              slot.prevInfo.time = slot.info.time;
-              slot.prevInfo.timerId = slot.info.timerId;
-              slot.prevInfo.localVideoInput = slot.info.localVideoInput;
-              if (slot.type === "monitor") {
-                slot.prevInfo.itemId = slot.info.itemId;
-                slot.prevInfo.listId = slot.info.listId;
-                slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
-              }
+            // Always snapshot prev on a newer transmit — including re-clicks of
+            // the same slide.id. Skipping that left remote displays without
+            // prevBoxes, so matching text replayed its fade instead of holding.
+            slot.prevInfo.slide =
+              slot.type === "stream"
+                ? copyStreamSlide(slot.info.slide)
+                : slot.info.slide;
+            slot.prevInfo.name = slot.info.name;
+            slot.prevInfo.type = slot.info.type;
+            slot.prevInfo.time = slot.info.time;
+            slot.prevInfo.timerId = slot.info.timerId;
+            slot.prevInfo.localVideoInput = slot.info.localVideoInput;
+            if (slot.type === "monitor") {
+              slot.prevInfo.itemId = slot.info.itemId;
+              slot.prevInfo.listId = slot.info.listId;
+              slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
             }
             // Merge the slide half over what is here, keeping the overlay lanes
             // this slot already holds — they arrive on their own keys below.
@@ -2220,6 +2228,29 @@ export const presentationSlice = createSlice({
         slot.info.videoPlayback = action.payload.videoPlayback;
       }
     },
+    /**
+     * Transport-only remote apply for built-in projector/monitor/stream.
+     * Pause/seek/play bumps cue generation without advancing slide `time`, and
+     * the time-gated remote listeners must still deliver those cues without
+     * replaying a full slide handoff.
+     */
+    applyRemoteVideoPlayback: (
+      state,
+      action: PayloadAction<{
+        outputType: PushOutputType;
+        videoPlayback?: VideoBackgroundPlaybackCue;
+      }>,
+    ) => {
+      const cue = action.payload.videoPlayback;
+      if (!cue) return;
+      const incomingGen = cue.generation ?? 0;
+      for (const slot of builtInSlots(state, action.payload.outputType)) {
+        const currentGen = slot.info.videoPlayback?.generation ?? 0;
+        if (incomingGen > currentGen) {
+          slot.info.videoPlayback = cue;
+        }
+      }
+    },
     updateProjector: (
       state,
       action: PayloadAction<
@@ -2258,17 +2289,15 @@ export const presentationSlice = createSlice({
     updateProjectorFromRemote: (state, action: PayloadAction<Presentation>) => {
       for (const projector of builtInSlots(state, "projector")) {
         projector.boardAliasId = "";
-        const sameSlide =
-          action.payload.slide?.id != null &&
-          projector.info.slide?.id === action.payload.slide.id;
-        if (!sameSlide) {
-          projector.prevInfo.slide = projector.info.slide;
-          projector.prevInfo.name = projector.info.name;
-          projector.prevInfo.type = projector.info.type;
-          projector.prevInfo.time = projector.info.time;
-          projector.prevInfo.timerId = projector.info.timerId;
-          projector.prevInfo.localVideoInput = projector.info.localVideoInput;
-        }
+        // Newer remote transmits always snapshot prev (listeners already require
+        // a newer time). Same slide.id re-clicks still need prevBoxes so matching
+        // text can hold instead of fading from 0.
+        projector.prevInfo.slide = projector.info.slide;
+        projector.prevInfo.name = projector.info.name;
+        projector.prevInfo.type = projector.info.type;
+        projector.prevInfo.time = projector.info.time;
+        projector.prevInfo.timerId = projector.info.timerId;
+        projector.prevInfo.localVideoInput = projector.info.localVideoInput;
 
         projector.info.slide = action.payload.slide;
         projector.info.name = action.payload.name;
@@ -2333,21 +2362,16 @@ export const presentationSlice = createSlice({
     updateMonitorFromRemote: (state, action: PayloadAction<Presentation>) => {
       for (const monitor of builtInSlots(state, "monitor")) {
         monitor.boardAliasId = "";
-        const sameSlide =
-          action.payload.slide?.id != null &&
-          monitor.info.slide?.id === action.payload.slide.id;
-        if (!sameSlide) {
-          monitor.prevInfo.slide = monitor.info.slide;
-          monitor.prevInfo.name = monitor.info.name;
-          monitor.prevInfo.type = monitor.info.type;
-          monitor.prevInfo.time = monitor.info.time;
-          monitor.prevInfo.timerId = monitor.info.timerId;
-          monitor.prevInfo.itemId = monitor.info.itemId;
-          monitor.prevInfo.listId = monitor.info.listId;
-          monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
-          monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
-          monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
-        }
+        monitor.prevInfo.slide = monitor.info.slide;
+        monitor.prevInfo.name = monitor.info.name;
+        monitor.prevInfo.type = monitor.info.type;
+        monitor.prevInfo.time = monitor.info.time;
+        monitor.prevInfo.timerId = monitor.info.timerId;
+        monitor.prevInfo.itemId = monitor.info.itemId;
+        monitor.prevInfo.listId = monitor.info.listId;
+        monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
+        monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
+        monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
 
         monitor.info.slide = action.payload.slide;
         monitor.info.name = action.payload.name;
@@ -2422,29 +2446,23 @@ export const presentationSlice = createSlice({
         const isStreamSlideType =
           Boolean(action.payload.localVideoInput) ||
           (action.payload.type !== "bible" && action.payload.type !== "free");
-        const sameSlide =
-          isStreamSlideType &&
-          action.payload.slide?.id != null &&
-          stream.info.slide?.id === action.payload.slide.id;
-        if (!sameSlide) {
-          stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
-          stream.prevInfo.name = stream.info.name;
-          stream.prevInfo.type = stream.info.type;
-          stream.prevInfo.time = stream.info.time;
-          stream.prevInfo.timerId = stream.info.timerId;
-          stream.prevInfo.localVideoInput = stream.info.localVideoInput;
-        }
+        // Always snapshot prev on a newer transmit (including same slide.id
+        // re-clicks) so remote stream text can skip matching fades.
+        stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
+        stream.prevInfo.name = stream.info.name;
+        stream.prevInfo.type = stream.info.type;
+        stream.prevInfo.time = stream.info.time;
+        stream.prevInfo.timerId = stream.info.timerId;
+        stream.prevInfo.localVideoInput = stream.info.localVideoInput;
 
         if (isStreamSlideType) {
-          if (!sameSlide) {
-            const bible = stream.info.bibleDisplayInfo;
-            if (bible?.title?.trim() || bible?.text?.trim()) {
-              stream.prevInfo.bibleDisplayInfo = bible;
-            }
-            const ft = stream.info.formattedTextDisplayInfo;
-            if (ft?.text?.trim()) {
-              stream.prevInfo.formattedTextDisplayInfo = ft;
-            }
+          const bible = stream.info.bibleDisplayInfo;
+          if (bible?.title?.trim() || bible?.text?.trim()) {
+            stream.prevInfo.bibleDisplayInfo = bible;
+          }
+          const ft = stream.info.formattedTextDisplayInfo;
+          if (ft?.text?.trim()) {
+            stream.prevInfo.formattedTextDisplayInfo = ft;
           }
           stream.info.slide = action.payload.slide;
           clearStreamNonSlideItemData(stream.info, t);
@@ -2496,6 +2514,7 @@ export const {
   updateMonitor,
   updateStream,
   updateVideoPlayback,
+  applyRemoteVideoPlayback,
   updateProjectorFromRemote,
   updateMonitorFromRemote,
   updateStreamFromRemote,

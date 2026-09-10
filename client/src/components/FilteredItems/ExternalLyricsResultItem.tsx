@@ -46,7 +46,7 @@ const ExternalLyricsResultItem = ({
         getExternalSectionClassName(sectionPosition),
       )}
     >
-      <div className="flex flex-col gap-2 py-1.5 pl-4 pr-2 md:flex-row md:items-center md:gap-2 md:pr-2">
+      <div className="flex flex-col gap-2 py-1.5 pl-4 pr-4 md:flex-row md:items-center md:gap-2">
         <div className="flex w-full min-w-0 items-start justify-between gap-2 md:flex-1 md:justify-start md:pr-0">
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <div className="flex flex-wrap items-center gap-2">

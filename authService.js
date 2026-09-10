@@ -28,6 +28,12 @@ import {
   sanitizePairingForClient,
   sanitizeWorkstationDeviceForClient,
 } from "./server/authResponseSanitize.js";
+import {
+  buildSupportContactEmail,
+  isSupportHoneypotFilled,
+  parseSupportContactBody,
+  resolveSupportInboxEmail,
+} from "./server/supportContact.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
@@ -824,22 +830,34 @@ const createEmailTags = (tags = {}) =>
     .filter(({ name, value }) => name.length > 0 && value.length > 0)
     .slice(0, 10);
 
-const sendEmail = async ({ to, subject, textBody, htmlBody, tags = {} }) => {
+const sendEmail = async ({
+  to,
+  subject,
+  textBody,
+  htmlBody,
+  tags = {},
+  replyTo,
+} = {}) => {
   if (resendClient && resendFromEmail) {
-    const response = await resendClient.emails.send({
+    const payload = {
       from: resendFromEmail,
       to: [to],
       subject,
       text: textBody,
       html: htmlBody,
       tags: createEmailTags(tags),
-    });
+    };
+    const normalizedReplyTo = String(replyTo || "").trim();
+    if (normalizedReplyTo) {
+      payload.reply_to = normalizedReplyTo;
+    }
+    const response = await resendClient.emails.send(payload);
     if (response.error) {
       throw new Error(response.error.message || "Could not send email.");
     }
     return response.data || null;
   }
-  logAuthEvent("log", "email.debug", { to, subject, tags });
+  logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
   return null;
 };
 
@@ -5568,6 +5586,75 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not start password reset",
+      });
+    }
+  },
+
+  /**
+   * Public support form. No session required. Rate-limited by IP and reply
+   * email. Honeypot fields succeed silently without sending mail.
+   */
+  async submitSupportContact(req, res) {
+    try {
+      if (isSupportHoneypotFilled(req.body)) {
+        logAuthEvent("warn", "support.contact.honeypot", {
+          ip: getClientIp(req),
+        });
+        return res.json({ success: true });
+      }
+
+      const parsed = parseSupportContactBody(req.body, normalizeEmail);
+      if (!parsed.ok) {
+        throw httpError(400, parsed.errorMessage);
+      }
+
+      const clientIp = getClientIp(req);
+      enforceRateLimit({
+        scope: "support-contact-ip",
+        key: clientIp,
+        limit: 3,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      enforceRateLimit({
+        scope: "support-contact-email",
+        key: parsed.email,
+        limit: 3,
+        windowMs: 60 * 60 * 1000,
+        blockMs: 60 * 60 * 1000,
+      });
+
+      if (!resendClient || !resendFromEmail) {
+        throw httpError(
+          503,
+          "Support email is not available right now. Email support@worshipsync.net instead.",
+        );
+      }
+
+      const inbox = resolveSupportInboxEmail();
+      const emailContent = buildSupportContactEmail(parsed);
+      await sendEmail({
+        to: inbox,
+        subject: emailContent.subject,
+        textBody: emailContent.textBody,
+        htmlBody: emailContent.htmlBody,
+        replyTo: parsed.email,
+        tags: {
+          category: "support_contact",
+        },
+      });
+
+      logAuthEvent("log", "support.contact.sent", {
+        ip: clientIp,
+        replyTo: parsed.email,
+        hasChurchName: Boolean(parsed.churchName),
+      });
+
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not send your message.",
       });
     }
   },

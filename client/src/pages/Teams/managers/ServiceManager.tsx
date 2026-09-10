@@ -220,7 +220,7 @@ const ServiceManager = ({
     ),
   );
   const defaultPlanTemplateOptions = [
-    { label: "No automatic template", value: "" },
+    { label: "No default template", value: "" },
     ...eligiblePlanTemplates.map((template) => ({
       label: template.name,
       value: template.templateId,
@@ -590,8 +590,8 @@ const ServiceManager = ({
           options={defaultPlanTemplateOptions}
         />
         <p className="text-xs text-gray-400">
-          New service plans start from this template. Scheduled role links in
-          the template fill from that date&apos;s team schedules.
+          Empty plans offer this as the one-click Apply action. Scheduled role
+          links in the template fill from that date&apos;s team schedules.
         </p>
       </div>
 

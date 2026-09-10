@@ -27,6 +27,9 @@ export const normalizeChurchIntegrations = (
   const restream = isRecord(value.restream) ? value.restream : {};
   const youtube = isRecord(value.youtube) ? value.youtube : {};
   const canva = isRecord(value.canva) ? value.canva : {};
+  const planningCenter = isRecord(value.planningCenter)
+    ? value.planningCenter
+    : {};
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -52,7 +55,7 @@ export const normalizeChurchIntegrations = (
         : base.catalog.songSelect,
       planningCenter: isRecord(catalog.planningCenter)
         ? {
-            status: "coming_soon",
+            status: "available",
             label:
               String(catalog.planningCenter.label || "").trim() ||
               base.catalog.planningCenter.label,
@@ -165,6 +168,12 @@ export const normalizeChurchIntegrations = (
       ...(Number.isFinite(Number(canva.lastImportedAt))
         ? { lastImportedAt: Number(canva.lastImportedAt) }
         : {}),
+    },
+    planningCenter: {
+      enabled: Boolean(planningCenter.enabled),
+      connected: Boolean(planningCenter.connected),
+      accountLabel: String(planningCenter.accountLabel ?? "").trim(),
+      lastError: String(planningCenter.lastError ?? "").trim(),
     },
   };
 };

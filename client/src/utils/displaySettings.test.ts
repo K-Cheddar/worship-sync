@@ -2,11 +2,24 @@ import {
   DISPLAY_SETTINGS_DEFAULTS,
   fromLegacyMonitorSettings,
   getApplicableSettingKeys,
+  isDisplayChromeReady,
   normalizeDisplaySettings,
   resolveDisplaySettings,
   resolveOutputDefaults,
   shouldSendNextSlideForOutput,
 } from "./displaySettings";
+
+describe("isDisplayChromeReady", () => {
+  it("waits for the registry when the screen has no override", () => {
+    expect(isDisplayChromeReady(false)).toBe(false);
+    expect(isDisplayChromeReady(true)).toBe(true);
+  });
+
+  it("honours an explicit screen override before the registry loads", () => {
+    expect(isDisplayChromeReady(false, false)).toBe(true);
+    expect(isDisplayChromeReady(false, true)).toBe(true);
+  });
+});
 
 describe("getApplicableSettingKeys", () => {
   it("gives stream only local-video audio controls", () => {
@@ -267,9 +280,9 @@ describe("legacy settings under a partly configured display", () => {
   it("lets the display's own value win where one exists", () => {
     const defaults = resolveOutputDefaults({ showClock: true }, LEGACY);
 
-    expect(resolveDisplaySettings(defaults, undefined, "monitor").showClock).toBe(
-      true,
-    );
+    expect(
+      resolveDisplaySettings(defaults, undefined, "monitor").showClock,
+    ).toBe(true);
   });
 
   it("falls back to the display alone when the church has no legacy settings", () => {

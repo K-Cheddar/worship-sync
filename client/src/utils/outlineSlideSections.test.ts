@@ -3,12 +3,14 @@ import {
   buildDocsById,
   buildOutlineSlideSections,
   buildOutlineVirtualRows,
+  captureOutlineScrollAnchor,
   getControllerItemPath,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
   getPrefetchItemIds,
   mergeDocsById,
   prepareItemForEditor,
+  resolveOutlineScrollTopFromAnchor,
   resolveSlidesForOutlineItem,
   findOutlineRowIndexForItem,
 } from "./outlineSlideSections";
@@ -256,6 +258,125 @@ describe("outlineSlideSections", () => {
     expect(
       getPinnedListIdFromRowOffsets(rows, (index) => starts[index], 196),
     ).toBe("l-2");
+  });
+
+  it("restores scrollTop from a viewport row anchor after rows above grow", () => {
+    const before = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("a1", "A1"), slide("a2", "A2")],
+          isActive: true,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      2,
+    );
+    // label, tiles(a), label(b), tiles(b) → b's label is index 2
+    const scrollTop = 80;
+    const getBeforeStart = (index: number) => index * 40;
+    const anchor = captureOutlineScrollAnchor(
+      before,
+      getBeforeStart,
+      scrollTop,
+    );
+    expect(anchor).toEqual(
+      expect.objectContaining({
+        listId: "l-2",
+        rowType: "sectionLabel",
+        localOffset: 0,
+      }),
+    );
+
+    const after = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [
+            slide("a1", "A1"),
+            slide("a2", "A2"),
+            slide("a3", "A3"),
+            slide("a4", "A4"),
+          ],
+          isActive: true,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      2,
+    );
+    // Extra tile row for A pushes B's label from index 2 → 3
+    const getAfterStart = (index: number) => index * 40;
+    expect(
+      resolveOutlineScrollTopFromAnchor(after, getAfterStart, anchor!),
+    ).toBe(120);
+  });
+
+  it("prefers slide id when matching a tiles-row anchor", () => {
+    const rows = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [
+            slide("a1", "A1"),
+            slide("a2", "A2"),
+            slide("a3", "A3"),
+            slide("a4", "A4"),
+          ],
+          isActive: true,
+        },
+      ],
+      2,
+    );
+    const anchor = captureOutlineScrollAnchor(rows, (index) => index * 40, 40);
+    expect(anchor?.slideId).toBe("a1");
+
+    // Insert a new first row of slides; a1 moves to the second tiles row.
+    const grown = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [
+            slide("new1", "N1"),
+            slide("new2", "N2"),
+            slide("a1", "A1"),
+            slide("a2", "A2"),
+            slide("a3", "A3"),
+            slide("a4", "A4"),
+          ],
+          isActive: true,
+        },
+      ],
+      2,
+    );
+    expect(
+      resolveOutlineScrollTopFromAnchor(grown, (index) => index * 40, anchor!),
+    ).toBe(80);
   });
 
   it("finds the tile row for a slide, falling back to the section label", () => {

@@ -663,9 +663,9 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
 
   return (
     <>
-      <div className="mt-4 flex flex-row flex-wrap items-end gap-3">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <Input
-          className="min-w-0 flex-1"
+          className="w-full min-w-0 sm:min-w-40 sm:flex-1"
           id="workstation-label"
           label="Label"
           value={pairLabel}
@@ -677,7 +677,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
           }}
         />
         <Select
-          className="min-w-48"
+          className="w-full sm:min-w-48 sm:w-auto"
           id="workstation-access"
           label="Access"
           value={workstationAccess}
@@ -809,9 +809,9 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
 
   return (
     <>
-      <div className="mt-4 flex flex-row flex-wrap items-start gap-3">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
         <Input
-          className="min-w-0 flex-1"
+          className="w-full min-w-0 sm:min-w-40 sm:flex-1"
           id="display-label"
           label="Label"
           value={displayLabel}
@@ -822,9 +822,9 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
             setLabelError("");
           }}
         />
-        <div className="flex min-w-48 flex-col gap-1">
+        <div className="flex w-full flex-col gap-1 sm:w-auto sm:min-w-48">
           <Select
-            className="min-w-48"
+            className="w-full sm:min-w-48"
             id="display-surface"
             label="Page type"
             value={displaySurface}
@@ -838,9 +838,9 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
             How this machine shows content.
           </p>
         </div>
-        <div className="flex min-w-48 flex-col gap-1">
+        <div className="flex w-full flex-col gap-1 sm:w-auto sm:min-w-48">
           <Select
-            className="min-w-48"
+            className="w-full sm:min-w-48"
             id="display-output"
             label="Content output"
             value={displayOutputId}
@@ -853,7 +853,7 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
           </p>
         </div>
         <Button
-          className="mt-7 w-full shrink-0 justify-center sm:w-auto"
+          className="w-full shrink-0 justify-center sm:mt-7 sm:w-auto"
           variant="cta"
           svg={KeyRound}
           iconSize="sm"

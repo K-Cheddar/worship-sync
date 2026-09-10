@@ -10,6 +10,7 @@ import {
 } from "../../store/createItemSlice";
 import type { ItemState, ServiceItem } from "../../types";
 import type { ServicePlanSongReference } from "../../types/servicePlan";
+import { libraryServicePlanSongRef } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
 
 /** Modal surface is dark and often portaled outside Teams `text-white` wrappers. */
@@ -79,11 +80,7 @@ const ServicePlanLibraryPicker = ({
   };
 
   const handleAttachSong = (item: ServiceItem) => {
-    onSelectSong({
-      kind: "library",
-      songId: item._id,
-      songName: item.name,
-    });
+    onSelectSong(libraryServicePlanSongRef(item));
     resetAndClose();
   };
 
@@ -104,11 +101,7 @@ const ServicePlanLibraryPicker = ({
   };
 
   const handleCreated = (item: ItemState) => {
-    onSelectSong({
-      kind: "library",
-      songId: item._id,
-      songName: item.name,
-    });
+    onSelectSong(libraryServicePlanSongRef(item));
     resetAndClose();
   };
 

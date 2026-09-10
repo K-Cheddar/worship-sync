@@ -268,6 +268,48 @@ describe("overflow utilities", () => {
     expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
+  it("preserves live-input mediaSource when rebuilding a Section-named slide", () => {
+    const mediaSource = {
+      kind: "local-video-input" as const,
+      sourceId: "local_video_section_1",
+      label: "Section 1 camera",
+      fit: "contain" as const,
+    };
+    const item = {
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [
+        {
+          id: "live-1",
+          name: "Section 1 camera",
+          type: "Section",
+          overflow: "fit",
+          mediaSource,
+          boxes: [
+            { background: "", width: 100, height: 100 },
+            {
+              words: "",
+              fontSize: 40,
+              fontColor: "#fff",
+              width: 100,
+              height: 100,
+              topMargin: 0,
+              sideMargin: 0,
+              isBold: false,
+              isItalic: false,
+            },
+          ],
+        },
+      ],
+      formattedSections: [{ sectionNum: 1, words: "", slideSpan: 1 }],
+    } as any;
+
+    const result = formatFree(item);
+
+    expect(result.slides).toHaveLength(1);
+    expect(result.slides[0].mediaSource).toEqual(mediaSource);
+  });
+
   it("formats lyrics into title, body slides, and trailing blank", () => {
     const item = {
       selectedArrangement: 0,

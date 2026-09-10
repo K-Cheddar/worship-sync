@@ -65,6 +65,8 @@ const Stream = () => {
       prevBoardPostStreamInfo={prevStreamInfo.boardPostStreamInfo}
       shouldAnimate
       width={100}
+      time={streamInfo.time}
+      prevTime={prevStreamInfo.time}
       timerInfo={streamTimer}
       prevTimerInfo={prevStreamTimer}
       streamItemContentBlocked={streamItemContentBlocked}

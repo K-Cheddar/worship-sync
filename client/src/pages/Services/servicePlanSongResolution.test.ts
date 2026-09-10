@@ -24,15 +24,25 @@ describe("resolveServicePlanSongRef", () => {
   });
 
   it("leaves a pending song alone while the library still lacks it", () => {
-    const songRef = { kind: "pending" as const, title: "Way Maker", lyricsText: "" };
+    const songRef = {
+      kind: "pending" as const,
+      title: "Way Maker",
+      lyricsText: "",
+    };
     expect(resolveServicePlanSongRef(songRef, library)).toBe(songRef);
   });
 
   it("holds the same confidence bar as the import", () => {
     // The words are all there but in the wrong order — not linkable then, not
     // linkable now.
-    const songRef = { kind: "pending" as const, title: "Owe You Praise", lyricsText: "" };
-    expect(resolveServicePlanSongRef(songRef, [song("s1", "Praise You")])).toBe(songRef);
+    const songRef = {
+      kind: "pending" as const,
+      title: "Owe You Praise",
+      lyricsText: "",
+    };
+    expect(resolveServicePlanSongRef(songRef, [song("s1", "Praise You")])).toBe(
+      songRef,
+    );
   });
 
   it("keeps a pending song that carries its own lyrics", () => {
@@ -43,6 +53,49 @@ describe("resolveServicePlanSongRef", () => {
       lyricsText: "Verse one",
     };
     expect(resolveServicePlanSongRef(songRef, library)).toBe(songRef);
+  });
+
+  it("carries a planning key onto a newly linked library song", () => {
+    expect(
+      resolveServicePlanSongRef(
+        {
+          kind: "pending",
+          title: "How Great is Our God",
+          lyricsText: "",
+          key: "E",
+        },
+        library,
+      ),
+    ).toEqual({
+      kind: "library",
+      songId: "song-42",
+      songName: "How Great Is Our God",
+      key: "E",
+    });
+  });
+
+  it("enriches an already-linked song with the library key", () => {
+    expect(
+      resolveServicePlanSongRef(
+        {
+          kind: "library",
+          songId: "song-42",
+          songName: "How Great Is Our God",
+        },
+        [
+          {
+            _id: "song-42",
+            name: "How Great Is Our God",
+            songMetadata: { key: "G" },
+          },
+        ],
+      ),
+    ).toEqual({
+      kind: "library",
+      songId: "song-42",
+      songName: "How Great Is Our God",
+      key: "G",
+    });
   });
 
   it("leaves an already-linked song and an element with no song alone", () => {
@@ -66,7 +119,11 @@ describe("resolveServicePlanSongRefs", () => {
           id: "now-in-library",
           type: "song",
           title: plainTextToRichText("How Great is Our God (E)"),
-          songRef: { kind: "pending", title: "How Great is Our God", lyricsText: "" },
+          songRef: {
+            kind: "pending",
+            title: "How Great is Our God",
+            lyricsText: "",
+          },
         },
         {
           id: "still-missing",
@@ -107,7 +164,11 @@ describe("resolveServicePlanSongRefs", () => {
             type: "song",
             title: plainTextToRichText("Medley"),
             songRefs: [
-              { kind: "pending", title: "How Great is Our God", lyricsText: "" },
+              {
+                kind: "pending",
+                title: "How Great is Our God",
+                lyricsText: "",
+              },
               { kind: "pending", title: "Way Maker", lyricsText: "" },
             ],
           },
@@ -129,6 +190,8 @@ describe("resolveServicePlanSongRefs", () => {
 
   it("is empty when the library has nothing new to offer", () => {
     expect(resolveServicePlanSongRefs(sections, []).size).toBe(0);
-    expect(resolveServicePlanSongRefs(null, [song("s1", "Anything")]).size).toBe(0);
+    expect(
+      resolveServicePlanSongRefs(null, [song("s1", "Anything")]).size,
+    ).toBe(0);
   });
 });

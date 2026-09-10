@@ -36,6 +36,10 @@ import {
 } from "../utils/authStorage";
 import { isPackagedElectronRenderer } from "../utils/environment";
 import {
+  getAuthRedirectToFromState,
+  setPublicShellAuthReturnPath,
+} from "../utils/authRedirectPath";
+import {
   assignOperatorAppLocation,
   isPublicPathShell,
 } from "../utils/operatorAppNavigation";
@@ -130,6 +134,11 @@ const InviteAccept = () => {
     options?: { replace?: boolean; state?: unknown },
   ) => {
     if (isPublicPathShell()) {
+      // Full-page assign drops React Router state; persist return path for Login.
+      const returnTo = getAuthRedirectToFromState(options?.state);
+      if (returnTo) {
+        setPublicShellAuthReturnPath(returnTo);
+      }
       assignOperatorAppLocation(pathWithOptionalSearch);
       return;
     }

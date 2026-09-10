@@ -24,4 +24,18 @@ describe("localVideoWarmIntent", () => {
     expect(seen[0]).toEqual([]);
     expect(seen.some((ids) => ids.join() === "source-1")).toBe(true);
   });
+
+  it("clears a persisted warm set when republishing empty after restart", async () => {
+    publishLocalVideoWarmIntent(["stale-cam"]);
+    expect(readLocalVideoWarmIntent().sourceIds).toEqual(["stale-cam"]);
+
+    jest.resetModules();
+    const {
+      publishLocalVideoWarmIntent: publishFresh,
+      readLocalVideoWarmIntent: readFresh,
+    } = await import("./localVideoWarmIntent");
+
+    publishFresh([]);
+    expect(readFresh().sourceIds).toEqual([]);
+  });
 });

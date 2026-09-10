@@ -52,6 +52,7 @@ import {
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
 import { createCanvaService } from "./server/canvaService.js";
+import { createPlanningCenterService } from "./server/planningCenterService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
 import {
   SongAudioInputError,
@@ -142,6 +143,22 @@ const APP_PUBLIC_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
 const PUBLIC_SHARE_OG_IMAGE_URL = buildPublicShareImageUrl(APP_PUBLIC_BASE_URL);
+/** Crawler OG title lookup only — keep share HTML responsive if CouchDB stalls. */
+const BOARD_SHARE_PREVIEW_TIMEOUT_MS = 2000;
+
+const withTimeout = async (promise, timeoutMs, timeoutMessage) => {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 /**
  * Path-based public share pages: crawlers get Open Graph HTML; browsers get the
@@ -156,7 +173,11 @@ const sendPublicShareMetaPage = async (req, res, matched) => {
     try {
       const aliasId = normalizeAliasId(matched.param);
       if (aliasId) {
-        const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+        const aliasDoc = await withTimeout(
+          getBoardDoc(getAliasDocId(aliasId)),
+          BOARD_SHARE_PREVIEW_TIMEOUT_MS,
+          "Board share preview timed out",
+        );
         const boardTitle = String(aliasDoc?.title || "").trim();
         if (boardTitle) {
           overrides = {
@@ -632,6 +653,7 @@ const youtubeLiveChatService = createYouTubeLiveChatService({
   redirectBaseUrl: frontEndHost,
 });
 let canvaService;
+let planningCenterService;
 
 const chatService = createChatService({
   getFirestore: getServerFirestore,
@@ -797,6 +819,14 @@ canvaService = createCanvaService({
   getMuxClient: () => mux,
 });
 
+planningCenterService = createPlanningCenterService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  getIntegrationsPath: getChurchIntegrationsPath,
+  redirectBaseUrl: frontEndHost,
+  httpClient: axios,
+});
+
 app.post(
   "/api/webhooks/resend",
   express.raw({ type: "application/json", limit: "1mb" }),
@@ -858,6 +888,7 @@ app.post("/api/auth/email-code-hint", authHandlers.getEmailCodeHint);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
+app.post("/api/support/contact", authHandlers.submitSupportContact);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",
@@ -2030,6 +2061,202 @@ app.post(
       );
     } catch (error) {
       respondCanvaError(res, "Error importing from Canva:", error);
+    }
+  },
+);
+
+const respondPlanningCenterError = (res, context, error) => {
+  console.error(context, error);
+  res.status(error?.statusCode || 500).json({
+    error:
+      error?.statusCode && error?.message
+        ? error.message
+        : "Planning Center could not complete that request. Try again.",
+  });
+};
+
+app.get("/api/planning-center/oauth/callback", async (req, res) => {
+  try {
+    const result = await planningCenterService.completeConnect({
+      state: req.query.state,
+      code: req.query.code,
+      denied: Boolean(req.query.error) || !req.query.code,
+    });
+    const params = new URLSearchParams({
+      status: "success",
+      returnTo: result.returnTo || "/account/integrations",
+      ...(result.accountLabel ? { accountLabel: result.accountLabel } : {}),
+      ...(result.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/planning-center/connect-complete?${params}`,
+    );
+  } catch (error) {
+    console.error("Error completing Planning Center connection:", error);
+    const params = new URLSearchParams({
+      status: "error",
+      message:
+        "The Planning Center connection did not finish. Return to WorshipSync and try again.",
+      returnTo:
+        typeof error?.returnTo === "string" && error.returnTo.startsWith("/")
+          ? error.returnTo
+          : "/account/integrations",
+      ...(error?.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/planning-center/connect-complete?${params}`,
+    );
+  }
+});
+
+app.use(
+  "/api/churches/:churchId/planning-center",
+  requireAppSession,
+  requireFullAppAccess,
+  (req, res, next) =>
+    req.appSession.churchId === req.params.churchId
+      ? next()
+      : res.status(403).json({ error: "That church is not available." }),
+);
+
+app.get("/api/churches/:churchId/planning-center/status", async (req, res) => {
+  try {
+    res.json(
+      await planningCenterService.getStatusForChurch({
+        churchId: req.params.churchId,
+      }),
+    );
+  } catch (error) {
+    respondPlanningCenterError(
+      res,
+      "Error loading Planning Center status:",
+      error,
+    );
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/planning-center/connect-url",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await planningCenterService.startConnect({
+          churchId: req.params.churchId,
+          userId: req.appSession.userId,
+          returnTo: req.body?.returnTo,
+          desktop: Boolean(req.body?.desktop),
+        }),
+      );
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error starting Planning Center connection:",
+        error,
+      );
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/planning-center/connect-status",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await planningCenterService.getConnectStatus({
+          churchId: req.params.churchId,
+          connectRequestId: req.body?.connectRequestId,
+          connectRequestSecret: req.body?.connectRequestSecret,
+        }),
+      );
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error loading Planning Center connection status:",
+        error,
+      );
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/planning-center/disconnect",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      await planningCenterService.disconnect({ churchId: req.params.churchId });
+      res.json({ success: true });
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error disconnecting Planning Center:",
+        error,
+      );
+    }
+  },
+);
+
+app.get(
+  "/api/churches/:churchId/planning-center/service-types",
+  async (req, res) => {
+    try {
+      res.json(
+        await planningCenterService.listServiceTypes({
+          churchId: req.params.churchId,
+        }),
+      );
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error listing Planning Center service types:",
+        error,
+      );
+    }
+  },
+);
+
+app.get(
+  "/api/churches/:churchId/planning-center/service-types/:serviceTypeId/plans",
+  async (req, res) => {
+    try {
+      res.json(
+        await planningCenterService.listPlans({
+          churchId: req.params.churchId,
+          serviceTypeId: req.params.serviceTypeId,
+          filter: req.query.filter,
+        }),
+      );
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error listing Planning Center plans:",
+        error,
+      );
+    }
+  },
+);
+
+app.get(
+  "/api/churches/:churchId/planning-center/service-types/:serviceTypeId/plans/:planId/import",
+  async (req, res) => {
+    try {
+      res.json(
+        await planningCenterService.getPlanImport({
+          churchId: req.params.churchId,
+          serviceTypeId: req.params.serviceTypeId,
+          planId: req.params.planId,
+        }),
+      );
+    } catch (error) {
+      respondPlanningCenterError(
+        res,
+        "Error importing Planning Center plan:",
+        error,
+      );
     }
   },
 );

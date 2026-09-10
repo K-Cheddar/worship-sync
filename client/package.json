@@ -55,6 +55,7 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.8.0",
+    "pdfjs-dist": "^5.7.284",
     "postcss": "^8.5.9",
     "pouchdb-browser": "^9.0.0",
     "re-resizable": "^6.11.2",

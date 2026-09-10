@@ -506,6 +506,29 @@ Let Your fire fall`;
       expect(item.slides[0].mediaSource?.sourceId).toBe("local_video_1");
       expect(item.background).toBe("");
     });
+
+    it("keeps mediaSource when the live input label looks like a section name", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewFreeForm({
+        name: "Section 1 camera",
+        text: "",
+        list,
+        db: undefined,
+        background: "",
+        brightness: 100,
+        emptyBodyText: true,
+        mediaSource: {
+          kind: "local-video-input",
+          sourceId: "local_video_section_1",
+          label: "Section 1 camera",
+          fit: "contain",
+        },
+      });
+      expect(item.slides[0].mediaSource?.sourceId).toBe(
+        "local_video_section_1",
+      );
+      expect(item.slides[0].mediaSource?.label).toBe("Section 1 camera");
+    });
   });
 
   describe("createNewBible", () => {

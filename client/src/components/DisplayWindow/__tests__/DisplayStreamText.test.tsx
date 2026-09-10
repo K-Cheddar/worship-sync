@@ -8,9 +8,14 @@ jest.mock("@gsap/react", () => ({
 }));
 
 const gsapFromToMock = jest.fn();
+const gsapSetMock = jest.fn();
 const timelineMock = {
   fromTo: (...args: any[]) => {
     gsapFromToMock(...args);
+    return timelineMock;
+  },
+  set: (...args: any[]) => {
+    gsapSetMock(...args);
     return timelineMock;
   },
   clear: jest.fn(),
@@ -93,7 +98,7 @@ describe("DisplayStreamText", () => {
     expect(timerDisplayMock).toHaveBeenCalled();
   });
 
-  it("uses a zero-duration text fade when the previous words match", () => {
+  it("holds matching text instead of replaying the fade", () => {
     render(
       <DisplayStreamText
         box={{ ...baseBox, words: "Same words" }}
@@ -105,11 +110,10 @@ describe("DisplayStreamText", () => {
 
     gsapCallbacks.forEach((cb) => cb());
 
-    expect(
-      gsapFromToMock.mock.calls.some(
-        ([, , props]) => props?.opacity === 1 && props?.duration === 0,
-      ),
-    ).toBe(true);
+    expect(gsapSetMock).toHaveBeenCalledWith(".display-box-text", {
+      opacity: 1,
+    });
+    expect(gsapFromToMock).not.toHaveBeenCalled();
   });
 
   it("fades previous text out when rendering the previous layer", () => {

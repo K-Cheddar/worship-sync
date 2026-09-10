@@ -4,6 +4,10 @@ import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
 import TimerDisplay from "./TimerDisplay";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
+import {
+  normalizeDisplayWords,
+  shouldSkipDisplayTextAnimation,
+} from "./utils";
 
 type DisplayStreamTextProps = {
   prevBox?: Box;
@@ -30,49 +34,46 @@ const DisplayStreamText = ({
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>(null);
+  const skipTextAnimation =
+    shouldAnimate &&
+    Boolean(prevBox) &&
+    shouldSkipDisplayTextAnimation(box.words, prevBox?.words);
+  // Hold matching text at 1 — duration-0 fromTo(0→1) still flickers.
+  const initialTextOpacity = !shouldAnimate
+    ? undefined
+    : isPrev || skipTextAnimation
+      ? 1
+      : 0;
 
   useGSAP(
     () => {
       if (!boxRef.current || !shouldAnimate) return;
 
       boxTimeline.current?.clear();
+      boxTimeline.current = gsap.timeline();
 
-      const skipTextAnimation = prevBox
-        ? prevBox.words?.trim() === box.words?.trim()
-        : false;
-
-      const textDuration = skipTextAnimation ? 0 : 0.35;
-
-      if (isPrev) {
-        boxTimeline.current = gsap.timeline();
-
-        boxTimeline.current.fromTo(
-          ".display-box-text",
-          { opacity: 1 },
-          {
-            opacity: 0,
-            duration: textDuration,
-            ease: "power1.inOut",
-          }
-        );
-      } else {
-        boxTimeline.current = gsap.timeline();
-        boxTimeline.current.fromTo(
-          ".display-box-text",
-          { opacity: 0 },
-          {
-            opacity: 1,
-            duration: textDuration,
-            ease: "power1.inOut",
-          }
-        );
+      if (skipTextAnimation) {
+        boxTimeline.current.set(".display-box-text", { opacity: 1 });
+        return;
       }
+
+      boxTimeline.current.fromTo(
+        ".display-box-text",
+        { opacity: isPrev ? 1 : 0 },
+        {
+          opacity: isPrev ? 0 : 1,
+          duration: 0.35,
+          ease: "power1.inOut",
+        },
+      );
     },
-    { scope: boxRef, dependencies: [box, time] }
+    {
+      scope: boxRef,
+      dependencies: [box, prevBox, time, isPrev, shouldAnimate, skipTextAnimation],
+    },
   );
 
-  const bWords = box.words || "";
-  const words = bWords.replace(/(\n)+/g, "\n").trim();
+  const words = normalizeDisplayWords(box.words);
   const fontSizeInPx = 50;
 
   // Text shadow and outline sizes in pixels (will scale with transform)
@@ -129,7 +130,10 @@ const DisplayStreamText = ({
     >
       <p
         className="display-box-text h-fit bottom-0 text-center w-full bg-transparent whitespace-pre-line absolute"
-        style={textStyles}
+        style={{
+          ...textStyles,
+          opacity: initialTextOpacity,
+        }}
       >
         {renderContent()}
       </p>

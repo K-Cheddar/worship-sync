@@ -110,6 +110,7 @@ import {
   getServicePlanElementSongRefs,
   getServicePlanRoleNotePositionIds,
 } from "../../types/servicePlan";
+import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
@@ -281,9 +282,7 @@ const songRefLabel = (
   songRef: ServicePlanSongReference | undefined,
 ): string | null => {
   if (!songRef) return null;
-  return songRef.kind === "library"
-    ? songRef.songName
-    : songRef.title || "Untitled song";
+  return getServicePlanSongRefLabel(songRef);
 };
 
 type NoteAccordionTriggerProps = {

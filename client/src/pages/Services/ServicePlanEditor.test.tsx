@@ -24,6 +24,7 @@ import {
   updateServicePlanPublicLive,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
   TeamPosition,
   TeamRecord,
@@ -107,6 +108,10 @@ jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
 
+jest.mock("./extractPdfText", () => ({
+  extractTextFromPdfFile: jest.fn(),
+}));
+
 // The library picker, the song suggestion popover, and the plan song lyrics
 // viewer all read songs via useSelector.
 let mockAllSongDocs: Array<Record<string, unknown>> = [];
@@ -129,6 +134,7 @@ const mockSaveServicePlanMicrophones = jest.mocked(saveServicePlanMicrophones);
 const mockGetServicePlanningImportDataFromUrl = jest.mocked(
   getServicePlanningImportDataFromUrl,
 );
+const mockExtractTextFromPdfFile = jest.mocked(extractTextFromPdfFile);
 const mockPublishServicePlan = jest.mocked(publishServicePlan);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
 const mockUnpublishServicePlan = jest.mocked(unpublishServicePlan);
@@ -330,9 +336,16 @@ describe("role note filter options", () => {
 });
 
 describe("ServicePlanEditor", () => {
+  // Import/autosave flows use waitFor budgets that stack under full-suite load;
+  // the default 5s Jest timeout is too tight for this file when the machine is busy.
+  jest.setTimeout(15_000);
+
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.removeItem("worshipsyncServicePlanImportSource");
+    localStorage.removeItem("worshipsyncServicePublicNotesTeam");
     mockAllSongDocs = [];
+    mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
@@ -866,7 +879,7 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].elements[0].id).not.toBe("tpl-el");
   });
 
-  it("automatically starts a new occurrence from the service default template", async () => {
+  it("applies the service default template with one click", async () => {
     const serviceWithDefault: TeamService = {
       ...oneTimeService,
       defaultPlanTemplateId: "tpl-default",
@@ -897,6 +910,7 @@ describe("ServicePlanEditor", () => {
       ],
     });
 
+    const user = userEvent.setup();
     renderEditor({
       service: serviceWithDefault,
       scheduledAssignmentRows: [
@@ -917,10 +931,14 @@ describe("ServicePlanEditor", () => {
       ],
     });
 
+    await user.click(
+      await screen.findByRole("button", { name: /Apply Standard Sabbath/i }),
+    );
+
     expect(await screen.findByText(/Avery Stone/)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Apply a template/i }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByLabelText(/^Title/i)).toHaveValue(
+      "Scripture reading",
+    );
 
     await waitFor(
       () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
@@ -1016,12 +1034,17 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(
-      await screen.findByRole("button", { name: /Import from Service Planning/i }),
+      await screen.findByRole("button", {
+        name: /Import from Service Planning/i,
+      }),
     );
-    await user.type(
-      screen.getByLabelText(/Planning URL/i),
-      "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc",
-    );
+    // Set the URL in one event — typing character-by-character is too slow
+    // under full-suite load for the default Jest timeout.
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: {
+        value: "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc",
+      },
+    });
     await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
 
     // All three teams' notes are visible, not just the saved one.
@@ -1072,7 +1095,9 @@ describe("ServicePlanEditor", () => {
     fireEvent.change(screen.getByLabelText(/Planning URL/i), {
       target: { value: "https://services.planningcenteronline.com/plans/123" },
     });
-    await user.click(screen.getByRole("button", { name: /Apply updates/i }));
+    // Scratch drafts have a section but no items, so this is a fresh import —
+    // not an updates pass over existing content.
+    await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
 
     expect(await screen.findByDisplayValue("Welcome & Connection")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Service")).not.toBeInTheDocument();
@@ -1105,12 +1130,15 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(
-      await screen.findByRole("button", { name: /Import from Service Planning/i }),
+      await screen.findByRole("button", {
+        name: /Import from Service Planning/i,
+      }),
     );
-    await user.type(
-      screen.getByLabelText(/Planning URL/i),
-      "https://services.planningcenteronline.com/plans/123",
-    );
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: {
+        value: "https://services.planningcenteronline.com/plans/123",
+      },
+    });
     await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
 
     await waitFor(() => {
@@ -1140,6 +1168,78 @@ describe("ServicePlanEditor", () => {
     // Regression: imported elements previously landed with no start time at
     // all (only "Start from scratch" seeded the timing anchor).
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
+  });
+
+  it("imports a Planning Center PDF file and remembers that source", async () => {
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+15:00 SML
+Host: Charmers Malcolm
+4:00 Opening Song: Come Before His Presence
+Opening Song to begin the worship experience.
+108:00`);
+
+    const user = userEvent.setup();
+    const view = renderEditor();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Choose import source/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Planning Center PDF/i }),
+    );
+
+    expect(localStorage.getItem("worshipsyncServicePlanImportSource")).toBe(
+      "planningCenterPdf",
+    );
+
+    const pdfInput = screen.getByLabelText(/Planning Center PDF/i);
+    const file = new File(["%PDF-fake"], "order-of-service.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(pdfInput, { target: { files: [file] } });
+
+    expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Opening Song: Come Before His Presence"),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
+    });
+    await waitFor(() => {
+      expect(mockSaveServicePlan).toHaveBeenCalled();
+    }, { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sourceImport).toEqual({
+      source: "planningCenterPdf",
+      sourceUrl: "",
+      loadedAt: expect.any(String),
+      planLabel: expect.stringContaining("Main Worship Service"),
+    });
+    expect(body.sections[0].elements[0].assignees[0].name).toBe(
+      "Host: Charmers Malcolm",
+    );
+    expect(body.sections[0].elements[1].songRef).toEqual({
+      kind: "pending",
+      title: "Come Before His Presence",
+      lyricsText: "",
+    });
+
+    view.unmount();
+    renderEditor();
+    await user.click(
+      await screen.findByRole("button", { name: /Choose import source/i }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: /Planning Center PDF/i }),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("worshipsyncServicePlanImportSource")).toBe(
+      "planningCenterPdf",
+    );
   });
 
   it("refreshes an existing plan with only the selected Service Planning fields", async () => {
@@ -1603,7 +1703,12 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Import from Service Planning/i }),
+      screen.getByRole("button", { name: /Choose import source/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Import from Service Planning/i,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Apply a template/i }),

@@ -103,6 +103,9 @@ import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
+import {
+  resolveShowInMediaFolderId,
+} from "./resolveShowInMediaTarget";
 import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
@@ -414,30 +417,56 @@ export function useMediaLibraryController({
   useEffect(() => {
     if (!focusMediaId) return;
     const mediaItem = list.find((m) => m.id === focusMediaId);
-    dispatch(setFocusMediaId(null));
-    if (!mediaItem) return;
+    if (!mediaItem) {
+      // Keep the request while the library is still loading so a late list
+      // can still resolve the item. Discard only when the library is settled.
+      if (!isMediaLoading) {
+        dispatch(setFocusMediaId(null));
+      }
+      return;
+    }
 
+    dispatch(setFocusMediaId(null));
     focusPendingIdRef.current = focusMediaId;
-    const targetFolder = mediaItem.folderId ?? MEDIA_LIBRARY_ROOT_VIEW;
-    dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
+
+    // Clear filters that would hide the target after folder navigation.
+    setSearchTerm("");
+    setOriginFilter("all");
+    setTypeFilter("all");
     if (!isLocalMediaVisibleByDefault(mediaItem, deviceId)) {
       setShowOtherDeviceLocalMedia(true);
     }
+
+    const targetFolder = resolveShowInMediaFolderId(mediaItem);
+    dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
     setSelectedMedia(mediaItem);
     setSelectedMediaIds(new Set([mediaItem.id]));
     setPreviewMedia(mediaItem);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusMediaId]);
+  }, [focusMediaId, list, isMediaLoading]);
 
   // After folder navigation re-filters the list, scroll the focused tile into view.
   useEffect(() => {
     const pendingId = focusPendingIdRef.current;
     if (!pendingId) return;
+
+    const mediaItem = list.find((m) => m.id === pendingId);
+    if (!mediaItem) return;
+
+    // Wait until the route folder matches the item so we don't clear the
+    // pending scroll while still on Show all / another folder.
+    const expectedFolder = resolveShowInMediaFolderId(mediaItem);
+    if (selectedLibraryFilter !== expectedFolder) return;
+
     const idx = filteredList.findIndex((m) => m.id === pendingId);
     if (idx < 0) return;
+
     focusPendingIdRef.current = null;
-    mediaGridRef.current?.scrollToMediaId(pendingId);
-  }, [filteredList]);
+    // Virtual grid may mount on the same commit as the folder change.
+    requestAnimationFrame(() => {
+      mediaGridRef.current?.scrollToMediaId(pendingId);
+    });
+  }, [filteredList, list, selectedLibraryFilter]);
 
   const handleRenamePopoverOpenChange = useCallback(
     (open: boolean) => {
@@ -1293,18 +1322,22 @@ export function useMediaLibraryController({
   const createCanvaDeckItemFromMedia = useCallback(
     async (pages: MediaType[], designTitle: string) => {
       if (!db || pages.length === 0) return;
+      // Prefer live list entries so refreshed Canva backgrounds are current.
+      const resolvedPages = pages.map(
+        (page) => list.find((mediaItem) => mediaItem.id === page.id) ?? page,
+      );
       try {
         const newItem = await createNewFreeForm({
           name: designTitle || "Canva presentation",
           text: "",
           list: allItemsList,
           db,
-          background: pages[0].background,
-          mediaInfo: pages[0],
+          background: resolvedPages[0].background,
+          mediaInfo: resolvedPages[0],
           brightness: defaultFreeFormBackgroundBrightness,
           overflow: defaultFreeFormFontMode,
           emptyBodyText: true,
-          slideDefs: pages.map((page, index) => ({
+          slideDefs: resolvedPages.map((page, index) => ({
             name: `Page ${index + 1}`,
             background: page.background,
             mediaInfo: page,
@@ -1327,7 +1360,7 @@ export function useMediaLibraryController({
           ),
         );
         showToast(
-          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${pages.length} slides.`,
+          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
           "success",
         );
       } catch {
@@ -1344,6 +1377,7 @@ export function useMediaLibraryController({
       defaultFreeFormBackgroundBrightness,
       defaultFreeFormFontMode,
       dispatch,
+      list,
       navigate,
       showToast,
     ],

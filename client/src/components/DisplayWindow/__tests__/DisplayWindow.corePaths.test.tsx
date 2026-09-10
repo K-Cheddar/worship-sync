@@ -78,18 +78,28 @@ jest.mock("../DisplayBox", () => ({
   __esModule: true,
   default: ({
     box,
+    prevBox,
     isPrev,
     isWindowVideoLoaded,
+    isPrevWindowVideoLoaded,
   }: {
     box: Box;
+    prevBox?: Box;
     isPrev?: boolean;
     isWindowVideoLoaded?: boolean;
+    isPrevWindowVideoLoaded?: boolean;
   }) => (
     <div
       data-testid={isPrev ? "display-box-prev" : "display-box"}
       data-box-id={box.id}
       data-words={box.words || ""}
-      data-video-loaded={isWindowVideoLoaded ? "true" : "false"}
+      data-prev-words={prevBox?.words ?? ""}
+      data-has-prev-box={prevBox ? "true" : "false"}
+      data-video-loaded={
+        (isPrev ? isPrevWindowVideoLoaded : isWindowVideoLoaded)
+          ? "true"
+          : "false"
+      }
     />
   ),
 }));
@@ -423,16 +433,19 @@ jest.mock("../HLSVideoPlayer", () => ({
     src,
     originalSrc,
     onLoadedData,
+    muted,
   }: {
     src: string;
     originalSrc: string;
     onLoadedData?: () => void;
+    muted?: boolean;
   }) => (
     <button
       type="button"
       data-testid="window-hls-player"
       data-src={src}
       data-original-src={originalSrc}
+      data-muted={muted ? "true" : "false"}
       onClick={() => onLoadedData?.()}
     />
   ),
@@ -460,6 +473,26 @@ const baseState = {
   // The projector clock/timer overlay mounts the real DisplayTimer, which reads
   // the timer list to resolve what it counts down.
   timers: { timers: [] },
+  // Clock chrome waits for the registry; tests that expect it on must be loaded.
+  displayOutputs: {
+    list: [
+      {
+        id: "projector",
+        type: "projector",
+        name: "Projector",
+        order: 0,
+        enabled: true,
+      },
+      {
+        id: "monitor",
+        type: "monitor",
+        name: "Monitor",
+        order: 1,
+        enabled: true,
+      },
+    ],
+    isLoaded: true,
+  },
   undoable: {
     present: {
       preferences: {
@@ -489,6 +522,7 @@ const streamStateWithLocalVideoAudio = {
         settings: { localVideoAudioEnabled: true },
       },
     ],
+    isLoaded: true,
   },
 };
 
@@ -555,7 +589,18 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("renders monitor previews as content-only by default", () => {
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="monitor"
+        boxes={[{ ...baseBox, id: "prev-monitor" }]}
+      />,
+    );
+
+    expect(screen.queryByTestId("monitor-view-mock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+
+    rerender(
       <DisplayWindow
         displayType="monitor"
         boxes={[baseBox]}
@@ -563,9 +608,83 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.queryByTestId("monitor-view-mock")).not.toBeInTheDocument();
-    expect(screen.getByTestId("display-box")).toBeInTheDocument();
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+  });
+
+  it("fades in live content on first show without replaying stale prev", () => {
+    render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        boxes={[baseBox]}
+        prevBoxes={[{ ...baseBox, id: "stale-prev", words: "Earlier slide" }]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+  });
+
+  it("keeps the prev layer available when the same slide is transmitted again", () => {
+    jest.useFakeTimers();
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        time={1000}
+        boxes={[baseBox]}
+        prevBoxes={[]}
+      />,
+    );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        time={2000}
+        boxes={[baseBox]}
+        prevBoxes={[baseBox]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-has-prev-box",
+      "true",
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-prev-words",
+      baseBox.words,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+
+    // Same visual content again — without transmit time in the transition key,
+    // the prev layer would stay suppressed and matching text would fade from 0.
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        time={3000}
+        boxes={[baseBox]}
+        prevBoxes={[baseBox]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-has-prev-box",
+      "true",
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-prev-words",
+      baseBox.words,
+    );
   });
 
   describe("projector clock and timer", () => {
@@ -611,6 +730,40 @@ describe("DisplayWindow core paths", () => {
                 settings: { showClock: false, showTimer: false },
               },
             ],
+            isLoaded: true,
+          },
+        }),
+      );
+
+      render(
+        <DisplayWindow
+          displayType="projector"
+          outputId="projector"
+          boxes={[baseBox]}
+          showClockTimer
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("projector-clock-timer"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not flash the clock from shipped defaults before the registry loads", () => {
+      mockUseSelector.mockImplementation((selector) =>
+        selector({
+          ...baseState,
+          displayOutputs: {
+            list: [
+              {
+                id: "projector",
+                type: "projector",
+                name: "Main",
+                order: 0,
+                enabled: true,
+              },
+            ],
+            isLoaded: false,
           },
         }),
       );
@@ -631,7 +784,40 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("renders stream mode with stream text plus stream overlays", () => {
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[{ ...baseBox, id: "prev-1" }]}
+        participantOverlayInfo={{
+          id: "p1",
+          type: "participant",
+          name: "Alice",
+        }}
+        stbOverlayInfo={{
+          id: "s1",
+          type: "stick-to-bottom",
+          heading: "Welcome",
+        }}
+        qrCodeOverlayInfo={{
+          id: "q1",
+          type: "qr-code",
+          url: "https://example.com",
+        }}
+        imageOverlayInfo={{
+          id: "i1",
+          type: "image",
+          imageUrl: "https://img.jpg",
+        }}
+        formattedTextDisplayInfo={{ text: "formatted" }}
+      />,
+    );
+
+    expect(screen.getByTestId("display-stream-text")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-stream-text-prev"),
+    ).not.toBeInTheDocument();
+
+    rerender(
       <DisplayWindow
         displayType="stream"
         boxes={[baseBox]}
@@ -742,7 +928,17 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("renders the previous display layer when reused box ids have changed visual content", () => {
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[
+          { ...baseBox, id: "same-box", words: "Previous lyrics" },
+        ]}
+        prevBoxes={[]}
+      />,
+    );
+
+    rerender(
       <DisplayWindow
         displayType="projector"
         boxes={[{ ...baseBox, id: "same-box", words: "Current lyrics" }]}
@@ -1752,6 +1948,7 @@ describe("DisplayWindow core paths", () => {
               },
             },
           ],
+          isLoaded: true,
         },
       }),
     );
@@ -1865,7 +2062,24 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("keeps current stream text lanes above local video", () => {
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        bibleDisplayInfo={{
+          title: "Outgoing verse",
+          text: "Previous verse",
+        }}
+        formattedTextDisplayInfo={{ text: "Outgoing announcement" }}
+      />,
+    );
+
+    rerender(
       <DisplayWindow
         displayType="stream"
         localVideoInput={{
@@ -1961,7 +2175,20 @@ describe("DisplayWindow core paths", () => {
 
   it("keeps the outgoing local video lane for the slide crossfade", () => {
     jest.useFakeTimers();
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        localVideoInput={{
+          sourceId: "source-previous",
+          deviceLabel: "Previous USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+      />,
+    );
+
+    rerender(
       <DisplayWindow
         displayType="projector"
         shouldAnimate
@@ -2045,7 +2272,15 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("keeps outgoing slide boxes while local video fades in", () => {
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        boxes={[{ ...baseBox, id: "outgoing-slide" }]}
+      />,
+    );
+
+    rerender(
       <DisplayWindow
         displayType="projector"
         shouldAnimate
@@ -2077,7 +2312,15 @@ describe("DisplayWindow core paths", () => {
       } as NonNullable<Box["mediaInfo"]>,
     };
 
-    render(
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[{ ...baseBox, id: "prev" }]}
+        shouldPlayVideo
+      />,
+    );
+
+    rerender(
       <DisplayWindow
         displayType="projector"
         boxes={[videoBox]}
@@ -2135,5 +2378,103 @@ describe("DisplayWindow core paths", () => {
       "data-video-loaded",
       "true",
     );
+  });
+
+  it("keeps the outgoing file video mounted in a previous lane during crossfade", async () => {
+    const videoA: Box = {
+      ...baseBox,
+      id: "video-a",
+      mediaInfo: {
+        id: "video-a",
+        type: "video",
+        background: "https://cdn.example.com/a.mp4",
+        placeholderImage: "https://cdn.example.com/a.jpg",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+    const videoB: Box = {
+      ...baseBox,
+      id: "video-b",
+      mediaInfo: {
+        id: "video-b",
+        type: "video",
+        background: "https://cdn.example.com/b.mp4",
+        placeholderImage: "https://cdn.example.com/b.jpg",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoA]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    const firstPlayer = await screen.findByTestId("window-hls-player");
+    act(() => {
+      firstPlayer.click();
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoB]}
+        prevBoxes={[videoA]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    expect(
+      await screen.findByTestId("previous-video-background-layer"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("previous-video-background-layer"),
+    ).toHaveAttribute("data-visible", "true");
+    expect(
+      screen.getByTestId("previous-video-background-layer"),
+    ).toHaveAttribute("data-release-crossfade", "false");
+    expect(
+      screen.getByTestId("previous-video-background-layer"),
+    ).toHaveAttribute("data-lane-key", "a");
+
+    const players = await screen.findAllByTestId("window-hls-player");
+    expect(players.length).toBeGreaterThanOrEqual(2);
+    const outgoing = players.find(
+      (player) =>
+        player.getAttribute("data-original-src") ===
+        "https://cdn.example.com/a.mp4",
+    );
+    const incoming = players.find(
+      (player) =>
+        player.getAttribute("data-original-src") ===
+        "https://cdn.example.com/b.mp4",
+    );
+    expect(outgoing).toBeTruthy();
+    expect(outgoing).toHaveAttribute("data-muted", "true");
+    expect(incoming).toBeTruthy();
+    expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
+      "data-video-loaded",
+      "true",
+    );
+
+    act(() => {
+      incoming?.click();
+    });
+
+    expect(
+      screen.getByTestId("previous-video-background-layer"),
+    ).toHaveAttribute("data-release-crossfade", "true");
+    expect(
+      screen.getByTestId("current-video-background-layer"),
+    ).toHaveAttribute("data-visible", "true");
+    // Outgoing keeps slot "a" so the same element continues playing.
+    expect(
+      screen.getByTestId("previous-video-background-layer"),
+    ).toHaveAttribute("data-lane-key", "a");
+    expect(
+      screen.getByTestId("current-video-background-layer"),
+    ).toHaveAttribute("data-lane-key", "b");
   });
 });

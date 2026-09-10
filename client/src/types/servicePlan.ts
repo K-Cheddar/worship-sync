@@ -113,8 +113,8 @@ export type ServicePlanAssignee = {
  * lyrics attached to the plan now so nothing is lost waiting on that step.
  */
 export type ServicePlanSongReference =
-  | { kind: "library"; songId: string; songName: string }
-  | { kind: "pending"; title: string; lyricsText: string };
+  | { kind: "library"; songId: string; songName: string; key?: string }
+  | { kind: "pending"; title: string; lyricsText: string; key?: string };
 
 /**
  * A scripture passage attached to an element. Stored as a parsed reference
@@ -354,11 +354,19 @@ export type ServicePlanTemplatePayload = {
   sections: ServicePlanSection[];
 };
 
+export type ServicePlanImportSource =
+  | "servicePlanning"
+  | "planningCenterPdf"
+  | "planningCenter";
+
 export type ServicePlanSourceImport = {
-  source: "servicePlanning";
+  source: ServicePlanImportSource;
+  /** Planning URL for Service Planning / PCO account; empty for pasted PDF text. */
   sourceUrl: string;
   loadedAt: string;
   planLabel: string;
+  planningCenterServiceTypeId?: string;
+  planningCenterPlanId?: string;
 };
 
 export type ServicePlan = {

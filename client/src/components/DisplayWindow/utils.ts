@@ -1,5 +1,31 @@
 import { REFERENCE_WIDTH } from "../../constants";
 
+/** Normalize lyric text for same-slide transition comparisons. */
+export const normalizeDisplayWords = (words?: string) =>
+  (words ?? "").trim().replace(/\n{2,}/g, "\n");
+
+/**
+ * True when consecutive slides show the same static text, so the text layer
+ * should hold instead of replaying a fade/slide.
+ */
+export const shouldSkipDisplayTextAnimation = (
+  words?: string,
+  prevWords?: string,
+) => {
+  const normalized = normalizeDisplayWords(words);
+  const prevNormalized = normalizeDisplayWords(prevWords);
+  if (normalized !== prevNormalized) return false;
+  // Dynamic placeholders change visually even when the template string matches.
+  if (
+    normalized.includes("{{timer}}") ||
+    normalized.includes("{{service-time}}") ||
+    normalized.includes("\u200C")
+  ) {
+    return false;
+  }
+  return true;
+};
+
 export const getFontSize = ({
   width,
   fontSize = 15,

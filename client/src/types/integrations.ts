@@ -104,6 +104,13 @@ export type CanvaIntegrationConfig = {
   lastImportedAt?: number;
 };
 
+export type PlanningCenterIntegrationConfig = {
+  enabled: boolean;
+  connected: boolean;
+  accountLabel: string;
+  lastError: string;
+};
+
 export type ChurchIntegrations = {
   version: number;
   catalog: ChurchIntegrationsCatalog;
@@ -111,6 +118,7 @@ export type ChurchIntegrations = {
   restream: RestreamIntegrationConfig;
   youtube: YouTubeIntegrationConfig;
   canva: CanvaIntegrationConfig;
+  planningCenter: PlanningCenterIntegrationConfig;
 };
 
 export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
@@ -118,7 +126,7 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
   catalog: {
     servicePlanning: { status: "available", label: "Service Planning" },
     songSelect: { status: "coming_soon", label: "SongSelect" },
-    planningCenter: { status: "coming_soon", label: "Planning Center" },
+    planningCenter: { status: "available", label: "Planning Center" },
   },
   servicePlanning: {
     enabled: false,
@@ -140,6 +148,12 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
     lastError: "",
   },
   canva: {
+    enabled: false,
+    connected: false,
+    accountLabel: "",
+    lastError: "",
+  },
+  planningCenter: {
     enabled: false,
     connected: false,
     accountLabel: "",

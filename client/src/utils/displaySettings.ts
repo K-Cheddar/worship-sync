@@ -133,12 +133,7 @@ export const getApplicableSettingKeys = (
     ];
   }
   // Pull surfaces composite the same band over their own content.
-  return [
-    "showClock",
-    "showTimer",
-    "clockFontSize",
-    "timerFontSize",
-  ];
+  return ["showClock", "showTimer", "clockFontSize", "timerFontSize"];
 };
 
 /**
@@ -190,10 +185,7 @@ export const normalizeDisplaySettings = (
   ) {
     next.localVideoAudioEnabled = candidate.localVideoAudioEnabled;
   }
-  if (
-    allowed.has("localVideoVolume") &&
-    candidate.localVideoVolume != null
-  ) {
+  if (allowed.has("localVideoVolume") && candidate.localVideoVolume != null) {
     const volume = Number(candidate.localVideoVolume);
     if (Number.isFinite(volume)) {
       next.localVideoVolume = Math.min(
@@ -253,10 +245,22 @@ export const resolveDisplaySettings = (
     showBackground: pick("showBackground") as boolean,
     localVideoAudioEnabled: pick("localVideoAudioEnabled") as boolean,
     localVideoVolume: pick("localVideoVolume") as number,
-    isHeadless: (screenOverrides?.isHeadless ??
-      defaults.isHeadless) as boolean,
+    isHeadless: (screenOverrides?.isHeadless ?? defaults.isHeadless) as boolean,
   };
 };
+
+/**
+ * Whether clock/timer chrome may paint for a live surface.
+ *
+ * Shipped defaults turn the clock and timer on. Until the church registry has
+ * been read, resolving "unset" against those defaults flashes chrome on a
+ * display that has them off. Screen overrides are already on the device (or the
+ * paired device record) and are safe to honour on first paint.
+ */
+export const isDisplayChromeReady = (
+  registryLoaded: boolean,
+  screenOverride?: boolean,
+) => registryLoaded || screenOverride !== undefined;
 
 /**
  * Does any screen on this display want the next-slide preview?

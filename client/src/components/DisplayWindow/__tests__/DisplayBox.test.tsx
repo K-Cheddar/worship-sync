@@ -486,6 +486,58 @@ describe("DisplayBox", () => {
     );
   });
 
+  it("still fades changed text out after a parent re-render mid-transition", () => {
+    const outgoing = baseBox;
+    const incoming = { ...baseBox, words: "Next lyric", background: "next.jpg" };
+    const { rerender } = render(
+      <DisplayBox
+        box={outgoing}
+        prevBox={incoming}
+        width={100}
+        showBackground
+        index={0}
+        shouldAnimate
+        isPrev
+      />,
+    );
+
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      expect.objectContaining({ opacity: 0, duration: 0.35 }),
+      "fadeOut",
+    );
+
+    mockTimeline.set.mockClear();
+    mockTimeline.fromTo.mockClear();
+
+    // Parent re-render with a new box identity but the same changed peer words
+    // must keep fading out — not flip to keepVisible.
+    rerender(
+      <DisplayBox
+        box={{ ...outgoing }}
+        prevBox={incoming}
+        width={100}
+        showBackground
+        index={0}
+        shouldAnimate
+        isPrev
+      />,
+    );
+
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      expect.objectContaining({ opacity: 0, duration: 0.35 }),
+      "fadeOut",
+    );
+    expect(mockTimeline.set).not.toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      "fadeOut",
+    );
+  });
+
   it("keeps matching text visible while the background crossfades in", () => {
     render(
       <DisplayBox
@@ -636,6 +688,63 @@ describe("DisplayBox", () => {
     );
 
     expect(screen.getByAltText("Main")).toHaveClass("opacity-100");
+  });
+
+  it("lifts the prev still while the outgoing video lane is still playing", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-1?v=rev-1",
+    });
+
+    render(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        isPrev
+        activeVideoUrl="worshipsync-media://asset/other-video?v=rev-1"
+        isWindowVideoLoaded
+        prevActiveVideoUrl="worshipsync-media://asset/video-1?v=rev-1"
+        isPrevWindowVideoLoaded
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveClass("opacity-0");
+  });
+
+  it("keeps the incoming still down while the outgoing video is held", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-2?v=rev-1",
+    });
+
+    render(
+      <DisplayBox
+        box={{
+          ...localVideoBox,
+          mediaInfo: {
+            ...localVideoBox.mediaInfo!,
+            localVideoFile: {
+              ...localVideoBox.mediaInfo!.localVideoFile!,
+              id: "video-2",
+            },
+            background: "local-video-file://video-2",
+          },
+        }}
+        width={100}
+        showBackground
+        index={0}
+        activeVideoUrl="worshipsync-media://asset/video-2?v=rev-1"
+        holdOutgoingVideo
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveClass("opacity-0");
   });
 
   it("keeps a cloud video still when no local thumbnail is available", () => {

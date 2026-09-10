@@ -75,6 +75,10 @@ const FullscreenPresentation = ({
     canCaptureLocalVideo: true,
     timerInfo,
     prevTimerInfo,
+    // Needed so same-slide re-transmits get a new transition identity and can
+    // skip matching text instead of replaying the fade.
+    time: displayInfo.time,
+    prevTime: prevDisplayInfo.time,
     shouldAnimate: true,
     shouldPlayVideo: true,
     width: 100,

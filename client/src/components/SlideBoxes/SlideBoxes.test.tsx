@@ -124,4 +124,69 @@ describe("SlideBoxes", () => {
     expect(mockSetIsMediaExpanded).toHaveBeenCalledWith(true);
     expect(mockSetFocusMediaId).toHaveBeenCalledWith("media-live-1");
   });
+
+  it("focuses library media by id so the panel can navigate to its folder", () => {
+    mockState = {
+      undoable: {
+        present: {
+          item: {
+            type: "image",
+            selectedSlide: 0,
+            selectedBox: 0,
+            arrangements: [],
+            selectedArrangement: 0,
+            slides: [
+              {
+                id: "s1",
+                name: "Section 1",
+                type: "Section",
+                boxes: [
+                  {
+                    id: "b0",
+                    width: 100,
+                    height: 100,
+                    words: "",
+                    x: 0,
+                    y: 0,
+                    background: "local-image://local_image_1",
+                    mediaInfo: {
+                      id: "local_image_1",
+                      name: "1000063547.png",
+                      type: "image",
+                      background: "local-image://local_image_1",
+                      folderId: "folder-photos",
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      media: {
+        list: [
+          {
+            id: "local_image_1",
+            name: "1000063547.png",
+            type: "image",
+            background: "local-image://local_image_1",
+            folderId: "folder-photos",
+          },
+        ],
+      },
+    };
+
+    render(
+      <SlideBoxes
+        canEdit
+        canDeleteBox={() => false}
+        isBoxLocked={[true]}
+        setIsBoxLocked={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Show in Media/i }));
+
+    expect(mockSetFocusMediaId).toHaveBeenCalledWith("local_image_1");
+  });
 });

@@ -269,6 +269,51 @@ describe("HLSVideoPlayer", () => {
     expect(onLoadedData).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores stale paint-ready listeners after a rapid A→B→A source swap", () => {
+    const onLoadedData = jest.fn();
+    const { rerender } = render(
+      <HLSPlayer
+        src="https://cdn.example.com/a.mp4"
+        onLoadedData={onLoadedData}
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    let seeking = true;
+    Object.defineProperty(video, "seeking", {
+      configurable: true,
+      get: () => seeking,
+    });
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+
+    fireEvent.loadedMetadata(video);
+    expect(onLoadedData).not.toHaveBeenCalled();
+
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/b.mp4"
+        onLoadedData={onLoadedData}
+      />,
+    );
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/a.mp4"
+        onLoadedData={onLoadedData}
+      />,
+    );
+
+    // First A's pending seeked must not declare paint-ready for the second A.
+    seeking = false;
+    fireEvent.seeked(video);
+    expect(onLoadedData).not.toHaveBeenCalled();
+
+    fireEvent.loadedMetadata(video);
+    expect(onLoadedData).toHaveBeenCalledTimes(1);
+  });
+
   it("seeks and pauses when a playback cue is present on metadata load", () => {
     const pause = jest.fn();
     Object.defineProperty(HTMLMediaElement.prototype, "pause", {

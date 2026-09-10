@@ -608,6 +608,19 @@ export const forgotPassword = async (email: string) =>
     body: JSON.stringify({ email }),
   });
 
+export const submitSupportContact = async (body: {
+  name: string;
+  email: string;
+  churchName?: string;
+  message: string;
+  /** Honeypot — leave empty. */
+  company?: string;
+}) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean }>("api/support/contact", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 export const updateHumanProfile = async (body: { displayName: string }) =>
   apiFetch<{
     success: boolean;

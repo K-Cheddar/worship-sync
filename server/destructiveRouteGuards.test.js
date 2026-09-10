@@ -28,9 +28,11 @@ test("song-audio API stays behind app session middleware", () => {
   assert.match(serverSource, /guardSongAudioUpload/);
 });
 
-test("oauth callbacks stay registered for Restream and YouTube", () => {
+test("oauth callbacks stay registered for Restream, YouTube, Canva, and Planning Center", () => {
   assert.match(serverSource, /\/api\/restream\/oauth\/callback/);
   assert.match(serverSource, /\/api\/youtube\/oauth\/callback/);
+  assert.match(serverSource, /\/api\/canva\/oauth\/callback/);
+  assert.match(serverSource, /\/api\/planning-center\/oauth\/callback/);
 });
 
 test("cloudinary delete and mux upload routes remain registered", () => {

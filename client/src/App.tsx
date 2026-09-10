@@ -104,6 +104,9 @@ const YouTubeConnectComplete = lazyRoute(
 const CanvaConnectComplete = lazyRoute(
   () => import("./pages/CanvaConnectComplete"),
 );
+const PlanningCenterConnectComplete = lazyRoute(
+  () => import("./pages/PlanningCenterConnectComplete"),
+);
 const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
 const WorkstationOperator = lazyRoute(
   () => import("./pages/WorkstationOperator"),
@@ -113,6 +116,7 @@ const PasswordReset = lazyRoute(() => import("./pages/PasswordReset"));
 const RecoveryConfirm = lazyRoute(() => import("./pages/RecoveryConfirm"));
 const PrivacyPolicy = lazyRoute(() => import("./pages/Legal/PrivacyPolicy"));
 const TermsOfService = lazyRoute(() => import("./pages/Legal/TermsOfService"));
+const Support = lazyRoute(() => import("./pages/Support"));
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -320,6 +324,7 @@ const AppRoutes = () => {
               <Route path="/login" element={<Login />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
               <Route path="/terms" element={<TermsOfService />} />
+              <Route path="/support" element={<Support />} />
               <Route
                 path="/login/desktop-sso-complete"
                 element={<DesktopSsoComplete />}
@@ -335,6 +340,10 @@ const AppRoutes = () => {
               <Route
                 path="/canva/connect-complete"
                 element={<CanvaConnectComplete />}
+              />
+              <Route
+                path="/planning-center/connect-complete"
+                element={<PlanningCenterConnectComplete />}
               />
               <Route path="/invite" element={<InviteAccept />} />
               <Route path="/auth/reset" element={<PasswordReset />} />

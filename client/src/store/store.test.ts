@@ -2870,6 +2870,70 @@ describe("store module", () => {
     ).toBe("New Projector");
   });
 
+  it("applies newer remote videoPlayback cues without a newer slide time", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const slide = createScreenSlide("video-slide", "playing");
+    const playingCue = {
+      mediaKey: "remote:v1",
+      positionSeconds: 10,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 5,
+      applySeek: false,
+    };
+    const pausedCue = {
+      ...playingCue,
+      positionSeconds: 12,
+      paused: true,
+      atServerMs: 1_000_200,
+      generation: 6,
+    };
+
+    store.dispatch(
+      presentationSlice.actions.updateProjectorFromRemote(
+        createScreenPresentation("projector", 500, {
+          name: "Live Video",
+          slide,
+          videoPlayback: playingCue,
+        }),
+      ),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: createScreenPresentation("projector", 500, {
+        name: "Live Video",
+        slide,
+        videoPlayback: pausedCue,
+      }),
+    });
+    await waitForListenerDelay();
+
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .videoPlayback,
+    ).toEqual(expect.objectContaining({ paused: true, generation: 6 }));
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .name,
+    ).toBe("Live Video");
+
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: createScreenPresentation("projector", 500, {
+        name: "Live Video",
+        slide,
+        videoPlayback: playingCue,
+      }),
+    });
+    await waitForListenerDelay();
+
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .videoPlayback,
+    ).toEqual(expect.objectContaining({ paused: true, generation: 6 }));
+  });
+
   it("applies only newer remote monitor updates", async () => {
     const { store, presentationSlice } = loadStoreWithPresentationSync();
 

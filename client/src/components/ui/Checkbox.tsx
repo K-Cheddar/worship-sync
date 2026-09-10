@@ -14,7 +14,9 @@ const Checkbox = React.forwardRef<
     ref={ref}
     data-slot="checkbox"
     className={cn(
-      "control-spacing peer size-4 shrink-0 cursor-pointer rounded border border-gray-600 bg-gray-950 shadow-xs outline-none transition-colors",
+      // Rem sizes on small screens: fluid `--spacing` would otherwise shrink
+      // `size-4` below a readable tap target (same idea as Switch / Slider).
+      "control-spacing peer size-[1.375rem] shrink-0 cursor-pointer rounded border border-gray-600 bg-gray-950 shadow-xs outline-none transition-colors md:size-4",
       "focus-visible:border-cyan-400 focus-visible:ring-2 focus-visible:ring-cyan-400/50",
       "disabled:cursor-not-allowed disabled:opacity-50",
       "data-[state=checked]:border-cyan-400 data-[state=checked]:bg-cyan-400 data-[state=checked]:text-gray-950",
@@ -26,7 +28,7 @@ const Checkbox = React.forwardRef<
       data-slot="checkbox-indicator"
       className="flex items-center justify-center text-current"
     >
-      <Check className="size-3 stroke-[3]" aria-hidden />
+      <Check className="size-[0.875rem] stroke-[3] md:size-3" aria-hidden />
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ));

@@ -1,9 +1,12 @@
 import type { Location } from "react-router-dom";
 import {
+  clearPublicShellAuthReturnPath,
   getAuthRedirectPathnameFromState,
   getAuthRedirectToFromState,
   getHumanPostAuthPath,
+  peekPublicShellAuthReturnPath,
   sanitizeAuthRedirectPathname,
+  setPublicShellAuthReturnPath,
 } from "./authRedirectPath";
 
 const loc = (state: Location["state"]): Location =>
@@ -16,6 +19,10 @@ const loc = (state: Location["state"]): Location =>
   }) as Location;
 
 describe("authRedirectPath", () => {
+  beforeEach(() => {
+    clearPublicShellAuthReturnPath();
+  });
+
   it("sanitizeAuthRedirectPathname allows known in-app routes", () => {
     expect(sanitizeAuthRedirectPathname("/account")).toBe("/account");
     expect(sanitizeAuthRedirectPathname("/controller/service")).toBe(
@@ -119,6 +126,29 @@ describe("authRedirectPath", () => {
         loc({ from: { pathname: "/", search: "", hash: "", key: "x" } }),
       ),
     ).toBe("/home");
+  });
+
+  it("getHumanPostAuthPath recovers and clears a public-shell return path", () => {
+    setPublicShellAuthReturnPath("/invite");
+    expect(peekPublicShellAuthReturnPath()).toBe("/invite");
+    expect(getHumanPostAuthPath(loc(undefined))).toBe("/invite");
+    expect(peekPublicShellAuthReturnPath()).toBeNull();
+  });
+
+  it("getHumanPostAuthPath prefers location state over the shell return path", () => {
+    setPublicShellAuthReturnPath("/invite");
+    expect(
+      getHumanPostAuthPath(
+        loc({ from: { pathname: "/account", search: "", hash: "", key: "x" } }),
+      ),
+    ).toBe("/account");
+    expect(peekPublicShellAuthReturnPath()).toBe("/invite");
+    clearPublicShellAuthReturnPath();
+  });
+
+  it("rejects unsafe public-shell return paths", () => {
+    setPublicShellAuthReturnPath("https://evil.example");
+    expect(peekPublicShellAuthReturnPath()).toBeNull();
   });
 
   it("getAuthRedirectPathnameFromState drops unknown redirect paths", () => {

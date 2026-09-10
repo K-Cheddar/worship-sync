@@ -10,6 +10,7 @@ import {
   getServicePlan,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
+  listServicePlanTemplates,
   listServicePlans,
   saveServicePlan,
 } from "../../../api/auth";
@@ -17,7 +18,13 @@ import type { TeamService } from "../../../api/authTypes";
 import { formatPlainDate } from "../../../utils/plainDate";
 
 jest.mock("../../../api/auth", () => ({
+  // Autosave's conflict check does `error instanceof AuthApiError`.
+  AuthApiError: class AuthApiError extends Error {
+    status?: number;
+    details?: unknown;
+  },
   listServicePlans: jest.fn(),
+  listServicePlanTemplates: jest.fn(),
   getServicePlan: jest.fn(),
   getServicePlanAssignmentHistory: jest.fn(),
   saveServicePlan: jest.fn(),
@@ -29,6 +36,12 @@ jest.mock("../../../api/auth", () => ({
     microphones: [],
     audiences: [],
   })),
+  publishServicePlan: jest.fn(),
+  unpublishServicePlan: jest.fn(),
+  updateServicePlanPublicLive: jest.fn(),
+  saveServicePlanTemplate: jest.fn(),
+  deleteServicePlanTemplate: jest.fn(),
+  getSongAudioUrl: jest.fn(),
 }));
 
 jest.mock("../../../hooks", () => ({
@@ -79,6 +92,7 @@ jest.mock("../TeamsPageContext", () => ({
 const mockGetServicePlan = jest.mocked(getServicePlan);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
 
@@ -127,6 +141,12 @@ describe("TeamsPlansPage", () => {
     window.matchMedia = originalMatchMedia;
   });
 
+  afterEach(() => {
+    // Fake-timer tests must not leave the suite stuck on a fixed July date —
+    // the one-time Easter fixture is anchored to the real "today" month.
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
@@ -143,6 +163,10 @@ describe("TeamsPlansPage", () => {
       hydratingScheduleIds: [],
     });
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [],
+    });
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
     mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
     mockSaveServicePlan.mockResolvedValue({

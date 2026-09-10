@@ -21,6 +21,7 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.ok(Array.isArray(out.servicePlanning.people));
   assert.equal(out.catalog.servicePlanning.status, "available");
   assert.equal(out.catalog.songSelect.status, "coming_soon");
+  assert.equal(out.catalog.planningCenter.status, "available");
   assert.equal(out.restream.enabled, false);
   assert.equal(out.restream.connected, false);
   assert.deepEqual(out.restream.platformSummary, []);
@@ -30,6 +31,9 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.equal(out.canva.enabled, false);
   assert.equal(out.canva.connected, false);
   assert.equal(out.canva.accountLabel, "");
+  assert.equal(out.planningCenter.enabled, false);
+  assert.equal(out.planningCenter.connected, false);
+  assert.equal(out.planningCenter.accountLabel, "");
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes Canva status", () => {
@@ -47,6 +51,21 @@ test("normalizeChurchIntegrationsForStorage normalizes Canva status", () => {
   assert.equal(out.canva.connected, true);
   assert.equal(out.canva.accountLabel, "Church Creative");
   assert.equal(out.canva.lastImportedAt, 123);
+});
+
+test("normalizeChurchIntegrationsForStorage normalizes Planning Center status", () => {
+  const out = normalizeChurchIntegrationsForStorage({
+    planningCenter: {
+      enabled: true,
+      connected: true,
+      accountLabel: "Example Church",
+      lastError: "",
+    },
+  });
+
+  assert.equal(out.planningCenter.enabled, true);
+  assert.equal(out.planningCenter.connected, true);
+  assert.equal(out.planningCenter.accountLabel, "Example Church");
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes a full service planning config", () => {
@@ -200,9 +219,15 @@ test("normalizeChurchIntegrationsAdminUpdate omits server-managed connection sta
       connected: false,
       accountLabel: "Stale YouTube status",
     },
+    planningCenter: {
+      enabled: false,
+      connected: false,
+      accountLabel: "Stale Planning Center status",
+    },
   });
 
   assert.equal(update.servicePlanning.enabled, true);
   assert.equal(Object.hasOwn(update, "restream"), false);
   assert.equal(Object.hasOwn(update, "youtube"), false);
+  assert.equal(Object.hasOwn(update, "planningCenter"), false);
 });

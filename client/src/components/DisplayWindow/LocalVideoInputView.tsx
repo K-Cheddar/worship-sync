@@ -312,6 +312,7 @@ const LocalVideoInputView = ({
     let frameCallbackId: number | undefined;
     let directPlaybackReady = false;
     let attachedVideo: HTMLVideoElement | null = null;
+    let markDirectReady: (() => void) | undefined;
     const captureConsumerId = captureConsumerIdRef.current;
     const retryCapture = (delayMs = 0) => {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
@@ -367,7 +368,7 @@ const LocalVideoInputView = ({
           return;
         }
         attachedVideo = video;
-        const markDirectReady = () => {
+        markDirectReady = () => {
           if (!active || video.srcObject !== stream) return;
           if (
             video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA &&
@@ -382,10 +383,12 @@ const LocalVideoInputView = ({
             window.clearInterval(playbackRecoveryTimer);
             playbackRecoveryTimer = undefined;
           }
-          video.removeEventListener("loadedmetadata", markDirectReady);
-          video.removeEventListener("loadeddata", markDirectReady);
-          video.removeEventListener("playing", markDirectReady);
-          video.removeEventListener("resize", markDirectReady);
+          if (markDirectReady) {
+            video.removeEventListener("loadedmetadata", markDirectReady);
+            video.removeEventListener("loadeddata", markDirectReady);
+            video.removeEventListener("playing", markDirectReady);
+            video.removeEventListener("resize", markDirectReady);
+          }
           if (
             frameCallbackId !== undefined &&
             "cancelVideoFrameCallback" in video
@@ -410,12 +413,12 @@ const LocalVideoInputView = ({
             }
           ).requestVideoFrameCallback(() => {
             frameCallbackId = undefined;
-            markDirectReady();
+            markDirectReady?.();
           });
         }
         const resumeDirectPlayback = () => {
           if (!active || video.srcObject !== stream) return;
-          markDirectReady();
+          markDirectReady?.();
           if (directPlaybackReady) return;
           // A detached Electron capture element can occasionally miss its
           // initial autoplay attempt. Retry playback without reopening or
@@ -480,6 +483,12 @@ const LocalVideoInputView = ({
         window.clearInterval(playbackRecoveryTimer);
       }
       const video = attachedVideo;
+      if (video && markDirectReady) {
+        video.removeEventListener("loadedmetadata", markDirectReady);
+        video.removeEventListener("loadeddata", markDirectReady);
+        video.removeEventListener("playing", markDirectReady);
+        video.removeEventListener("resize", markDirectReady);
+      }
       if (
         video &&
         frameCallbackId !== undefined &&

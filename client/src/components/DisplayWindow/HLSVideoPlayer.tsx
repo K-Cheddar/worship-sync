@@ -11,6 +11,7 @@ import {
   VIDEO_CUE_DRIFT_TOLERANCE_SECONDS,
   type VideoPreviewCommand,
 } from "../../utils/videoBackgroundPlayback";
+import { isInstantVideoSource } from "../../utils/isInstantVideoSource";
 
 type HLSPlayerProps = {
   src: string;
@@ -134,47 +135,80 @@ const HLSPlayer = ({
   const appliedGenerationRef = useRef<number | null>(null);
   /** A seek computed before the duration landed could not wrap a looping cue. */
   const appliedWithoutDurationRef = useRef(false);
+  /** Invalidates in-flight seeked/loadeddata waits across rapid source swaps. */
+  const paintReadyWaitGenerationRef = useRef(0);
+  const paintReadyDisposersRef = useRef<Array<() => void>>([]);
+
+  const clearPaintReadyWaits = useCallback(() => {
+    paintReadyDisposersRef.current.forEach((dispose) => dispose());
+    paintReadyDisposersRef.current = [];
+  }, []);
 
   /**
    * Tell the display layer it is safe to drop the poster. Wait out an in-flight
    * cue seek and for HAVE_CURRENT_DATA so Electron does not flash black between
    * cached clips.
    */
-  const notifyPaintReady = useCallback((videoSrc: string) => {
-    const video = videoRef.current;
-    if (!video || srcRef.current !== videoSrc) return;
-    if (paintReadySrcRef.current === videoSrc) return;
+  const notifyPaintReady = useCallback(
+    (videoSrc: string) => {
+      const video = videoRef.current;
+      if (!video || srcRef.current !== videoSrc) return;
+      if (paintReadySrcRef.current === videoSrc) return;
 
-    const finish = () => {
-      if (srcRef.current !== videoSrc || paintReadySrcRef.current === videoSrc) {
-        return;
-      }
-      if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
-        const onLoaded = () => {
-          video.removeEventListener("loadeddata", onLoaded);
-          finish();
+      clearPaintReadyWaits();
+      const generation = ++paintReadyWaitGenerationRef.current;
+
+      const isStale = () =>
+        generation !== paintReadyWaitGenerationRef.current ||
+        srcRef.current !== videoSrc ||
+        paintReadySrcRef.current === videoSrc;
+
+      const waitForEvent = (
+        eventName: "loadeddata" | "seeked",
+        then: () => void,
+      ) => {
+        let dispose: () => void = () => undefined;
+        const handler = () => {
+          video.removeEventListener(eventName, handler);
+          paintReadyDisposersRef.current =
+            paintReadyDisposersRef.current.filter((entry) => entry !== dispose);
+          then();
         };
-        video.addEventListener("loadeddata", onLoaded);
-        return;
-      }
-      paintReadySrcRef.current = videoSrc;
-      logVideoCue("player.paintReady", {
-        role: playbackRoleRef.current,
-        ...elementState(video),
-      });
-      onLoadedDataRef.current?.();
-    };
-
-    if (video.seeking) {
-      const onSeeked = () => {
-        video.removeEventListener("seeked", onSeeked);
-        finish();
+        dispose = () => {
+          video.removeEventListener(eventName, handler);
+        };
+        paintReadyDisposersRef.current.push(dispose);
+        video.addEventListener(eventName, handler);
       };
-      video.addEventListener("seeked", onSeeked);
-      return;
-    }
-    finish();
-  }, []);
+
+      const finish = () => {
+        if (isStale()) return;
+        // Cue seeks can start after loadeddata; always recheck before declaring.
+        if (video.seeking) {
+          waitForEvent("seeked", finish);
+          return;
+        }
+        if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
+          waitForEvent("loadeddata", finish);
+          return;
+        }
+        if (video.seeking) {
+          waitForEvent("seeked", finish);
+          return;
+        }
+        paintReadySrcRef.current = videoSrc;
+        clearPaintReadyWaits();
+        logVideoCue("player.paintReady", {
+          role: playbackRoleRef.current,
+          ...elementState(video),
+        });
+        onLoadedDataRef.current?.();
+      };
+
+      finish();
+    },
+    [clearPaintReadyWaits],
+  );
 
   const notifyPaintReadyRef = useRef(notifyPaintReady);
   notifyPaintReadyRef.current = notifyPaintReady;
@@ -401,6 +435,8 @@ const HLSPlayer = ({
   );
 
   useEffect(() => {
+    clearPaintReadyWaits();
+    paintReadyWaitGenerationRef.current += 1;
     readySrcRef.current = null;
     syncedSrcRef.current = null;
     paintReadySrcRef.current = null;
@@ -409,10 +445,20 @@ const HLSPlayer = ({
     if (!videoRef.current || !src) return;
 
     if (src.endsWith(".m3u8")) {
-      return playHLS(videoRef.current, src);
+      const stopHls = playHLS(videoRef.current, src);
+      return () => {
+        clearPaintReadyWaits();
+        paintReadyWaitGenerationRef.current += 1;
+        stopHls?.();
+      };
     }
-    return playNative(videoRef.current, src);
-  }, [src, playNative, playHLS]);
+    const stopNative = playNative(videoRef.current, src);
+    return () => {
+      clearPaintReadyWaits();
+      paintReadyWaitGenerationRef.current += 1;
+      stopNative?.();
+    };
+  }, [src, playNative, playHLS, clearPaintReadyWaits]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -554,12 +600,7 @@ const HLSPlayer = ({
     return subscribeVideoPreviewCommands(applyCommand);
   }, [playback, playbackRole]);
 
-  const preloadValue =
-    src.startsWith("media-cache://") ||
-      src.startsWith("worshipsync-media://") ||
-      src.startsWith("blob:")
-      ? "auto"
-      : "metadata";
+  const preloadValue = isInstantVideoSource(src) ? "auto" : "metadata";
 
   return (
     <video
