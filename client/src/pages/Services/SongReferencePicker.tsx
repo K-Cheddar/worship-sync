@@ -4,6 +4,10 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import { useSelector } from "../../hooks";
+import {
+  getServicePlanSongRefLabel,
+  libraryServicePlanSongRef,
+} from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import type { ServicePlanSongReference } from "../../types/servicePlan";
 
 type SongReferencePickerProps = {
@@ -43,7 +47,9 @@ const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerP
     return (
       <div className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-950/60 px-2 py-1.5">
         <Music className="size-4 shrink-0 text-orange-300" aria-hidden />
-        <span className="flex-1 truncate text-sm">{value.songName}</span>
+        <span className="flex-1 truncate text-sm">
+          {getServicePlanSongRefLabel(value)}
+        </span>
         <Button
           type="button"
           variant="tertiary"
@@ -110,21 +116,24 @@ const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerP
       />
       {results.length > 0 ? (
         <ul className="space-y-1 rounded-md border border-gray-700 bg-gray-950/60 p-1">
-          {results.map((doc) => (
-            <li key={doc._id}>
-              <Button
-                type="button"
-                variant="tertiary"
-                className="w-full justify-start"
-                onClick={() => {
-                  onChange({ kind: "library", songId: doc._id, songName: doc.name });
-                  setQuery("");
-                }}
-              >
-                {doc.name}
-              </Button>
-            </li>
-          ))}
+          {results.map((doc) => {
+            const songRef = libraryServicePlanSongRef(doc);
+            return (
+              <li key={doc._id}>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="w-full justify-start"
+                  onClick={() => {
+                    onChange(songRef);
+                    setQuery("");
+                  }}
+                >
+                  {getServicePlanSongRefLabel(songRef)}
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <Button

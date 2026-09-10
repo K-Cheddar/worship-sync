@@ -12,6 +12,7 @@ import {
   type ServicePlanSection,
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
+import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 
 type ServicePlanSetlistProps = {
   sections: ServicePlanSection[] | null | undefined;
@@ -23,8 +24,15 @@ type ServicePlanSetlistProps = {
   ) => void;
 };
 
-const songRefName = (songRef: ServicePlanSongReference) =>
-  songRef.kind === "library" ? songRef.songName : songRef.title;
+const songRefName = (
+  songRef: ServicePlanSongReference,
+  song?: DBItem,
+) => {
+  const key = songRef.key?.trim() || song?.songMetadata?.key?.trim();
+  return getServicePlanSongRefLabel(
+    key && key !== songRef.key ? { ...songRef, key } : songRef,
+  );
+};
 
 const ServicePlanSetlist = ({
   sections,
@@ -92,10 +100,10 @@ const ServicePlanSetlist = ({
                 padding="px-1 py-0.5"
                 aria-label={
                   songRef.kind === "pending" && onCreatePendingSong
-                    ? `Create ${songRefName(songRef)} in the library`
+                    ? `Create ${songRefName(songRef, song)} in the library`
                     : songRef.kind === "pending"
-                      ? `View reference lyrics for ${songRefName(songRef)}`
-                      : `View song details for ${songRefName(songRef)}`
+                      ? `View reference lyrics for ${songRefName(songRef, song)}`
+                      : `View song details for ${songRefName(songRef, song)}`
                 }
                 onClick={() => {
                   if (songRef.kind === "pending" && onCreatePendingSong) {
@@ -106,7 +114,7 @@ const ServicePlanSetlist = ({
                 }}
               >
                 <span className="truncate text-left text-sm text-gray-100">
-                  {songRefName(songRef) || "Untitled song"}
+                  {songRefName(songRef, song) || "Untitled song"}
                 </span>
               </Button>
               {!song ? (

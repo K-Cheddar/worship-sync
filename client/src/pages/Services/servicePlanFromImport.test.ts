@@ -35,13 +35,23 @@ describe("buildServicePlanSectionsFromImport", () => {
       {
         sectionName: "Call to Worship",
         rows: [
-          { elementType: "Song", title: "Great Are You Lord", ledBy: "Jane Doe" },
+          {
+            elementType: "Song",
+            title: "Great Are You Lord",
+            ledBy: "Jane Doe",
+          },
           { elementType: "Song", title: "Unmatched New Song", ledBy: "" },
         ],
       },
       {
         sectionName: "Message",
-        rows: [{ elementType: "Message", title: "The Good Shepherd", ledBy: "Pastor Sam" }],
+        rows: [
+          {
+            elementType: "Message",
+            title: "The Good Shepherd",
+            ledBy: "Pastor Sam",
+          },
+        ],
       },
     ],
     teamAssignments: [],
@@ -115,21 +125,27 @@ describe("buildServicePlanSectionsFromImport", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
         ...data,
-        sections: [{
-          sectionName: "Praise & Prayer",
-          rows: [
-            {
-              elementType: "Welcome Song",
-              title: "There's a Welcome Here (C)",
-              ledBy: "Praise Team",
-              songTitle: "There's a Welcome Here (C)",
-            },
-            // Reads like a song and isn't one. The plan marks its songs, so
-            // this row's wording must not add one.
-            { elementType: "Call to Praise", title: "Call to Praise", ledBy: "" },
-            { elementType: "Appeal Song", title: "Appeal Song", ledBy: "" },
-          ],
-        }],
+        sections: [
+          {
+            sectionName: "Praise & Prayer",
+            rows: [
+              {
+                elementType: "Welcome Song",
+                title: "There's a Welcome Here (C)",
+                ledBy: "Praise Team",
+                songTitle: "There's a Welcome Here (C)",
+              },
+              // Reads like a song and isn't one. The plan marks its songs, so
+              // this row's wording must not add one.
+              {
+                elementType: "Call to Praise",
+                title: "Call to Praise",
+                ledBy: "",
+              },
+              { elementType: "Appeal Song", title: "Appeal Song", ledBy: "" },
+            ],
+          },
+        ],
       },
       songs,
     );
@@ -145,6 +161,7 @@ describe("buildServicePlanSectionsFromImport", () => {
       kind: "pending",
       title: "There's a Welcome Here",
       lyricsText: "",
+      key: "C",
     });
   });
 
@@ -152,13 +169,24 @@ describe("buildServicePlanSectionsFromImport", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
         ...data,
-        sections: [{
-          sectionName: "Praise & Worship",
-          rows: [
-            { elementType: "Welcome", title: "How Great Is Our God (E)", ledBy: "" },
-            { elementType: "Song", title: "Marked Song", ledBy: "", songTitle: "Marked Song" },
-          ],
-        }],
+        sections: [
+          {
+            sectionName: "Praise & Worship",
+            rows: [
+              {
+                elementType: "Welcome",
+                title: "How Great Is Our God (E)",
+                ledBy: "",
+              },
+              {
+                elementType: "Song",
+                title: "Marked Song",
+                ledBy: "",
+                songTitle: "Marked Song",
+              },
+            ],
+          },
+        ],
       },
       songs,
     );
@@ -168,6 +196,7 @@ describe("buildServicePlanSectionsFromImport", () => {
       kind: "pending",
       title: "How Great Is Our God",
       lyricsText: "",
+      key: "E",
     });
   });
 
@@ -175,15 +204,19 @@ describe("buildServicePlanSectionsFromImport", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
         ...data,
-        sections: [{
-          sectionName: "Congregational Hymn",
-          rows: [{
-            elementType: "Congregational Hymn",
-            title: "Great Are You Lord #520 (Bb)",
-            ledBy: "",
-            songTitle: "Great Are You Lord #520 (Bb)",
-          }],
-        }],
+        sections: [
+          {
+            sectionName: "Congregational Hymn",
+            rows: [
+              {
+                elementType: "Congregational Hymn",
+                title: "Great Are You Lord #520 (Bb)",
+                ledBy: "",
+                songTitle: "Great Are You Lord #520 (Bb)",
+              },
+            ],
+          },
+        ],
       },
       songs,
     );
@@ -192,6 +225,7 @@ describe("buildServicePlanSectionsFromImport", () => {
       kind: "library",
       songId: "song-1",
       songName: "Great Are You Lord",
+      key: "Bb",
     });
   });
 
@@ -199,10 +233,14 @@ describe("buildServicePlanSectionsFromImport", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
         ...data,
-        sections: [{
-          sectionName: "Worship",
-          rows: [{ elementType: "Song", title: "Great Are You Lord", ledBy: "" }],
-        }],
+        sections: [
+          {
+            sectionName: "Worship",
+            rows: [
+              { elementType: "Song", title: "Great Are You Lord", ledBy: "" },
+            ],
+          },
+        ],
       },
       songs,
     );
@@ -214,10 +252,18 @@ describe("buildServicePlanSectionsFromImport", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
         ...data,
-        sections: [{
-          sectionName: "Praise & Prayer",
-          rows: [{ elementType: "Call to Praise", title: "Call to Praise", ledBy: "" }],
-        }],
+        sections: [
+          {
+            sectionName: "Praise & Prayer",
+            rows: [
+              {
+                elementType: "Call to Praise",
+                title: "Call to Praise",
+                ledBy: "",
+              },
+            ],
+          },
+        ],
       },
       songs,
     );
@@ -233,55 +279,76 @@ describe("buildServicePlanSectionsFromImport", () => {
   });
 
   it("keeps imported timing plus shared and team-scoped notes", () => {
-    const [section] = buildServicePlanSectionsFromImport({
-      ...data,
-      sections: [{
-        sectionName: "Welcome",
-        rows: [{
-          elementType: "Welcome Song",
-          title: "There's a Welcome Here",
-          ledBy: "Praise Team",
-          startTime: "11:11",
-          durationMinutes: 1.5,
-          note: "Invite everyone to sing.",
-          teamNotes: [
-            { teamName: "Media Team", note: "Capture the greetings." },
-            { teamName: "Praise Team", note: "Walk around and greet people." },
-          ],
-        }],
-      }],
-    }, songs);
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome Song",
+                title: "There's a Welcome Here",
+                ledBy: "Praise Team",
+                startTime: "11:11",
+                durationMinutes: 1.5,
+                note: "Invite everyone to sing.",
+                teamNotes: [
+                  { teamName: "Media Team", note: "Capture the greetings." },
+                  {
+                    teamName: "Praise Team",
+                    note: "Walk around and greet people.",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      songs,
+    );
 
     const [element] = section.elements;
     expect(element.startTime).toBe("11:11");
     expect(element.durationMinutes).toBe(1.5);
     expect(element.durationSeconds).toBe(90);
     expect(richTextToPlainText(element.notes)).toBe("Invite everyone to sing.");
-    expect(element.teamNotes?.map(({ label, note }) => ({
-      label,
-      note: richTextToPlainText(note),
-    }))).toEqual([
+    expect(
+      element.teamNotes?.map(({ label, note }) => ({
+        label,
+        note: richTextToPlainText(note),
+      })),
+    ).toEqual([
       { label: "Media Team", note: "Capture the greetings." },
       { label: "Praise Team", note: "Walk around and greet people." },
     ]);
   });
 
   it("keeps a multi-line note's line structure as blocks and list items", () => {
-    const [section] = buildServicePlanSectionsFromImport({
-      ...data,
-      sections: [{
-        sectionName: "Welcome",
-        rows: [{
-          elementType: "Welcome Song",
-          title: "There's a Welcome Here",
-          ledBy: "Praise Team",
-          teamNotes: [{
-            teamName: "Media Team",
-            note: "3 or 4 headsets:\n- Host: Gray\n- Co-Host: Blue",
-          }],
-        }],
-      }],
-    }, songs);
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome Song",
+                title: "There's a Welcome Here",
+                ledBy: "Praise Team",
+                teamNotes: [
+                  {
+                    teamName: "Media Team",
+                    note: "3 or 4 headsets:\n- Host: Gray\n- Co-Host: Blue",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      songs,
+    );
 
     // One block per line, so the public view and the editor both render the
     // list the author typed rather than a single run-on paragraph.
@@ -314,6 +381,24 @@ describe("buildServicePlanSourceImport", () => {
       sourceUrl: "https://services.planningcenteronline.com/plans/123",
       loadedAt: expect.any(String),
       planLabel: "Sunday, Jan 1",
+    });
+  });
+
+  it("records Planning Center PDF paste provenance", () => {
+    const result = buildServicePlanSourceImport(
+      {
+        planLabel: "SMC Worship Experience",
+        sections: [],
+        teamAssignments: [],
+      },
+      "",
+      "planningCenterPdf",
+    );
+    expect(result).toEqual({
+      source: "planningCenterPdf",
+      sourceUrl: "",
+      loadedAt: expect.any(String),
+      planLabel: "SMC Worship Experience",
     });
   });
 });

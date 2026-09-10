@@ -15,6 +15,7 @@
  * deleted.
  */
 import { findBestSongMatchByName } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
+import { libraryServicePlanSongRef } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import {
   getServicePlanElementSongRefs,
   type ServicePlanSection,
@@ -25,19 +26,42 @@ import {
  * The reference to use for a plan element right now — the stored one, unless a
  * pending title has since become a real library song.
  */
-export const resolveServicePlanSongRef = <T extends { _id: string; name: string }>(
+export const resolveServicePlanSongRef = <
+  T extends {
+    _id: string;
+    name: string;
+    songMetadata?: { key?: string } | null;
+  },
+>(
   songRef: ServicePlanSongReference | undefined,
   songs: T[],
 ): ServicePlanSongReference | undefined => {
-  if (!songRef || songRef.kind !== "pending") return songRef;
+  if (!songRef) return songRef;
+
+  if (songRef.kind === "library") {
+    const song = songs.find((entry) => entry._id === songRef.songId);
+    if (!song) return songRef;
+    const next = libraryServicePlanSongRef(song);
+    // Keep a planning-imported key when the library song has none yet.
+    if (!next.key && songRef.key) next.key = songRef.key;
+    if (
+      next.songName === songRef.songName &&
+      (next.key || undefined) === (songRef.key || undefined)
+    ) {
+      return songRef;
+    }
+    return next;
+  }
+
   // A pending reference carrying its own lyrics holds content the library song
   // wouldn't show, so it stays as it is rather than being quietly replaced.
   if (songRef.lyricsText.trim()) return songRef;
 
   const matched = findBestSongMatchByName(songRef.title, songs);
-  return matched
-    ? { kind: "library", songId: matched._id, songName: matched.name }
-    : songRef;
+  if (!matched) return songRef;
+  const next = libraryServicePlanSongRef(matched);
+  if (!next.key && songRef.key) next.key = songRef.key;
+  return next;
 };
 
 /**
@@ -48,7 +72,13 @@ export const resolveServicePlanSongRef = <T extends { _id: string; name: string 
  * moved. Built once per plan rather than per row — matching runs over the whole
  * library, and a plan has many rows.
  */
-export const resolveServicePlanSongRefs = <T extends { _id: string; name: string }>(
+export const resolveServicePlanSongRefs = <
+  T extends {
+    _id: string;
+    name: string;
+    songMetadata?: { key?: string } | null;
+  },
+>(
   sections: ServicePlanSection[] | null | undefined,
   songs: T[],
 ): ReadonlyMap<string, ServicePlanSongReference[]> => {

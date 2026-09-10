@@ -7,13 +7,24 @@
  * classifies rows as song/bible/none for the live outline) since a
  * ServicePlan element can be any of a broader set of types.
  */
-import type { EventData, ServicePlanningImportData } from "../../containers/Overlays/eventParser";
+import type {
+  EventData,
+  ServicePlanningImportData,
+} from "../../containers/Overlays/eventParser";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import { findBestSongMatchByName } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
+import {
+  extractPlanningKey,
+  hasPlanningKeySuffix,
+  libraryServicePlanSongRef,
+} from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
 import generateRandomId from "../../utils/generateRandomId";
-import { multilineTextToRichText, plainTextToRichText } from "../../types/richText";
+import {
+  multilineTextToRichText,
+  plainTextToRichText,
+} from "../../types/richText";
 import { getServicePlanElementType } from "../../types/servicePlan";
 import type {
   ServicePlanElement,
@@ -50,12 +61,6 @@ const readsAsSong = (text: string): boolean =>
   SONG_WORDS.test(text) ||
   (AMBIGUOUS_SONG_WORDS.test(text) && !NON_SONG_PHRASES.test(text));
 
-/** A planning key is a strong song signal even when the source's music icon
- * was omitted from this particular row. Keep this narrower than general title
- * matching so ordinary spoken items are not turned into pending songs. */
-const hasPlanningKeySuffix = (title: string): boolean =>
-  /\s\([A-G][#b]?(?:\s*(?:â†’|->|→)\s*[A-G][#b]?)?\)\s*$/iu.test(title);
-
 /** Best-effort classification of a raw Service Planning row into our broader
  * element type vocabulary — the source's own "element type" column is free
  * text set by whoever built the plan, not a fixed enum, so this is a keyword
@@ -71,24 +76,44 @@ export const guessServicePlanElementType = (
   if (/\b(video|clip|film)\b/.test(text)) return "video";
   if (/\b(image|photo|slide|graphic)\b/.test(text)) return "image";
   if (/\b(scripture|bible|reading|verse)\b/.test(text)) return "bible";
-  if (/\b(announcement|announcements|welcome)\b/.test(text)) return "announcement";
+  if (/\b(announcement|announcements|welcome)\b/.test(text))
+    return "announcement";
   if (/\b(header|heading|divider)\b/.test(text)) return "heading";
   return "free";
 };
 
-const buildElementFromRow = <T extends { _id: string; name: string }>(
+const buildElementFromRow = <
+  T extends {
+    _id: string;
+    name: string;
+    songMetadata?: { key?: string } | null;
+  },
+>(
   row: EventData,
   songs: T[],
   sourceMarksSongs: boolean,
 ): ServicePlanElement => {
-  const type = row.songTitle || hasPlanningKeySuffix(row.title)
-    ? "song"
-    : guessServicePlanElementType(row.elementType, row.title, {
-        skipSongWords: sourceMarksSongs,
-      });
+  const type =
+    row.songTitle || hasPlanningKeySuffix(row.title)
+      ? "song"
+      : guessServicePlanElementType(row.elementType, row.title, {
+          skipSongWords: sourceMarksSongs,
+        });
   const rawTitle = row.title?.trim() || row.elementType?.trim() || "Untitled";
   const ledBy = row.ledBy?.trim();
-  const assigneeNames = ledBy ? splitServicePlanningLedByNames(ledBy) : [];
+  // Structured imports (Planning Center paste) may already split people; Service
+  // Planning printouts still arrive as one Led-by string.
+  const assigneeNames = (row.assigneeNames || [])
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const resolvedAssigneeNames = assigneeNames.length
+    ? assigneeNames
+    : ledBy
+      ? splitServicePlanningLedByNames(ledBy)
+      : [];
+  const sourceLedByRaw =
+    ledBy ||
+    (resolvedAssigneeNames.length ? resolvedAssigneeNames.join(", ") : "");
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
@@ -98,21 +123,21 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
     ...(row.elementType?.trim()
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
-    ...(ledBy && assigneeNames.length
+    ...(resolvedAssigneeNames.length
       ? {
-        assignees: assigneeNames.map((name) => ({
-          id: generateRandomId(),
-          name,
-        })),
-        sourceLedByRaw: ledBy,
-      }
+          assignees: resolvedAssigneeNames.map((name) => ({
+            id: generateRandomId(),
+            name,
+          })),
+          sourceLedByRaw,
+        }
       : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
     ...(typeof row.durationMinutes === "number"
       ? {
-        durationSeconds: Math.round(row.durationMinutes * 60),
-        durationMinutes: row.durationMinutes,
-      }
+          durationSeconds: Math.round(row.durationMinutes * 60),
+          durationMinutes: row.durationMinutes,
+        }
       : {}),
     // Notes are the one imported field that carries line structure (bullet
     // lists of mic assignments and the like), so they keep their own blocks
@@ -134,10 +159,30 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
     // element type ("Welcome Song") or a second line, so it only stands in
     // when the source marked nothing.
     const cleanedTitle = cleanPlanningTitle(row.songTitle?.trim() || rawTitle);
+    const planningKey =
+      extractPlanningKey(rawTitle) ||
+      extractPlanningKey(row.songTitle?.trim() || "");
     const matched = findBestSongMatchByName(cleanedTitle, songs);
-    element.songRef = matched
-      ? { kind: "library", songId: matched._id, songName: matched.name }
-      : { kind: "pending", title: cleanedTitle, lyricsText: "" };
+    if (matched) {
+      const libraryRef = libraryServicePlanSongRef(matched);
+      element.songRef = {
+        ...libraryRef,
+        ...(!libraryRef.key && planningKey ? { key: planningKey } : {}),
+      };
+    } else {
+      element.songRef = {
+        kind: "pending",
+        title: cleanedTitle,
+        lyricsText: "",
+        ...(planningKey ? { key: planningKey } : {}),
+      };
+    }
+  }
+
+  if (row.scriptureRefs?.length) {
+    // Prefer structured refs from parsers that already extracted Scripture lines
+    // (Planning Center), including when the item title is not itself a reference.
+    element.scriptureRefs = row.scriptureRefs;
   } else if (type === "bible") {
     // The source's own row is free text ("Reading: John 3:16"), so only attach
     // when it actually parses as a reference — otherwise it stays a plain item
@@ -189,9 +234,20 @@ export const buildServicePlanSectionsFromImport = <
 export const buildServicePlanSourceImport = (
   data: ServicePlanningImportData,
   sourceUrl: string,
+  source: ServicePlanSourceImport["source"] = "servicePlanning",
+  extras: {
+    planningCenterServiceTypeId?: string;
+    planningCenterPlanId?: string;
+  } = {},
 ): ServicePlanSourceImport => ({
-  source: "servicePlanning",
+  source,
   sourceUrl,
   loadedAt: new Date().toISOString(),
   planLabel: data.planLabel || "Imported plan",
+  ...(extras.planningCenterServiceTypeId
+    ? { planningCenterServiceTypeId: extras.planningCenterServiceTypeId }
+    : {}),
+  ...(extras.planningCenterPlanId
+    ? { planningCenterPlanId: extras.planningCenterPlanId }
+    : {}),
 });

@@ -11,6 +11,7 @@ import {
   type ServicePlanScriptureReference,
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
+import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { richTextToPlainText } from "../../types/richText";
 
 type ServicePlanContentPanelProps = {
@@ -78,7 +79,7 @@ const ServicePlanContentPanel = ({
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Songs</h3>
         {songs.length ? songs.map((song, index) => {
-          const label = song.kind === "pending" ? song.title : song.songName;
+          const label = getServicePlanSongRefLabel(song);
           return (
             <div key={`${song.kind}:${label}:${index}`} className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1.5">
               <Icon svg={Music} size="xs" className="shrink-0 text-cyan-300" />
