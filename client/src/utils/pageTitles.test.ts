@@ -3,6 +3,9 @@ import { getPageTitle } from "./pageTitles";
 describe("getPageTitle", () => {
   test.each([
     ["/home", "Home | WorshipSync"],
+    ["/support", "Support | WorshipSync"],
+    ["/privacy", "Privacy Policy | WorshipSync"],
+    ["/terms", "Terms of Service | WorshipSync"],
     ["/controller/item/123", "Controller | WorshipSync"],
     ["/account/branding", "Account | WorshipSync"],
     ["/teams-and-services/schedules", "Schedules | WorshipSync"],

@@ -401,6 +401,15 @@ const AppEntry = () => {
 
         <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-600/80 pt-5 text-sm text-gray-300">
           <Link
+            to="/support"
+            className="cursor-pointer underline underline-offset-2 hover:text-white"
+          >
+            Support
+          </Link>
+          <span aria-hidden className="text-gray-600">
+            ·
+          </span>
+          <Link
             to="/privacy"
             className="cursor-pointer underline underline-offset-2 hover:text-white"
           >

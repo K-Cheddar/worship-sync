@@ -878,6 +878,7 @@ app.post("/api/auth/email-code-hint", authHandlers.getEmailCodeHint);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
+app.post("/api/support/contact", authHandlers.submitSupportContact);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",

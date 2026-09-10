@@ -693,6 +693,17 @@ const Welcome = () => {
         <footer className="mx-auto mt-2 flex w-full max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-700 pt-6 text-sm text-gray-300">
           <Button
             component="link"
+            to="/support"
+            variant="none"
+            className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+          >
+            Support
+          </Button>
+          <span aria-hidden className="text-gray-600">
+            ·
+          </span>
+          <Button
+            component="link"
             to="/privacy"
             variant="none"
             className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"

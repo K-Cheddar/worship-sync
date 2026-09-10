@@ -36,6 +36,7 @@ const ROUTES_TO_SKIP_SAVE = new Set([
   "/login",
   "/privacy",
   "/terms",
+  "/support",
   "/login/desktop-sso-complete",
   "/restream/connect-complete",
   "/youtube/connect-complete",

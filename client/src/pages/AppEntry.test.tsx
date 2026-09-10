@@ -99,6 +99,10 @@ describe("AppEntry", () => {
       "href",
       "/login?createChurch=1",
     );
+    expect(screen.getByRole("link", { name: /^Support$/i })).toHaveAttribute(
+      "href",
+      "/support",
+    );
     expect(
       screen.getByRole("link", { name: /Privacy Policy/i }),
     ).toHaveAttribute("href", "/privacy");

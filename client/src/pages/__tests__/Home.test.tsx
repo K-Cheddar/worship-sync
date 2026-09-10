@@ -162,6 +162,10 @@ describe("Home", () => {
       screen.getByRole("link", { name: /^Teams /i }),
     ).toHaveAttribute("href", "/teams-and-services");
 
+    expect(screen.getByRole("link", { name: /^Support$/i })).toHaveAttribute(
+      "href",
+      "/support",
+    );
     expect(
       screen.getByRole("link", { name: /Privacy Policy/i }),
     ).toHaveAttribute("href", "/privacy");

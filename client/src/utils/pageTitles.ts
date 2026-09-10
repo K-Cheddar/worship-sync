@@ -9,6 +9,9 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname.startsWith("/aux-controller")) return title("Controller");
   if (pathname === "/current-service") return title("Current Service");
   if (pathname === "/overlay-controller") return title("Overlay Controller");
+  if (pathname === "/support") return title("Support");
+  if (pathname === "/privacy") return title("Privacy Policy");
+  if (pathname === "/terms") return title("Terms of Service");
   if (pathname === "/login") return title("Sign In");
   if (pathname === "/login/desktop-sso-complete")
     return title("Desktop Sign In");
