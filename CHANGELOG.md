@@ -1,3 +1,28 @@
+# [2.33.0](https://github.com/K-Cheddar/worship-sync/compare/v2.32.0...v2.33.0) (2026-09-10)
+
+
+### Bug Fixes
+
+* Board crawlers can wait forever ([dbc5756](https://github.com/K-Cheddar/worship-sync/commit/dbc57565132107a66c91c27382ee29a9ba919fe6))
+* Canva decks omit selected existing pages ([e7a266a](https://github.com/K-Cheddar/worship-sync/commit/e7a266ae3eac480e898056aa68c4b95779d51e72))
+* Existing-account invite sign-in loses return path ([6a55e71](https://github.com/K-Cheddar/worship-sync/commit/6a55e715f097539e8480b25e6b28a5b144ace8f9))
+* Improve mobile tap targets and outline scroll restore ([ee930a2](https://github.com/K-Cheddar/worship-sync/commit/ee930a2a36d0f62b247f18469310c9e470a54807))
+* Other controller outlines disappear after a new controller opens ([e94217a](https://github.com/K-Cheddar/worship-sync/commit/e94217a1c516870cc98f222f9fe65cf31e4f270a))
+* Signed-in volunteers lose their schedule link ([4229c25](https://github.com/K-Cheddar/worship-sync/commit/4229c25c2f14de457dbc5911f482b7a8863e24f0))
+* Some live input items lose their feed ([ffe9a69](https://github.com/K-Cheddar/worship-sync/commit/ffe9a69df05ad4f85778f50e3abeb254f1e1950a))
+* Two client views nest ternaries ([8f217ea](https://github.com/K-Cheddar/worship-sync/commit/8f217ea2dd073e50d8544fcfd3a3c13a3672a8e5))
+* Unused cameras stay open after restart ([e668bde](https://github.com/K-Cheddar/worship-sync/commit/e668bde7d2503206b3f520988b1f30f810ee6358))
+* Video posters vanish before cue sync ([fd0141f](https://github.com/K-Cheddar/worship-sync/commit/fd0141fa2ef6ee42e6b5b6ddabdb3cf837e23b9c))
+* Video retries retain stale listeners ([21a4d68](https://github.com/K-Cheddar/worship-sync/commit/21a4d68d5fe92ab6240b98608e3cc1ddebe6e058))
+
+
+### Features
+
+* Add public support contact form ([560d93e](https://github.com/K-Cheddar/worship-sync/commit/560d93eb2095000e8cc80428d208c07750139770))
+* Connect Planning Center accounts to churches ([d65de16](https://github.com/K-Cheddar/worship-sync/commit/d65de1640fee7402f0f1d8e5de0e907f4ecb1b7f))
+* Harden live video backgrounds and presentation sync ([4ec4863](https://github.com/K-Cheddar/worship-sync/commit/4ec4863ed2cd9d81f89511b9aecb4035fdd65660))
+* Import service plans from Planning Center and PDFs ([a9e1689](https://github.com/K-Cheddar/worship-sync/commit/a9e1689dbc14de81b551300c728ce60ed062b1c6))
+
 # [2.32.0](https://github.com/K-Cheddar/worship-sync/compare/v2.31.0...v2.32.0) (2026-09-09)
 
 
