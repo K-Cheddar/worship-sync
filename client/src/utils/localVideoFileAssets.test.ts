@@ -65,6 +65,43 @@ describe("localVideoFileAssets thumbnails", () => {
     );
   });
 
+  it("uses byte IPC for a downloaded conversion in Electron", async () => {
+    const importLocalAssetBytes = jest.fn().mockResolvedValue({
+      assetId: "local_video_converted",
+      contentType: "video/mp4",
+      url: "worshipsync-media://asset/local_video_converted",
+    });
+    window.electronAPI = {
+      importLocalAssetBytes,
+    } as unknown as NonNullable<typeof window.electronAPI>;
+
+    const file = new File(["video"], "local_video_converted.mp4", {
+      type: "video/mp4",
+    });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => new ArrayBuffer(5),
+    });
+
+    await saveLocalVideoFile(
+      {
+        ...storedVideo("local_video_converted"),
+        blob: file,
+      },
+      { importBytes: true },
+    );
+
+    expect(importLocalAssetBytes).toHaveBeenCalledWith(
+      expect.any(ArrayBuffer),
+      expect.objectContaining({
+        assetId: "local_video_converted",
+        contentType: "video/mp4",
+      }),
+    );
+    await expect(
+      getLocalVideoFile("local_video_converted"),
+    ).resolves.toEqual(expect.objectContaining({ blob: undefined }));
+  });
+
   it("reuses a stored still instead of decoding the original again", async () => {
     await saveLocalVideoFile(storedVideo("local_video_cached"));
     await saveLocalImageThumbnail(storedThumbnail("local_video_cached"));

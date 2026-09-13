@@ -95,6 +95,25 @@ describe("videoBackgroundPlayback", () => {
     );
   });
 
+  it("uses one cloud identity when a local source is not playable", () => {
+    expect(
+      getVideoBackgroundMediaKey(
+        videoMedia({
+          muxPlaybackId: "mux-playback-1",
+          localVideoFile: {
+            id: "file-1",
+            ownerDeviceId: "d1",
+            ownerLabel: "Booth",
+            fileName: "camera.mov",
+            contentType: "video/quicktime",
+            storagePolicy: "local-and-cloud",
+            preferCloudPlayback: true,
+          },
+        }),
+      ),
+    ).toBe("remote:mux-playback-1");
+  });
+
   it("formats a compact video clock", () => {
     expect(formatVideoClock(0)).toBe("0:00");
     expect(formatVideoClock(12.9)).toBe("0:12");

@@ -75,10 +75,10 @@ export const getVideoBackgroundMediaKey = (
   media?: MediaType,
 ): string | undefined => {
   if (!isFileVideoBackground(media) || !media) return undefined;
-  if (media.localVideoFile) {
+  if (media.localVideoFile && !media.localVideoFile.preferCloudPlayback) {
     return `local-video:${media.localVideoFile.id}:${media.localVideoFile.contentRevision ?? "legacy"}`;
   }
-  return `remote:${media.id || media.publicId || media.background}`;
+  return `remote:${media.muxPlaybackId || media.id || media.publicId || media.background}`;
 };
 
 /**

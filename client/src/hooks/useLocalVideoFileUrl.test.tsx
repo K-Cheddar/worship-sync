@@ -100,4 +100,21 @@ describe("useLocalVideoFileUrl", () => {
     });
     expect(mockAcquireLocalVideoFileThumbnailUrl).not.toHaveBeenCalled();
   });
+
+  it("uses the cloud-transcoded playback URL when local decoding is unavailable", () => {
+    const { result } = renderHook(() =>
+      useLocalVideoFileUrl({
+        ...reference,
+        cloudUrl: "https://stream.mux.com/playback.m3u8",
+        preferCloudPlayback: true,
+      }),
+    );
+
+    expect(result.current).toEqual({
+      isLocalVideoFile: false,
+      isOwner: true,
+      status: "ready",
+    });
+    expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
+  });
 });

@@ -14,6 +14,7 @@ export type FileUploadProgress = {
   status: UploadStatus;
   progress: number;
   error?: string;
+  canConvertForOfflinePlayback?: boolean;
 };
 
 export type MediaUploadInputProps = {
@@ -40,6 +41,8 @@ export type MuxUploadResult = {
   playbackId: string;
   assetId: string;
   playbackUrl: string;
+  /** Static H.264/AAC MP4 rendition used for offline conversion. */
+  mp4Url?: string;
   thumbnailUrl: string;
   name: string;
   /** Stable identity for detecting an already-imported Canva page selection. */

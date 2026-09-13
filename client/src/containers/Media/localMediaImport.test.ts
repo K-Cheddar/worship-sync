@@ -3,6 +3,10 @@ import {
   readImageDimensions,
   saveLocalImage,
 } from "../../utils/localImageAssets";
+import {
+  readVideoMetadata,
+  saveLocalVideoFile,
+} from "../../utils/localVideoFileAssets";
 import { createLocalMediaFromFile } from "./localMediaImport";
 
 jest.mock("../../utils/generateRandomId");
@@ -11,10 +15,17 @@ jest.mock("../../utils/localImageAssets", () => ({
   readImageDimensions: jest.fn(),
   saveLocalImage: jest.fn(),
 }));
+jest.mock("../../utils/localVideoFileAssets", () => ({
+  ...jest.requireActual("../../utils/localVideoFileAssets"),
+  readVideoMetadata: jest.fn(),
+  saveLocalVideoFile: jest.fn(),
+}));
 
 const mockedGenerateRandomId = jest.mocked(generateRandomId);
 const mockedReadImageDimensions = jest.mocked(readImageDimensions);
 const mockedSaveLocalImage = jest.mocked(saveLocalImage);
+const mockedReadVideoMetadata = jest.mocked(readVideoMetadata);
+const mockedSaveLocalVideoFile = jest.mocked(saveLocalVideoFile);
 
 describe("createLocalMediaFromFile", () => {
   beforeEach(() => {
@@ -22,6 +33,12 @@ describe("createLocalMediaFromFile", () => {
     mockedGenerateRandomId.mockReturnValue("asset-1");
     mockedReadImageDimensions.mockResolvedValue({ width: 1920, height: 1080 });
     mockedSaveLocalImage.mockResolvedValue();
+    mockedReadVideoMetadata.mockResolvedValue({
+      width: 1920,
+      height: 1080,
+      duration: 12,
+    });
+    mockedSaveLocalVideoFile.mockResolvedValue();
   });
 
   it("saves an image on this device", async () => {
@@ -45,5 +62,47 @@ describe("createLocalMediaFromFile", () => {
         }),
       }),
     );
+  });
+
+  it("keeps a locally undecodable MOV and marks cloud playback as authoritative", async () => {
+    mockedReadVideoMetadata.mockRejectedValueOnce(
+      new Error("The selected video could not be read."),
+    );
+    const file = new File(["video"], "camera.mov", { type: "video/quicktime" });
+
+    const media = await createLocalMediaFromFile(
+      file,
+      "church-1",
+      "local-and-cloud",
+      { allowCloudPlaybackFallback: true },
+    );
+
+    expect(mockedSaveLocalVideoFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blob: file,
+        contentType: "video/quicktime",
+        width: 1920,
+        height: 1080,
+        duration: 0,
+      }),
+    );
+    expect(media.localVideoFile).toEqual(
+      expect.objectContaining({
+        preferCloudPlayback: true,
+        contentType: "video/quicktime",
+      }),
+    );
+  });
+
+  it("rejects a locally undecodable video when cloud upload is disabled", async () => {
+    mockedReadVideoMetadata.mockRejectedValueOnce(
+      new Error("The selected video could not be read."),
+    );
+    const file = new File(["video"], "camera.mov", { type: "video/quicktime" });
+
+    await expect(
+      createLocalMediaFromFile(file, "church-1", "local-only"),
+    ).rejects.toThrow(/cannot be played on this device/i);
+    expect(mockedSaveLocalVideoFile).not.toHaveBeenCalled();
   });
 });

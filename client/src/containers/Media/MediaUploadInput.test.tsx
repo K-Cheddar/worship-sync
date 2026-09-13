@@ -6,6 +6,7 @@ import type { MediaUploadInputRef } from "./MediaUploadInput.types";
 import { createLocalMediaFromFile } from "./localMediaImport";
 import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
 import type { MediaType } from "../../types";
+import { convertMuxVideoToLocalMp4 } from "./utils/muxUpload";
 
 const mockValidateFiles = jest.fn((files: File[]) => ({
   valid: files,
@@ -48,11 +49,13 @@ jest.mock("../../utils/localImageUploadQueue", () => ({
 }));
 
 jest.mock("./utils/muxUpload", () => ({
+  convertMuxVideoToLocalMp4: jest.fn(),
   uploadVideoToMux: jest.fn(),
 }));
 
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
 const mockedEnqueueUpload = jest.mocked(enqueueLocalImageUpload);
+const mockedConvertMuxVideo = jest.mocked(convertMuxVideoToLocalMp4);
 
 const localImage = (): MediaType => ({
   path: "",
@@ -100,6 +103,9 @@ describe("MediaUploadInput", () => {
     localStorage.clear();
     mockedCreateLocalMedia.mockResolvedValue(localImage());
     mockedEnqueueUpload.mockResolvedValue({} as never);
+    mockedConvertMuxVideo.mockResolvedValue(
+      new File(["converted"], "photo.mp4", { type: "video/mp4" }),
+    );
     (window as { electronAPI?: unknown }).electronAPI = {
       setUploadInProgress: jest.fn().mockResolvedValue(true),
       setTaskbarUploadProgress: jest.fn().mockResolvedValue(true),
@@ -173,6 +179,64 @@ describe("MediaUploadInput", () => {
       );
     });
     expect(mockedEnqueueUpload).not.toHaveBeenCalled();
+  });
+
+  it("offers a temporary cloud conversion when a local video cannot play", async () => {
+    const playbackError = new Error(
+      "This video cannot be played on this device. You can convert it for offline playback.",
+    );
+    playbackError.name = "LocalVideoPlaybackError";
+    const convertedFile = new File(["converted"], "camera.mp4", {
+      type: "video/mp4",
+    });
+    const onLocalMediaAdded = jest.fn();
+    const sourceFile = new File(["source"], "camera.mov", {
+      type: "video/quicktime",
+    });
+    mockDetectFileType.mockReturnValue("video");
+    mockedCreateLocalMedia
+      .mockRejectedValueOnce(playbackError)
+      .mockResolvedValueOnce(localImage());
+    mockedConvertMuxVideo.mockResolvedValueOnce(convertedFile);
+    renderUploadInput(onLocalMediaAdded);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("switch", { name: /Upload to cloud/i }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [sourceFile] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add (1 file)" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Convert camera.mov" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert camera.mov" }));
+
+    await waitFor(() => {
+      expect(mockedConvertMuxVideo).toHaveBeenCalledWith(
+        sourceFile,
+        expect.objectContaining({
+          isCancelled: expect.any(Function),
+          onProgress: expect.any(Function),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(mockedCreateLocalMedia).toHaveBeenLastCalledWith(
+        convertedFile,
+        "church-1",
+        "local-only",
+        { importBytes: true },
+      );
+    });
+    await waitFor(() => {
+      expect(onLocalMediaAdded).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "local_image_1" }),
+      );
+    });
   });
 
   it("updates Electron upload progress while adding files", async () => {

@@ -971,6 +971,8 @@ export type LocalVideoFileReference = {
   /** Optional portable copy attached after a background/cloud upload. */
   cloudUrl?: string;
   cloudMediaId?: string;
+  /** Use the cloud-transcoded playback URL when the original codec is local-unplayable. */
+  preferCloudPlayback?: boolean;
 };
 
 export type LocalVideoInputPresentation = {

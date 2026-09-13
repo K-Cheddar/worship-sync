@@ -29,10 +29,22 @@ import {
   UploadStatus,
 } from "./MediaUploadInput.types";
 import { detectFileType, validateFiles } from "./utils/fileUtils";
-import { uploadVideoToMux } from "./utils/muxUpload";
+import {
+  convertMuxVideoToLocalMp4,
+  uploadVideoToMux,
+  type MuxUploadCallbacks,
+} from "./utils/muxUpload";
 import { FileList } from "./components/FileList";
 import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { ProgressPopup } from "./components/ProgressPopup";
+
+const isLocalVideoPlaybackError = (error: unknown) =>
+  error instanceof Error && error.name === "LocalVideoPlaybackError";
+
+type PollingTimeout = {
+  timeoutId: NodeJS.Timeout;
+  cancel: () => void;
+};
 
 const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
   (
@@ -59,6 +71,9 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const [overallProgress, setOverallProgress] = useState(0);
     const [statusMessage, setStatusMessage] = useState("");
     const [currentFileIndex, setCurrentFileIndex] = useState(0);
+    const [convertingFileIndex, setConvertingFileIndex] = useState<number | null>(
+      null,
+    );
     const [uploadToCloud, setUploadToCloud] = useState(
       () =>
         !isGuestSession &&
@@ -67,7 +82,15 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cancelRequestedRef = useRef(false);
     const activeXhrRef = useRef<XMLHttpRequest | null>(null);
-    const pollingTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+    const pollingTimeoutsRef = useRef<PollingTimeout[]>([]);
+    const cancelPollingTimeouts = () => {
+      const pendingTimeouts = pollingTimeoutsRef.current;
+      pollingTimeoutsRef.current = [];
+      pendingTimeouts.forEach(({ timeoutId, cancel }) => {
+        cancel();
+        clearTimeout(timeoutId);
+      });
+    };
 
     const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
       if (uploadDisabled) return;
@@ -122,6 +145,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           fileProgress.file,
           churchId,
           storagePolicy,
+          { allowCloudPlaybackFallback: storagePolicy === "local-and-cloud" },
         );
         onLocalMediaAdded(media);
         updateFileStatus(fileIndex, { progress: 40 });
@@ -148,8 +172,8 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           setXhr: (xhr: XMLHttpRequest) => {
             activeXhrRef.current = xhr;
           },
-          addTimeout: (timeoutId: NodeJS.Timeout) => {
-            pollingTimeoutsRef.current.push(timeoutId);
+          addTimeout: (timeoutId: NodeJS.Timeout, cancel: () => void) => {
+            pollingTimeoutsRef.current.push({ timeoutId, cancel });
           },
         };
 
@@ -178,8 +202,92 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         updateFileStatus(fileIndex, {
           status: "error",
           error: err instanceof Error ? err.message : "Upload failed",
+          canConvertForOfflinePlayback: isLocalVideoPlaybackError(err),
         });
         throw err;
+      }
+    };
+
+    const convertFileForOfflinePlayback = async (fileIndex: number) => {
+      const fileProgress = selectedFiles[fileIndex];
+      if (
+        !fileProgress?.canConvertForOfflinePlayback ||
+        convertingFileIndex !== null ||
+        uploadStatus === "uploading" ||
+        uploadStatus === "processing"
+      ) {
+        return;
+      }
+
+      setConvertingFileIndex(fileIndex);
+      setUploadStatus("processing");
+      setOverallProgress(0);
+      setCurrentFileIndex(fileIndex);
+      setStatusMessage(`Converting ${fileProgress.file.name} for offline playback...`);
+      setError("");
+      cancelRequestedRef.current = false;
+
+      const callbacks: MuxUploadCallbacks = {
+        onProgress: (progress) => {
+          setOverallProgress(progress);
+          updateFileStatus(fileIndex, { progress });
+          setStatusMessage(
+            `Converting ${fileProgress.file.name} for offline playback... ${Math.round(progress)}%`,
+          );
+        },
+        onStatusUpdate: (message) => setStatusMessage(message),
+        isCancelled: () => cancelRequestedRef.current,
+        setXhr: (xhr) => {
+          activeXhrRef.current = xhr;
+        },
+        addTimeout: (timeoutId, cancel) => {
+          pollingTimeoutsRef.current.push({ timeoutId, cancel });
+        },
+      };
+
+      updateFileStatus(fileIndex, {
+        status: "processing",
+        progress: 0,
+        error: undefined,
+      });
+      try {
+        const convertedFile = await convertMuxVideoToLocalMp4(
+          fileProgress.file,
+          callbacks,
+        );
+        const media = await createLocalMediaFromFile(
+          convertedFile,
+          churchId,
+          "local-only",
+          { importBytes: true },
+        );
+        onLocalMediaAdded(media);
+        updateFileStatus(fileIndex, {
+          status: "ready",
+          progress: 100,
+          canConvertForOfflinePlayback: false,
+        });
+        setOverallProgress(100);
+        setUploadStatus("ready");
+        setStatusMessage(`${fileProgress.file.name} is ready for offline playback.`);
+        window.setTimeout(() => handleCancel(), 2000);
+      } catch (err) {
+        updateFileStatus(fileIndex, {
+          status: "error",
+          error: err instanceof Error ? err.message : "Conversion failed",
+          canConvertForOfflinePlayback: true,
+        });
+        setUploadStatus("error");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Could not convert this video for offline playback.",
+        );
+        setStatusMessage("Offline conversion failed.");
+      } finally {
+        setConvertingFileIndex(null);
+        activeXhrRef.current = null;
+        cancelPollingTimeouts();
       }
     };
 
@@ -236,6 +344,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             break;
           }
           errorCount++;
+          if (isLocalVideoPlaybackError(err)) {
+            setIsMinimized(false);
+            setIsMinimizedToButton(false);
+          }
           console.error(`Failed to upload file ${i + 1}:`, err);
         }
       }
@@ -276,10 +388,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           activeXhrRef.current.abort();
           activeXhrRef.current = null;
         }
-        pollingTimeoutsRef.current.forEach(timeoutId => clearTimeout(timeoutId));
-        pollingTimeoutsRef.current = [];
         setStatusMessage("Cancelling upload...");
       }
+
+      cancelPollingTimeouts();
 
       setSelectedFiles([]);
       setError("");
@@ -318,6 +430,13 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       [openModal, isUploading, overallProgress, uploadStatus],
     );
     const showProgressPopup = (isUploading || uploadStatus === "ready" || uploadStatus === "error") && isMinimized && !isMinimizedToButton;
+    const offlineConversionCandidates = selectedFiles.reduce<number[]>(
+      (candidates, fileProgress, index) => {
+        if (fileProgress.canConvertForOfflinePlayback) candidates.push(index);
+        return candidates;
+      },
+      [],
+    );
 
     useEffect(() => {
       onUploadActiveChange?.(isUploading);
@@ -454,7 +573,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 id="media-upload-input"
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*,video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.ts,.m2ts,.mts,.3gp,.3g2,.mpeg,.mpg,.ogv,.wmv,.flv"
                 multiple
                 onChange={handleFileSelect}
                 disabled={isUploading || uploadDisabled}
@@ -519,6 +638,31 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             />
 
             {error && <p className="text-red-500 text-sm">{error}</p>}
+
+            {offlineConversionCandidates.length > 0 && !isUploading && (
+              <div className="flex flex-col gap-2 rounded border border-amber-700/60 bg-amber-950/30 p-3">
+                <p className="text-sm text-amber-200">
+                  This video cannot play on this device. Convert it for offline playback?
+                </p>
+                <p className="text-xs text-gray-300">
+                  The original is uploaded temporarily. The converted MP4 is saved here, then the temporary cloud asset is removed.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {offlineConversionCandidates.map((fileIndex) => (
+                    <Button
+                      key={fileIndex}
+                      variant="secondary"
+                      onClick={() => {
+                        void convertFileForOfflinePlayback(fileIndex);
+                      }}
+                      disabled={convertingFileIndex !== null}
+                    >
+                      Convert {selectedFiles[fileIndex].file.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-2 justify-end mt-2">
               <Button variant="secondary" onClick={handleCancel}>

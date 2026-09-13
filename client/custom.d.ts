@@ -54,6 +54,20 @@ interface WindowStatesInfo {
   boardOpen: boolean;
 }
 
+interface ElectronLocalAsset {
+  assetId: string;
+  workspaceId?: string;
+  kind: "image" | "video" | "audio" | "pdf";
+  fileName: string;
+  contentType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+}
+
 interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
@@ -149,6 +163,34 @@ interface ElectronAPI {
   syncMediaCache: (
     mediaUrls: string[],
   ) => Promise<{ downloaded: number; cleaned: number }>;
+
+  // App-managed local assets
+  importLocalAsset: (
+    file: File,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) => Promise<ElectronLocalAsset>;
+  importLocalAssetBytes: (
+    data: ArrayBuffer,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) => Promise<ElectronLocalAsset>;
+  getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
+  deleteLocalAsset: (assetId: string) => Promise<boolean>;
 
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

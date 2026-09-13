@@ -8,15 +8,15 @@ import {
   THUMBNAIL_STORE_NAME,
   type StoredLocalImageThumbnail,
 } from "./localImageAssets";
+import {
+  getVideoContentType,
+  isSupportedVideoFile,
+} from "./mediaFileTypes";
 
 const LOCAL_VIDEO_FILE_URL_PREFIX = "local-video-file://";
 const MAX_BROWSER_LOCAL_VIDEO_BYTES = 500 * 1024 * 1024;
-const ALLOWED_VIDEO_TYPES = new Set([
-  "video/mp4",
-  "video/quicktime",
-  "video/webm",
-]);
 const LOCAL_VIDEO_FILE_CHANGE_EVENT = "worshipsync-local-video-file-change";
+const VIDEO_METADATA_TIMEOUT_MS = 10_000;
 const VIDEO_THUMBNAIL_TIMEOUT_MS = 8_000;
 
 export type StoredLocalVideoFile = {
@@ -48,8 +48,8 @@ export const parseLocalVideoFileAssetId = (value: string | undefined) => {
 };
 
 export const validateLocalVideoFile = (file: File): string | null => {
-  if (!ALLOWED_VIDEO_TYPES.has(file.type.toLowerCase())) {
-    return "Choose an MP4, MOV, or WebM video.";
+  if (!isSupportedVideoFile(file)) {
+    return "Choose a supported video file, such as MP4, MOV, WebM, MKV, or AVI.";
   }
   if (file.size <= 0) return "Choose a video that is not empty.";
   if (!window.electronAPI && file.size > MAX_BROWSER_LOCAL_VIDEO_BYTES) {
@@ -58,36 +58,56 @@ export const validateLocalVideoFile = (file: File): string | null => {
   return null;
 };
 
+export const getLocalVideoContentType = (file: File) =>
+  getVideoContentType(file);
+
 export const readVideoMetadata = (file: File) =>
   new Promise<{ width: number; height: number; duration: number }>(
     (resolve, reject) => {
       const url = URL.createObjectURL(file);
       const video = document.createElement("video");
+      let settled = false;
       const cleanup = () => {
         video.removeAttribute("src");
         video.load();
         URL.revokeObjectURL(url);
       };
-      video.preload = "metadata";
-      video.onloadedmetadata = () => {
+      let timeoutId = 0;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        video.onloadeddata = null;
+        video.onerror = null;
+        cleanup();
+        if (error) {
+          reject(error);
+        }
+      };
+      timeoutId = window.setTimeout(() => {
+        finish(new Error("The selected video could not be read in time."));
+      }, VIDEO_METADATA_TIMEOUT_MS);
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.onloadeddata = () => {
         const width = video.videoWidth;
         const height = video.videoHeight;
         const duration = video.duration;
-        cleanup();
         if (
           width > 0 &&
           height > 0 &&
           Number.isFinite(duration) &&
           duration > 0
         ) {
+          finish();
           resolve({ width, height, duration });
           return;
         }
-        reject(new Error("The selected video has invalid metadata."));
+        finish(new Error("The selected video has invalid metadata."));
       };
       video.onerror = () => {
-        cleanup();
-        reject(new Error("The selected video could not be read."));
+        finish(new Error("The selected video could not be read."));
       };
       video.src = url;
     },
@@ -177,7 +197,7 @@ const captureVideoThumbnailFromSource = async ({
     return await withTimeout(
       (async () => {
         const loaded = waitForVideoEvent(video, "loadeddata");
-        video.src = objectUrl || source;
+        video.src = typeof source === "string" ? source : objectUrl;
         if (video.error) {
           throw new Error("The selected video could not be read.");
         }
@@ -256,22 +276,39 @@ export const subscribeLocalVideoFileChanges = (
     window.removeEventListener(LOCAL_VIDEO_FILE_CHANGE_EVENT, onChange);
 };
 
-export const saveLocalVideoFile = async (video: StoredLocalVideoFile) => {
+export const saveLocalVideoFile = async (
+  video: StoredLocalVideoFile,
+  options: { importBytes?: boolean } = {},
+) => {
   const thumbnail = await createLocalVideoFileThumbnail(video).catch(
     () => undefined,
   );
+  const file = video.blob;
+  const shouldImportBytes =
+    options.importBytes && Boolean(window.electronAPI?.importLocalAssetBytes);
+  const shouldImportFromPath =
+    !options.importBytes && Boolean(window.electronAPI?.importLocalAsset);
   const useElectronStore =
-    Boolean(window.electronAPI?.importLocalAsset) && video.blob instanceof File;
+    file instanceof File &&
+    (shouldImportBytes || shouldImportFromPath);
   if (useElectronStore) {
-    await window.electronAPI!.importLocalAsset(video.blob as File, {
+    const metadata = {
       assetId: video.id,
       workspaceId: video.workspaceId,
-      kind: "video",
+      kind: "video" as const,
       fileName: video.fileName,
       contentType: video.contentType,
       width: video.width,
       height: video.height,
-    });
+    };
+    if (shouldImportBytes) {
+      await window.electronAPI!.importLocalAssetBytes(
+        await file.arrayBuffer(),
+        metadata,
+      );
+    } else {
+      await window.electronAPI!.importLocalAsset(file, metadata);
+    }
   }
   const storedVideo = useElectronStore ? { ...video, blob: undefined } : video;
   const db = await openLocalAssetDb();
