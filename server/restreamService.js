@@ -26,6 +26,11 @@ const createId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 
+const restreamMessageDocumentId = ({ database, sessionId, fingerprint }) =>
+  `restream_msg_${hashValue(
+    `${database}\u0000${sessionId}\u0000${fingerprint}`,
+  )}`;
+
 const clampRoute = (value) => {
   const raw = String(value || "").trim();
   if (!raw.startsWith("/")) return "/boards/controller";
@@ -477,6 +482,13 @@ export const createRestreamService = ({
     map.set(id, merge ? { ...current, ...data } : { ...data });
   };
 
+  const createMessageDocFallback = async (id, data) => {
+    const existing = await getDoc(RESTREAM_MESSAGE_COLLECTION, id);
+    if (existing) return false;
+    await setDoc(RESTREAM_MESSAGE_COLLECTION, id, data);
+    return true;
+  };
+
   const deleteDoc = async (collectionName, id) => {
     const db = getFirestore?.();
     if (db) {
@@ -516,14 +528,17 @@ export const createRestreamService = ({
     map.delete(id);
   };
 
-  const queryMessages = async ({ database, sessionId }) => {
+  const queryMessages = async ({ database, sessionId, limit }) => {
     const db = getFirestore?.();
     if (db) {
-      const snapshot = await db
+      let query = db
         .collection(RESTREAM_MESSAGE_COLLECTION)
         .where("database", "==", database)
-        .where("sessionId", "==", sessionId)
-        .get();
+        .where("sessionId", "==", sessionId);
+      if (Number.isFinite(limit)) {
+        query = query.orderBy("postedAt", "desc").limit(limit);
+      }
+      const snapshot = await query.get();
       return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     }
 
@@ -677,28 +692,42 @@ export const createRestreamService = ({
     });
   };
 
+  const buildRestreamSession = ({ churchId, database, sessionId }) => ({
+    churchId,
+    database,
+    sessionId: sessionId || createId("restream_session"),
+    startedAt: nowMs(),
+    messageCount: 0,
+    connectionState: "disconnected",
+    lastError: "",
+    platformSummary: [],
+    streamTitle: "",
+    connectionIssues: [],
+    activeConnectionCount: 0,
+    totalConnectionCount: 0,
+    accountLabel: "",
+    enabled: false,
+    connected: false,
+  });
+
   const getCurrentSession = async ({ churchId, database }) => {
     const existing = await getDoc(RESTREAM_SESSION_COLLECTION, database);
     if (existing) return existing;
 
-    const startedAt = nowMs();
-    const session = {
-      churchId,
-      database,
-      sessionId: createId("restream_session"),
-      startedAt,
-      messageCount: 0,
-      connectionState: "disconnected",
-      lastError: "",
-      platformSummary: [],
-      streamTitle: "",
-      connectionIssues: [],
-      activeConnectionCount: 0,
-      totalConnectionCount: 0,
-      accountLabel: "",
-      enabled: false,
-      connected: false,
-    };
+    const db = getFirestore?.();
+    const session = buildRestreamSession({ churchId, database });
+    if (db) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(RESTREAM_SESSION_COLLECTION).doc(database);
+        const snapshot = await transaction.get(ref);
+        if (snapshot.exists) {
+          return { id: snapshot.id, ...snapshot.data() };
+        }
+        transaction.set(ref, session);
+        return { id: database, ...session };
+      });
+    }
+
     await setDoc(RESTREAM_SESSION_COLLECTION, database, session);
     return { id: database, ...session };
   };
@@ -706,6 +735,97 @@ export const createRestreamService = ({
   const updateSession = async (database, patch) => {
     await setDoc(RESTREAM_SESSION_COLLECTION, database, patch, { merge: true });
     return getDoc(RESTREAM_SESSION_COLLECTION, database);
+  };
+
+  const incrementSessionMessageCountFallback = async (database, patch) => {
+    const current = await getDoc(RESTREAM_SESSION_COLLECTION, database);
+    const next = {
+      ...(current || { id: database }),
+      ...patch,
+      messageCount: Number(current?.messageCount || 0) + 1,
+    };
+    await setDoc(RESTREAM_SESSION_COLLECTION, database, {
+      ...patch,
+      messageCount: next.messageCount,
+    });
+    return next;
+  };
+
+  const persistMessageAndIncrementSession = async ({
+    churchId,
+    database,
+    sessionId,
+    messageId,
+    message,
+  }) => {
+    const messageData = {
+      ...message,
+      id: messageId,
+      churchId,
+      database,
+      sessionId,
+    };
+    const sessionPatch = {
+      lastEventAt: message.postedAt,
+      connected: true,
+      enabled: true,
+    };
+    const db = getFirestore?.();
+
+    if (db) {
+      return db.runTransaction(async (transaction) => {
+        const messageRef = db
+          .collection(RESTREAM_MESSAGE_COLLECTION)
+          .doc(messageId);
+        const sessionRef = db
+          .collection(RESTREAM_SESSION_COLLECTION)
+          .doc(database);
+        const messageSnapshot = await transaction.get(messageRef);
+        if (messageSnapshot.exists) {
+          return { created: false, messageId };
+        }
+
+        const sessionSnapshot = await transaction.get(sessionRef);
+        const sessionExists = sessionSnapshot.exists;
+        const sessionBase = sessionExists
+          ? sessionSnapshot.data()
+          : buildRestreamSession({ churchId, database, sessionId });
+        const currentSessionId = String(sessionBase.sessionId || "").trim();
+        if (currentSessionId && currentSessionId !== sessionId) {
+          return { created: false, messageId, stale: true };
+        }
+
+        const nextMessageCount =
+          Number(sessionBase.messageCount || 0) + 1;
+        const nextSession = {
+          id: database,
+          ...sessionBase,
+          ...sessionPatch,
+          messageCount: nextMessageCount,
+        };
+        transaction.set(messageRef, messageData);
+        transaction.set(
+          sessionRef,
+          {
+            ...(sessionExists ? {} : sessionBase),
+            ...(currentSessionId ? {} : { sessionId }),
+            ...sessionPatch,
+            messageCount: nextMessageCount,
+          },
+          { merge: true },
+        );
+        return { created: true, messageId, nextSession };
+      });
+    }
+
+    const created = await createMessageDocFallback(messageId, messageData);
+    if (!created) return { created: false, messageId };
+
+    const nextSession = await incrementSessionMessageCountFallback(
+      database,
+      sessionPatch,
+    );
+    return { created: true, messageId, nextSession };
   };
 
   const getStatusForChurch = async ({ churchId, database }) => {
@@ -769,6 +889,7 @@ export const createRestreamService = ({
     const messages = await queryMessages({
       database,
       sessionId: session.sessionId,
+      limit: MAX_MESSAGE_QUERY,
     });
     return messages
       .sort((a, b) => {
@@ -1076,37 +1197,44 @@ export const createRestreamService = ({
   };
 
   const upsertMessage = async ({ churchId, database, sessionId, message }) => {
-    await setDoc(RESTREAM_MESSAGE_COLLECTION, message.id, {
-      ...message,
+    const messageId = restreamMessageDocumentId({
+      database,
+      sessionId,
+      fingerprint: message.fingerprint,
+    });
+    const result = await persistMessageAndIncrementSession({
       churchId,
       database,
       sessionId,
+      messageId,
+      message,
     });
 
-    const currentSession = await getDoc(RESTREAM_SESSION_COLLECTION, database);
-    const nextMessageCount = Number(currentSession?.messageCount || 0) + 1;
-    await syncSessionSnapshot({
-      churchId,
-      database,
-      patch: {
-        lastEventAt: message.postedAt,
-        messageCount: nextMessageCount,
-        connected: true,
-        enabled: true,
-      },
-      emitType: "message-created",
-      emitPayload: { messageId: message.id },
-    });
+    // A duplicate event can race another receiver process after the bounded
+    // fingerprint lookup. Only the creator may advance the session count or
+    // sync the integration snapshot. Every receiver still emits a local
+    // refresh signal because SSE clients are scoped to this server process.
+    if (!result.created) {
+      if (result.stale) return false;
+      // Every receiver instance needs a local refresh signal, even when its
+      // create lost a cross-process race to another instance.
+      emitSse(churchId, "message-created", { messageId });
+      return false;
+    }
+
+    const nextSession = result.nextSession;
+    emitSse(churchId, "message-created", { messageId });
     await updateIntegrationFromSession(churchId, {
       enabled: true,
       connected: true,
-      accountLabel: currentSession?.accountLabel || "",
+      accountLabel: nextSession?.accountLabel || "",
       lastError: "",
       lastEventAt: message.postedAt,
-      startedAt: currentSession?.startedAt,
-      platformSummary: currentSession?.platformSummary || [],
-      streamTitle: currentSession?.streamTitle || "",
+      startedAt: nextSession?.startedAt,
+      platformSummary: nextSession?.platformSummary || [],
+      streamTitle: nextSession?.streamTitle || "",
     });
+    return true;
   };
 
   const createReceiverMessage = ({ action, connectionInfo }) => {
@@ -1224,9 +1352,30 @@ export const createRestreamService = ({
     };
   };
 
-  const receiverHasFingerprint = async (database, sessionId, fingerprint) => {
+  const findMessageIdByFingerprint = async (
+    database,
+    sessionId,
+    fingerprint,
+  ) => {
+    const db = getFirestore?.();
+    if (db) {
+      const snapshot = await db
+        .collection(RESTREAM_MESSAGE_COLLECTION)
+        .where("database", "==", database)
+        .where("sessionId", "==", sessionId)
+        .where("fingerprint", "==", fingerprint)
+        .limit(1)
+        .get();
+      return snapshot.docs[0]?.id || "";
+    }
+
+    // The RTDB fallback has an existing per-session message index. Keep its
+    // behavior unchanged when Firestore is not configured.
     const messages = await queryMessages({ database, sessionId });
-    return messages.some((message) => message.fingerprint === fingerprint);
+    return (
+      messages.find((message) => message.fingerprint === fingerprint)?.id ||
+      ""
+    );
   };
 
   const ensureReceiverOutboundMaps = (receiver) => {
@@ -1395,13 +1544,15 @@ export const createRestreamService = ({
       if (!modMessage) {
         return;
       }
-      if (
-        await receiverHasFingerprint(
-          receiver.database,
-          currentSession.sessionId,
-          modMessage.fingerprint,
-        )
-      ) {
+      const existingModeratorMessageId = await findMessageIdByFingerprint(
+        receiver.database,
+        currentSession.sessionId,
+        modMessage.fingerprint,
+      );
+      if (existingModeratorMessageId) {
+        emitSse(receiver.churchId, "message-created", {
+          messageId: existingModeratorMessageId,
+        });
         return;
       }
       await upsertMessage({
@@ -1438,13 +1589,15 @@ export const createRestreamService = ({
     if (!message) {
       return;
     }
-    if (
-      await receiverHasFingerprint(
-        receiver.database,
-        currentSession.sessionId,
-        message.fingerprint,
-      )
-    ) {
+    const existingMessageId = await findMessageIdByFingerprint(
+      receiver.database,
+      currentSession.sessionId,
+      message.fingerprint,
+    );
+    if (existingMessageId) {
+      emitSse(receiver.churchId, "message-created", {
+        messageId: existingMessageId,
+      });
       return;
     }
 

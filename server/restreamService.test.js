@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import axios from "axios";
 import {
   createRestreamService,
@@ -8,6 +9,12 @@ import {
 
 const createFirestoreMock = () => {
   const collections = new Map();
+  let transactionChain = Promise.resolve();
+  let transactionCommitError = null;
+  const metrics = {
+    documentGets: 0,
+    queryGets: [],
+  };
 
   const getCollectionMap = (name) => {
     if (!collections.has(name)) {
@@ -24,11 +31,17 @@ const createFirestoreMock = () => {
     data: () => (value === undefined ? undefined : clone(value)),
   });
 
-  const buildQuery = (name, filters = []) => ({
+  const buildQuery = (
+    name,
+    filters = [],
+    resultLimit = null,
+    ordering = null,
+  ) => ({
     doc(id) {
       const collection = getCollectionMap(name);
       return {
         async get() {
+          metrics.documentGets += 1;
           return buildDocSnapshot(id, collection.get(id));
         },
         async set(data, options = {}) {
@@ -38,6 +51,22 @@ const createFirestoreMock = () => {
             options.merge ? { ...current, ...clone(data) } : clone(data),
           );
         },
+        async update(data) {
+          if (!collection.has(id)) {
+            const error = new Error("Not found");
+            error.code = 5;
+            throw error;
+          }
+          collection.set(id, { ...collection.get(id), ...clone(data) });
+        },
+        async create(data) {
+          if (collection.has(id)) {
+            const error = new Error("Already exists");
+            error.code = 6;
+            throw error;
+          }
+          collection.set(id, clone(data));
+        },
         async delete() {
           collection.delete(id);
         },
@@ -45,21 +74,85 @@ const createFirestoreMock = () => {
     },
     where(field, operator, value) {
       assert.equal(operator, "==");
-      return buildQuery(name, [...filters, { field, value }]);
+      return buildQuery(
+        name,
+        [...filters, { field, value }],
+        resultLimit,
+        ordering,
+      );
+    },
+    limit(limitValue) {
+      return buildQuery(name, filters, limitValue, ordering);
+    },
+    orderBy(field, direction = "asc") {
+      assert.ok(["asc", "desc"].includes(direction));
+      return buildQuery(name, filters, resultLimit, { field, direction });
     },
     async get() {
-      const rows = Array.from(getCollectionMap(name).entries())
+      const entries = Array.from(getCollectionMap(name).entries())
         .filter(([, doc]) =>
           filters.every(({ field, value }) => doc?.[field] === value),
-        )
-        .map(([id, doc]) => buildDocSnapshot(id, doc));
-      return { docs: rows };
+        );
+      if (ordering) {
+        entries.sort(([leftId, left], [rightId, right]) => {
+          const leftValue = left?.[ordering.field] ?? 0;
+          const rightValue = right?.[ordering.field] ?? 0;
+          if (leftValue === rightValue) {
+            return String(leftId).localeCompare(String(rightId));
+          }
+          const comparison = leftValue < rightValue ? -1 : 1;
+          return ordering.direction === "desc" ? -comparison : comparison;
+        });
+      }
+      const allRows = entries.map(([id, doc]) => buildDocSnapshot(id, doc));
+      const rows =
+        resultLimit === null ? allRows : allRows.slice(0, resultLimit);
+      metrics.queryGets.push({
+        name,
+        filters,
+        limit: resultLimit,
+        orderBy: ordering,
+        returned: rows.length,
+      });
+      return { docs: rows, empty: rows.length === 0 };
     },
   });
 
-  return {
+  const firestore = {
     collection(name) {
       return buildQuery(name);
+    },
+    runTransaction(callback) {
+      const run = transactionChain.then(async () => {
+        const writes = [];
+        const transaction = {
+          get(ref) {
+            return ref.get();
+          },
+          set(ref, data, options = {}) {
+            writes.push({ ref, data, options });
+          },
+          update(ref, data) {
+            writes.push({ ref, data });
+          },
+        };
+        const result = await callback(transaction);
+        if (transactionCommitError) {
+          const error = transactionCommitError;
+          transactionCommitError = null;
+          throw error;
+        }
+        for (const write of writes) {
+          if (write.options) {
+            await write.ref.set(write.data, write.options);
+          } else {
+            await write.ref.update(write.data);
+          }
+        }
+        return result;
+      });
+      transactionChain = run.catch(() => undefined);
+      return run;
     },
     seed(collectionName, id, value) {
       getCollectionMap(collectionName).set(id, clone(value));
@@ -68,7 +161,12 @@ const createFirestoreMock = () => {
       const value = getCollectionMap(collectionName).get(id);
       return value ? clone(value) : undefined;
     },
+    failNextTransactionCommit(error = new Error("Transaction failed")) {
+      transactionCommitError = error;
+    },
+    metrics,
   };
+  return firestore;
 };
 
 const createRealtimeDbMock = () => {
@@ -162,8 +260,12 @@ const createRealtimeDbMock = () => {
   };
 };
 
-const createServiceHarness = ({ useFirestore = true, realtimeDb } = {}) => {
-  const firestore = createFirestoreMock();
+const createServiceHarness = ({
+  useFirestore = true,
+  realtimeDb,
+  firestore: providedFirestore,
+} = {}) => {
+  const firestore = providedFirestore || createFirestoreMock();
   const database = realtimeDb || createRealtimeDbMock();
   const boardDisplayUpdates = [];
   const service = createRestreamService({
@@ -175,6 +277,16 @@ const createServiceHarness = ({ useFirestore = true, realtimeDb } = {}) => {
   });
 
   return { firestore, realtimeDb: database, boardDisplayUpdates, service };
+};
+
+const waitFor = async (predicate, timeoutMs = 1000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for asynchronous test work");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 };
 
 test("normalizeRestreamPostedAtMs converts Unix seconds to ms", () => {
@@ -206,6 +318,28 @@ test("restream service creates a default disconnected session status", async () 
   assert.equal(result.session.enabled, false);
   assert.equal(result.session.connectionState, "disconnected");
   assert.equal(result.session.messageCount, 0);
+});
+
+test("restream service initializes one shared session across instances", async () => {
+  const firestore = createFirestoreMock();
+  firestore.seed("restreamTokens", "church-1", {
+    churchId: "church-1",
+    database: "db-1",
+    accountLabel: "Main account",
+  });
+  const first = createServiceHarness({ firestore });
+  const second = createServiceHarness({ firestore });
+
+  const [firstStatus, secondStatus] = await Promise.all([
+    first.service.getStatusForChurch({ churchId: "church-1", database: "db-1" }),
+    second.service.getStatusForChurch({ churchId: "church-1", database: "db-1" }),
+  ]);
+  const session = firestore.read("restreamSessions", "db-1");
+
+  assert.ok(session?.sessionId);
+  assert.equal(firstStatus.session.sessionId, session.sessionId);
+  assert.equal(secondStatus.session.sessionId, session.sessionId);
+  assert.equal(session.messageCount, 0);
 });
 
 test("restream service lists current-session messages newest first", async () => {
@@ -248,6 +382,51 @@ test("restream service lists current-session messages newest first", async () =>
     messages.map((message) => message.id),
     ["m2", "m1"],
   );
+  const messageQuery = firestore.metrics.queryGets.at(-1);
+  assert.equal(messageQuery.limit, 500);
+  assert.deepEqual(messageQuery.orderBy, {
+    field: "postedAt",
+    direction: "desc",
+  });
+});
+
+test("restream service limits current-session Firestore reads", async () => {
+  const { firestore, service } = createServiceHarness();
+  firestore.seed("restreamSessions", "db-1", {
+    churchId: "church-1",
+    database: "db-1",
+    sessionId: "session-large",
+    startedAt: 100,
+    messageCount: 501,
+  });
+  for (let index = 0; index < 501; index += 1) {
+    firestore.seed("restreamMessages", `message-${index}`, {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-large",
+      author: "Viewer",
+      text: `Message ${index}`,
+      postedAt: index,
+      isHighlighted: false,
+      hidden: false,
+    });
+  }
+
+  const messages = await service.listCurrentSessionMessages({
+    churchId: "church-1",
+    database: "db-1",
+  });
+  const messageQuery = firestore.metrics.queryGets.at(-1);
+
+  assert.equal(messages.length, 500);
+  assert.equal(messages[0].postedAt, 500);
+  assert.equal(messages.at(-1).postedAt, 1);
+  assert.equal(messageQuery.limit, 500);
+  assert.equal(messageQuery.returned, 500);
+  assert.deepEqual(messageQuery.orderBy, {
+    field: "postedAt",
+    direction: "desc",
+  });
 });
 
 test("restream service highlights, hides, and filters highlighted messages", async () => {
@@ -1127,7 +1306,7 @@ test("restream service stores YouTube messages from the documented chat action e
         },
       }),
     });
-    sockets[0].emit("message", {
+    const viewerEvent = {
       data: JSON.stringify({
         action: "event",
         timestamp: 1_778_629_519,
@@ -1152,9 +1331,31 @@ test("restream service stores YouTube messages from the documented chat action e
           },
         },
       }),
-    });
+    };
+    const queryCountBeforeDedupe = firestore.metrics.queryGets.length;
+    sockets[0].emit("message", viewerEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Restream may replay an event after a reconnect. The second delivery
+    // must use the bounded lookup and leave both the document count and the
+    // session count unchanged.
+    sockets[0].emit("message", viewerEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const dedupeQueries = firestore.metrics.queryGets.slice(
+      queryCountBeforeDedupe,
+    );
+    assert.equal(dedupeQueries.length, 2);
+    assert.equal(
+      dedupeQueries.every(
+        (query) =>
+          query.name === "restreamMessages" && query.limit === 1,
+      ),
+      true,
+    );
+    assert.equal(dedupeQueries[0].returned, 0);
+    assert.equal(dedupeQueries[1].returned, 1);
 
     const status = await service.getStatusForChurch({
       churchId: "church-1",
@@ -1177,6 +1378,341 @@ test("restream service stores YouTube messages from the documented chat action e
     globalThis.WebSocket = originalWebSocket;
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service deduplicates the same event across receiver instances", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+
+  try {
+    const sharedFirestore = createFirestoreMock();
+    sharedFirestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    sharedFirestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-shared",
+      startedAt: 100,
+      messageCount: 0,
+      connected: false,
+    });
+
+    const first = createServiceHarness({ firestore: sharedFirestore });
+    const second = createServiceHarness({ firestore: sharedFirestore });
+    await Promise.all([
+      first.service.ensureReceiver("church-1"),
+      second.service.ensureReceiver("church-1"),
+    ]);
+    const firstSseEvents = [];
+    const secondSseEvents = [];
+    first.service.addSseClient("church-1", {
+      write: (event) => firstSseEvents.push(event),
+    });
+    second.service.addSseClient("church-1", {
+      write: (event) => secondSseEvents.push(event),
+    });
+
+    const event = {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_519,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: "event-shared",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: "youtube-message-shared",
+            text: "One shared event",
+          },
+        },
+      }),
+    };
+    sockets.forEach((socket) => socket.emit("message", event));
+    await waitFor(
+      () =>
+        sharedFirestore.read("restreamSessions", "db-1")?.messageCount === 1,
+    );
+
+    const messages = await first.service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    const session = sharedFirestore.read("restreamSessions", "db-1");
+    const dedupeQueries = sharedFirestore.metrics.queryGets.filter((query) =>
+      query.filters.some((filter) => filter.field === "fingerprint"),
+    );
+
+    assert.equal(sockets.length, 2);
+    assert.equal(messages.length, 1);
+    assert.equal(session.messageCount, 1);
+    assert.equal(dedupeQueries.length, 2);
+    assert.equal(dedupeQueries.every((query) => query.limit === 1), true);
+    assert.equal(
+      firstSseEvents.some((event) => event.includes('"message-created"')),
+      true,
+    );
+    assert.equal(
+      secondSseEvents.some((event) => event.includes('"message-created"')),
+      true,
+    );
+
+    // Distinct messages arriving at the same time must both advance the
+    // shared count. This exercises the transaction around the counter rather
+    // than only the idempotent document create.
+    const secondEvent = {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_520,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: "event-second",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: "youtube-message-second",
+            text: "A second event",
+          },
+        },
+      }),
+    };
+    const thirdEvent = {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_521,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: "event-third",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: "youtube-message-third",
+            text: "A third event",
+          },
+        },
+      }),
+    };
+    sockets[0].emit("message", secondEvent);
+    sockets[1].emit("message", thirdEvent);
+    await waitFor(
+      () =>
+        sharedFirestore.read("restreamSessions", "db-1")?.messageCount === 3,
+    );
+
+    const allMessages = await first.service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    const finalSession = sharedFirestore.read("restreamSessions", "db-1");
+    assert.equal(allMessages.length, 3);
+    assert.equal(finalSession.messageCount, 3);
+
+    // Message persistence and the counter must commit together. A failed
+    // transaction must leave no message behind that would cause a later
+    // replay to skip the count increment.
+    const retryEvent = {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_522,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: "event-retry",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: "youtube-message-retry",
+            text: "A retryable event",
+          },
+        },
+      }),
+    };
+    sharedFirestore.failNextTransactionCommit(
+      new Error("temporary Firestore failure"),
+    );
+    sockets[0].emit("message", retryEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(
+      (await first.service.listCurrentSessionMessages({
+        churchId: "church-1",
+        database: "db-1",
+      })).length,
+      3,
+    );
+    assert.equal(sharedFirestore.read("restreamSessions", "db-1").messageCount, 3);
+
+    sockets[0].emit("message", retryEvent);
+    await waitFor(
+      () =>
+        sharedFirestore.read("restreamSessions", "db-1")?.messageCount === 4,
+    );
+    assert.equal(
+      (await first.service.listCurrentSessionMessages({
+        churchId: "church-1",
+        database: "db-1",
+      })).length,
+      4,
+    );
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("restream service deduplicates legacy messages with random document IDs", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+
+  try {
+    const { firestore, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-legacy",
+      startedAt: 100,
+      messageCount: 0,
+      connected: true,
+    });
+
+    const postedAt = 1_778_629_519_000;
+    const fingerprint = crypto
+      .createHash("sha256")
+      .update(
+        JSON.stringify({
+          connectionIdentifier: "conn-legacy",
+          eventIdentifier: "event-legacy",
+          postedAt,
+          text: "Legacy message",
+          author: "Evan",
+        }),
+      )
+      .digest("hex");
+    firestore.seed("restreamMessages", "legacy-random-id", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-legacy",
+      fingerprint,
+      author: "Evan",
+      text: "Legacy message",
+      postedAt,
+      isHighlighted: false,
+      hidden: false,
+    });
+
+    await service.ensureReceiver("church-1");
+    const sseEvents = [];
+    service.addSseClient("church-1", {
+      write: (event) => sseEvents.push(event),
+    });
+    const queryCountBeforeDedupe = firestore.metrics.queryGets.length;
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_519,
+        payload: {
+          connectionIdentifier: "conn-legacy",
+          eventIdentifier: "event-legacy",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: "youtube-message-legacy",
+            text: "Legacy message",
+          },
+        },
+      }),
+    });
+
+    await waitFor(
+      () => firestore.metrics.queryGets.length > queryCountBeforeDedupe,
+    );
+
+    const messages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    const dedupeQueries = firestore.metrics
+      .queryGets.slice(queryCountBeforeDedupe)
+      .filter((query) =>
+        query.filters.some((filter) => filter.field === "fingerprint"),
+      );
+    const session = firestore.read("restreamSessions", "db-1");
+
+    assert.equal(sockets.length, 1);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].id, "legacy-random-id");
+    assert.equal(session.messageCount, 0);
+    assert.equal(dedupeQueries.length, 1);
+    assert.equal(dedupeQueries[0].limit, 1);
+    assert.equal(dedupeQueries[0].returned, 1);
+    assert.equal(
+      sseEvents.some((event) => event.includes('"message-created"')),
+      true,
+    );
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
   }
 });
 

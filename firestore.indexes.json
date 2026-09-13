@@ -65,6 +65,24 @@
         { "fieldPath": "dayKey", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "database", "order": "ASCENDING" },
+        { "fieldPath": "sessionId", "order": "ASCENDING" },
+        { "fieldPath": "fingerprint", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "database", "order": "ASCENDING" },
+        { "fieldPath": "sessionId", "order": "ASCENDING" },
+        { "fieldPath": "postedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
