@@ -8,6 +8,8 @@ import {
   controllerProfilesSlice,
   setControllerProfilesFromRemote,
 } from "../../store/controllerProfilesSlice";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import type { AccessType } from "../../context/globalInfo";
 
 /**
  * The route guard's one hard rule: it never renders nothing.
@@ -46,6 +48,10 @@ jest.mock("../../components/ControllerPageShell/ControllerPageShell", () => ({
     <div data-testid="controller-shell">{children}</div>
   ),
 }));
+jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
+  __esModule: true,
+  default: () => <div data-testid="lyrics-editor" />,
+}));
 
 const LOBBY = {
   id: "ctrl_lobby",
@@ -58,25 +64,40 @@ const LOBBY = {
   outlineScope: "ctrl_lobby",
 };
 
-const renderRoute = (profiles?: unknown[], path = "/aux-controller/ctrl_lobby") => {
+const renderRoute = (
+  profiles?: unknown[],
+  path = "/aux-controller/ctrl_lobby",
+  access: AccessType = "full",
+) => {
   const store = configureStore({
     reducer: {
       controllerProfiles: controllerProfilesSlice.reducer,
       displayOutputs: () => ({ list: [], isLoaded: true }),
       presentation: () => ({ outputs: {} }),
       undoable: () => ({
-        present: { preferences: { scrollbarWidth: "auto" }, itemLists: {} },
+        present: {
+          preferences: { scrollbarWidth: "auto" },
+          itemLists: {},
+          item: { isEditMode: false },
+        },
       }),
     },
   });
   if (profiles) store.dispatch(setControllerProfilesFromRemote(profiles));
   render(
     <Provider store={store}>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/aux-controller/:profileId/*" element={<AuxController />} />
-        </Routes>
-      </MemoryRouter>
+      <GlobalInfoContext.Provider
+        value={{ access, user: "op", churchName: "Test" } as never}
+      >
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route
+              path="/aux-controller/:profileId/*"
+              element={<AuxController />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>
     </Provider>,
   );
 };
@@ -123,6 +144,16 @@ describe("the auxiliary controller route", () => {
     renderRoute([LOBBY]);
     expect(screen.getByTestId("controller-shell")).toBeInTheDocument();
     expect(screen.getByTestId("service-items")).toBeInTheDocument();
+  });
+
+  it("mounts the lyrics editor like the main controller", () => {
+    renderRoute([LOBBY]);
+    expect(screen.getByTestId("lyrics-editor")).toBeInTheDocument();
+  });
+
+  it("keeps the lyrics editor off view-only access", () => {
+    renderRoute([LOBBY], "/aux-controller/ctrl_lobby", "view");
+    expect(screen.queryByTestId("lyrics-editor")).not.toBeInTheDocument();
   });
 
   it("drops the warning once the real profile arrives", () => {

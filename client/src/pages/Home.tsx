@@ -336,28 +336,24 @@ const Welcome = () => {
       findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID);
     const overlay =
       findControllerProfile(controllerProfiles, OVERLAY_CONTROLLER_ID);
-    return [
-      {
+    // Match aux controllers and the Controllers admin toggle: retired built-ins
+    // stay in the registry but must not appear in home navigation.
+    const links: CardLink[] = [];
+    if (presentation?.enabled) {
+      links.push({
         ...primaryControllerTemplates[0],
-        title: presentation?.name || "Presentation",
-        description: getControllerProfileDescription(
-          presentation ?? {
-            type: "presentation",
-            description: "",
-          },
-        ),
-      },
-      {
+        title: presentation.name || "Presentation",
+        description: getControllerProfileDescription(presentation),
+      });
+    }
+    if (overlay?.enabled) {
+      links.push({
         ...primaryControllerTemplates[1],
-        title: overlay?.name || "Overlays",
-        description: getControllerProfileDescription(
-          overlay ?? {
-            type: "overlay",
-            description: "",
-          },
-        ),
-      },
-    ];
+        title: overlay.name || "Overlays",
+        description: getControllerProfileDescription(overlay),
+      });
+    }
+    return links;
   }, [controllerProfiles]);
   const visiblePrimaryControllers = isMemberAccess
     ? []

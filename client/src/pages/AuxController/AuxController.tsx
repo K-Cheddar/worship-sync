@@ -23,6 +23,7 @@ import QuickLinks from "../Controller/QuickLinks";
 import Displays from "../Controller/Displays";
 import Media from "../../containers/Media/Media";
 import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
+import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -105,6 +106,7 @@ const AuxControllerBody = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className="z-10 mr-2 h-1/4 lg:hidden"
         svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}

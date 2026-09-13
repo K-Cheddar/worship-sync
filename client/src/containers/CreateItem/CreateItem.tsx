@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import {
   FileQuestion,
@@ -38,7 +38,7 @@ import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
-import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import SendTargets from "../../components/SendTargets/SendTargets";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
@@ -75,35 +75,11 @@ import {
   lineTabsListShellClassName,
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
-
-type ItemTypesType = {
-  type: ItemType;
-  label: string;
-  access?: AccessType[];
-};
-
-const types: ItemTypesType[] = [
-  {
-    type: "song",
-    label: "Song",
-    access: ["full", "music"],
-  },
-  {
-    type: "bible",
-    label: "Bible",
-    access: ["full"],
-  },
-  {
-    type: "free",
-    label: "Custom Item",
-    access: ["full", "music"],
-  },
-  {
-    type: "timer",
-    label: "Timer",
-    access: ["full"],
-  },
-];
+import {
+  getCreateItemTypeOptions,
+  getDefaultCreateItemType,
+  isUnstartedCreateItemDraft,
+} from "./createItemTypeDefaults";
 
 const buildCreateItemOverrideState = (
   name: string,
@@ -209,8 +185,10 @@ const CreateItem = ({
 
   const itemTypes = useMemo(
     () =>
-      types.filter((itemType) => access && itemType.access?.includes(access)),
-    [access]
+      getCreateItemTypeOptions(createControllerProfile.type).filter(
+        (itemType) => access && itemType.access?.includes(access),
+      ),
+    [access, createControllerProfile.type],
   );
 
   const selectedTypeLabel = isEmbedded
@@ -274,7 +252,9 @@ const CreateItem = ({
 
     if (!overrideType || !overrideName) return;
 
-    const isValidType = types.some((itemType) => itemType.type === overrideType);
+    const isValidType = getCreateItemTypeOptions(
+      createControllerProfile.type,
+    ).some((itemType) => itemType.type === overrideType);
     if (!isValidType) return;
 
     dispatch(
@@ -283,7 +263,44 @@ const CreateItem = ({
       )
     );
     setSearchParams({}, { replace: true });
-  }, [dispatch, isEmbedded, searchParams, setSearchParams]);
+  }, [
+    createControllerProfile.type,
+    dispatch,
+    isEmbedded,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  // Aux defaults to Custom; main stays Song. Seed once per mount from the
+  // blank global draft so we do not fight an explicit type click or wipe work.
+  const hasAppliedControllerDefaultRef = useRef(false);
+  useEffect(() => {
+    if (isEmbedded) return;
+    if (searchParams.get("type") && searchParams.get("name")) return;
+    if (hasAppliedControllerDefaultRef.current) return;
+
+    hasAppliedControllerDefaultRef.current = true;
+
+    const preferredType = getDefaultCreateItemType(
+      createControllerProfile.type,
+    );
+    if (preferredType === selectedType) return;
+    if (!isUnstartedCreateItemDraft(createItemDraft)) return;
+
+    dispatch(
+      setCreateItem({
+        ...createItemDraft,
+        type: preferredType,
+      }),
+    );
+  }, [
+    createControllerProfile.type,
+    createItemDraft,
+    dispatch,
+    isEmbedded,
+    searchParams,
+    selectedType,
+  ]);
 
   const applyLrclibImport = async (candidate: NormalizedLrclibTrack) => {
     let resolvedCandidate = candidate;
