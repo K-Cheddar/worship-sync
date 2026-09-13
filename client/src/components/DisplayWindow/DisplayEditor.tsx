@@ -6,6 +6,7 @@ import cn from "classnames";
 
 import { Box } from "../../types";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
@@ -16,6 +17,7 @@ import {
   REFERENCE_WIDTH,
 } from "../../constants";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 type DraggableData = {
   node: HTMLElement;
@@ -106,7 +108,20 @@ const DisplayEditorComponent = ({
   const rawBackground = isVideoBg
     ? localVideoThumbnail.url || box.mediaInfo?.placeholderImage
     : box.background;
-  const background = useCachedMediaUrl(rawBackground);
+  // Match DisplayBox: local images resolve through the asset store. Passing
+  // local-image:// into img src is blocked by Electron CSP and left the editor
+  // stage black while slide thumbnails (DisplayBox) still painted.
+  const localImage = useLocalImageUrl(
+    isVideoBg ? undefined : box.mediaInfo?.localImage,
+  );
+  const cachedBackground = useCachedMediaUrl(
+    localImage.isLocalImage || isLocalMediaReferenceUrl(rawBackground)
+      ? undefined
+      : rawBackground,
+  );
+  const background = localImage.isLocalImage
+    ? localImage.url
+    : cachedBackground;
   const { showToast } = useToast();
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const TOAST_DEBOUNCE_MS = 2000;
@@ -505,7 +520,20 @@ const DisplayEditorComponent = ({
         right: !isBoxLocked && !disabled,
       }}
     >
-      {background && (
+      {localImage.isLocalImage && localImage.status === "unavailable" ? (
+        <div
+          className="display-box-background absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black px-6 text-center text-white"
+          role="status"
+          style={{ fontSize: 16 }}
+        >
+          <p className="text-sm font-semibold">Local image unavailable</p>
+          <p className="text-xs text-neutral-300">
+            {localImage.isOwner
+              ? "Open this item on the source device and choose Relink."
+              : `Available on ${box.mediaInfo?.localImage?.ownerLabel || "the source device"} only.`}
+          </p>
+        </div>
+      ) : background ? (
         <img
           className={cn(
             "display-box-background h-full w-full absolute",
@@ -520,7 +548,7 @@ const DisplayEditorComponent = ({
           src={background}
           alt={box.label}
         />
-      )}
+      ) : null}
       {typeof onChange === "function" && index !== 0 && (
         <>
           <textarea

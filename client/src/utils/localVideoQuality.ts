@@ -45,6 +45,13 @@ export const resolveLocalVideoCaptureProfile = (
   );
 };
 
+const MAX_CAPTURE_FRAME_RATE = 60;
+
+const lastAppliedProfileByTrack = new WeakMap<
+  MediaStreamTrack,
+  LocalVideoCaptureProfile["id"]
+>();
+
 /**
  * VP8 realtime bitrate based on delivered pixels rather than monitor labels.
  * About 0.09 bits per pixel per frame retains motion detail while bounded
@@ -56,8 +63,37 @@ export const getLocalVideoRealtimeBitrate = (
   frameRate: number,
 ) => {
   const pixels = Math.max(1, width) * Math.max(1, height);
-  const frames = Math.min(60, Math.max(1, frameRate));
+  const frames = Math.min(MAX_CAPTURE_FRAME_RATE, Math.max(1, frameRate));
   const calculated = pixels * frames * 0.09;
   const bounded = Math.min(45_000_000, Math.max(4_000_000, calculated));
   return Math.round(bounded / 250_000) * 250_000;
+};
+
+/**
+ * Ask a local capture track for the smallest profile that covers the rendered
+ * output. Skips when the track is already on that profile. Desktop and
+ * fixed-mode cameras may reject renegotiation; callers treat that as
+ * non-fatal and keep the existing mode.
+ */
+export const applyLocalVideoCaptureProfile = async (
+  stream: MediaStream,
+  targetWidth: number,
+  targetHeight: number,
+) => {
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack?.applyConstraints) return;
+  const profile = resolveLocalVideoCaptureProfile([
+    { width: targetWidth, height: targetHeight },
+  ]);
+  if (lastAppliedProfileByTrack.get(videoTrack) === profile.id) return;
+  try {
+    await videoTrack.applyConstraints({
+      width: { ideal: profile.width },
+      height: { ideal: profile.height },
+      frameRate: { ideal: MAX_CAPTURE_FRAME_RATE },
+    });
+    lastAppliedProfileByTrack.set(videoTrack, profile.id);
+  } catch {
+    // Keep the closest available mode rather than surfacing a toast.
+  }
 };

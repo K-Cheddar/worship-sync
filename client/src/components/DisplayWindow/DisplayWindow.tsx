@@ -283,11 +283,22 @@ type DisplayWindowProps = {
   /** Display output whose settings this surface renders with. */
   outputId?: string;
   /**
-   * Opt in to opening the local capture device. Only live output surfaces set
-   * this; previews render without it so they never compete with the projector
-   * for the same camera.
+   * Opt in to the high-quality local video path (direct capture and/or relay).
+   * Live outputs and same-machine operator previews set this so the booth
+   * mirrors audience motion instead of low-res still previews.
    */
   canCaptureLocalVideo?: boolean;
+  /**
+   * Open or share the capture in this window (editor + controller previews).
+   * Fullscreen projector/monitor/stream leave this off so USB cameras stay
+   * exclusively owned by the capture host and arrive via relay.
+   */
+  directLocalVideoCapture?: boolean;
+  /**
+   * When false, local video stays silent even if screen settings allow sound.
+   * Operator preview tiles mute so three cards do not play house audio.
+   */
+  playLocalVideoAudio?: boolean;
   participantOverlayInfo?: OverlayInfo;
   prevParticipantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
@@ -349,6 +360,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       outputId,
 
       canCaptureLocalVideo = false,
+      directLocalVideoCapture = false,
+      playLocalVideoAudio = true,
       participantOverlayInfo,
       prevParticipantOverlayInfo,
       stbOverlayInfo,
@@ -1235,14 +1248,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const localVideoFile = useLocalVideoFileUrl(
       videoBox?.mediaInfo?.localVideoFile,
     );
+    const isCloudPlaybackPending = Boolean(
+      videoBox?.mediaInfo?.localVideoFile?.preferCloudPlayback &&
+        !videoBox.mediaInfo.localVideoFile.cloudUrl,
+    );
     const isAwaitingLocalVideoUrl = Boolean(
       videoBox?.mediaInfo?.localVideoFile &&
-      localVideoFile.isLocalVideoFile &&
-      !localVideoFile.url,
+      (isCloudPlaybackPending ||
+        (localVideoFile.isLocalVideoFile && !localVideoFile.url)),
     );
-    const desiredVideoUrl = localVideoFile.isLocalVideoFile
-      ? localVideoFile.url
-      : rawDesiredVideoUrl;
+    let desiredVideoUrl = rawDesiredVideoUrl;
+    if (isCloudPlaybackPending) {
+      desiredVideoUrl = undefined;
+    } else if (localVideoFile.isLocalVideoFile) {
+      desiredVideoUrl = localVideoFile.url;
+    }
 
     const [fileVideoSlots, setFileVideoSlots] = useState<
       Record<FileVideoSlotId, FileVideoSlotContent | null>
@@ -1535,12 +1555,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         shouldAnimate={shouldAnimate}
         playAudio={
           canCaptureLocalVideo &&
+          playLocalVideoAudio &&
           resolvedDisplaySettings.localVideoAudioEnabled &&
           localVideoInput.audioEnabled !== false &&
           localVideoContentVisible
         }
         volume={localVideoVolume}
-        captureEnabled={canCaptureLocalVideo && displayType === "editor"}
+        captureEnabled={
+          canCaptureLocalVideo &&
+          (displayType === "editor" || directLocalVideoCapture)
+        }
         receiveHighQuality={canCaptureLocalVideo}
         publishPreview={canCaptureLocalVideo && displayType === "editor"}
         showErrors={!canCaptureLocalVideo || displayType === "editor"}

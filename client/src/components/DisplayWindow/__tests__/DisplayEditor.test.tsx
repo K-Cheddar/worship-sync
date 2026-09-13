@@ -16,6 +16,24 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => mockUseCachedMediaUrl(url),
 }));
 
+const mockUseLocalImageUrl = jest.fn(() => ({
+  isLocalImage: false,
+  isOwner: false,
+  status: "not-local" as const,
+  url: undefined,
+}));
+
+jest.mock("../../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: (...args: unknown[]) => mockUseLocalImageUrl(...args),
+}));
+
+jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
+  useLocalVideoFileUrl: () => ({
+    isLocalVideoFile: false,
+    url: undefined,
+  }),
+}));
+
 jest.mock("react-rnd", () => ({
   Rnd: (props: any) => {
     latestRndProps = props;
@@ -55,6 +73,12 @@ describe("DisplayEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     latestRndProps = null;
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: false,
+      isOwner: false,
+      status: "not-local" as const,
+      url: undefined,
+    });
     global.requestAnimationFrame = jest.fn((cb: FrameRequestCallback) => {
       cb(0);
       return 1;
@@ -379,5 +403,83 @@ describe("DisplayEditor", () => {
     expect(textarea.selectionStart).toBe(1);
     expect(textarea.selectionEnd).toBe(1);
     expect(textarea.scrollTop).toBe(0);
+  });
+
+  it("resolves local image backgrounds instead of leaving the stage black", () => {
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: true,
+      status: "ready" as const,
+      url: "blob:local-editor-image",
+    });
+    mockUseCachedMediaUrl.mockReturnValue(undefined);
+
+    render(
+      <DisplayEditor
+        box={{
+          ...baseBox,
+          background: "local-image://asset-1",
+          mediaInfo: {
+            id: "asset-1",
+            type: "image",
+            background: "local-image://asset-1",
+            localImage: {
+              id: "asset-1",
+              ownerDeviceId: "device-1",
+              ownerLabel: "Booth",
+              fileName: "welcome.png",
+              contentType: "image/png",
+              storagePolicy: "local-only",
+            },
+          },
+        }}
+        width={960}
+        index={0}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Main" })).toHaveAttribute(
+      "src",
+      "blob:local-editor-image",
+    );
+    expect(mockUseCachedMediaUrl).toHaveBeenCalledWith(undefined);
+  });
+
+  it("explains when a local image cannot be resolved on this device", () => {
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable" as const,
+      url: undefined,
+    });
+
+    render(
+      <DisplayEditor
+        box={{
+          ...baseBox,
+          background: "local-image://asset-1",
+          mediaInfo: {
+            id: "asset-1",
+            type: "image",
+            background: "local-image://asset-1",
+            localImage: {
+              id: "asset-1",
+              ownerDeviceId: "other-device",
+              ownerLabel: "Lobby PC",
+              fileName: "welcome.png",
+              contentType: "image/png",
+              storagePolicy: "local-only",
+            },
+          },
+        }}
+        width={960}
+        index={0}
+      />,
+    );
+
+    expect(screen.getByText("Local image unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Available on Lobby PC only/i),
+    ).toBeInTheDocument();
   });
 });

@@ -45,7 +45,7 @@ describe("PresentationPreview", () => {
         this.callback([], this as unknown as ResizeObserver);
       }
 
-      disconnect() {}
+      disconnect() { }
     }
 
     Object.defineProperty(window, "ResizeObserver", {
@@ -197,6 +197,28 @@ describe("PresentationPreview", () => {
       expect.objectContaining({
         displayType: "projector",
         monitorLayoutMode: "content-only",
+      }),
+    );
+  });
+
+  it("uses the high-quality local video path so booth tiles mirror live output", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />,
+    );
+
+    expect(mockDisplayWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canCaptureLocalVideo: true,
+        directLocalVideoCapture: true,
+        playLocalVideoAudio: false,
       }),
     );
   });

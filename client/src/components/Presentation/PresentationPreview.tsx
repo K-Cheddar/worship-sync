@@ -203,6 +203,11 @@ const PresentationPreview = ({
     localVideoInput: info.localVideoInput,
     prevLocalVideoInput: prevInfo.localVideoInput,
     videoPlayback: info.videoPlayback,
+    // Same-machine booth tiles must show live local video, not still previews,
+    // so operators can trust what the audience sees.
+    canCaptureLocalVideo: true,
+    directLocalVideoCapture: true,
+    playLocalVideoAudio: false,
   } as const;
 
   return (
