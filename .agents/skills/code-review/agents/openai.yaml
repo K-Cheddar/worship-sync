@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Review changes rigorously before approval"
+  default_prompt: "Use $code-review to review this change against its intended behavior and repository guidance."

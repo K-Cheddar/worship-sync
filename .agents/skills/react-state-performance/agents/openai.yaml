@@ -1,0 +1,4 @@
+interface:
+  display_name: "React State Performance"
+  short_description: "Keep state updates fast and localized"
+  default_prompt: "Use $react-state-performance to review state ownership and render impact for this client change."

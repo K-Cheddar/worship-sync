@@ -23,6 +23,63 @@ Changes should be reviewed with the mindset that this software is used live and 
 
 Treat every change as if it could be exercised during a live event with little time to recover.
 
+## Required Implementation Workflow
+
+For substantive changes, use `$implementation-planning` before editing and `$code-review` for rigorous review. A substantive change affects behavior, data, contracts, shared rendering, live-operation paths, or more than a localized mechanical edit.
+
+The canonical repository skills live in `.agents/skills/`. Searching for existing analogous implementations is part of implementation, not optional cleanup. The planning skill owns the detailed investigation and planning method.
+
+### Assumption policy
+
+- Do not ask the user about routine implementation details that can be resolved confidently from the repository. Research the repository first.
+- Stop and clarify when an unresolved choice could materially affect product behavior or UX, architecture or data ownership, persisted or synced data shapes, API or server contracts, backward compatibility, permissions or security, destructive behavior, or feature scope.
+- Do not silently make consequential product or architecture decisions.
+
+### Before / After Behavior
+
+For substantive work, state Before behavior, After behavior, and Behavior intentionally unchanged before coding and repeat the actual behavior in the final response. Include material UX, contracts, network/API work, persistence/sync, Electron/IPC, background work/timing, failures, security, and resource behavior. The planning skill owns the detailed format. For behavior-preserving refactors, say so explicitly without inventing user-visible changes.
+
+### Mandatory pre-completion self-review
+
+Before handoff, re-read the request and acceptance criteria; review the complete diff; check callers, consumers, parallel implementations, affected surfaces, edge cases, and failures; run risk-appropriate verification; and identify incomplete work or verification gaps.
+
+### Completion contract
+
+Never describe work as complete if known required work or verification remains. `COMPLETE` requires all acceptance criteria implemented, all required affected surfaces addressed, successful risk-appropriate verification planned to establish correctness, and no known required implementation or verification work remaining. `INCOMPLETE` is required when a required behavior, surface, implementation item, or verification remains unaddressed.
+
+`Not verified` may list only optional or unavailable additional-confidence checks without forcing `INCOMPLETE`; label them as optional. Do not place required verification there.
+
+Substantive implementation tasks must end with this status section:
+
+```text
+Implementation status: COMPLETE | INCOMPLETE
+
+Before behavior
+actual behavior before the change
+
+After behavior
+actual behavior after the change
+
+Behavior intentionally unchanged
+important adjacent behavior preserved
+
+Implemented
+concise list
+
+Verified (required)
+exact risk-appropriate checks/tests run successfully
+
+Not verified (optional)
+additional confidence checks not run; no required verification belongs here
+
+Known follow-ups
+None or explicit remaining work
+```
+
+If Known follow-ups includes work required to satisfy the original request, the status must be `INCOMPLETE`.
+
+For recurring lessons, follow `.agents/engineering-guidance.md`. Prefer durable enforcement over accumulating one-off prose rules.
+
 ## Review Priorities
 
 Review in this order:
@@ -211,6 +268,10 @@ Prefer existing patterns already used in the client:
 - Existing `DisplayWindow` and preview architecture for rendering
 - Existing test style with Jest and Testing Library
 - Reusable shared UI components (`Button`, `Input`, `Select`, and other primitives in `client/src/components`) instead of ad hoc markup when something suitable already exists. Icon-only controls still use `Button` with `svg` + `aria-label` — do not reach for a raw `<button>` for that case.
+
+**State and render performance**
+
+For client changes with high-frequency updates, broad render fan-out, persisted or synchronized state, preview/display/media paths, meaningful lifecycle or cross-surface implications, or suspected/measured performance problems, use `$react-state-performance`. Ordinary low-risk local component state does not require its deeper analysis. Keep optimization evidence-driven; memoization is not automatic.
 
 **Operator UI density (live controllers and moderator surfaces)**
 

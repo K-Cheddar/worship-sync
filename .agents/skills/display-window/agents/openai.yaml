@@ -1,0 +1,4 @@
+interface:
+  display_name: "Display Window"
+  short_description: "Guide safe WorshipSync display rendering changes"
+  default_prompt: "Use $display-window to improve WorshipSync display transitions safely."
