@@ -284,7 +284,24 @@ test("a paired workstation can view saved Service Plans but not edit them", asyn
       serviceId: "svc1",
       date: "2026-09-06",
       name: "Sunday Service",
-      sections: [],
+      sections: [
+        {
+          id: "worship",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+              assignedName: "Avery Volunteer",
+              assignedMemberId: "member-1",
+              assignees: [
+                { id: "assignee-1", name: "Avery Volunteer", memberId: "member-1" },
+              ],
+            },
+          ],
+        },
+      ],
     },
   });
   assert.equal(saved.statusCode, 200);
@@ -345,6 +362,21 @@ test("a paired workstation can view saved Service Plans but not edit them", asyn
   );
   assert.equal(getRes.statusCode, 200);
   assert.equal(getRes.payload?.servicePlan?.planKey, "svc1@2026-09-06");
+  const planElement = getRes.payload?.servicePlan?.sections?.[0]?.elements?.[0];
+  assert.equal(planElement?.assignees, undefined);
+  assert.equal(planElement?.assignedName, undefined);
+  assert.equal(planElement?.assignedMemberId, undefined);
+
+  const assignmentsRes = createRes();
+  await authHandlers.getServicePlanAssignments(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId, planKey: "svc1@2026-09-06" },
+    }),
+    assignmentsRes,
+  );
+  assert.equal(assignmentsRes.statusCode, 200);
+  assert.deepEqual(assignmentsRes.payload?.assignments, []);
 
   // Default workstations cannot edit plans (no booth grant), even with CSRF.
   const saveRes = createRes();

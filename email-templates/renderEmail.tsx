@@ -8,6 +8,7 @@ import {
   IntakeSubmissionsDigestEmail,
   ScheduleAssignmentEmail,
   ScheduleResponsesDigestEmail,
+  ServicePlanShareEmail,
   PairingSetupCodeEmail,
   PasswordResetEmail,
   SignInCodeEmail,
@@ -105,6 +106,16 @@ export async function renderScheduleResponsesDigestEmail(props: {
   }[];
 }) {
   return renderEmailHtmlAndText(<ScheduleResponsesDigestEmail {...props} />);
+}
+
+export async function renderServicePlanShareEmail(props: {
+  churchName: string;
+  serviceName: string;
+  serviceDate: string;
+  message: string;
+  shareUrl: string;
+}) {
+  return renderEmailHtmlAndText(<ServicePlanShareEmail {...props} />);
 }
 
 export async function renderPairingSetupCodeEmail(props: {

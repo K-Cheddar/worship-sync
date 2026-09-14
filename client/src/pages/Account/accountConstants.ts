@@ -1,4 +1,5 @@
 import {
+  PanelsTopLeft,
   MonitorCog,
   Palette,
   Plug,
@@ -12,7 +13,8 @@ export type AccountTabId =
   | "setup"
   | "controllers"
   | "branding"
-  | "integrations";
+  | "integrations"
+  | "workspace";
 
 export type AccountSection = {
   id: AccountTabId;
@@ -66,6 +68,15 @@ export const ACCOUNT_SECTIONS: AccountSection[] = [
     description:
       "Service Planning and future connections to sync names and overlay fields.",
     icon: Plug,
+  },
+  {
+    id: "workspace",
+    routePath: "workspace",
+    path: "/account/workspace",
+    label: "Workspace",
+    description:
+      "Choose which optional tools appear in the Current Service Workspace.",
+    icon: PanelsTopLeft,
   },
 ];
 

@@ -593,6 +593,80 @@ type ScheduleResponsesDigestEmailProps = {
   }[];
 };
 
+type ServicePlanShareEmailProps = {
+  churchName: string;
+  serviceName: string;
+  serviceDate: string;
+  message: string;
+  shareUrl: string;
+};
+
+export function ServicePlanShareEmail({
+  churchName,
+  serviceName,
+  serviceDate,
+  message,
+  shareUrl,
+}: ServicePlanShareEmailProps) {
+  const churchDisplay = churchName.trim() || "your church";
+  const serviceDisplay = serviceName.trim() || "Service plan";
+  const dateDisplay = serviceDate.trim() || "the scheduled date";
+  const messageLines = message.split(/\r?\n/);
+
+  return (
+    <WorshipSyncEmailLayout
+      previewText={`${serviceDisplay} service plan for ${dateDisplay}`}
+      title="Service plan"
+    >
+      <Text style={bodyText}>
+        {messageLines.map((line, index) => (
+          <React.Fragment key={`${index}-${line}`}>
+            {line}
+            {index < messageLines.length - 1 ? <br /> : null}
+          </React.Fragment>
+        ))}
+      </Text>
+      <Section
+        style={{
+          border: `1px solid ${worshipSyncEmailBrand.cardBorder}`,
+          borderRadius: "8px",
+          margin: "0 0 24px",
+          padding: "16px",
+        }}
+      >
+        <Text
+          style={{
+            ...bodyText,
+            color: worshipSyncEmailBrand.textPrimary,
+            fontWeight: 600,
+            margin: "0 0 4px",
+          }}
+        >
+          {serviceDisplay}
+        </Text>
+        <Text style={{ ...finePrint, margin: 0 }}>{dateDisplay}</Text>
+      </Section>
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={shareUrl} style={ctaButtonStyle}>
+          View Service Plan
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        If the button does not work, copy and paste this link into your
+        browser:
+      </Text>
+      <Text style={urlText}>
+        <Link href={shareUrl} style={{ color: worshipSyncEmailBrand.link }}>
+          {shareUrl}
+        </Link>
+      </Text>
+      <Text style={finePrint}>
+        This link opens the current version of the plan for {churchDisplay}.
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
 /**
  * "People answered your schedule" — coalesced.
  *

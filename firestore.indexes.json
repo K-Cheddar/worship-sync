@@ -81,7 +81,7 @@
       "fields": [
         { "fieldPath": "database", "order": "ASCENDING" },
         { "fieldPath": "sessionId", "order": "ASCENDING" },
-        { "fieldPath": "postedAt", "order": "DESCENDING" }
+        { "fieldPath": "messageTimestamp", "order": "DESCENDING" }
       ]
     }
   ],
@@ -99,6 +99,24 @@
     {
       "collectionGroup": "chatMessages",
       "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamOauthStates",
+      "fieldPath": "ttlExpireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamConnectRequests",
+      "fieldPath": "ttlExpireAt",
       "ttl": true,
       "indexes": []
     },

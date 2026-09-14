@@ -18,6 +18,7 @@ import {
   renderIntakeSubmissionsDigestEmail,
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
+  renderServicePlanShareEmail,
   renderPairingSetupCodeEmail,
   renderPasswordResetEmail,
   renderSignInCodeEmail,
@@ -77,6 +78,11 @@ import {
   normalizeChurchIntegrationsAdminUpdate,
   normalizeChurchIntegrationsForStorage,
 } from "./server/churchIntegrations.js";
+import {
+  getCurrentServiceWorkspacePath,
+  normalizeCurrentServiceWorkspaceForStorage,
+  normalizeCurrentServiceWorkspacePatch,
+} from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 
 const SESSION_KIND_HUMAN = "human";
@@ -4488,8 +4494,10 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   getUserByUid,
   getChurchById,
   sendEmail,
+  emailDeliveryConfigured: Boolean(resendClient),
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
+  renderServicePlanShareEmail,
   // Takes the member record rather than an address, so the public endpoint that
   // calls it has no way to redirect the invite.
   sendRosterMemberInvite,
@@ -5974,6 +5982,38 @@ export const authHandlers = {
       return res.json({
         success: true,
         integrations,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
+  async updateCurrentServiceWorkspace(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const sectionPatch = normalizeCurrentServiceWorkspacePatch(req.body);
+      const rtdb = requireRealtimeDatabase();
+      const workspaceRef = rtdb.ref(
+        getCurrentServiceWorkspacePath(req.params.churchId),
+      );
+
+      await workspaceRef.child("sections").update(sectionPatch.sections);
+      const savedSnapshot = await workspaceRef.once("value");
+      const currentServiceWorkspace =
+        normalizeCurrentServiceWorkspaceForStorage(savedSnapshot.val());
+      await addSecurityEvent({
+        type: "current_service_workspace_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+      });
+
+      return res.json({
+        success: true,
+        currentServiceWorkspace,
       });
     } catch (error) {
       return res.status(error.statusCode || 500).json({

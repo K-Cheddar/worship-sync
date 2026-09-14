@@ -30,6 +30,8 @@ import type {
   ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
+  CurrentServiceWorkspaceConfig,
+  CurrentServiceWorkspaceSectionPatch,
   EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
@@ -62,6 +64,7 @@ import type {
   WorkstationDeviceClient,
 } from "./authTypes";
 import type { SongAudio } from "../types";
+import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 
 export type RichLinkPreview = {
   provider: "youtube" | "spotify";
@@ -716,6 +719,18 @@ export const updateChurchIntegrations = async (
   }>(`api/churches/${churchId}/integrations`, {
     method: "POST",
     body: JSON.stringify(integrations),
+  });
+
+export const updateCurrentServiceWorkspace = async (
+  churchId: string,
+  sections: CurrentServiceWorkspaceSectionPatch,
+) =>
+  apiFetch<{
+    success: boolean;
+    currentServiceWorkspace: CurrentServiceWorkspaceConfig;
+  }>(`api/churches/${churchId}/current-service-workspace`, {
+    method: "POST",
+    body: JSON.stringify({ sections }),
   });
 
 export type TeamRosterMemberPayload = {
@@ -1662,6 +1677,18 @@ export const getServicePlan = async (churchId: string, planKey: string) =>
     method: "GET",
   });
 
+export const getServicePlanPublicSnapshot = async (
+  churchId: string,
+  planKey: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    snapshot: PublicServiceFlowSnapshot | null;
+  }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/public-snapshot`,
+    { method: "GET" },
+  );
+
 export const getServicePlanAssignments = async (
   churchId: string,
   planKey: string,
@@ -1697,6 +1724,29 @@ export const publishServicePlan = async (churchId: string, planKey: string) =>
   }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/publish`,
     { method: "POST", body: JSON.stringify({}) },
+  );
+
+export type ServicePlanShareEmailPayload = {
+  recipients: string[];
+  subject: string;
+  message: string;
+};
+
+export type ServicePlanShareEmailResult = {
+  success: boolean;
+  sent: number;
+  failed: number;
+  failedRecipients: string[];
+};
+
+export const sendServicePlanShareEmail = async (
+  churchId: string,
+  planKey: string,
+  body: ServicePlanShareEmailPayload,
+) =>
+  apiFetch<ServicePlanShareEmailResult>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/email`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const unpublishServicePlan = async (churchId: string, planKey: string) =>

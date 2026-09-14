@@ -137,6 +137,23 @@ export const AccountIntegrationsPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+export const AccountWorkspacePageSkeleton = () => (
+  <SkeletonStatus label="Loading workspace settings">
+    <section className={cardClassName}>
+      <SkeletonSectionHeader />
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className={cn(skeletonBar, "h-12 w-full")} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <div className={cn(skeletonBar, "h-10 w-28")} />
+        <div className={cn(skeletonBar, "h-10 w-24")} />
+      </div>
+    </section>
+  </SkeletonStatus>
+);
+
 export const AccountSectionRouteSkeleton = () => (
   <div className="space-y-4">
     <div className="flex flex-col gap-3 border-b border-gray-700/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
