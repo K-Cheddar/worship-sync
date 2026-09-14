@@ -69,6 +69,11 @@ describe("useSyncMonitorSettings", () => {
     expect(onValueMock).not.toHaveBeenCalled();
   });
 
+  it("does not subscribe when Displays is unavailable", () => {
+    renderHook(() => useSyncMonitorSettings(db, "church-1", true, false));
+    expect(onValueMock).not.toHaveBeenCalled();
+  });
+
   it("dispatches monitor settings fields from Firebase", () => {
     renderHook(() => useSyncMonitorSettings(db, "church-1", true));
 

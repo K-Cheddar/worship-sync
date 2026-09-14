@@ -5,6 +5,11 @@ import type { NormalizedLrclibTrack } from "../utils/lrclib";
 export type CreateItemState = {
   name: string;
   type: ItemType;
+  /**
+   * True after the operator (or an explicit deep-link / import) chooses a type.
+   * Blank drafts without this flag adopt the active controller's default type.
+   */
+  hasUserSelectedType: boolean;
   text: string;
   songArtist: string;
   songAlbum: string;
@@ -22,6 +27,7 @@ export type CreateItemState = {
 export const initialCreateItemState: CreateItemState = {
   name: "",
   type: "song",
+  hasUserSelectedType: false,
   text: "",
   songArtist: "",
   songAlbum: "",

@@ -41,25 +41,26 @@ const Checkbox = ({
   }
 
   return (
-    <div
+    <Label
+      htmlFor={id}
       className={cn(
-        "flex min-w-0 items-center gap-2 max-md:min-h-11 max-md:gap-3",
+        "flex min-w-0 items-center gap-2 font-normal text-gray-100 max-md:min-h-11 max-md:gap-3",
+        disabled ? "cursor-not-allowed" : "cursor-pointer",
         className,
       )}
     >
       {control}
-      <Label
-        htmlFor={id}
+      <span
         className={cn(
-          "min-w-0 flex-1 cursor-pointer font-normal text-gray-100 max-md:flex max-md:min-h-11 max-md:items-center",
+          "min-w-0 flex-1 max-md:flex max-md:min-h-11 max-md:items-center",
           hideLabel && "sr-only",
-          disabled && "cursor-not-allowed opacity-50",
+          disabled && "opacity-50",
           labelClassName,
         )}
       >
         {label}
-      </Label>
-    </div>
+      </span>
+    </Label>
   );
 };
 

@@ -22,6 +22,7 @@ describe("createItemSlice", () => {
       createItemSlice.actions.setCreateItem({
         name: "Grace",
         type: "timer",
+        hasUserSelectedType: true,
         text: "Amazing grace",
         songArtist: "",
         songAlbum: "",
@@ -39,6 +40,7 @@ describe("createItemSlice", () => {
     expect(store.getState().createItem).toEqual({
       name: "Grace",
       type: "timer",
+      hasUserSelectedType: true,
       text: "Amazing grace",
       songArtist: "",
       songAlbum: "",
@@ -58,6 +60,7 @@ describe("createItemSlice", () => {
       createItem: {
         name: "Grace",
         type: "timer",
+        hasUserSelectedType: true,
         text: "Amazing grace",
         songArtist: "",
         songAlbum: "",

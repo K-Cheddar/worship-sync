@@ -37,6 +37,7 @@ export const useSyncMonitorSettings = (
   firebaseDb: Database | null | undefined,
   churchId: string | null | undefined,
   sharedDataReady: boolean,
+  enabled = true,
 ) => {
   const dispatch = useDispatch();
   const displayOutputs = useSelector(
@@ -50,7 +51,7 @@ export const useSyncMonitorSettings = (
 
   const handleMonitorSettings = useCallback(
     (data: unknown) => {
-      if (!data) return;
+      if (!enabled || !data) return;
       const settings = data as LegacyMonitorSettings;
       dispatch(setMonitorShowClock(settings.showClock));
       dispatch(setMonitorShowTimer(settings.showTimer));
@@ -65,7 +66,7 @@ export const useSyncMonitorSettings = (
       // seeding inline would be skipped and never retried.
       setLegacySettings(settings);
     },
-    [dispatch],
+    [dispatch, enabled],
   );
 
   /**
@@ -79,6 +80,10 @@ export const useSyncMonitorSettings = (
    * already configured is never overwritten.
    */
   useEffect(() => {
+    if (!enabled) {
+      setLegacySettings(null);
+      return;
+    }
     if (!legacySettings || !displayOutputsLoaded) return;
     const seeded = fromLegacyMonitorSettings(legacySettings, "monitor");
     if (!seeded) return;
@@ -133,12 +138,13 @@ export const useSyncMonitorSettings = (
     displayOutputsLoaded,
     firebaseDb,
     legacySettings,
+    enabled,
   ]);
 
   useFirebaseValueWithRetry({
     db: firebaseDb,
     path: churchId ? getChurchDataPath(churchId, "monitorSettings") : null,
-    enabled: !!firebaseDb && !!churchId && !!sharedDataReady,
+    enabled: enabled && !!firebaseDb && !!churchId && !!sharedDataReady,
     onData: handleMonitorSettings,
     label: "monitor settings",
   });

@@ -3,6 +3,7 @@ import { Cloudinary } from "@cloudinary/url-gen";
 import type PouchDB from "pouchdb-browser";
 import { emptyChurchBranding } from "../utils/churchBranding";
 import { createDefaultChurchIntegrations } from "../types/integrations";
+import { createDefaultCurrentServiceWorkspace } from "../utils/currentServiceWorkspace";
 
 /** Mock EventTarget for testing (broadcast, updater, etc.) */
 export class MockEventTarget implements EventTarget {
@@ -122,6 +123,8 @@ export function createMockGlobalContext(
     churchBrandingStatus: "ready" as const,
     churchIntegrations: createDefaultChurchIntegrations(),
     churchIntegrationsStatus: "ready" as const,
+    currentServiceWorkspace: createDefaultCurrentServiceWorkspace(),
+    currentServiceWorkspaceStatus: "ready" as const,
     refreshChurchIntegrationsSync: jest.fn(),
     role: "admin",
     authError: "",
@@ -198,6 +201,8 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     churchBrandingStatus: "ready" as const,
     churchIntegrations: createDefaultChurchIntegrations(),
     churchIntegrationsStatus: "ready" as const,
+    currentServiceWorkspace: createDefaultCurrentServiceWorkspace(),
+    currentServiceWorkspaceStatus: "ready" as const,
     refreshChurchIntegrationsSync: jest.fn(),
     role: "admin",
     authError: "",

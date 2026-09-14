@@ -78,6 +78,39 @@ describe("sessionRouteAccess", () => {
     ).toBe(false);
   });
 
+  it("allows the read-only current service viewer for default workstations", () => {
+    expect(
+      isRouteAllowedForSession("/current-service/view", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "none", services: "view" },
+      }),
+    ).toBe(true);
+  });
+
+  it("allows the read-only current service viewer for service-plan viewers", () => {
+    expect(
+      isRouteAllowedForSession("/current-service/view", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "view",
+        permissions: { teams: "none", services: "view" },
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks the read-only current service viewer without service-plan access", () => {
+    expect(
+      isRouteAllowedForSession("/current-service/view", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "none", services: "none" },
+      }),
+    ).toBe(false);
+  });
+
   it("blocks teams admin routes for booth workstations", () => {
     expect(
       isRouteAllowedForSession("/teams-and-services/plans", {

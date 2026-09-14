@@ -385,6 +385,9 @@ describe("Home", () => {
     expect(
       screen.queryByRole("link", { name: /Service Workspace/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Current Service Viewer/i }),
+    ).toHaveAttribute("href", "/current-service/view");
   });
 
   it("shows Service Workspace on booth workstations with Teams view", () => {

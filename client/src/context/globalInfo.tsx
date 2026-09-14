@@ -63,6 +63,7 @@ import {
 } from "../api/authErrorBus";
 import type {
   ChurchBranding,
+  CurrentServiceWorkspaceConfig,
   EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
@@ -143,6 +144,10 @@ import {
 import type { ChurchIntegrations } from "../types/integrations";
 import { createDefaultChurchIntegrations } from "../types/integrations";
 import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
+import {
+  createDefaultCurrentServiceWorkspace,
+  normalizeCurrentServiceWorkspace,
+} from "../utils/currentServiceWorkspace";
 import { setServerTimeOffset } from "../utils/serverTime";
 import {
   isFirebasePermissionDenied,
@@ -323,6 +328,7 @@ type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
 type ChurchBrandingStatus = "loading" | "ready";
 type ChurchIntegrationsStatus = "loading" | "ready";
+type CurrentServiceWorkspaceStatus = "loading" | "ready";
 export type HumanAuthMethod = "password" | "google" | "microsoft";
 
 export type AccessType = "full" | "music" | "view" | "member";
@@ -440,6 +446,8 @@ type GlobalInfoContextType = {
   churchBrandingStatus: ChurchBrandingStatus;
   churchIntegrations: ChurchIntegrations;
   churchIntegrationsStatus: ChurchIntegrationsStatus;
+  currentServiceWorkspace: CurrentServiceWorkspaceConfig;
+  currentServiceWorkspaceStatus: CurrentServiceWorkspaceStatus;
   /** Re-auth shared RTDB and resubscribe integrations (e.g. after OAuth connect). */
   refreshChurchIntegrationsSync: () => void;
   role: string;
@@ -572,6 +580,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     useState<ChurchIntegrationsStatus>("loading");
   const [churchIntegrationsListenGeneration, setChurchIntegrationsListenGeneration] =
     useState(0);
+  const [currentServiceWorkspace, setCurrentServiceWorkspace] =
+    useState<CurrentServiceWorkspaceConfig>(
+      createDefaultCurrentServiceWorkspace(),
+    );
+  const [currentServiceWorkspaceStatus, setCurrentServiceWorkspaceStatus] =
+    useState<CurrentServiceWorkspaceStatus>("loading");
   const [role, setRole] = useState("");
   // One tri-state per category. Which are *offered* comes from the server
   // (`notificationCategories`) rather than being hardcoded here, so adding a
@@ -2304,6 +2318,56 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     churchIntegrationsListenGeneration,
   ]);
 
+  useEffect(() => {
+    if (
+      loginState !== "success" ||
+      !churchId ||
+      (sessionKind !== "human" && sessionKind !== "workstation")
+    ) {
+      setCurrentServiceWorkspace(createDefaultCurrentServiceWorkspace());
+      setCurrentServiceWorkspaceStatus("ready");
+      return;
+    }
+
+    if (!firebaseDb || !isSharedDataScopeReady) {
+      setCurrentServiceWorkspaceStatus("loading");
+      return;
+    }
+
+    setCurrentServiceWorkspace(createDefaultCurrentServiceWorkspace());
+    setCurrentServiceWorkspaceStatus("loading");
+    return subscribeWithPermissionRetry(
+      firebaseDb,
+      getChurchDataPath(churchId, "currentServiceWorkspace"),
+      (snapshot) => {
+        setCurrentServiceWorkspace(
+          normalizeCurrentServiceWorkspace(snapshot.val()),
+        );
+        setCurrentServiceWorkspaceStatus("ready");
+      },
+      {
+        label: "current service workspace settings",
+        onError: (error) => {
+          console.error(
+            "Could not subscribe to Current Service Workspace settings:",
+            error,
+          );
+          // Preserve the last known configuration on a transient listener
+          // error so disabled tools do not suddenly reappear and initialize.
+          setCurrentServiceWorkspaceStatus("ready");
+        },
+      },
+    );
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataScopeReady,
+    loginState,
+    sessionKind,
+    sharedDataSessionScope,
+    sharedDataTokenRemintNonce,
+  ]);
+
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -2941,6 +3005,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      currentServiceWorkspace,
+      currentServiceWorkspaceStatus,
       refreshChurchIntegrationsSync,
       role,
       authError,
@@ -3005,6 +3071,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      currentServiceWorkspace,
+      currentServiceWorkspaceStatus,
       refreshChurchIntegrationsSync,
       role,
       authError,
