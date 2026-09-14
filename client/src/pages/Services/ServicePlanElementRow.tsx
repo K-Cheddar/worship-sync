@@ -26,7 +26,6 @@ import {
   X,
 } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
@@ -1221,10 +1220,12 @@ const ServicePlanElementRow = ({
     listeners,
     setNodeRef,
     setActivatorNodeRef,
-    transform,
-    transition,
     isDragging,
-  } = useSortable({ id: elementDndId(element.id), disabled: !allowEdit });
+  } = useSortable({
+    id: elementDndId(element.id),
+    disabled: !allowEdit,
+    animateLayoutChanges: () => false,
+  });
 
   const scopedNotes = element.teamNotes || [];
   const assignees = getServicePlanElementAssignees(element);
@@ -2364,8 +2365,6 @@ const ServicePlanElementRow = ({
       id={servicePlanElementDomId(element.id)}
       ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
         opacity: isDragging ? 0.6 : undefined,
       }}
       className={cn(

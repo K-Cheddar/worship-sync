@@ -1,8 +1,8 @@
 /**
  * Owns "which service is the Controller on" for every current-service surface.
  *
- * The pick is made once, when the page loads (or as soon as the services list
- * arrives), and then held. Re-picking on a timer meant a service that ran long
+ * The pick is made once per server calendar-day context (or as soon as the
+ * services list arrives), and then held. Re-picking on a timer meant a service
  * could swap the operator onto next week's plan mid-service — exactly the kind
  * of surprise a live surface can't afford. Time still passes, but the answer
  * doesn't change under the operator's hands; they switch services themselves.
@@ -11,7 +11,20 @@
  * disappears from the schedule (service deleted, time changed), the next-best
  * service is picked so the surface never sits on a service that no longer runs.
  */
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
+import {
+  getServerTimeOffset,
+  serverDate,
+  subscribeServerTimeOffset,
+} from "../../utils/serverTime";
 import {
   listCurrentServiceOccurrences,
   pickCurrentServiceOccurrence,
@@ -28,12 +41,45 @@ export type CurrentServiceOccurrence = {
   selectOccurrence: (occurrenceId: string) => void;
 };
 
+const sessionDayKey = (nowMs: number): string => {
+  const date = new Date(nowMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const useAuthoritativeServerNowMs = (): number => {
+  const serverOffsetMs = useSyncExternalStore(
+    subscribeServerTimeOffset,
+    getServerTimeOffset,
+    getServerTimeOffset,
+  );
+  const [dayBoundaryTick, setDayBoundaryTick] = useState(0);
+
+  useEffect(() => {
+    const nowMs = serverDate().getTime();
+    const nextBoundary = new Date(nowMs);
+    nextBoundary.setHours(24, 0, 0, 0);
+    const delayMs = Math.max(1, nextBoundary.getTime() - nowMs);
+    const timeoutId = window.setTimeout(
+      () => setDayBoundaryTick((tick) => tick + 1),
+      delayMs,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [dayBoundaryTick, serverOffsetMs]);
+
+  return serverDate().getTime();
+};
+
 export const useCurrentServiceOccurrence = (
   services: TeamService[],
 ): CurrentServiceOccurrence => {
-  /** Anchored at mount on purpose: the candidate window shouldn't drift under
-   * a session that stays open through a service. */
-  const [loadedAtMs] = useState(() => Date.now());
+  const authoritativeNowMs = useAuthoritativeServerNowMs();
+  /** Anchored for the current server calendar-day context: the candidate
+   * window shouldn't drift under a session that stays open through a service. */
+  const [loadedAtMs, setLoadedAtMs] = useState(() => authoritativeNowMs);
+  const loadedDayKeyRef = useRef(sessionDayKey(loadedAtMs));
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<
     string | null
   >(null);
@@ -53,12 +99,29 @@ export const useCurrentServiceOccurrence = (
   const [pinnedOccurrenceId, setPinnedOccurrenceId] = useState<string | null>(
     null,
   );
+
+  const resetStaleSession = useCallback((nowMs = serverDate().getTime()) => {
+    const nextDayKey = sessionDayKey(nowMs);
+    if (nextDayKey === loadedDayKeyRef.current) return;
+    loadedDayKeyRef.current = nextDayKey;
+    setLoadedAtMs(nowMs);
+    // A new calendar day gets a new automatic context. Explicit selections are
+    // retained below when their occurrence is still present in the new window.
+    setPinnedOccurrenceId(null);
+  }, []);
+
+  useEffect(() => {
+    resetStaleSession(authoritativeNowMs);
+  }, [authoritativeNowMs, resetStaleSession]);
+
+  useSyncOnReconnect(resetStaleSession);
+
   const autoOccurrence = useMemo(
     () =>
       occurrences.find(
         (candidate) => candidate.occurrenceId === pinnedOccurrenceId,
-      ) || pickCurrentServiceOccurrence(occurrences, loadedAtMs),
-    [loadedAtMs, occurrences, pinnedOccurrenceId],
+      ) || pickCurrentServiceOccurrence(occurrences, authoritativeNowMs),
+    [authoritativeNowMs, occurrences, pinnedOccurrenceId],
   );
   // Drops the pin only when it stops being real: the memo above re-picks, and
   // this records that new choice. Setting the id we already hold is a no-op, so
@@ -66,6 +129,17 @@ export const useCurrentServiceOccurrence = (
   useEffect(() => {
     setPinnedOccurrenceId(autoOccurrence?.occurrenceId ?? null);
   }, [autoOccurrence]);
+
+  useEffect(() => {
+    if (
+      selectedOccurrenceId &&
+      !occurrences.some(
+        (candidate) => candidate.occurrenceId === selectedOccurrenceId,
+      )
+    ) {
+      setSelectedOccurrenceId(null);
+    }
+  }, [occurrences, selectedOccurrenceId]);
 
   const occurrence = useMemo(
     () =>

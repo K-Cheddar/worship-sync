@@ -25,12 +25,53 @@ export type UseServicePlanAutosaveOptions<
   buildPayload: () => TPayload | null;
   save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
   getConflictPlan: (error: unknown) => TDoc | null;
+  /**
+   * True when `doc` is this editor's payload after the server persisted it.
+   * Used to acknowledge a lost HTTP response whose 409/GET body is our write,
+   * without treating a second editor's document as a successful save.
+   */
+  isOwnWrite?: (doc: TDoc, payload: TPayload) => boolean;
+  /**
+   * Load the persisted document after an uncertain save failure so we can ack
+   * a committed write instead of retrying the same stale POST.
+   */
+  loadLatest?: () => Promise<TDoc | null>;
   onSaved: (plan: TDoc) => void;
   onConflict: (latestPlan: TDoc) => void;
 };
 
 const AUTOSAVE_DELAY_MS = 1_200;
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
+
+/**
+ * Operator-edited plan/template content. Publish and live-progress fields are
+ * intentionally omitted: they share the document but do not bump revision.
+ */
+export const isMatchingServicePlanWrite = (
+  doc: {
+    name?: string;
+    sections?: unknown;
+    timezone?: string | null;
+    sourceImport?: unknown;
+  },
+  payload: {
+    name?: string;
+    sections?: unknown;
+    timezone?: string | null;
+    sourceImport?: unknown;
+  },
+) =>
+  (doc.name ?? "") === (payload.name ?? "") &&
+  (doc.timezone ?? "") === (payload.timezone ?? "") &&
+  JSON.stringify(doc.sections ?? []) ===
+    JSON.stringify(payload.sections ?? []) &&
+  JSON.stringify(doc.sourceImport ?? null) ===
+    JSON.stringify(payload.sourceImport ?? null);
+
+const getDocumentRevision = (doc: RevisionedDocument) =>
+  Number.isSafeInteger(doc.revision) && (doc.revision ?? 0) >= 0
+    ? (doc.revision ?? 0)
+    : 0;
 
 /**
  * Serializes complete-document plan saves. A change made during an in-flight
@@ -41,7 +82,10 @@ const RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
  * template editor share one implementation; both are complete-document writes
  * guarded by a server-side revision check.
  */
-export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload>({
+export const useServicePlanAutosave = <
+  TDoc extends RevisionedDocument,
+  TPayload,
+>({
   enabled,
   resetKey,
   changeVersion,
@@ -49,6 +93,8 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   buildPayload,
   save,
   getConflictPlan,
+  isOwnWrite,
+  loadLatest,
   onSaved,
   onConflict,
 }: UseServicePlanAutosaveOptions<TDoc, TPayload>) => {
@@ -60,6 +106,8 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   const buildPayloadRef = useRef(buildPayload);
   const saveRef = useRef(save);
   const getConflictPlanRef = useRef(getConflictPlan);
+  const isOwnWriteRef = useRef(isOwnWrite);
+  const loadLatestRef = useRef(loadLatest);
   const onSavedRef = useRef(onSaved);
   const onConflictRef = useRef(onConflict);
   const timerRef = useRef<number | null>(null);
@@ -72,12 +120,24 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
    * state — otherwise its revision and "saved" ack would be applied to the
    * plan now on screen. */
   const generationRef = useRef(0);
+  /**
+   * One-revision-ahead acknowledgement for the last POST we actually sent.
+   * Kept through retries so a delayed SSE echo of our own write is not treated
+   * as another editor just because `inFlightRef` was cleared.
+   */
+  const expectedAckRevisionRef = useRef<number | null>(null);
+  /** Successful writes keyed by the generation that sent them, so a pending
+   * flush for a plan we already left can reuse that response's revision. */
+  const saveAckByGenerationRef = useRef(
+    new Map<number, { revision: number; version: number }>(),
+  );
   /** The newest unsaved snapshot, captured with the save function bound to the
    * plan it came from, so a pending edit can still be persisted to the *right*
    * plan after the editor has moved on. */
   const pendingRef = useRef<{
     payload: TPayload;
     baseRevision: number;
+    version: number;
     save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
   } | null>(null);
 
@@ -86,19 +146,25 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   buildPayloadRef.current = buildPayload;
   saveRef.current = save;
   getConflictPlanRef.current = getConflictPlan;
+  isOwnWriteRef.current = isOwnWrite;
+  loadLatestRef.current = loadLatest;
   onSavedRef.current = onSaved;
   onConflictRef.current = onConflict;
 
   // Stable: only touches refs, so effects can depend on it without re-running.
   const clearTimers = useCallback(() => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    if (retryTimerRef.current !== null)
+      window.clearTimeout(retryTimerRef.current);
     timerRef.current = null;
     retryTimerRef.current = null;
   }, []);
 
   const saveLatest = useCallback(async (): Promise<boolean> => {
-    if (!enabledRef.current || changeVersionRef.current <= savedVersionRef.current) {
+    if (
+      !enabledRef.current ||
+      changeVersionRef.current <= savedVersionRef.current
+    ) {
       return true;
     }
     if (inFlightRef.current) return inFlightRef.current;
@@ -107,31 +173,76 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
     const payload = buildPayloadRef.current();
     if (!payload) return true;
     const generation = generationRef.current;
+    const saveFn = saveRef.current;
+    const loadLatestFn = loadLatestRef.current;
+    const isOwnWriteFn = isOwnWriteRef.current;
+    const sentRevision = revisionRef.current;
+    const expectedNextRevision = sentRevision + 1;
+    expectedAckRevisionRef.current = expectedNextRevision;
+
+    const acknowledge = (savedPlan: TDoc) => {
+      const nextRevision = savedPlan.revision ?? expectedNextRevision;
+      saveAckByGenerationRef.current.set(generation, {
+        revision: nextRevision,
+        version: versionBeingSaved,
+      });
+      if (generation !== generationRef.current) return false;
+      revisionRef.current = nextRevision;
+      savedVersionRef.current = versionBeingSaved;
+      retryCountRef.current = 0;
+      pendingRef.current = null;
+      expectedAckRevisionRef.current = null;
+      onSavedRef.current(savedPlan);
+      setState(
+        changeVersionRef.current > versionBeingSaved ? "dirty" : "saved",
+      );
+      return true;
+    };
+
+    const isAcknowledgedOwnWrite = (doc: TDoc) =>
+      Boolean(isOwnWriteFn?.(doc, payload)) &&
+      getDocumentRevision(doc) === expectedNextRevision;
 
     setState("saving");
     const request = (async () => {
       try {
-        const savedPlan = await saveRef.current(payload, revisionRef.current);
-        // Resolved after a plan switch — this result describes the plan we
-        // left, so applying any of it here would corrupt the current one.
-        if (generation !== generationRef.current) return false;
-        revisionRef.current = savedPlan.revision ?? revisionRef.current + 1;
-        savedVersionRef.current = versionBeingSaved;
-        retryCountRef.current = 0;
-        pendingRef.current = null;
-        onSavedRef.current(savedPlan);
-        setState(
-          changeVersionRef.current > versionBeingSaved ? "dirty" : "saved",
-        );
-        return true;
+        const savedPlan = await saveFn(payload, sentRevision);
+        return acknowledge(savedPlan);
       } catch (error) {
-        if (generation !== generationRef.current) return false;
         const latestPlan = getConflictPlanRef.current(error);
+        if (latestPlan && isAcknowledgedOwnWrite(latestPlan)) {
+          return acknowledge(latestPlan);
+        }
+        if (generation !== generationRef.current) return false;
         if (latestPlan) {
+          expectedAckRevisionRef.current = null;
           setState("conflict");
           onConflictRef.current(latestPlan);
           return false;
         }
+
+        if (loadLatestFn) {
+          try {
+            const remote = await loadLatestFn();
+            if (remote && isAcknowledgedOwnWrite(remote)) {
+              return acknowledge(remote);
+            }
+            if (generation !== generationRef.current) return false;
+            if (
+              remote &&
+              getDocumentRevision(remote) > sentRevision &&
+              !isOwnWriteFn?.(remote, payload)
+            ) {
+              expectedAckRevisionRef.current = null;
+              setState("conflict");
+              onConflictRef.current(remote);
+              return false;
+            }
+          } catch {
+            if (generation !== generationRef.current) return false;
+          }
+        }
+
         const retryDelay = RETRY_DELAYS_MS[retryCountRef.current];
         retryCountRef.current += 1;
         if (retryDelay !== undefined) {
@@ -159,15 +270,30 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
    * under the new plan. Fire-and-forget: this hook's state now belongs to a
    * different plan, so the result is deliberately not applied here.
    */
-  const flushPendingForPreviousPlan = useCallback(() => {
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    if (!pending) return;
-    if (changeVersionRef.current <= savedVersionRef.current) return;
-    void pending.save(pending.payload, pending.baseRevision).catch(() => {
-      // Nothing to surface — the editor has already moved to another plan.
-    });
-  }, []);
+  const flushPendingForPreviousPlan = useCallback(
+    (inFlight: Promise<boolean> | null, leavingGeneration: number) => {
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (!pending) return;
+      if (changeVersionRef.current <= savedVersionRef.current) return;
+
+      void (async () => {
+        if (inFlight) {
+          await inFlight.catch(() => false);
+        }
+        const ack = saveAckByGenerationRef.current.get(leavingGeneration);
+        saveAckByGenerationRef.current.delete(leavingGeneration);
+        if (ack && ack.version >= pending.version) return;
+        const baseRevision = ack?.revision ?? pending.baseRevision;
+        try {
+          await pending.save(pending.payload, baseRevision);
+        } catch {
+          // Nothing to surface — the editor has already moved to another plan.
+        }
+      })();
+    },
+    [],
+  );
 
   const flush = useCallback(async () => {
     clearTimers();
@@ -194,6 +320,7 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
     revisionRef.current = plan.revision ?? revisionRef.current;
     savedVersionRef.current = changeVersionRef.current;
     retryCountRef.current = 0;
+    expectedAckRevisionRef.current = null;
     setState("saved");
   }, []);
 
@@ -202,15 +329,17 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   /**
    * The server broadcasts a successful write before its HTTP response returns.
    * Consumers use this to recognize that one-revision-ahead SSE message as the
-   * acknowledgement for their own in-flight save, rather than a second editor.
+   * acknowledgement for their own in-flight or retrying save, rather than a
+   * second editor.
    */
   const getInFlightExpectedRevision = useCallback(
-    () => (inFlightRef.current ? revisionRef.current + 1 : null),
+    () => expectedAckRevisionRef.current,
     [],
   );
 
   const markConflict = useCallback(() => {
     clearTimers();
+    expectedAckRevisionRef.current = null;
     setState("conflict");
   }, [clearTimers]);
 
@@ -218,7 +347,9 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
     if (resetKeyRef.current === resetKey) return;
     resetKeyRef.current = resetKey;
     clearTimers();
-    flushPendingForPreviousPlan();
+    const leavingGeneration = generationRef.current;
+    const inFlight = inFlightRef.current;
+    flushPendingForPreviousPlan(inFlight, leavingGeneration);
     // Any in-flight request now belongs to the previous plan.
     generationRef.current += 1;
     inFlightRef.current = null;
@@ -226,7 +357,11 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
     // snapshot the render's value here: an incoming route response must never
     // acknowledge a click that happened while it was settling.
     savedVersionRef.current = 0;
-    revisionRef.current = baseRevision;
+    // The previous plan's revision must not leak onto the next one. Adopt the
+    // fetched document once this draft is clean; copying `baseRevision` here
+    // would still be the plan we just left.
+    revisionRef.current = 0;
+    expectedAckRevisionRef.current = null;
     retryCountRef.current = 0;
     setState("saved");
     // resetKey intentionally identifies a different plan, not a new save ack.
@@ -242,17 +377,17 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   // prop — the template editor deliberately does not, since a new `template`
   // identity resets its draft — so it goes on reporting the revision the
   // document had before the first autosave. Moving back to that would make
-  // every later save a guaranteed 409. Switching documents is the one case
-  // where the revision legitimately drops, and the resetKey effect above owns
-  // it.
+  // every later save a guaranteed 409. Switching documents resets to 0 above;
+  // this effect then adopts the fetched plan's revision while the draft is
+  // still clean.
   useEffect(() => {
     const hasUnsavedWork = changeVersionRef.current > savedVersionRef.current;
     if (
-      baseRevision <= revisionRef.current
-      || hasUnsavedWork
-      || inFlightRef.current
-      || pendingRef.current
-      || state !== "saved"
+      baseRevision <= revisionRef.current ||
+      hasUnsavedWork ||
+      inFlightRef.current ||
+      pendingRef.current ||
+      state !== "saved"
     ) {
       return;
     }
@@ -279,6 +414,7 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
       // Stale during a conflict, and intentionally so: the flush must lose the
       // server's revision check rather than clobber the other editor's work.
       baseRevision: revisionRef.current,
+      version: changeVersion,
       save: saveRef.current,
     };
   }, [changeVersion, enabled, state]);
@@ -312,9 +448,11 @@ export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload
   useEffect(
     () => () => {
       clearTimers();
+      const leavingGeneration = generationRef.current;
+      const inFlight = inFlightRef.current;
       generationRef.current += 1;
       inFlightRef.current = null;
-      flushPendingForPreviousPlan();
+      flushPendingForPreviousPlan(inFlight, leavingGeneration);
     },
     [clearTimers, flushPendingForPreviousPlan],
   );

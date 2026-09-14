@@ -20,8 +20,10 @@ import {
   saveServicePlan,
   saveServicePlanAssignmentHistory,
   saveServicePlanMicrophones,
+  sendServicePlanShareEmail,
   unpublishServicePlan,
   updateServicePlanPublicLive,
+  AuthApiError,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
 import { extractTextFromPdfFile } from "./extractPdfText";
@@ -34,6 +36,7 @@ import type {
 } from "../../api/authTypes";
 import type { ServicePlan } from "../../types/servicePlan";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
+import type { ServicePlanTimingSource } from "./servicePlanTimingUtils";
 import {
   plainTextToRichText,
   richTextToPlainText,
@@ -47,6 +50,15 @@ jest.mock("../../api/auth", () => ({
   AuthApiError: class AuthApiError extends Error {
     status?: number;
     details?: unknown;
+    constructor(
+      message: string,
+      options: { status?: number; details?: unknown } = {},
+    ) {
+      super(message);
+      this.name = "AuthApiError";
+      this.status = options.status;
+      this.details = options.details;
+    }
   },
   listServicePlanTemplates: jest.fn(),
   saveServicePlanTemplate: jest.fn(),
@@ -58,6 +70,7 @@ jest.mock("../../api/auth", () => ({
   saveServicePlan: jest.fn(),
   saveServicePlanAssignmentHistory: jest.fn(),
   saveServicePlanMicrophones: jest.fn(),
+  sendServicePlanShareEmail: jest.fn(),
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
   getSongAudioUrl: jest.fn(),
@@ -138,6 +151,7 @@ const mockExtractTextFromPdfFile = jest.mocked(extractTextFromPdfFile);
 const mockPublishServicePlan = jest.mocked(publishServicePlan);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
 const mockUnpublishServicePlan = jest.mocked(unpublishServicePlan);
+const mockSendServicePlanShareEmail = jest.mocked(sendServicePlanShareEmail);
 const mockUpdateServicePlanPublicLive = jest.mocked(updateServicePlanPublicLive);
 
 const oneTimeService: TeamService = {
@@ -159,21 +173,14 @@ const occurrence: TeamScheduleOccurrence = {
   startsAt: "2026-07-26T14:00:00.000Z",
 };
 
-const renderEditor = ({
-  service = oneTimeService,
-  occurrence: occurrenceProp = occurrence,
-  members = [],
-  positions = [],
-  teams = [],
-  canEdit = true,
-  initialEditing = false,
-  onBack,
-  planNavigation,
-  occurrenceSwitcher,
-  teamMicrophones,
-  scheduledAssignmentRows,
-  mobileServingContent,
-}: {
+const nextOccurrence: TeamScheduleOccurrence = {
+  occurrenceId: "service-1@2026-08-02T14:00:00.000Z",
+  serviceId: "service-1",
+  name: "Easter Sunday",
+  startsAt: "2026-08-02T14:00:00.000Z",
+};
+
+type RenderEditorProps = {
   service?: TeamService;
   occurrence?: TeamScheduleOccurrence;
   members?: TeamRosterMember[];
@@ -200,34 +207,54 @@ const renderEditor = ({
   };
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   mobileServingContent?: ReactNode;
-} = {}) =>
-  render(
-    <GlobalInfoContext.Provider
-      value={
-        createMockGlobalContext({ churchId: "church-1" }) as ContextType<
-          typeof GlobalInfoContext
-        >
-      }
-    >
-      <ToastProvider>
-        <ServicePlanEditor
-          service={service}
-          occurrence={occurrenceProp}
-          members={members}
-          positions={positions}
-          teams={teams}
-          canEdit={canEdit}
-          initialEditing={initialEditing}
-          onBack={onBack}
-          planNavigation={planNavigation}
-          occurrenceSwitcher={occurrenceSwitcher}
-          teamMicrophones={teamMicrophones}
-          scheduledAssignmentRows={scheduledAssignmentRows}
-          mobileServingContent={mobileServingContent}
-        />
-      </ToastProvider>
-    </GlobalInfoContext.Provider>,
-  );
+  onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
+};
+
+const editorTree = ({
+  service = oneTimeService,
+  occurrence: occurrenceProp = occurrence,
+  members = [],
+  positions = [],
+  teams = [],
+  canEdit = true,
+  initialEditing = false,
+  onBack,
+  planNavigation,
+  occurrenceSwitcher,
+  teamMicrophones,
+  scheduledAssignmentRows,
+  mobileServingContent,
+  onPlanTimingChange,
+}: RenderEditorProps = {}) => (
+  <GlobalInfoContext.Provider
+    value={
+      createMockGlobalContext({ churchId: "church-1" }) as ContextType<
+        typeof GlobalInfoContext
+      >
+    }
+  >
+    <ToastProvider>
+      <ServicePlanEditor
+        service={service}
+        occurrence={occurrenceProp}
+        members={members}
+        positions={positions}
+        teams={teams}
+        canEdit={canEdit}
+        initialEditing={initialEditing}
+        onBack={onBack}
+        planNavigation={planNavigation}
+        occurrenceSwitcher={occurrenceSwitcher}
+        teamMicrophones={teamMicrophones}
+        scheduledAssignmentRows={scheduledAssignmentRows}
+        mobileServingContent={mobileServingContent}
+        onPlanTimingChange={onPlanTimingChange}
+      />
+    </ToastProvider>
+  </GlobalInfoContext.Provider>
+);
+
+const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
 
 describe("collectServicePlanTeamNoteLabels", () => {
   it("returns sorted unique non-empty team note labels", () => {
@@ -381,6 +408,12 @@ describe("ServicePlanEditor", () => {
     mockUnpublishServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {} as ServicePlan,
+    });
+    mockSendServicePlanShareEmail.mockResolvedValue({
+      success: true,
+      sent: 1,
+      failed: 0,
+      failedRecipients: [],
     });
     mockUpdateServicePlanPublicLive.mockResolvedValue({
       success: true,
@@ -658,6 +691,26 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
   });
 
+  it("publishes draft timing changes to the embedding surface", async () => {
+    const user = userEvent.setup();
+    const onPlanTimingChange = jest.fn();
+    renderEditor({ onPlanTimingChange });
+
+    await user.click(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    );
+
+    await waitFor(() => {
+      expect(onPlanTimingChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          planKey: "service-1@2026-07-26",
+          startsAt: occurrence.startsAt,
+          sections: expect.any(Array),
+        }),
+      );
+    });
+  });
+
   // The Controller workspace picks the occurrence itself and has no Plans list
   // to go back to, so the switch has to be reachable from the plan's own menu —
   // including on a service with no plan saved yet, or the operator is stuck.
@@ -825,6 +878,231 @@ describe("ServicePlanEditor", () => {
     );
   });
 
+  it("saves the next edit against the revision the server returned", async () => {
+    const user = userEvent.setup();
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 4,
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              { id: "el-1", type: "free", title: plainTextToRichText("Living Hope") },
+            ],
+          },
+        ],
+      },
+    });
+    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
+      success: true,
+      servicePlan: {
+        planId: `church-1::${planKey}`,
+        churchId: "church-1",
+        planKey,
+        ...body,
+        revision: (body.baseRevision ?? 0) + 1,
+      } as ServicePlan,
+    }));
+
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    const title = await screen.findByLabelText(/^Title/i);
+    await user.type(title, "!");
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
+      { timeout: 2_500 },
+    );
+    expect(mockSaveServicePlan.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ baseRevision: 4 }),
+    );
+
+    await user.type(title, "!");
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(2),
+      { timeout: 2_500 },
+    );
+    expect(mockSaveServicePlan.mock.calls[1][2]).toEqual(
+      expect.objectContaining({ baseRevision: 5 }),
+    );
+  });
+
+  it("does not send the previous plan's revision after prev/next onto a lower-revision plan", async () => {
+    const user = userEvent.setup();
+    const sundayPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 50,
+      sections: [
+        {
+          id: "section-sunday",
+          name: "Worship",
+          elements: [
+            { id: "el-sunday", type: "free" as const, title: plainTextToRichText("Sunday item") },
+          ],
+        },
+      ],
+    };
+    const nextWeekPlan = {
+      planId: "church-1::service-1@2026-08-02",
+      churchId: "church-1",
+      planKey: "service-1@2026-08-02",
+      serviceId: "service-1",
+      date: "2026-08-02",
+      name: "Easter Sunday",
+      revision: 3,
+      sections: [
+        {
+          id: "section-next",
+          name: "Worship",
+          elements: [
+            { id: "el-next", type: "free" as const, title: plainTextToRichText("Next week item") },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockImplementation(async (_churchId, planKey) => ({
+      success: true,
+      servicePlan: planKey === nextWeekPlan.planKey ? nextWeekPlan : sundayPlan,
+    }));
+    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
+      success: true,
+      servicePlan: {
+        planId: `church-1::${planKey}`,
+        churchId: "church-1",
+        planKey,
+        ...body,
+        revision: (body.baseRevision ?? 0) + 1,
+      } as ServicePlan,
+    }));
+
+    const view = renderEditor();
+    expect(
+      await screen.findByRole("button", { name: "View full name: Sunday item" }),
+    ).toBeInTheDocument();
+
+    view.rerender(editorTree({
+      occurrence: nextOccurrence,
+    }));
+    expect(
+      await screen.findByRole("button", { name: "View full name: Next week item" }),
+    ).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.type(await screen.findByLabelText(/^Title/i), "!");
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
+      { timeout: 2_500 },
+    );
+    expect(mockSaveServicePlan).toHaveBeenCalledWith(
+      "church-1",
+      "service-1@2026-08-02",
+      expect.objectContaining({ baseRevision: 3 }),
+    );
+    expect(mockSaveServicePlan.mock.calls[0][2].baseRevision).not.toBe(50);
+  });
+
+  it("offers Reload latest only for a concurrent-edit conflict", async () => {
+    const user = userEvent.setup();
+    const latestPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Their version",
+      revision: 9,
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "el-1", type: "free" as const, title: plainTextToRichText("Their item") },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        ...latestPlan,
+        name: "Easter Sunday",
+        revision: 8,
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              { id: "el-1", type: "free" as const, title: plainTextToRichText("Our item") },
+            ],
+          },
+        ],
+      },
+    });
+    mockSaveServicePlan.mockRejectedValueOnce(
+      new AuthApiError("Conflict", {
+        status: 409,
+        details: { servicePlan: latestPlan },
+      }),
+    );
+
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.type(await screen.findByLabelText(/^Title/i), "!");
+
+    expect(
+      await screen.findByText("Plan changed elsewhere", undefined, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload latest" })).toBeInTheDocument();
+  });
+
+  it("does not offer Reload latest after a generic save failure", async () => {
+    const user = userEvent.setup();
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 4,
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              { id: "el-1", type: "free" as const, title: plainTextToRichText("Living Hope") },
+            ],
+          },
+        ],
+      },
+    });
+    mockSaveServicePlan.mockRejectedValue(new Error("500"));
+
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.type(await screen.findByLabelText(/^Title/i), "!");
+
+    expect(
+      await screen.findByText("Retrying save…", undefined, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload latest" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
+  });
+
   it("applies a saved template to an empty plan", async () => {
     mockListServicePlanTemplates.mockResolvedValue({
       success: true,
@@ -930,6 +1208,14 @@ describe("ServicePlanEditor", () => {
         },
       ],
     });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Choose a template" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Apply a template" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close/i }));
 
     await user.click(
       await screen.findByRole("button", { name: /Apply Standard Sabbath/i }),
@@ -2188,6 +2474,9 @@ Opening Song to begin the worship experience.
       screen.getByRole("button", { name: /View simple view/i }),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("menuitem", { name: /^Email$/i }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("menuitem", { name: /Save as template/i }),
     ).toBeInTheDocument();
     expect(
@@ -2204,6 +2493,15 @@ Opening Song to begin the worship experience.
     expect(
       screen.queryByText(/Serving links include notes/i),
     ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: /^Email$/i }));
+    expect(
+      await screen.findByRole("heading", { name: "Email service plan" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /^Subject:/ })).toHaveDisplayValue(
+      /Easter Sunday Service Plan/,
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     await user.keyboard("{Escape}");
 
@@ -2504,6 +2802,63 @@ Opening Song to begin the worship experience.
       "noopener,noreferrer",
     );
     openSpy.mockRestore();
+  });
+
+  it("flushes a published plan before sending its share email", async () => {
+    const publishedPlan: ServicePlan = {
+      ...planWithTwoSections,
+      published: true,
+    };
+    const events: string[] = [];
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: publishedPlan,
+      publicUrls: {
+        team: "https://www.worshipsync.net/#/services/share-token",
+      },
+    });
+    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => {
+      events.push("save");
+      return {
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          ...body,
+          planKey,
+        } as ServicePlan,
+      };
+    });
+    mockSendServicePlanShareEmail.mockImplementation(async () => {
+      events.push("send");
+      return {
+        success: true,
+        sent: 1,
+        failed: 0,
+        failedRecipients: [],
+      };
+    });
+
+    const user = userEvent.setup();
+    renderEditor({ initialEditing: true });
+
+    const sectionName = await screen.findByDisplayValue("Worship");
+    await user.clear(sectionName);
+    await user.type(sectionName, "Opening");
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Email$/i }));
+    await user.type(
+      await screen.findByRole("textbox", { name: /^To:/ }),
+      "one@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Send email" }));
+
+    await waitFor(() => {
+      expect(mockSendServicePlanShareEmail).toHaveBeenCalled();
+    });
+    expect(
+      await screen.findByText("Service plan email sent successfully."),
+    ).toBeInTheDocument();
+    expect(events).toEqual(["save", "send"]);
   });
 
   it("opens library song lyrics from a plan song badge", async () => {

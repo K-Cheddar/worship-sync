@@ -30,7 +30,7 @@ import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
 import { ChatProvider } from "./chat/ChatContext";
 import ChatWindowHost from "./chat/ChatWindowHost";
-import { getPageTitle } from "./utils/pageTitles";
+import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 
 /**
@@ -52,6 +52,9 @@ import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoo
 const Controller = lazyRoute(() => import("./pages/Controller/Controller"));
 const CurrentServiceWorkspace = lazyRoute(
   () => import("./pages/Controller/CurrentServiceWorkspace"),
+);
+const CurrentServiceViewer = lazyRoute(
+  () => import("./pages/CurrentServiceViewer"),
 );
 const OverlayController = lazyRoute(
   () => import("./pages/OverlayController/OverlayController"),
@@ -144,6 +147,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/" || pathname === "") return true;
   if (pathname === "/home") return true;
   if (pathname === "/current-service") return true;
+  if (pathname === "/current-service/view") return true;
   if (pathname.startsWith("/controller")) return true;
   if (pathname.startsWith("/aux-controller")) return true;
   if (pathname === "/overlay-controller") return true;
@@ -237,9 +241,7 @@ const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
 
-  useEffect(() => {
-    document.title = getPageTitle(location.pathname);
-  }, [location.pathname]);
+  useDocumentPageTitle();
 
   useLayoutEffect(() => {
     const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);
@@ -302,6 +304,14 @@ const AppRoutes = () => {
                     <TeamsAccessGuard>
                       <CurrentServiceWorkspace />
                     </TeamsAccessGuard>
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/current-service/view"
+                element={
+                  <AuthGate allowedKinds={["human", "workstation"]}>
+                    <CurrentServiceViewer />
                   </AuthGate>
                 }
               />

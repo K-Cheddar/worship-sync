@@ -177,6 +177,13 @@ const enabledGlobalInfo = {
   loginState: "success",
 };
 
+const setVisibility = (visibility: DocumentVisibilityState) => {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => visibility,
+  });
+};
+
 describe("useCurrentServicePlanSource", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -205,6 +212,10 @@ describe("useCurrentServicePlanSource", () => {
       assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
     });
     mockLoadPlanPreview.mockResolvedValue(outlineFixture);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("loads the current service's plan and marks the preview plan-sourced", async () => {
@@ -661,7 +672,9 @@ describe("useCurrentServicePlanSource", () => {
     expect(latestResult?.savedPlans).toEqual([]);
     expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
     expect(store.getState().servicePlanningImport.preview).toBeNull();
-    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+    // Refresh is an authoritative reconciliation: it reloads the summary list
+    // as well as the selected plan and its assignments.
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
   });
 
   it("does not silently switch services when a list refresh drops the automatic selection", async () => {
@@ -791,6 +804,296 @@ describe("useCurrentServicePlanSource", () => {
       secondPlan.planKey,
     );
     expect(latestResult?.selectedPlanKey).toBe(secondPlan.planKey);
+  });
+
+  it("keeps selected-plan reconciliation alive for an unrelated plan event", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    let resolveRefresh!: (value: { servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockReturnValue(slowRefresh);
+    let refreshPromise: Promise<void> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        servicePlan: secondPlan,
+      });
+    });
+
+    await act(async () => {
+      resolveRefresh({
+        servicePlan: { ...planFixture, name: "Selected plan refreshed" },
+      });
+      await refreshPromise;
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      { ...planFixture, name: "Selected plan refreshed" },
+      expect.any(Array),
+    );
+  });
+
+  it("keeps selected-plan reconciliation alive for an unrelated plan removal", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    let resolveRefresh!: (value: { servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockReturnValue(slowRefresh);
+    let refreshPromise: Promise<void> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-removed",
+        planKey: "unrelated-plan@2026-08-02",
+      });
+    });
+
+    await act(async () => {
+      resolveRefresh({
+        servicePlan: { ...planFixture, name: "Selected plan refreshed" },
+      });
+      await refreshPromise;
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      { ...planFixture, name: "Selected plan refreshed" },
+      expect.any(Array),
+    );
+  });
+
+  it("recovers changed plan details and assignments after a long hidden period", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const refreshedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
+    const refreshedAssignments = [
+      { teamName: "Band", role: "Keys", name: "Alex Morgan" },
+    ];
+    mockGetServicePlan.mockResolvedValue({ servicePlan: refreshedPlan });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: refreshedAssignments,
+    });
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      refreshedPlan,
+      refreshedAssignments,
+    );
+  });
+
+  it("does not reconcile when a hidden period is shorter than the threshold", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 9_999;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(1);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles the selected plan and assignments after network recovery", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const refreshedAssignments = [
+      { teamName: "Band", role: "Keys", name: "Offline recovery" },
+    ];
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: refreshedAssignments,
+    });
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+      nowMs += 10_001;
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      refreshedAssignments,
+    );
+  });
+
+  it("ignores the initial SSE connection but reconciles a later connection", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await act(async () => {
+      mockLiveHandler?.({ type: "connected" });
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(1);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      mockLiveHandler?.({ type: "connected" });
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses visibility, online, and SSE reconnect signals into one refresh", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    // Mark the first connected message as the initial connection.
+    act(() => mockLiveHandler?.({ type: "connected" }));
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("offline"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("online"));
+      mockLiveHandler?.({ type: "connected" });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the refreshed list to clear a plan removed while asleep", async () => {
+    const remainingPlan = {
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      date: "2026-08-01",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    mockListServicePlans.mockResolvedValue({ servicePlans: [remainingPlan] });
+    mockGetServicePlan.mockResolvedValue({ servicePlan: null });
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(latestResult?.savedPlans).toEqual([remainingPlan]);
+  });
+
+  it("keeps the displayed plan and assignments when background reconciliation fails", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockGetServicePlan.mockRejectedValue(new Error("temporarily unavailable"));
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+  });
+
+  it("keeps the displayed assignments when background assignment reconciliation fails", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    mockGetServicePlanAssignments.mockRejectedValue(
+      new Error("assignments temporarily unavailable"),
+    );
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(latestResult?.savedPlans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ planKey: planFixture.planKey }),
+      ]),
+    );
   });
 
   it("switches to another occurrence when the operator overrides it", async () => {

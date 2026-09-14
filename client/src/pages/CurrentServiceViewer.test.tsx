@@ -1,0 +1,357 @@
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ContextType } from "react";
+import { Provider } from "react-redux";
+import { MemoryRouter } from "react-router-dom";
+import type { ServiceTime } from "../types";
+import type { ServicePlan } from "../types/servicePlan";
+import {
+  buildCurrentServiceViewerOptions,
+  default as CurrentServiceViewer,
+  useCurrentServiceViewerSelection,
+} from "./CurrentServiceViewer";
+import ServicePublicView from "./ServicePublicView";
+import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
+import type { TeamScheduleOccurrence } from "../api/authTypes";
+import { GlobalInfoContext } from "../context/globalInfo";
+import { createMockGlobalContext } from "../test/mocks";
+import store from "../store/store";
+import { initiateServices } from "../store/serviceTimesSlice";
+import {
+  getServicePlan,
+  getServicePlanPublicSnapshot,
+  listServicePlans,
+} from "../api/auth";
+
+jest.mock("../api/auth", () => ({
+  getServicePlan: jest.fn(),
+  getServicePlanPublicSnapshot: jest.fn(),
+  listServicePlans: jest.fn(),
+}));
+
+jest.mock("./Teams/hooks/useTeamsLiveSync", () => ({
+  isServicePlanUpdatedEvent: jest.fn(() => false),
+  useTeamsLiveSync: jest.fn(),
+}));
+
+jest.mock("../containers/Toolbar/ToolbarElements/UserSection", () => () => null);
+
+const plan: ServicePlan = {
+  planId: "plan-1",
+  churchId: "church-1",
+  planKey: "svc-1@2026-09-13",
+  serviceId: "svc-1",
+  date: "2026-09-13",
+  name: "Sunday Service",
+  sections: [
+    {
+      id: "worship",
+      name: "Worship",
+      elements: [
+        {
+          id: "welcome",
+          type: "song",
+          title: {
+            blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }],
+          },
+          notes: {
+            blocks: [{ type: "paragraph", spans: [{ text: "Start quietly." }] }],
+          },
+          teamNotes: [
+            {
+              id: "team-note-1",
+              label: "Worship Team",
+              note: {
+                blocks: [{ type: "paragraph", spans: [{ text: "Team detail." }] }],
+              },
+            },
+          ],
+          songRefs: [
+            { kind: "library", songId: "song-1", songName: "Opening Song" },
+          ],
+          assignees: [
+            { id: "assignee-1", name: "Avery Volunteer", memberId: "member-1" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const occurrence = (
+  occurrenceId: string,
+  startsAt: string,
+): TeamScheduleOccurrence => ({
+  occurrenceId,
+  serviceId: occurrenceId,
+  name: occurrenceId,
+  startsAt,
+});
+
+const service = (id: string, dateTimeISO: string): ServiceTime => ({
+  id,
+  name: id,
+  timerType: "countdown",
+  reccurence: "one_time",
+  dateTimeISO,
+});
+
+const morningService = service("svc-1", "2026-09-13T13:00:00.000Z");
+const tomorrowService = service("svc-2", "2026-09-14T13:00:00.000Z");
+
+const summary = (serviceItem: ServiceTime): {
+  planKey: string;
+  serviceId: string;
+  date: string;
+  name: string;
+  startsAt: string;
+} => ({
+  planKey: `${serviceItem.id}@${serviceItem.dateTimeISO?.slice(0, 10)}`,
+  serviceId: serviceItem.id,
+  date: serviceItem.dateTimeISO?.slice(0, 10) ?? "",
+  name: `${serviceItem.name} Plan`,
+  startsAt: serviceItem.dateTimeISO ?? "",
+});
+
+const renderViewer = (services: ServiceTime[], canViewTeams = false) => {
+  store.dispatch(initiateServices(services));
+  const context = createMockGlobalContext({
+    churchId: "church-1",
+    churchName: "Test Church",
+    canViewServices: true,
+    canViewTeams,
+  });
+  return render(
+    <Provider store={store}>
+      <GlobalInfoContext.Provider
+        value={context as ContextType<typeof GlobalInfoContext>}
+      >
+        <MemoryRouter>
+          <CurrentServiceViewer />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>
+    </Provider>,
+  );
+};
+
+describe("CurrentServiceViewer", () => {
+  afterEach(() => {
+    cleanup();
+    store.dispatch(initiateServices([]));
+    jest.mocked(getServicePlan).mockReset();
+    jest.mocked(getServicePlanPublicSnapshot).mockReset();
+    jest.mocked(listServicePlans).mockReset();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  it("renders plan content without roster assignments", () => {
+    render(
+      <ServicePublicView
+        snapshot={buildServicePlanFlowSnapshot({
+          plan,
+          startsAt: "2026-09-13T13:00:00.000Z",
+          churchName: "Test Church",
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Worship" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    expect(screen.getByText("Opening Song")).toBeInTheDocument();
+    expect(screen.getByText("Start quietly.")).toBeInTheDocument();
+    expect(screen.getByText("Team detail.")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /Team notes/ })).toBeInTheDocument();
+    expect(screen.queryByText("Avery Volunteer")).not.toBeInTheDocument();
+  });
+
+  it("loads the automatically selected service and its saved plan", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [summary(morningService)],
+    });
+    jest.mocked(getServicePlan).mockResolvedValue({
+      success: true,
+      servicePlan: plan,
+    });
+
+    renderViewer([morningService]);
+
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    expect(getServicePlan).toHaveBeenCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
+  });
+
+  it("shows a clear empty state when the selected service has no saved plan", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [],
+    });
+
+    renderViewer([morningService]);
+
+    expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to Home/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /Choose a service/i })).toBeInTheDocument();
+    expect(getServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("groups bounded manual choices as recent, today, and upcoming", () => {
+    const now = Date.parse("2026-09-13T08:00:00.000Z");
+    const options = buildCurrentServiceViewerOptions(
+      [
+        occurrence("recent", "2026-09-12T10:00:00.000Z"),
+        occurrence("today", "2026-09-13T10:00:00.000Z"),
+        occurrence("later", "2026-09-14T10:00:00.000Z"),
+      ],
+      now,
+    );
+
+    expect(options.map((option) => option.group)).toEqual([
+      "Recent",
+      "Today",
+      "Upcoming",
+    ]);
+    expect(options.map((option) => option.value)).toEqual([
+      "recent",
+      "today",
+      "later",
+    ]);
+  });
+
+  it("keeps manual selection until the viewer explicitly returns to automatic", () => {
+    const result = {
+      current: null as ReturnType<typeof useCurrentServiceViewerSelection> | null,
+    };
+    const Harness = ({ services }: { services: ServiceTime[] }) => {
+      result.current = useCurrentServiceViewerSelection(services);
+      return null;
+    };
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T08:00:00.000Z"));
+
+    render(
+      <Harness
+        services={[
+          service("morning", "2026-09-13T09:00:00.000Z"),
+          service("tomorrow", "2026-09-14T09:00:00.000Z"),
+        ]}
+      />,
+    );
+    const tomorrow = result.current?.occurrences.find(
+      (candidate) => candidate.serviceId === "tomorrow",
+    );
+    act(() => {
+      result.current?.selectOccurrence(tomorrow?.occurrenceId ?? "");
+    });
+
+    expect(result.current?.occurrence?.serviceId).toBe("tomorrow");
+    expect(result.current?.selectedOccurrenceId).toBe(tomorrow?.occurrenceId);
+
+    act(() => {
+      result.current?.returnToCurrent();
+    });
+
+    expect(result.current?.occurrence?.serviceId).toBe("morning");
+    expect(result.current?.selectedOccurrenceId).toBeNull();
+  });
+
+  it("switches between bounded services and returns to the automatic service", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [summary(morningService), summary(tomorrowService)],
+    });
+    jest.mocked(getServicePlan).mockImplementation(async (_churchId, planKey) => ({
+      success: true,
+      servicePlan: { ...plan, planKey, name: planKey },
+    }));
+    const user = userEvent.setup();
+
+    renderViewer([morningService, tomorrowService]);
+    expect(await screen.findByRole("heading", { name: "svc-1@2026-09-13" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
+    await user.click(await screen.findByRole("option", { name: /svc-2/ }));
+    expect(await screen.findByRole("heading", { name: "svc-2@2026-09-14" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /return to current service/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /return to current service/i }));
+    expect(await screen.findByRole("heading", { name: "svc-1@2026-09-13" })).toBeInTheDocument();
+  });
+
+  it("refreshes after a meaningful hidden-to-visible transition", async () => {
+    let nowMs = Date.parse("2026-09-13T12:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [summary(morningService)],
+    });
+    jest.mocked(getServicePlan).mockResolvedValue({
+      success: true,
+      servicePlan: plan,
+    });
+    const setVisibility = (visibility: DocumentVisibilityState) => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => visibility,
+      });
+    };
+
+    renderViewer([morningService]);
+    await screen.findByRole("heading", { name: "Welcome" });
+    expect(listServicePlans).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(listServicePlans).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
+  it("rechecks the automatic choice when the scheduled start arrives", () => {
+    jest.useFakeTimers();
+    let nowMs = Date.parse("2026-09-13T08:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const result = {
+      current: null as ReturnType<typeof useCurrentServiceViewerSelection> | null,
+    };
+    const Harness = () => {
+      result.current = useCurrentServiceViewerSelection([
+        service("morning", "2026-09-13T08:01:00.000Z"),
+      ]);
+      return null;
+    };
+
+    render(<Harness />);
+    expect(result.current?.automaticResolution.reason).toBe("upcoming-today");
+
+    act(() => {
+      nowMs += 60_000;
+      jest.advanceTimersByTime(60_000);
+    });
+
+    expect(result.current?.automaticResolution.reason).toBe("in-progress");
+  });
+});

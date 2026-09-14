@@ -14,6 +14,7 @@ import {
   Info,
   Layers,
   LayoutDashboard,
+  ListChecks,
   MessagesSquare,
   Monitor,
   Presentation,
@@ -72,6 +73,14 @@ const currentPlanLink: CardLink = {
     "Open the live workspace for the current service, with service plan and display previews together.",
   to: "/current-service",
   icon: LayoutDashboard,
+};
+
+const currentServiceViewerLink: CardLink = {
+  title: "Current Service Viewer",
+  description:
+    "Keep the saved plan for today’s service open on a phone, tablet, or paired workstation.",
+  to: "/current-service/view",
+  icon: ListChecks,
 };
 
 /** The only surface a `member` gets: their own assignments, nothing else. */
@@ -309,7 +318,14 @@ const DisplayLinkGroup = ({
 };
 
 const Welcome = () => {
-  const { loginState, role, access, canViewTeams, sessionKind } =
+  const {
+    loginState,
+    role,
+    access,
+    canViewTeams,
+    canViewServices,
+    sessionKind,
+  } =
     useContext(GlobalInfoContext) || {};
   const { installMenuItems, installHelpDialogs } = useAppInstallChrome();
   const controllerProfiles = useSelector(selectControllerProfiles);
@@ -377,6 +393,8 @@ const Welcome = () => {
     : [...visiblePrimaryControllers, ...visibleAuxControllers];
   /** Live service plan workspace — not a controller surface; sits with My schedule. */
   const showServiceWorkspace = !isMemberAccess && Boolean(canViewTeams);
+  const showCurrentServiceViewer =
+    !isMemberAccess && Boolean(canViewServices);
   const showMySchedule = isLoggedIn && isHumanSession;
   const visibleSecondaryControllers = isMemberAccess
     ? []
@@ -528,12 +546,15 @@ const Welcome = () => {
             neither belongs under Controllers (operator surfaces) nor Church
             administration. My schedule is human-session only; workstations
             still get Service Workspace when they can view teams. */}
-        {(showMySchedule || showServiceWorkspace) && (
+        {(showMySchedule || showServiceWorkspace || showCurrentServiceViewer) && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="grid gap-4 md:grid-cols-2">
               {showMySchedule ? <HomeLinkCard {...mySchedulelink} /> : null}
               {showServiceWorkspace ? (
                 <HomeLinkCard {...currentPlanLink} />
+              ) : null}
+              {showCurrentServiceViewer ? (
+                <HomeLinkCard {...currentServiceViewerLink} />
               ) : null}
             </div>
           </section>

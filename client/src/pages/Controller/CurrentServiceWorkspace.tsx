@@ -3,7 +3,9 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useNavigate } from "react-router-dom";
@@ -37,6 +39,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
   TeamSchedule,
+  TeamScheduleOccurrence,
   TeamScheduleSummary,
 } from "../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../types/servicePlan";
@@ -65,28 +68,69 @@ import {
 import { toTeamService } from "../Teams/teamsUtils";
 import { initiateLiveCredits } from "../../store/creditsSlice";
 import { selectOutputSlot } from "../../store/presentationSlice";
+import { formatTime } from "../../components/DisplayWindow/TimerDisplay";
 import { getChurchDataPath } from "../../utils/firebasePaths";
-import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
-import NextServiceCountdown from "../../components/NextServiceCountdownText/NextServiceCountdown";
-import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
+import {
+  subscribeCountdownTicker,
+} from "../../hooks/useNextServiceCountdownText";
+import {
+  formatCurrentServiceOvertime,
+  resolveCurrentServiceTimingState,
+} from "./currentServiceTiming";
 import {
   formatOccurrenceLabel,
   getOccurrenceServices,
   resolveLiveSlideProgress,
   type LiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
+import {
+  resolveCurrentServiceWorkspaceSections,
+  resolveCurrentServiceWorkspaceTab,
+  type CurrentServiceWorkspacePreviewSection,
+  type CurrentServiceWorkspacePreviewTab,
+} from "../../utils/currentServiceWorkspace";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
 import { hydrateOccurrenceSchedules } from "../../utils/hydrateOccurrenceSchedules";
 import { onlyHydratedSchedules } from "../../api/authTypes";
 import CurrentServiceRestreamPanel from "./CurrentServiceRestreamPanel";
+import {
+  useTeamsLiveSync,
+  type TeamsStreamEvent,
+} from "../Teams/hooks/useTeamsLiveSync";
+import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
+import {
+  getServerTimeOffset,
+  serverDate,
+  subscribeServerTimeOffset,
+} from "../../utils/serverTime";
+import {
+  getServicePlanKey,
+} from "../../utils/servicePlanKeys";
+import type { ServicePlanTimingSource } from "../Services/servicePlanTimingUtils";
 
-type WorkspaceTab = "plan" | "serving" | "displays" | "credits" | "chat";
+type WorkspaceTab = "plan" | CurrentServiceWorkspacePreviewTab;
 /**
  * Whether this date's schedule cells are actually on the client. The bootstrap
  * hydrates a window around today, and the operator can page beyond it.
  */
 type AssignmentsStatus = "ready" | "loading" | "unavailable";
-type PreviewTab = "serving" | "displays" | "credits" | "chat";
+type PreviewTab = CurrentServiceWorkspacePreviewTab;
+
+export const mergeCurrentServiceSchedules = (
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
+  overrides: ReadonlyMap<string, TeamSchedule | null>,
+): (TeamSchedule | TeamScheduleSummary)[] => {
+  const merged = schedules.flatMap((schedule) => {
+    if (!overrides.has(schedule.scheduleId)) return [schedule];
+    const override = overrides.get(schedule.scheduleId);
+    return override ? [override] : [];
+  });
+  const knownIds = new Set(merged.map((schedule) => schedule.scheduleId));
+  overrides.forEach((override, scheduleId) => {
+    if (override && !knownIds.has(scheduleId)) merged.push(override);
+  });
+  return merged;
+};
 
 const ChatUnreadBadge = ({ count }: { count: number }) => {
   if (count <= 0) return null;
@@ -102,48 +146,113 @@ const ChatUnreadBadge = ({ count }: { count: number }) => {
 
 type ServiceHeadingProps = {
   service?: ServiceTime | null;
-  targetIso?: string | null;
+  occurrence?: TeamScheduleOccurrence | null;
+  occurrenceServices?: ServiceTime[];
+  timingPlan?: ServicePlanTimingSource | null;
 };
 
-const ServiceHeading = ({ service, targetIso }: ServiceHeadingProps) => {
-  if (!service || !targetIso) return null;
-  const name = service.name || "Service";
+const useCurrentServiceClockMs = (): number => {
+  // An offset change rerenders immediately; the shared ticker keeps the leaf
+  // moving once per second. Both paths derive the value from serverDate rather
+  // than incrementing a local countdown.
+  useSyncExternalStore(
+    subscribeServerTimeOffset,
+    getServerTimeOffset,
+    getServerTimeOffset,
+  );
+  const [, setTick] = useState(0);
+
+  useEffect(
+    () => subscribeCountdownTicker(() => setTick((value) => value + 1)),
+    [],
+  );
+
+  return serverDate().getTime();
+};
+
+const getTimingLabel = (
+  timingState: ReturnType<typeof resolveCurrentServiceTimingState>,
+): string => {
+  if (timingState.type === "overtime") return "Over by";
+  if (timingState.type === "service-ending") return "Ends in";
+  return "Starts in";
+};
+
+const ServiceHeading = ({
+  service,
+  occurrence,
+  occurrenceServices = [],
+  timingPlan,
+}: ServiceHeadingProps) => {
+  const nowMs = useCurrentServiceClockMs();
+  if (!service || !occurrence) return null;
+
+  const timingState = resolveCurrentServiceTimingState({
+    occurrence,
+    occurrenceServices,
+    plan: timingPlan,
+    nowMs,
+  });
+  const displayService =
+    timingState.type === "upcoming-service" ? timingState.service : service;
+  const name =
+    (occurrence.groupId && timingState.type !== "upcoming-service"
+      ? occurrence.name
+      : displayService.name) || "Service";
+
+  if (timingState.type === "live") {
+    return (
+      <p className="min-w-0 flex-1 truncate text-lg font-semibold">
+        {`${name} · Live`}
+      </p>
+    );
+  }
+
+  const isOvertime = timingState.type === "overtime";
+  const totalSeconds = Math.max(
+    0,
+    Math.floor(
+      (isOvertime ? nowMs - timingState.targetMs : timingState.targetMs - nowMs) /
+        1000,
+    ),
+  );
+  const timeText = isOvertime
+    ? formatCurrentServiceOvertime(timingState.targetMs, nowMs)
+    : formatTime(totalSeconds, false);
+  const label = getTimingLabel(timingState);
 
   return (
-    <NextServiceCountdown targetIso={targetIso}>
-      {(serviceTimeText) =>
-        serviceTimeText === "0" ? (
-          <p className="min-w-0 flex-1 truncate text-lg font-semibold">
-            {`${name} is live`}
-          </p>
-        ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <p className="min-w-0 truncate text-lg font-semibold">{name}:</p>
-            <div
-              className="shrink-0 rounded-md border border-white/20 bg-gray-950 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight"
-              style={{ color: service.color || "#ffffff" }}
-              aria-label={`Begins in ${serviceTimeText}`}
-            >
-              {serviceTimeText}
-            </div>
-          </div>
-        )
-      }
-    </NextServiceCountdown>
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      <p className="min-w-0 truncate text-lg font-semibold">{name} · {label}</p>
+      <div
+        className="shrink-0 rounded-md border border-white/20 bg-gray-950 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight"
+        style={{ color: displayService.color || "#ffffff" }}
+        aria-label={`${label} ${timeText}`}
+      >
+        {timeText}
+      </div>
+    </div>
   );
 };
 
 const WorkspacePage = ({
   children,
   service,
-  targetIso,
+  occurrence,
+  occurrenceServices,
+  timingPlan,
 }: ServiceHeadingProps & {
   children: ReactNode;
 }) => (
   <main className="flex h-dvh flex-col overflow-hidden bg-homepage-canvas p-3 text-white lg:p-4">
     <header className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-gray-700 bg-gray-900/60 px-3 py-2">
       <HomeToolbarMenu />
-      <ServiceHeading service={service} targetIso={targetIso} />
+      <ServiceHeading
+        service={service}
+        occurrence={occurrence}
+        occurrenceServices={occurrenceServices}
+        timingPlan={timingPlan}
+      />
       <div className="ml-auto shrink-0">
         <UserSection />
       </div>
@@ -178,16 +287,24 @@ const DisplaysPreview = ({
   progress = null,
   activeItemId = null,
   activeListId = null,
+  isVisible = true,
 }: {
   columns?: 1 | 2;
   progress?: LiveSlideProgress | null;
   activeItemId?: string | null;
   activeListId?: string | null;
+  /** When false, pause mounted preview video and animation work. */
+  isVisible?: boolean;
 }) => (
   <div className="flex h-full min-h-0 flex-col gap-2">
     <LiveSlideProgressChrome progress={progress} />
     <div className="min-h-0">
-      <TransmitHandler readOnly columns={columns} fillWidth />
+      <TransmitHandler
+        readOnly
+        columns={columns}
+        fillWidth
+        isPreviewActive={isVisible}
+      />
     </div>
     <CurrentServiceItemList
       activeItemId={activeItemId}
@@ -227,24 +344,7 @@ const ServingPanel = ({
   </div>
 );
 
-const PreviewPanel = ({
-  credits,
-  value,
-  onValueChange,
-  progress,
-  activeItemId,
-  activeListId,
-  assignmentTeams,
-  microphones,
-  assignmentsStatus,
-  onOpenSchedule,
-  churchId,
-  youtubeConnected,
-  youtubeAccountLabel,
-  chatUnreadCount,
-  onChatUnreadCountChange,
-  showToast,
-}: {
+type PreviewPanelProps = {
   credits: CreditsInfo[];
   value: PreviewTab;
   onValueChange: (value: PreviewTab) => void;
@@ -264,91 +364,141 @@ const PreviewPanel = ({
   chatUnreadCount: number;
   onChatUnreadCountChange: (count: number) => void;
   showToast: (message: string, variant: "success" | "error") => void;
+  sections: readonly CurrentServiceWorkspacePreviewSection[];
+};
+
+const PreviewPanelContent = ({
+  credits,
+  value,
+  progress,
+  activeItemId,
+  activeListId,
+  assignmentTeams,
+  microphones,
+  assignmentsStatus,
+  onOpenSchedule,
+  churchId,
+  youtubeConnected,
+  youtubeAccountLabel,
+  chatUnreadCount,
+  onChatUnreadCountChange,
+  showToast,
+  sections,
+}: Omit<PreviewPanelProps, "onValueChange" | "sections" | "value"> & {
+  value: PreviewTab;
+  sections: readonly CurrentServiceWorkspacePreviewSection[];
 }) => (
-  <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
-    <Tabs
-      value={value}
-      onValueChange={(next) => onValueChange(next as PreviewTab)}
-      className="flex min-h-0 flex-1 flex-col gap-0"
-    >
-      <div className="shrink-0 border-b border-gray-700 p-2">
-        <div className="flex flex-col gap-2">
-          <TabsList
-            variant="line"
-            className={lineTabsListShellClassName}
-            aria-label="Workspace preview"
-          >
-            <TabsTrigger
-              value="displays"
-              className={lineTabsTriggerSmClassName}
-            >
-              Displays
-            </TabsTrigger>
-            <TabsTrigger value="credits" className={lineTabsTriggerSmClassName}>
-              Credits
-            </TabsTrigger>
-            <TabsTrigger value="serving" className={lineTabsTriggerSmClassName}>
-              Team
-            </TabsTrigger>
-            <TabsTrigger value="chat" className={lineTabsTriggerSmClassName}>
-              Chat
-              {value !== "chat" ? (
-                <ChatUnreadBadge count={chatUnreadCount} />
-              ) : null}
-            </TabsTrigger>
-          </TabsList>
-          {value === "displays" ? (
-            <LiveSlideProgressChrome progress={progress} />
-          ) : null}
-        </div>
+  <div className="min-h-0 flex-1 overflow-hidden p-2">
+    {sections.some((section) => section.key === "displays") ? (
+      <div
+        className={
+          value === "displays" ? "flex h-full min-h-0 flex-col" : "hidden"
+        }
+        aria-hidden={value !== "displays"}
+      >
+        <DisplaysPreview
+          columns={2}
+          activeItemId={activeItemId}
+          activeListId={activeListId}
+          isVisible={value === "displays"}
+        />
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
-        <div
-          className={
-            value === "displays" ? "flex h-full min-h-0 flex-col" : "hidden"
-          }
-          aria-hidden={value !== "displays"}
-        >
-          <DisplaysPreview
-            columns={2}
-            activeItemId={activeItemId}
-            activeListId={activeListId}
-          />
-        </div>
-        <div
-          className={value === "credits" ? "h-full min-h-0" : "hidden"}
-          aria-hidden={value !== "credits"}
-        >
-          <CreditsPanel credits={credits} />
-        </div>
-        <div
-          className={value === "serving" ? "h-full min-h-0" : "hidden"}
-          aria-hidden={value !== "serving"}
-        >
-          <ServingPanel
-            assignmentTeams={assignmentTeams}
-            microphones={microphones}
-            assignmentsStatus={assignmentsStatus}
-            onOpenSchedule={onOpenSchedule}
-          />
-        </div>
-        <div
-          className={value === "chat" ? "h-full min-h-0" : "hidden"}
-          aria-hidden={value !== "chat"}
-        >
-          <CurrentServiceRestreamPanel
-            churchId={churchId}
-            firebaseYoutubeConnected={youtubeConnected}
-            firebaseYoutubeAccountLabel={youtubeAccountLabel}
-            isVisible={value === "chat"}
-            onUnreadCountChange={onChatUnreadCountChange}
-            showToast={showToast}
-          />
-        </div>
+    ) : null}
+    {sections.some((section) => section.key === "credits") ? (
+      <div
+        className={value === "credits" ? "h-full min-h-0" : "hidden"}
+        aria-hidden={value !== "credits"}
+      >
+        <CreditsPanel credits={credits} />
       </div>
-    </Tabs>
-  </section>
+    ) : null}
+    {sections.some((section) => section.key === "team") ? (
+      <div
+        className={value === "serving" ? "h-full min-h-0" : "hidden"}
+        aria-hidden={value !== "serving"}
+      >
+        <ServingPanel
+          assignmentTeams={assignmentTeams}
+          microphones={microphones}
+          assignmentsStatus={assignmentsStatus}
+          onOpenSchedule={onOpenSchedule}
+        />
+      </div>
+    ) : null}
+    {sections.some((section) => section.key === "chat") ? (
+      <div
+        className={value === "chat" ? "h-full min-h-0" : "hidden"}
+        aria-hidden={value !== "chat"}
+      >
+        <CurrentServiceRestreamPanel
+          churchId={churchId}
+          firebaseYoutubeConnected={youtubeConnected}
+          firebaseYoutubeAccountLabel={youtubeAccountLabel}
+          isVisible={value === "chat"}
+          onUnreadCountChange={onChatUnreadCountChange}
+          showToast={showToast}
+        />
+      </div>
+    ) : null}
+  </div>
 );
+
+const PreviewPanel = ({
+  sections,
+  value,
+  ...props
+}: PreviewPanelProps) => {
+  if (sections.length === 1) {
+    const section = sections[0];
+    return (
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
+        {section.tab === "displays" ? (
+          <div className="shrink-0 border-b border-gray-700 p-2">
+            <LiveSlideProgressChrome progress={props.progress} />
+          </div>
+        ) : null}
+        <PreviewPanelContent {...props} sections={sections} value={section.tab} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
+      <Tabs
+        value={value}
+        onValueChange={(next) => props.onValueChange(next as PreviewTab)}
+        className="flex min-h-0 flex-1 flex-col gap-0"
+      >
+        <div className="shrink-0 border-b border-gray-700 p-2">
+          <div className="flex flex-col gap-2">
+            <TabsList
+              variant="line"
+              className={lineTabsListShellClassName}
+              aria-label="Workspace preview"
+            >
+              {sections.map((section) => (
+                <TabsTrigger
+                  key={section.key}
+                  value={section.tab}
+                  className={lineTabsTriggerSmClassName}
+                >
+                  {section.label}
+                  {section.key === "chat" && value !== "chat" ? (
+                    <ChatUnreadBadge count={props.chatUnreadCount} />
+                  ) : null}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {value === "displays" ? (
+              <LiveSlideProgressChrome progress={props.progress} />
+            ) : null}
+          </div>
+        </div>
+        <PreviewPanelContent {...props} sections={sections} value={value} />
+      </Tabs>
+    </section>
+  );
+};
 
 /**
  * A read-only-at-the-controller live workspace around the current scheduled
@@ -361,6 +511,7 @@ const CurrentServiceWorkspace = () => {
     canEditTeams,
     churchId,
     churchIntegrations,
+    currentServiceWorkspace,
     firebaseDb,
     loginState,
     sharedDataReady,
@@ -397,18 +548,71 @@ const CurrentServiceWorkspace = () => {
   const [roleScheduleSource, setRoleScheduleSource] = useState<
     (TeamSchedule | TeamScheduleSummary)[]
   >([]);
+  const roleScheduleOverridesRef = useRef(
+    new Map<string, TeamSchedule | null>(),
+  );
+  const roleDataRequestIdRef = useRef(0);
+  const roleDataInFlightRef = useRef<Promise<void> | null>(null);
+  const roleDataInFlightChurchIdRef = useRef<string | undefined>(undefined);
+  const roleDataChurchIdRef = useRef<string | undefined>(churchId);
+  const roleDataEnabledRef = useRef(false);
+  const roleDataMountedRef = useRef(false);
+  const hasReceivedLiveConnectionRef = useRef(false);
   const [assignmentsIncomplete, setAssignmentsIncomplete] = useState(false);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<
     string | null
   >(null);
+  const [timingPlan, setTimingPlan] =
+    useState<ServicePlanTimingSource | null>(null);
+
+  const availableSections = useMemo(
+    () =>
+      resolveCurrentServiceWorkspaceSections(currentServiceWorkspace, {
+        team: Boolean(canViewTeams),
+      }),
+    [canViewTeams, currentServiceWorkspace],
+  );
+  const availableSectionKeys = useMemo(
+    () => new Set(availableSections.map((section) => section.key)),
+    [availableSections],
+  );
+  const displaysAvailable = availableSectionKeys.has("displays");
+  const creditsAvailable = availableSectionKeys.has("credits");
+  const teamAvailable = availableSectionKeys.has("team");
+  const chatAvailable = availableSectionKeys.has("chat");
+  const resolvedTab = resolveCurrentServiceWorkspaceTab(
+    tab,
+    availableSections,
+  );
+
+  const canLoadRoleData = Boolean(
+    churchId && teamAvailable && loginState !== "guest",
+  );
+  roleDataChurchIdRef.current = churchId;
+  roleDataEnabledRef.current = canLoadRoleData;
+
+  useEffect(() => {
+    roleDataMountedRef.current = true;
+    return () => {
+      roleDataMountedRef.current = false;
+      roleDataRequestIdRef.current += 1;
+      roleDataInFlightRef.current = null;
+      roleDataInFlightChurchIdRef.current = undefined;
+    };
+  }, []);
 
   const liveSlideProgress = useMemo(
     () => resolveLiveSlideProgress(projectorInfo, monitorInfo),
     [monitorInfo, projectorInfo],
   );
 
-  useSyncMonitorSettings(firebaseDb, churchId, !!sharedDataReady);
+  useSyncMonitorSettings(
+    firebaseDb,
+    churchId,
+    !!sharedDataReady,
+    displaysAvailable,
+  );
 
   useEffect(() => {
     setIsMobile?.(!isDesktop);
@@ -417,40 +621,153 @@ const CurrentServiceWorkspace = () => {
 
   useEffect(() => {
     setChatUnreadCount(0);
-  }, [churchId]);
+  }, [chatAvailable, churchId]);
 
   useEffect(() => {
-    if (!churchId || !canViewTeams || loginState === "guest") {
+    if (tab !== resolvedTab) {
+      setTab(resolvedTab);
+    }
+  }, [resolvedTab, tab]);
+
+  const loadRoleData = useCallback(
+    async ({ preserveOnFailure = true }: { preserveOnFailure?: boolean } = {}) => {
+      const churchIdAtStart = churchId;
+      if (!canLoadRoleData || !churchIdAtStart) {
+        if (!preserveOnFailure) {
+          setRolePositions([]);
+          setRoleTeams([]);
+          setRoleMembers([]);
+          setRoleScheduleSource([]);
+        }
+        return;
+      }
+
+      const existing = roleDataInFlightRef.current;
+      if (
+        existing &&
+        roleDataInFlightChurchIdRef.current === churchIdAtStart
+      ) {
+        return existing;
+      }
+      roleDataInFlightRef.current = null;
+
+      const requestId = ++roleDataRequestIdRef.current;
+      roleDataChurchIdRef.current = churchIdAtStart;
+      roleDataInFlightChurchIdRef.current = churchIdAtStart;
+      roleScheduleOverridesRef.current.clear();
+      const isCurrentRequest = () =>
+        requestId === roleDataRequestIdRef.current &&
+        roleDataChurchIdRef.current === churchIdAtStart &&
+        roleDataEnabledRef.current &&
+        roleDataMountedRef.current;
+
+      let request!: Promise<void>;
+      request = (async () => {
+        try {
+          const bootstrap = await getTeamsBootstrap(churchIdAtStart);
+          if (!isCurrentRequest()) return;
+          setRolePositions(bootstrap.positions || []);
+          setRoleTeams(bootstrap.teams || []);
+          setRoleMembers(bootstrap.members || []);
+          setRoleScheduleSource(
+            mergeCurrentServiceSchedules(
+              bootstrap.schedules || [],
+              roleScheduleOverridesRef.current,
+            ),
+          );
+        } catch (error) {
+          if (!isCurrentRequest()) return;
+          console.error("Could not reconcile Current Service teams:", error);
+          if (!preserveOnFailure) {
+            setRolePositions([]);
+            setRoleTeams([]);
+            setRoleMembers([]);
+            setRoleScheduleSource([]);
+          }
+        }
+      })().finally(() => {
+        if (roleDataInFlightRef.current === request) {
+          roleDataInFlightRef.current = null;
+          roleDataInFlightChurchIdRef.current = undefined;
+        }
+      });
+      roleDataInFlightRef.current = request;
+      return request;
+    },
+    [canLoadRoleData, churchId],
+  );
+
+  useEffect(() => {
+    if (!canLoadRoleData) {
+      roleDataRequestIdRef.current += 1;
+      roleDataInFlightRef.current = null;
+      roleDataInFlightChurchIdRef.current = undefined;
+      roleScheduleOverridesRef.current.clear();
       setRolePositions([]);
       setRoleTeams([]);
       setRoleMembers([]);
       setRoleScheduleSource([]);
       return;
     }
-    let cancelled = false;
-    getTeamsBootstrap(churchId)
-      .then((bootstrap) => {
-        if (cancelled) return;
-        setRolePositions(bootstrap.positions || []);
-        setRoleTeams(bootstrap.teams || []);
-        setRoleMembers(bootstrap.members || []);
-        setRoleScheduleSource(bootstrap.schedules || []);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setRolePositions([]);
-          setRoleTeams([]);
-          setRoleMembers([]);
-          setRoleScheduleSource([]);
+    void loadRoleData({ preserveOnFailure: false });
+  }, [canLoadRoleData, loadRoleData]);
+
+  const applyTeamsStreamEvent = useCallback(
+    (event: TeamsStreamEvent) => {
+      if (event.type === "connected") {
+        if (hasReceivedLiveConnectionRef.current) {
+          void loadRoleData({ preserveOnFailure: true });
+        } else {
+          hasReceivedLiveConnectionRef.current = true;
         }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canViewTeams, churchId, loginState]);
+        return;
+      }
+
+      if (
+        event.type === "schedule-updated" &&
+        "schedule" in event &&
+        event.schedule
+      ) {
+        const schedule = event.schedule as TeamSchedule;
+        if (!schedule.scheduleId) return;
+        roleScheduleOverridesRef.current.set(schedule.scheduleId, schedule);
+        setRoleScheduleSource((current) =>
+          mergeCurrentServiceSchedules(
+            current,
+            new Map([[schedule.scheduleId, schedule]]),
+          ),
+        );
+        return;
+      }
+
+      if (
+        event.type === "schedule-removed" &&
+        "scheduleId" in event &&
+        typeof event.scheduleId === "string"
+      ) {
+        const removedScheduleId = event.scheduleId;
+        roleScheduleOverridesRef.current.set(removedScheduleId, null);
+        setRoleScheduleSource((current) =>
+          mergeCurrentServiceSchedules(
+            current,
+            new Map([[removedScheduleId, null]]),
+          ),
+        );
+      }
+    },
+    [loadRoleData],
+  );
 
   useEffect(() => {
-    if (!churchId || !canViewTeams || loginState === "guest") {
+    hasReceivedLiveConnectionRef.current = false;
+  }, [canLoadRoleData, churchId]);
+
+  const liveChurchId = canLoadRoleData ? churchId : null;
+  useTeamsLiveSync(liveChurchId, applyTeamsStreamEvent);
+  useSyncOnReconnect(canLoadRoleData ? loadRoleData : undefined);
+
+  useEffect(() => {
+    if (!canLoadRoleData || !churchId) {
       setMicrophones([]);
       return;
     }
@@ -466,10 +783,16 @@ const CurrentServiceWorkspace = () => {
     return () => {
       cancelled = true;
     };
-  }, [canViewTeams, churchId, loginState]);
+  }, [canLoadRoleData, churchId]);
 
   useEffect(() => {
-    if (!firebaseDb || loginState === "guest") return;
+    if (
+      !firebaseDb ||
+      loginState === "guest" ||
+      !creditsAvailable
+    ) {
+      return;
+    }
     return onValue(
       ref(
         firebaseDb,
@@ -480,7 +803,7 @@ const CurrentServiceWorkspace = () => {
         dispatch(initiateLiveCredits(Array.isArray(data) ? data : []));
       },
     );
-  }, [churchId, dispatch, firebaseDb, loginState]);
+  }, [churchId, creditsAvailable, dispatch, firebaseDb, loginState]);
 
   const services = useMemo(
     () => serviceTimes.map(toTeamService),
@@ -495,25 +818,19 @@ const CurrentServiceWorkspace = () => {
       ) || null,
     [occurrence?.serviceId, services],
   );
-  /**
-   * The header timer only considers services covered by the selected plan.
-   * It retains the standard override and grace-window behavior within that
-   * selected service scope.
-   */
   const occurrenceServices = useMemo(
     () => getOccurrenceServices(serviceTimes, occurrence),
     [occurrence, serviceTimes],
   );
-  const upcomingService = useDisplayedUpcomingService(
-    occurrenceServices,
-    NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
-    { keepRecentlyElapsedDuringGrace: true },
+  const timingPlanForOccurrence = useMemo(
+    () =>
+      occurrence &&
+      timingPlan?.planKey === getServicePlanKey(occurrence) &&
+      timingPlan.startsAt === occurrence.startsAt
+        ? timingPlan
+        : null,
+    [occurrence, timingPlan],
   );
-  const upcomingTargetIso = useMemo(
-    () => upcomingService?.nextAt.toISOString() ?? null,
-    [upcomingService],
-  );
-  const headerService = upcomingService?.service ?? null;
 
   /** Lives in the plan's own actions menu rather than the page toolbar: it
    * corrects which service the plan panel is on, so it belongs with the plan. */
@@ -536,6 +853,11 @@ const CurrentServiceWorkspace = () => {
    */
   const [hydratingAssignments, setHydratingAssignments] = useState(false);
   useEffect(() => {
+    if (!canLoadRoleData) {
+      setHydratingAssignments(false);
+      setAssignmentsIncomplete(false);
+      return;
+    }
     let cancelled = false;
     setHydratingAssignments(true);
     void hydrateOccurrenceSchedules({
@@ -556,7 +878,7 @@ const CurrentServiceWorkspace = () => {
     return () => {
       cancelled = true;
     };
-  }, [churchId, occurrence, roleScheduleSource]);
+  }, [canLoadRoleData, churchId, occurrence, roleScheduleSource]);
 
   const roleSchedules = useMemo(
     () => onlyHydratedSchedules(roleScheduleSource),
@@ -570,7 +892,7 @@ const CurrentServiceWorkspace = () => {
       : "unavailable";
 
   const assignmentRows = useMemo(() => {
-    if (!occurrence) return [];
+    if (!canLoadRoleData || !occurrence) return [];
     return getOccurrenceAssignmentSummary({
       occurrence,
       schedules: roleSchedules,
@@ -580,6 +902,7 @@ const CurrentServiceWorkspace = () => {
       services,
     });
   }, [
+    canLoadRoleData,
     occurrence,
     roleMembers,
     rolePositions,
@@ -589,13 +912,19 @@ const CurrentServiceWorkspace = () => {
   ]);
 
   const assignmentTeams = useMemo(
-    () => groupAssignmentSummaryByTeam(assignmentRows, roleSchedules),
-    [assignmentRows, roleSchedules],
+    () =>
+      canLoadRoleData
+        ? groupAssignmentSummaryByTeam(assignmentRows, roleSchedules)
+        : [],
+    [assignmentRows, canLoadRoleData, roleSchedules],
   );
 
   const scheduledMicrophoneHolders = useMemo(
-    () => getScheduledMicrophoneHolders(assignmentRows, roleTeams),
-    [assignmentRows, roleTeams],
+    () =>
+      canLoadRoleData
+        ? getScheduledMicrophoneHolders(assignmentRows, roleTeams)
+        : new Map(),
+    [assignmentRows, canLoadRoleData, roleTeams],
   );
 
   /**
@@ -682,11 +1011,18 @@ const CurrentServiceWorkspace = () => {
   );
 
   const desktopPreviewTab: PreviewTab =
-    tab === "credits" || tab === "serving" || tab === "chat" ? tab : "displays";
+    resolvedTab === "plan"
+      ? (availableSections[0]?.tab ?? "displays")
+      : resolvedTab;
 
   if (!canViewTeams) {
     return (
-      <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
+      <WorkspacePage
+        service={service}
+        occurrence={occurrence}
+        occurrenceServices={occurrenceServices}
+        timingPlan={timingPlanForOccurrence}
+      >
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
           <section className="max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
             <h2 className="text-lg font-semibold">Teams access required</h2>
@@ -701,7 +1037,12 @@ const CurrentServiceWorkspace = () => {
 
   if (!occurrence || !service) {
     return (
-      <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
+      <WorkspacePage
+        service={service}
+        occurrence={occurrence}
+        occurrenceServices={occurrenceServices}
+        timingPlan={timingPlanForOccurrence}
+      >
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
           <section className="max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
             <ListChecks
@@ -733,18 +1074,25 @@ const CurrentServiceWorkspace = () => {
     <ServicePlanEditor
       service={service}
       occurrence={occurrence}
+      onPlanTimingChange={setTimingPlan}
       members={roleMembers}
       positions={rolePositions}
       teams={roleTeams}
-      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
-      teamMicrophones={{
-        rows: assignmentRows,
-        assignmentsStatus,
-        savingSlot: savingMicrophoneSlot,
-        onChange: (row, microphoneIds) => {
-          void saveScheduledMicrophones(row, microphoneIds);
-        },
-      }}
+      scheduledMicrophoneHolders={
+        canLoadRoleData ? scheduledMicrophoneHolders : undefined
+      }
+      teamMicrophones={
+        canLoadRoleData
+          ? {
+              rows: assignmentRows,
+              assignmentsStatus,
+              savingSlot: savingMicrophoneSlot,
+              onChange: (row, microphoneIds) => {
+                void saveScheduledMicrophones(row, microphoneIds);
+              },
+            }
+          : undefined
+      }
       canEdit={Boolean(canEditServices ?? canEditTeams)}
       showSummary={false}
       occurrenceSwitcher={occurrenceSwitcher}
@@ -752,12 +1100,23 @@ const CurrentServiceWorkspace = () => {
   );
 
   return (
-    <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
-      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+    <WorkspacePage
+      service={service}
+      occurrence={occurrence}
+      occurrenceServices={occurrenceServices}
+      timingPlan={timingPlanForOccurrence}
+    >
+      <div
+        className={
+          availableSections.length > 0
+            ? "flex min-h-0 flex-1 gap-4 overflow-hidden"
+            : "flex min-h-0 flex-1 overflow-hidden"
+        }
+      >
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div
             className={
-              isDesktop || tab === "plan"
+              isDesktop || resolvedTab === "plan"
                 ? "order-2 flex min-h-0 flex-1 flex-col overflow-hidden"
                 : "hidden"
             }
@@ -766,11 +1125,11 @@ const CurrentServiceWorkspace = () => {
           </div>
           {!isDesktop ? (
             <SectionTabs<WorkspaceTab>
-              value={tab}
+              value={resolvedTab}
               onValueChange={setTab}
               keepMounted
               className={
-                tab === "plan"
+                resolvedTab === "plan"
                   ? "order-1 shrink-0"
                   : "order-1 flex min-h-0 flex-1 flex-col overflow-hidden"
               }
@@ -778,7 +1137,7 @@ const CurrentServiceWorkspace = () => {
               tabsListClassName="shrink-0"
               triggerClassName="!h-[2rem] !min-h-[2rem] !max-h-[2rem] text-xs px-2.5 py-1.5"
               tabsContentClassName={
-                tab === "plan"
+                resolvedTab === "plan"
                   ? "hidden"
                   : "mt-3 flex min-h-0 flex-1 flex-col space-y-0 overflow-hidden"
               }
@@ -788,75 +1147,92 @@ const CurrentServiceWorkspace = () => {
                   label: "Service plan",
                   content: null,
                 },
-                {
-                  value: "displays",
-                  label: "Displays",
-                  content: (
-                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                      <DisplaysPreview
-                        columns={2}
-                        progress={liveSlideProgress}
-                        activeItemId={monitorInfo.itemId ?? null}
-                        activeListId={monitorInfo.listId ?? null}
-                      />
-                    </section>
-                  ),
-                  contentClassName:
-                    "flex min-h-0 flex-1 flex-col overflow-hidden",
-                },
-                {
-                  value: "credits",
-                  label: "Credits",
-                  content: (
-                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                      <CreditsPanel credits={liveCredits} />
-                    </section>
-                  ),
-                  contentClassName:
-                    "flex min-h-0 flex-1 flex-col overflow-hidden",
-                },
-                {
-                  value: "serving",
-                  label: "Team",
-                  content: (
-                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-3">
-                      {servingContent}
-                    </section>
-                  ),
-                  contentClassName:
-                    "flex min-h-0 flex-1 flex-col overflow-hidden",
-                },
-                {
-                  value: "chat",
-                  label: "Chat",
-                  badge:
-                    tab !== "chat" ? (
-                      <ChatUnreadBadge count={chatUnreadCount} />
-                    ) : null,
-                  content: (
-                    <CurrentServiceRestreamPanel
-                      churchId={churchId || ""}
-                      firebaseYoutubeConnected={Boolean(
-                        loginState === "success" &&
-                        churchIntegrations?.youtube?.connected,
-                      )}
-                      firebaseYoutubeAccountLabel={
-                        churchIntegrations?.youtube?.accountLabel || ""
-                      }
-                      isVisible={tab === "chat"}
-                      onUnreadCountChange={setChatUnreadCount}
-                      showToast={showToast}
-                    />
-                  ),
-                  contentClassName:
-                    "flex min-h-0 flex-1 flex-col overflow-hidden",
-                },
+                ...(displaysAvailable
+                  ? [
+                      {
+                        value: "displays" as const,
+                        label: "Displays",
+                        content: (
+                          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                            <DisplaysPreview
+                              columns={2}
+                              progress={liveSlideProgress}
+                              activeItemId={monitorInfo.itemId ?? null}
+                              activeListId={monitorInfo.listId ?? null}
+                              isVisible={resolvedTab === "displays"}
+                            />
+                          </section>
+                        ),
+                        contentClassName:
+                          "flex min-h-0 flex-1 flex-col overflow-hidden",
+                      },
+                    ]
+                  : []),
+                ...(creditsAvailable
+                  ? [
+                      {
+                        value: "credits" as const,
+                        label: "Credits",
+                        content: (
+                          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                            <CreditsPanel credits={liveCredits} />
+                          </section>
+                        ),
+                        contentClassName:
+                          "flex min-h-0 flex-1 flex-col overflow-hidden",
+                      },
+                    ]
+                  : []),
+                ...(teamAvailable
+                  ? [
+                      {
+                        value: "serving" as const,
+                        label: "Team",
+                        content: (
+                          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-3">
+                            {servingContent}
+                          </section>
+                        ),
+                        contentClassName:
+                          "flex min-h-0 flex-1 flex-col overflow-hidden",
+                      },
+                    ]
+                  : []),
+                ...(chatAvailable
+                  ? [
+                      {
+                        value: "chat" as const,
+                        label: "Chat",
+                        badge:
+                          resolvedTab !== "chat" ? (
+                            <ChatUnreadBadge count={chatUnreadCount} />
+                          ) : null,
+                        content: (
+                          <CurrentServiceRestreamPanel
+                            churchId={churchId || ""}
+                            firebaseYoutubeConnected={Boolean(
+                              loginState === "success" &&
+                              churchIntegrations?.youtube?.connected,
+                            )}
+                            firebaseYoutubeAccountLabel={
+                              churchIntegrations?.youtube?.accountLabel || ""
+                            }
+                            isVisible={resolvedTab === "chat"}
+                            onUnreadCountChange={setChatUnreadCount}
+                            showToast={showToast}
+                          />
+                        ),
+                        contentClassName:
+                          "flex min-h-0 flex-1 flex-col overflow-hidden",
+                      },
+                    ]
+                  : []),
               ]}
             />
           ) : null}
         </section>
 
-        {isDesktop ? (
+        {isDesktop && availableSections.length > 0 ? (
           <aside
             className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
               }`}
@@ -904,6 +1280,7 @@ const CurrentServiceWorkspace = () => {
                 chatUnreadCount={chatUnreadCount}
                 onChatUnreadCountChange={setChatUnreadCount}
                 showToast={showToast}
+                sections={availableSections}
               />
             ) : null}
           </aside>

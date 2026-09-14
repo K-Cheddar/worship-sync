@@ -2,6 +2,7 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
+import { getServicePlanDurationSeconds } from "./servicePlanDuration";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -77,10 +78,91 @@ export const resolvePlanTimelineStartMs = (
   return startsAtMs + deltaMinutes * 60_000;
 };
 
+export type ServicePlanTimingSource = {
+  planKey?: string;
+  startsAt?: string;
+  timezone?: string;
+  sections?: ServicePlanSection[] | null;
+};
+
 type TimedItem = {
   startTime?: string;
   durationSeconds?: number;
   durationMinutes?: number;
+};
+
+const getReliableDurationMs = (item: TimedItem): number | null => {
+  const seconds = item.durationSeconds;
+  const hasSeconds =
+    typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0;
+  const minutes = item.durationMinutes;
+  const hasMinutes =
+    typeof minutes === "number" && Number.isFinite(minutes) && minutes >= 0;
+  return hasSeconds || hasMinutes
+    ? getServicePlanDurationSeconds(item) * 1000
+    : null;
+};
+
+/**
+ * Returns the latest reliable timed element end in a dated plan. Element
+ * starts are wall-clock values in the plan timezone, while the first element
+ * anchors the real timeline (which may begin before the official occurrence).
+ * Untimed or malformed elements are skipped rather than treated as zero-length
+ * items, so an incomplete plan cannot manufacture an end timestamp.
+ */
+export const resolveServicePlanEndMs = (
+  plan: ServicePlanTimingSource,
+  fallbackStartsAtMs?: number,
+): number | null => {
+  const planStartsAtMs = plan.startsAt ? Date.parse(plan.startsAt) : Number.NaN;
+  const startsAtMs = Number.isFinite(planStartsAtMs)
+    ? planStartsAtMs
+    : fallbackStartsAtMs;
+  if (!Number.isFinite(startsAtMs)) return null;
+
+  const sections = plan.sections || [];
+  const elements = sections.flatMap((section) => section?.elements || []);
+  const firstStartTime = elements.find((element) =>
+    TIME_PATTERN.test(String(element?.startTime || "").trim()),
+  )?.startTime;
+  const firstStartMinutes = firstStartTime
+    ? parseTimeToMinutes(String(firstStartTime).trim())
+    : null;
+  if (firstStartMinutes == null) return null;
+
+  const timelineStartMs = resolvePlanTimelineStartMs(
+    startsAtMs,
+    plan.timezone || "UTC",
+    sections,
+  );
+  let previousStartMinutes: number | null = null;
+  let elapsedFromTimelineStartMs = 0;
+  let latestEndMs: number | null = null;
+
+  for (const element of elements) {
+    const startMinutes = parseTimeToMinutes(
+      String(element?.startTime || "").trim(),
+    );
+    if (startMinutes == null) continue;
+
+    if (previousStartMinutes == null) {
+      previousStartMinutes = startMinutes;
+    } else {
+      let deltaMinutes = startMinutes - previousStartMinutes;
+      if (deltaMinutes < 0) deltaMinutes += 1440;
+      elapsedFromTimelineStartMs += deltaMinutes * 60_000;
+      previousStartMinutes = startMinutes;
+    }
+
+    const durationMs = getReliableDurationMs(element);
+    if (durationMs == null) continue;
+    const endMs = timelineStartMs + elapsedFromTimelineStartMs + durationMs;
+    if (Number.isFinite(endMs) && (latestEndMs == null || endMs > latestEndMs)) {
+      latestEndMs = endMs;
+    }
+  }
+
+  return latestEndMs;
 };
 
 const getTimedItemDurationMinutes = (item: TimedItem): number => {

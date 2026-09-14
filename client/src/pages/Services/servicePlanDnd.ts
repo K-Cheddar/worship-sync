@@ -9,6 +9,8 @@ import {
   type Collision,
   type CollisionDetection,
 } from "@dnd-kit/core";
+import type { ServicePlanSection } from "../../types/servicePlan";
+import { moveElementToPosition } from "./servicePlanDraftUtils";
 
 export const SERVICE_PLAN_SECTION_DND_PREFIX = "section:";
 export const SERVICE_PLAN_ELEMENT_DND_PREFIX = "element:";
@@ -39,9 +41,14 @@ const isSectionDndId = (id: string) =>
 const isElementDndId = (id: string) =>
   id.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX);
 
+export const servicePlanElementDndId = (elementId: string) =>
+  `${SERVICE_PLAN_ELEMENT_DND_PREFIX}${elementId}`;
+
 /**
  * From a collision list already produced by dnd-kit, prefer nested item targets
- * over tall parent section cards when dragging an element.
+ * over tall parent section cards when dragging an element. The active item is
+ * never a drop candidate — after a live preview it sits under the pointer and
+ * would otherwise steal the destination.
  */
 export const pickServicePlanCollisions = (
   activeId: string,
@@ -57,9 +64,10 @@ export const pickServicePlanCollisions = (
     return collisions;
   }
 
-  const elementCollisions = collisions.filter((collision) =>
-    isElementDndId(String(collision.id)),
-  );
+  const elementCollisions = collisions.filter((collision) => {
+    const collisionId = String(collision.id);
+    return isElementDndId(collisionId) && collisionId !== activeId;
+  });
   if (elementCollisions.length > 0) {
     return elementCollisions;
   }
@@ -88,9 +96,16 @@ export const servicePlanCollisionDetection: CollisionDetection = (args) => {
     return closestCenter(args);
   }
 
+  const argsWithoutActive = {
+    ...args,
+    droppableContainers: args.droppableContainers.filter(
+      (container) => String(container.id) !== activeId,
+    ),
+  };
+
   const pointerCollisions = pickServicePlanCollisions(
     activeId,
-    pointerWithin(args),
+    pointerWithin(argsWithoutActive),
   );
   if (pointerCollisions.length > 0) {
     return pointerCollisions;
@@ -98,77 +113,228 @@ export const servicePlanCollisionDetection: CollisionDetection = (args) => {
 
   const intersectionCollisions = pickServicePlanCollisions(
     activeId,
-    rectIntersection(args),
+    rectIntersection(argsWithoutActive),
   );
   if (intersectionCollisions.length > 0) {
     return intersectionCollisions;
   }
 
-  const elementContainers = args.droppableContainers.filter((container) =>
-    isElementDndId(String(container.id)),
+  const elementContainers = argsWithoutActive.droppableContainers.filter(
+    (container) => isElementDndId(String(container.id)),
   );
   const elementClosest = closestCenter({
-    ...args,
+    ...argsWithoutActive,
     droppableContainers: elementContainers,
   });
   if (elementClosest.length > 0) {
     return elementClosest;
   }
 
-  const sectionContainers = args.droppableContainers.filter((container) =>
-    isSectionDndId(String(container.id)),
+  const sectionContainers = argsWithoutActive.droppableContainers.filter(
+    (container) => isSectionDndId(String(container.id)),
   );
   return closestCenter({
-    ...args,
+    ...argsWithoutActive,
     droppableContainers: sectionContainers,
   });
 };
 
-export type ServicePlanDropAction =
-  | { type: "reorder-sections" }
-  | { type: "move-element-to-element" }
-  | { type: "move-element-to-section" }
-  | { type: "noop" };
+export type ServicePlanElementPlacement =
+  | {
+      type: "before" | "after";
+      destinationSectionId: string;
+      targetElementId: string;
+    }
+  | {
+      type: "append";
+      destinationSectionId: string;
+    };
+
+export const servicePlanElementPlacementsEqual = (
+  a: ServicePlanElementPlacement | null,
+  b: ServicePlanElementPlacement | null,
+): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.type !== b.type || a.destinationSectionId !== b.destinationSectionId) {
+    return false;
+  }
+  if (a.type === "append" || b.type === "append") {
+    return a.type === "append" && b.type === "append";
+  }
+  return a.targetElementId === b.targetElementId;
+};
+
+export const elementDropEdgeFromPointer = (
+  pointerY: number,
+  overRect: { top: number; height: number },
+): "before" | "after" =>
+  pointerY < overRect.top + overRect.height / 2 ? "before" : "after";
+
+export const pointerYFromDragEvent = (event: {
+  activatorEvent: Event;
+  delta: { y: number };
+}): number | null => {
+  const native = event.activatorEvent as {
+    clientY?: number;
+    touches?: ArrayLike<{ clientY: number }>;
+    changedTouches?: ArrayLike<{ clientY: number }>;
+  };
+  if (typeof native.clientY === "number") {
+    return native.clientY + event.delta.y;
+  }
+  const touch = native.touches?.[0] || native.changedTouches?.[0];
+  return touch ? touch.clientY + event.delta.y : null;
+};
 
 /**
- * Decide what a completed drag should commit. Dropping an element on its own
- * parent section is a no-op (tall-section collision leftover) — do not append
- * to the end of that section.
+ * Resolve the semantic placement for an element drag against the committed
+ * plan. Leftover collisions (the dragged row, the source section card, or the
+ * destination section card after a precise row hit) keep the previous
+ * placement instead of inventing a new one.
  */
-export const resolveServicePlanDropAction = ({
-  activeId,
+export const resolveServicePlanElementPlacement = ({
+  sections,
+  activeElementId,
   overId,
-  activeElementOwningSectionId,
+  pointerY = null,
+  overRect = null,
+  previousPlacement = null,
 }: {
-  activeId: string;
-  overId: string;
-  /** Section that currently owns the dragged element (from committed plan data). */
-  activeElementOwningSectionId: string | null;
-}): ServicePlanDropAction => {
-  if (activeId === overId) {
-    return { type: "noop" };
+  sections: ServicePlanSection[];
+  activeElementId: string;
+  overId: string | null;
+  pointerY?: number | null;
+  overRect?: { top: number; height: number } | null;
+  previousPlacement?: ServicePlanElementPlacement | null;
+}): ServicePlanElementPlacement | null => {
+  if (!overId) return previousPlacement;
+
+  const source = sections.find((section) =>
+    section.elements.some((element) => element.id === activeElementId),
+  );
+  if (!source) return previousPlacement;
+
+  if (overId === servicePlanElementDndId(activeElementId)) {
+    return previousPlacement;
   }
 
-  if (isSectionDndId(activeId) && isSectionDndId(overId)) {
-    return { type: "reorder-sections" };
-  }
-
-  if (isElementDndId(activeId) && isElementDndId(overId)) {
-    return { type: "move-element-to-element" };
-  }
-
-  if (isElementDndId(activeId) && isSectionDndId(overId)) {
-    const destinationSectionId = overId.slice(
-      SERVICE_PLAN_SECTION_DND_PREFIX.length,
+  if (isElementDndId(overId)) {
+    const targetElementId = overId.slice(
+      SERVICE_PLAN_ELEMENT_DND_PREFIX.length,
     );
-    if (
-      activeElementOwningSectionId != null &&
-      activeElementOwningSectionId === destinationSectionId
-    ) {
-      return { type: "noop" };
-    }
-    return { type: "move-element-to-section" };
+    const destination = sections.find((section) =>
+      section.elements.some((element) => element.id === targetElementId),
+    );
+    if (!destination) return previousPlacement;
+    const edge =
+      pointerY != null && overRect
+        ? elementDropEdgeFromPointer(pointerY, overRect)
+        : "before";
+    return {
+      type: edge,
+      destinationSectionId: destination.id,
+      targetElementId,
+    };
   }
 
-  return { type: "noop" };
+  if (!isSectionDndId(overId)) return previousPlacement;
+
+  const destinationSectionId = overId.slice(
+    SERVICE_PLAN_SECTION_DND_PREFIX.length,
+  );
+  const destination = sections.find(
+    (section) => section.id === destinationSectionId,
+  );
+  if (!destination) return previousPlacement;
+
+  if (destination.elements.length === 0) {
+    return { type: "append", destinationSectionId: destination.id };
+  }
+
+  if (
+    previousPlacement &&
+    previousPlacement.type !== "append" &&
+    previousPlacement.destinationSectionId === destination.id
+  ) {
+    return previousPlacement;
+  }
+
+  if (
+    previousPlacement &&
+    previousPlacement.destinationSectionId !== source.id &&
+    destination.id === source.id
+  ) {
+    return previousPlacement;
+  }
+
+  return { type: "append", destinationSectionId: destination.id };
+};
+
+/** Apply a semantic placement to the committed plan. Always the same input → same output. */
+export const applyServicePlanElementPlacement = (
+  sections: ServicePlanSection[],
+  activeElementId: string,
+  placement: ServicePlanElementPlacement,
+): ServicePlanSection[] | null => {
+  const source = sections.find((section) =>
+    section.elements.some((element) => element.id === activeElementId),
+  );
+  const destination = sections.find(
+    (section) => section.id === placement.destinationSectionId,
+  );
+  if (!source || !destination) return null;
+
+  const destWithoutActive = destination.elements.filter(
+    (element) => element.id !== activeElementId,
+  );
+
+  let targetIndex: number;
+  if (placement.type === "append") {
+    targetIndex = destWithoutActive.length;
+  } else {
+    const targetIndexInDest = destWithoutActive.findIndex(
+      (element) => element.id === placement.targetElementId,
+    );
+    if (targetIndexInDest === -1) return null;
+    targetIndex =
+      placement.type === "before" ? targetIndexInDest : targetIndexInDest + 1;
+  }
+
+  return moveElementToPosition(
+    sections,
+    activeElementId,
+    source.id,
+    destination.id,
+    targetIndex,
+  );
+};
+
+export const previewServicePlanSections = (
+  sections: ServicePlanSection[],
+  activeElementId: string,
+  placement: ServicePlanElementPlacement | null,
+): ServicePlanSection[] => {
+  if (!placement) return sections;
+  return (
+    applyServicePlanElementPlacement(sections, activeElementId, placement) ||
+    sections
+  );
+};
+
+/**
+ * Commit the last valid preview whenever the drop has a target. Cancelled or
+ * outside drops (`overId` missing) restore the original order.
+ */
+export const commitServicePlanElementDrag = ({
+  originalSections,
+  previewSections,
+  overId,
+}: {
+  originalSections: ServicePlanSection[];
+  previewSections: ServicePlanSection[] | null;
+  overId: string | null;
+}): ServicePlanSection[] => {
+  if (!overId || !previewSections) return originalSections;
+  return previewSections;
 };

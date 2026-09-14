@@ -65,6 +65,25 @@ export type MemberPermissions = {
   teamScopes?: Record<string, TeamScopedPermission>;
 };
 
+export type CurrentServiceWorkspaceSectionKey =
+  | "displays"
+  | "credits"
+  | "team"
+  | "chat";
+
+export type CurrentServiceWorkspaceSections = Record<
+  CurrentServiceWorkspaceSectionKey,
+  boolean
+>;
+
+export type CurrentServiceWorkspaceConfig = {
+  sections: CurrentServiceWorkspaceSections;
+};
+
+export type CurrentServiceWorkspaceSectionPatch = Partial<
+  CurrentServiceWorkspaceSections
+>;
+
 /** "default" resolves per category at send time; the server stores the tri-state. */
 export type NotificationPreference = "on" | "off" | "default";
 
