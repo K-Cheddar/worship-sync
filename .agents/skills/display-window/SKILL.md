@@ -44,6 +44,8 @@ Stream is special:
 - The stream page background must remain transparent.
 - Stream item content and stream overlays are separate lanes.
 - Automatic overlay display can temporarily hide item content, but operator-controlled stream content blocking is a separate state.
+- Treat overlays as one active lane. A cross-type change is a handoff, not a hard cut or stacked pile-up; outgoing content may remain only long enough to exit cleanly.
+- Preserve current/previous intent so stale previous overlay data cannot replay or keep item content hidden. Favor calm, readable fade or slide handoffs over flashes or flicker.
 - Never add black page/stage backgrounds to stream output. Projector and monitor may use black stages when intentional.
 - Stream overlay timing has two authorities that must stay aligned:
   - Shared timing for cross-device send, expiry, and ordering. Use `serverNow()` plus `transitionSequence`.

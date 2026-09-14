@@ -70,3 +70,17 @@ List only consequential unresolved ambiguities. Write `None` when repository evi
 ### Verification
 
 List the exact required checks, tests, and manual scenarios that establish correctness and distinguish changed behavior from adjacent behavior that must remain stable. List optional or unavailable additional-confidence checks separately. Required verification that remains undone makes the work incomplete.
+
+## User-facing and operator UX
+
+For user-facing work, inspect the closest comparable WorshipSync experience before inventing UI. Plan reuse of its canonical renderer and data source/model; reuse alone is not parity if data richness or state handling differs. State the intended relationship to the reference, relevant persistent controls, and loading, empty, error, interrupted, responsive, permission, and privacy behavior.
+
+Before calling the work complete, inspect the resulting experience from the user's perspective. Check its hierarchy, data completeness, nearby navigation, responsive behavior, and whether it avoids unnecessary cards, whitespace, duplicated chrome, or parallel patterns.
+
+For dense live controller or moderator surfaces:
+
+- Keep the default view focused on scanning content, frequent actions, and safety-critical state such as active session or connection status.
+- Group uncommon or higher-impact controls in one clearly labeled overflow with short scope-setting helper text; keep destructive actions reachable but not prominent.
+- Give the primary feed or preview enough space; avoid stacking rarely used toolbars above it.
+- Use a sheet for tall or scrollable overflow content and a popover for compact single-column actions.
+- Make popovers and sheets keyboard-accessible, dismissible with Escape, and return focus to their trigger. Give icon-only or ambiguous controls stable accessible labels.

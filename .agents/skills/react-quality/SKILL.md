@@ -26,6 +26,10 @@ Before adding code, inspect the relevant slice/context, reader, writer, sync hoo
 - `client/src/components/Button/` and `client/src/components/Input/` for shared control conventions.
 - `client/src/test/`, adjacent `*.test.tsx`, and `client/src/components/DisplayWindow/__tests__/` for test style and live-surface contracts.
 
+## Client conventions
+
+Use Tailwind for styling, prefer ES6 syntax, and avoid nested ternaries. Reuse shared controls when suitable rather than recreating their behavior; do not extract an abstraction mechanically just to eliminate small duplication. For auth API responses, align client types with `authService.js` payloads through `client/src/api/authTypes.ts`.
+
 ## Determine ownership before adding state
 
 For every value, write down its current and proposed authority:
@@ -101,6 +105,18 @@ Prefer domain types, accurate API payloads, narrowing of unknown data, and discr
 Use Testing Library's accessible queries and `user-event` for operator interactions. Put reducer and utility contracts in focused tests; add lifecycle tests for state reset, request cancellation, timers/listeners, async errors, and synchronization whenever that behavior changes. Live display changes also need the surface-specific tests required by `$display-window`.
 
 Ask: could this test pass while the user-visible or cross-device behavior is broken? If so, it may be coupled to implementation details or lack a negative/lifecycle assertion. Do not weaken an existing expectation until the production behavior and old contract have been reviewed under `AGENTS.md`.
+
+### Test lint rules
+
+Client lint enforces `testing-library/no-node-access`: use Testing Library queries (`screen`, `within`, `getBy*`, `findBy*`, `queryBy*`) instead of chaining DOM traversal such as `closest`, `parentElement`, or `querySelector` from a queried node. Scope queries with `within` when needed.
+
+Client lint also enforces `jest/no-conditional-expect`: do not put `expect` inside `if`, `switch`, ternary callbacks, or similar conditional branches. Partition the data first and assert at top level, or use one clear aggregate assertion.
+
+After editing client tests, run `npm.cmd run lint:check --prefix client`. Do not leave scratch tests such as `__tmp_*.test.tsx`; delete debug-only files or promote them to real coverage.
+
+### Changing an existing expectation
+
+Treat an expectation change as a behavior-contract decision, not cleanup. Before editing it, state the behavior change and why it is intentional, then check whether the old contract is user-visible, operator-critical, API-visible, security-relevant, or relied on elsewhere. If the production change is not intentional or the old contract is still required, fix the implementation or clarify the desired behavior. When the new contract is correct, update the test deliberately and explain the changed expectation in the handoff or review.
 
 ## Review and verification
 
