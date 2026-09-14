@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import BoardSyncProvider, {
   describeBoardSyncError,
   isBoardAuthError,
@@ -28,6 +28,30 @@ jest.mock("pouchdb-browser", () => ({
     replicate: { to: jest.fn() },
   })),
 }));
+
+type MockPouchEvent = {
+  on: jest.Mock;
+  cancel: jest.Mock;
+  emit: (eventName: string, payload?: unknown) => void;
+};
+
+const createMockPouchEvent = (): MockPouchEvent => {
+  const listeners = new Map<string, (payload?: unknown) => void>();
+  const event: MockPouchEvent = {
+    on: jest.fn(),
+    cancel: jest.fn(),
+    emit: (eventName, payload) => listeners.get(eventName)?.(payload),
+  };
+  event.on.mockImplementation(
+    (eventName: string, listener: (payload?: unknown) => void) => {
+      listeners.set(eventName, listener);
+      return event;
+    },
+  );
+  return event;
+};
+
+const mockPouchDB = jest.requireMock("pouchdb-browser").default as jest.Mock;
 
 const Consumer = () => {
   const sync = useBoardSync();
@@ -60,6 +84,7 @@ describe("isBoardAuthError", () => {
   it("flags the sign-in-again error and 401/unauthorized shapes", () => {
     expect(isBoardAuthError(new Error(AUTH_SIGN_IN_AGAIN_MESSAGE))).toBe(true);
     expect(isBoardAuthError({ status: 401 })).toBe(true);
+    expect(isBoardAuthError({ status: 403 })).toBe(true);
     expect(isBoardAuthError({ name: "unauthorized" })).toBe(true);
   });
 
@@ -75,6 +100,13 @@ describe("BoardSyncProvider auth gating", () => {
   let warnSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    mockPouchDB.mockReset();
+    mockPouchDB.mockImplementation(() => ({
+      close: jest.fn(),
+      sync: jest.fn(),
+      changes: jest.fn(() => createMockPouchEvent()),
+      replicate: { to: jest.fn() },
+    }));
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => { });
@@ -121,5 +153,47 @@ describe("BoardSyncProvider auth gating", () => {
       expect.anything(),
     );
     expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it("renews the CouchDB session and restarts live replication after a runtime 403", async () => {
+    const initialReplication = createMockPouchEvent();
+    const liveSyncs: MockPouchEvent[] = [];
+    const localDb = {
+      close: jest.fn(),
+      changes: jest.fn(() => createMockPouchEvent()),
+      sync: jest.fn(() => {
+        const liveSync = createMockPouchEvent();
+        liveSyncs.push(liveSync);
+        return liveSync;
+      }),
+    };
+    const remoteDb = {
+      close: jest.fn(),
+      replicate: { to: jest.fn(() => initialReplication) },
+    };
+    mockPouchDB
+      .mockImplementationOnce(() => localDb)
+      .mockImplementationOnce(() => remoteDb);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true }),
+    });
+
+    renderProvider({ database: "church-db", loginState: "success" });
+
+    await waitFor(() => expect(remoteDb.replicate.to).toHaveBeenCalled());
+    await act(async () => {
+      initialReplication.emit("complete");
+    });
+    await waitFor(() => expect(liveSyncs).toHaveLength(1));
+    expect(screen.getByTestId("status")).toHaveTextContent("connected");
+
+    await act(async () => {
+      liveSyncs[0]?.emit("denied", { status: 403 });
+    });
+
+    await waitFor(() => expect(localDb.sync).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(screen.getByTestId("status")).toHaveTextContent("connected");
   });
 });

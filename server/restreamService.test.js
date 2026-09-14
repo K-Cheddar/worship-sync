@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import axios from "axios";
 import {
+  beganOnPreviousLocalCalendarDay,
+  collectDestinationBroadcastIds,
   createRestreamService,
+  decideRestreamSessionBoundary,
   normalizeRestreamPostedAtMs,
+  resolveRestreamEventId,
 } from "./restreamService.js";
+import { RESTREAM_MESSAGE_RETENTION_MS } from "./restreamRetention.js";
 
 const createFirestoreMock = () => {
   const collections = new Map();
@@ -89,11 +94,15 @@ const createFirestoreMock = () => {
       return buildQuery(name, filters, resultLimit, { field, direction });
     },
     async get() {
-      const entries = Array.from(getCollectionMap(name).entries())
-        .filter(([, doc]) =>
+      let entries = Array.from(getCollectionMap(name).entries()).filter(
+        ([, doc]) =>
           filters.every(({ field, value }) => doc?.[field] === value),
-        );
+      );
       if (ordering) {
+        // Firestore orderBy excludes documents that do not contain the field.
+        entries = entries.filter(
+          ([, doc]) => doc?.[ordering.field] !== undefined,
+        );
         entries.sort(([leftId, left], [rightId, right]) => {
           const leftValue = left?.[ordering.field] ?? 0;
           const rightValue = right?.[ordering.field] ?? 0;
@@ -171,7 +180,9 @@ const createFirestoreMock = () => {
 
 const createRealtimeDbMock = () => {
   const updates = [];
+  const queries = [];
   const root = {};
+  let transactionChain = Promise.resolve();
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -229,29 +240,81 @@ const createRealtimeDbMock = () => {
     val: () => (value === undefined ? undefined : clone(value)),
   });
 
+  const createRef = (path, query = {}) => ({
+    orderByChild(field) {
+      return createRef(path, { ...query, orderByChild: field });
+    },
+    limitToLast(limit) {
+      return createRef(path, { ...query, limitToLast: limit });
+    },
+    async get() {
+      let value = getAtPath(path);
+      if (
+        Number.isFinite(query.limitToLast) &&
+        query.orderByChild &&
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
+        const entries = Object.entries(value).sort(
+          ([leftId, left], [rightId, right]) => {
+            const leftValue = left?.[query.orderByChild] ?? null;
+            const rightValue = right?.[query.orderByChild] ?? null;
+            if (leftValue === rightValue) {
+              return leftId.localeCompare(rightId);
+            }
+            if (leftValue === null) return -1;
+            if (rightValue === null) return 1;
+            return leftValue < rightValue ? -1 : 1;
+          },
+        );
+        value = Object.fromEntries(
+          entries.slice(-query.limitToLast),
+        );
+      }
+      queries.push({ path, ...query });
+      return buildSnapshot(value);
+    },
+    async set(value) {
+      setAtPath(path, value);
+    },
+    transaction(updateFunction) {
+      const run = transactionChain.then(async () => {
+        const current = getAtPath(path);
+        const next = updateFunction(
+          current === undefined ? null : clone(current),
+        );
+        if (next === undefined || next === null) {
+          return {
+            committed: false,
+            snapshot: buildSnapshot(current),
+          };
+        }
+        setAtPath(path, next);
+        return { committed: true, snapshot: buildSnapshot(next) };
+      });
+      transactionChain = run.catch(() => undefined);
+      return run;
+    },
+    async update(patch) {
+      const current = getAtPath(path);
+      const next =
+        current && typeof current === "object" ? { ...current } : {};
+      Object.assign(next, clone(patch));
+      setAtPath(path, next);
+      updates.push({ path, patch: JSON.parse(JSON.stringify(patch)) });
+    },
+    async remove() {
+      removeAtPath(path);
+    },
+  });
+
   return {
     updates,
+    queries,
     root,
     ref(path) {
-      return {
-        async get() {
-          return buildSnapshot(getAtPath(path));
-        },
-        async set(value) {
-          setAtPath(path, value);
-        },
-        async update(patch) {
-          const current = getAtPath(path);
-          const next =
-            current && typeof current === "object" ? { ...current } : {};
-          Object.assign(next, clone(patch));
-          setAtPath(path, next);
-          updates.push({ path, patch: JSON.parse(JSON.stringify(patch)) });
-        },
-        async remove() {
-          removeAtPath(path);
-        },
-      };
+      return createRef(path);
     },
     read(path) {
       const value = getAtPath(path);
@@ -264,6 +327,7 @@ const createServiceHarness = ({
   useFirestore = true,
   realtimeDb,
   firestore: providedFirestore,
+  fetchInProgressEvents,
 } = {}) => {
   const firestore = providedFirestore || createFirestoreMock();
   const database = realtimeDb || createRealtimeDbMock();
@@ -274,9 +338,63 @@ const createServiceHarness = ({
     getIntegrationsPath: (churchId) => `churches/${churchId}/data/integrations`,
     onBoardDisplayUpdate: (database) => boardDisplayUpdates.push(database),
     redirectBaseUrl: "https://example.com",
+    fetchInProgressEvents,
   });
 
   return { firestore, realtimeDb: database, boardDisplayUpdates, service };
+};
+
+const installFakeWebSocket = () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  return {
+    sockets,
+    restore: () => {
+      globalThis.WebSocket = originalWebSocket;
+    },
+  };
+};
+
+const emitConnectionInfo = (socket, payload) => {
+  socket.emit("message", {
+    data: JSON.stringify({
+      action: "connection_info",
+      payload,
+    }),
+  });
+};
+
+const seedConnectedToken = (firestore) => {
+  firestore.seed("restreamTokens", "church-1", {
+    churchId: "church-1",
+    database: "db-1",
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    accessTokenExpiresAt: Date.now() + 3_600_000,
+    accountLabel: "Main account",
+  });
 };
 
 const waitFor = async (predicate, timeoutMs = 1000) => {
@@ -331,8 +449,14 @@ test("restream service initializes one shared session across instances", async (
   const second = createServiceHarness({ firestore });
 
   const [firstStatus, secondStatus] = await Promise.all([
-    first.service.getStatusForChurch({ churchId: "church-1", database: "db-1" }),
-    second.service.getStatusForChurch({ churchId: "church-1", database: "db-1" }),
+    first.service.getStatusForChurch({
+      churchId: "church-1",
+      database: "db-1",
+    }),
+    second.service.getStatusForChurch({
+      churchId: "church-1",
+      database: "db-1",
+    }),
   ]);
   const session = firestore.read("restreamSessions", "db-1");
 
@@ -359,6 +483,7 @@ test("restream service lists current-session messages newest first", async () =>
     author: "Alex",
     text: "First",
     postedAt: 10,
+    messageTimestamp: 10,
     isHighlighted: false,
     hidden: false,
   });
@@ -369,6 +494,7 @@ test("restream service lists current-session messages newest first", async () =>
     author: "Jamie",
     text: "Second",
     postedAt: 20,
+    messageTimestamp: 20,
     isHighlighted: false,
     hidden: false,
   });
@@ -385,9 +511,41 @@ test("restream service lists current-session messages newest first", async () =>
   const messageQuery = firestore.metrics.queryGets.at(-1);
   assert.equal(messageQuery.limit, 500);
   assert.deepEqual(messageQuery.orderBy, {
-    field: "postedAt",
+    field: "messageTimestamp",
     direction: "desc",
   });
+});
+
+test("restream service includes migrated messages using their canonical timestamp", async () => {
+  const { firestore, service } = createServiceHarness();
+
+  firestore.seed("restreamSessions", "db-1", {
+    churchId: "church-1",
+    database: "db-1",
+    sessionId: "session-migrated",
+    startedAt: 100,
+    messageCount: 1,
+  });
+  firestore.seed("restreamMessages", "legacy-received-at", {
+    churchId: "church-1",
+    database: "db-1",
+    sessionId: "session-migrated",
+    author: "Alex",
+    text: "Migrated message",
+    receivedAt: 25,
+    messageTimestamp: 25,
+    isHighlighted: false,
+    hidden: false,
+  });
+
+  const messages = await service.listCurrentSessionMessages({
+    churchId: "church-1",
+    database: "db-1",
+  });
+
+  assert.deepEqual(messages.map((message) => message.id), [
+    "legacy-received-at",
+  ]);
 });
 
 test("restream service limits current-session Firestore reads", async () => {
@@ -407,6 +565,7 @@ test("restream service limits current-session Firestore reads", async () => {
       author: "Viewer",
       text: `Message ${index}`,
       postedAt: index,
+      messageTimestamp: index,
       isHighlighted: false,
       hidden: false,
     });
@@ -424,9 +583,259 @@ test("restream service limits current-session Firestore reads", async () => {
   assert.equal(messageQuery.limit, 500);
   assert.equal(messageQuery.returned, 500);
   assert.deepEqual(messageQuery.orderBy, {
-    field: "postedAt",
+    field: "messageTimestamp",
     direction: "desc",
   });
+});
+
+test("restream service bounds the RTDB session-index read", async () => {
+  const realtimeDb = createRealtimeDbMock();
+  const { service } = createServiceHarness({
+    useFirestore: false,
+    realtimeDb,
+  });
+  await realtimeDb.ref("server/restream/v1/restreamSessions/db-1").set({
+    churchId: "church-1",
+    database: "db-1",
+    sessionId: "session-rtdb-large",
+    startedAt: 100,
+    messageCount: 501,
+  });
+
+  const indexPath =
+    "server/restream/v1/restreamMessagesByDatabase/db-1/session-rtdb-large";
+  await realtimeDb
+    .ref(indexPath)
+    .set(
+      Object.fromEntries(
+        Array.from({ length: 501 }, (_, index) => [
+          `message-${index}`,
+          {
+            database: "db-1",
+            sessionId: "session-rtdb-large",
+             author: "Viewer",
+             text: `Message ${index}`,
+             postedAt: index,
+             messageTimestamp: index,
+             expiresAt: Date.now() + 90 * 24 * 60 * 60 * 1000,
+           },
+        ]),
+      ),
+    );
+
+  const messages = await service.listCurrentSessionMessages({
+    churchId: "church-1",
+    database: "db-1",
+  });
+
+  assert.equal(messages.length, 500);
+  assert.equal(messages[0].postedAt, 500);
+  assert.equal(messages.at(-1).postedAt, 1);
+  assert.deepEqual(realtimeDb.queries.at(-1), {
+    path: indexPath,
+    orderByChild: "messageTimestamp",
+    limitToLast: 500,
+  });
+});
+
+test("RTDB Restream reads filter and clean up expired messages", async () => {
+  const realtimeDb = createRealtimeDbMock();
+  const { service } = createServiceHarness({
+    useFirestore: false,
+    realtimeDb,
+  });
+  const now = Date.now();
+  const indexPath =
+    "server/restream/v1/restreamMessagesByDatabase/db-1/session-rtdb-expiry";
+  const expiredMessage = {
+    database: "db-1",
+    sessionId: "session-rtdb-expiry",
+    author: "Viewer",
+    text: "Expired message",
+    messageTimestamp: now - 90 * 24 * 60 * 60 * 1000 - 1,
+    expiresAt: now - 1,
+  };
+  const currentMessage = {
+    database: "db-1",
+    sessionId: "session-rtdb-expiry",
+    author: "Viewer",
+    text: "Current message",
+    messageTimestamp: now,
+    expiresAt: now + 1_000,
+  };
+
+  await realtimeDb.ref("server/restream/v1/restreamSessions/db-1").set({
+    churchId: "church-1",
+    database: "db-1",
+    sessionId: "session-rtdb-expiry",
+    startedAt: now,
+    messageCount: 2,
+  });
+  await realtimeDb.ref(indexPath).set({
+    expired: expiredMessage,
+    current: currentMessage,
+  });
+  await realtimeDb
+    .ref("server/restream/v1/restreamMessages/expired")
+    .set(expiredMessage);
+
+  const messages = await service.listCurrentSessionMessages({
+    churchId: "church-1",
+    database: "db-1",
+  });
+
+  assert.deepEqual(messages.map((message) => message.id), ["current"]);
+  assert.equal(
+    realtimeDb.read("server/restream/v1/restreamMessages/expired"),
+    undefined,
+  );
+  assert.equal(realtimeDb.read(`${indexPath}/expired`), undefined);
+});
+
+test("new viewer and moderator Restream messages receive shared retention metadata", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, service } = createServiceHarness();
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-retention",
+      startedAt: Date.now(),
+      messageCount: 0,
+      connected: true,
+    });
+
+    await service.ensureReceiver("church-1");
+    const postedAtSeconds = Math.floor(Date.now() / 1000);
+    fakeWs.sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: postedAtSeconds,
+        payload: {
+          connectionIdentifier: "conn-retention",
+          eventIdentifier: "event-retention",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Viewer" },
+            text: "Viewer message",
+          },
+        },
+      }),
+    });
+    fakeWs.sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "reply_created",
+        timestamp: 1_778_629_520,
+        payload: {
+          replyUuid: "reply-retention",
+          connectionIdentifiers: ["conn-retention"],
+          text: "Moderator reply",
+        },
+      }),
+    });
+
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.messageCount === 2,
+    );
+
+    const messages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.deepEqual(
+      messages.map((message) => message.kind).sort(),
+      ["moderator_reply", "viewer_message"],
+    );
+    messages.forEach((message) => {
+      const expiresAt = Date.parse(message.expiresAt);
+      assert.equal(
+        expiresAt - message.postedAt,
+        RESTREAM_MESSAGE_RETENTION_MS,
+      );
+    });
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("RTDB Restream writes keep expiration metadata JSON-compatible", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const realtimeDb = createRealtimeDbMock();
+    const { service } = createServiceHarness({
+      useFirestore: false,
+      realtimeDb,
+    });
+    await realtimeDb.ref("server/restream/v1/restreamTokens/church-1").set({
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    await realtimeDb.ref("server/restream/v1/restreamSessions/db-1").set({
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-rtdb-retention",
+      startedAt: Date.now(),
+      messageCount: 0,
+    });
+
+    await service.ensureReceiver("church-1");
+    const postedAtSeconds = Math.floor(Date.now() / 1000);
+    fakeWs.sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: postedAtSeconds,
+        payload: {
+          connectionIdentifier: "conn-rtdb-retention",
+          eventIdentifier: "event-rtdb-retention",
+          eventPayload: {
+            author: { displayName: "Viewer" },
+            text: "RTDB message",
+          },
+        },
+      }),
+    });
+
+    await waitFor(
+      () =>
+        realtimeDb.read("server/restream/v1/restreamSessions/db-1")
+          ?.messageCount === 1,
+    );
+    const messages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(
+      typeof messages[0].expiresAt,
+      "number",
+      JSON.stringify(messages[0]),
+    );
+    assert.equal(
+      messages[0].expiresAt - messages[0].postedAt,
+      RESTREAM_MESSAGE_RETENTION_MS,
+    );
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
 });
 
 test("restream service highlights, hides, and filters highlighted messages", async () => {
@@ -614,47 +1023,18 @@ test("restream service resets the session without touching prior message documen
   );
 });
 
-test("restream service auto-resets chat once a new stream goes live after a long idle gap", async () => {
-  const originalWebSocket = globalThis.WebSocket;
+test("restream service keeps chat after a long idle reconnect without confirmed Event ID", async () => {
   const originalClientId = process.env.RESTREAM_CLIENT_ID;
   const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
-
-  const sockets = [];
-  globalThis.WebSocket = class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = new Map();
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      const next = this.listeners.get(type) || [];
-      next.push(handler);
-      this.listeners.set(type, next);
-    }
-
-    emit(type, payload) {
-      const handlers = this.listeners.get(type) || [];
-      handlers.forEach((handler) => handler(payload));
-    }
-
-    close() {
-      return undefined;
-    }
-  };
+  const fakeWs = installFakeWebSocket();
   process.env.RESTREAM_CLIENT_ID = "client-id";
   process.env.RESTREAM_CLIENT_SECRET = "client-secret";
 
   try {
-    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
-    firestore.seed("restreamTokens", "church-1", {
-      churchId: "church-1",
-      database: "db-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 3_600_000,
-      accountLabel: "Main account",
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
     });
+    seedConnectedToken(firestore);
     firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
@@ -675,240 +1055,453 @@ test("restream service auto-resets chat once a new stream goes live after a long
     });
 
     await service.ensureReceiver("church-1");
-    sockets[0].emit("open");
-    sockets[0].emit("message", {
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: { owner: { displayName: "Main Channel" }, websiteChannelId: 11 },
+    });
+
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-last-week");
+    assert.equal(session.messageCount, 2);
+    assert.equal(
+      firestore.read("restreamMessages", "m1").sessionId,
+      "session-last-week",
+    );
+    assert.equal(session.sessionSuggestion?.reason, "day_boundary");
+    assert.deepEqual(boardDisplayUpdates, []);
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service serializes chat events behind a session boundary", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  let releaseEventLookup;
+  let resolveEventLookupStarted;
+  const eventLookupStarted = new Promise((resolve) => {
+    resolveEventLookupStarted = resolve;
+  });
+
+  try {
+    const { firestore, service } = createServiceHarness({
+      fetchInProgressEvents: () =>
+        new Promise((resolve) => {
+          resolveEventLookupStarted();
+          releaseEventLookup = resolve;
+        }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-before-boundary",
+      startedAt: 100,
+      messageCount: 0,
+      connected: false,
+      restreamEventId: "restream-event-old",
+      destinationBroadcastIds: ["youtube-event-old"],
+    });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-new", title: "New service" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+    await eventLookupStarted;
+
+    // This event arrives while connection_info is still resolving the session
+    // boundary. It must be processed only after resetSession has committed.
+    fakeWs.sockets[0].emit("message", {
       data: JSON.stringify({
-        action: "connection_info",
+        action: "event",
+        timestamp: 1_778_629_519,
         payload: {
           connectionIdentifier: "conn-1",
-          connectionUuid: "connection-uuid-1",
+          eventIdentifier: "event-after-boundary",
           eventSourceId: 13,
-          status: "connected",
-          target: { owner: { displayName: "Main Channel" } },
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Viewer" },
+            text: "Arrived after the boundary",
+          },
         },
       }),
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseEventLookup({
+      ok: true,
+      events: [
+        {
+          id: "restream-event-new",
+          destinations: [{ channelId: 11 }],
+        },
+      ],
+    });
 
-    const session = firestore.read("restreamSessions", "db-1");
-    assert.notEqual(session.sessionId, "session-last-week");
-    assert.equal(session.messageCount, 0);
-    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+    await waitFor(() => {
+      const session = firestore.read("restreamSessions", "db-1");
+      return session?.sessionId !== "session-before-boundary" &&
+        session?.messageCount === 1;
+    });
+
+    const messages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].text, "Arrived after the boundary");
+    assert.equal(
+      messages[0].sessionId,
+      firestore.read("restreamSessions", "db-1").sessionId,
+    );
   } finally {
-    globalThis.WebSocket = originalWebSocket;
+    fakeWs.restore();
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
   }
 });
 
 test("restream service keeps chat history across a brief reconnect mid-stream", async () => {
-  const originalWebSocket = globalThis.WebSocket;
   const originalClientId = process.env.RESTREAM_CLIENT_ID;
   const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
-
-  const sockets = [];
-  globalThis.WebSocket = class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = new Map();
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      const next = this.listeners.get(type) || [];
-      next.push(handler);
-      this.listeners.set(type, next);
-    }
-
-    emit(type, payload) {
-      const handlers = this.listeners.get(type) || [];
-      handlers.forEach((handler) => handler(payload));
-    }
-
-    close() {
-      return undefined;
-    }
-  };
+  const fakeWs = installFakeWebSocket();
   process.env.RESTREAM_CLIENT_ID = "client-id";
   process.env.RESTREAM_CLIENT_SECRET = "client-secret";
 
   try {
-    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
-    firestore.seed("restreamTokens", "church-1", {
-      churchId: "church-1",
-      database: "db-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 3_600_000,
-      accountLabel: "Main account",
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
     });
+    seedConnectedToken(firestore);
     firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
       sessionId: "session-mid-service",
-      startedAt: 100,
+      startedAt: Date.now() - 60_000,
       messageCount: 2,
       connected: false,
       wentIdleAt: Date.now() - 30 * 1000,
     });
 
     await service.ensureReceiver("church-1");
-    sockets[0].emit("open");
-    sockets[0].emit("message", {
-      data: JSON.stringify({
-        action: "connection_info",
-        payload: {
-          connectionIdentifier: "conn-1",
-          connectionUuid: "connection-uuid-1",
-          eventSourceId: 13,
-          status: "connected",
-          target: { owner: { displayName: "Main Channel" } },
-        },
-      }),
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: { owner: { displayName: "Main Channel" }, websiteChannelId: 11 },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
 
     const session = firestore.read("restreamSessions", "db-1");
     assert.equal(session.sessionId, "session-mid-service");
     assert.equal(session.messageCount, 2);
+    assert.equal(session.sessionSuggestion ?? null, null);
     assert.deepEqual(boardDisplayUpdates, []);
   } finally {
-    globalThis.WebSocket = originalWebSocket;
+    fakeWs.restore();
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
   }
 });
 
-test("restream service keeps chat history when the same broadcast reconnects, even after a long gap", async () => {
-  const originalWebSocket = globalThis.WebSocket;
+test("restream service keeps chat when the same YouTube destination reconnects after a long gap", async () => {
   const originalClientId = process.env.RESTREAM_CLIENT_ID;
   const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
-
-  const sockets = [];
-  globalThis.WebSocket = class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = new Map();
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      const next = this.listeners.get(type) || [];
-      next.push(handler);
-      this.listeners.set(type, next);
-    }
-
-    emit(type, payload) {
-      const handlers = this.listeners.get(type) || [];
-      handlers.forEach((handler) => handler(payload));
-    }
-
-    close() {
-      return undefined;
-    }
-  };
+  const fakeWs = installFakeWebSocket();
   process.env.RESTREAM_CLIENT_ID = "client-id";
   process.env.RESTREAM_CLIENT_SECRET = "client-secret";
 
   try {
-    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
-    firestore.seed("restreamTokens", "church-1", {
-      churchId: "church-1",
-      database: "db-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 3_600_000,
-      accountLabel: "Main account",
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
     });
-    // A single-platform connection can drop and recover on Restream's side
-    // (flaky venue internet, a YouTube ingest hiccup) without our own socket
-    // ever reconnecting. That must never wipe chat for the same broadcast,
-    // no matter how long the gap was.
+    seedConnectedToken(firestore);
     firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
       sessionId: "session-mid-service",
-      startedAt: 100,
+      startedAt: Date.now() - 60_000,
       messageCount: 2,
       connected: false,
       wentIdleAt: Date.now() - 20 * 60 * 1000,
-      broadcastKey: "youtube-event-1",
+      destinationBroadcastIds: ["youtube-event-1"],
     });
 
     await service.ensureReceiver("church-1");
-    sockets[0].emit("open");
-    sockets[0].emit("message", {
-      data: JSON.stringify({
-        action: "connection_info",
-        payload: {
-          connectionIdentifier: "conn-1",
-          connectionUuid: "connection-uuid-1",
-          eventSourceId: 13,
-          status: "connected",
-          target: {
-            event: { id: "youtube-event-1", title: "Sunday Live" },
-            owner: { displayName: "Main Channel" },
-          },
-        },
-      }),
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
 
     const session = firestore.read("restreamSessions", "db-1");
     assert.equal(session.sessionId, "session-mid-service");
     assert.equal(session.messageCount, 2);
     assert.deepEqual(boardDisplayUpdates, []);
   } finally {
-    globalThis.WebSocket = originalWebSocket;
+    fakeWs.restore();
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
   }
 });
 
-test("restream service resets chat when a different broadcast connects after a long gap", async () => {
-  const originalWebSocket = globalThis.WebSocket;
+test("restream service does not reset when preferred platform order flips YouTube to Facebook", async () => {
   const originalClientId = process.env.RESTREAM_CLIENT_ID;
   const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
-
-  const sockets = [];
-  globalThis.WebSocket = class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = new Map();
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      const next = this.listeners.get(type) || [];
-      next.push(handler);
-      this.listeners.set(type, next);
-    }
-
-    emit(type, payload) {
-      const handlers = this.listeners.get(type) || [];
-      handlers.forEach((handler) => handler(payload));
-    }
-
-    close() {
-      return undefined;
-    }
-  };
+  const fakeWs = installFakeWebSocket();
   process.env.RESTREAM_CLIENT_ID = "client-id";
   process.env.RESTREAM_CLIENT_SECRET = "client-secret";
 
   try {
-    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
-    firestore.seed("restreamTokens", "church-1", {
+    const { firestore, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({
+        ok: true,
+        events: [
+          {
+            id: "restream-event-1",
+            destinations: [{ channelId: 11 }, { channelId: 22 }],
+          },
+        ],
+      }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 3_600_000,
-      accountLabel: "Main account",
+      sessionId: "session-mid-service",
+      startedAt: Date.now() - 60_000,
+      messageCount: 2,
+      connected: false,
+      wentIdleAt: Date.now() - 20 * 60 * 1000,
+      restreamEventId: "restream-event-1",
+      destinationBroadcastIds: ["youtube-event-1"],
     });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    // Facebook arrives first so preferred-connection ordering would have
+    // flipped under the old broadcastKey heuristic.
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-fb",
+      connectionUuid: "connection-uuid-fb",
+      eventSourceId: 19,
+      status: "connected",
+      target: {
+        liveVideo: { id: "facebook-live-9", title: "Sunday Live" },
+        page: { name: "Church Page" },
+        websiteChannelId: 22,
+      },
+    });
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-yt",
+      connectionUuid: "connection-uuid-yt",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+
+    await waitFor(() => {
+      const ids =
+        firestore.read("restreamSessions", "db-1")?.destinationBroadcastIds ||
+        [];
+      return ids.includes("facebook-live-9") && ids.includes("youtube-event-1");
+    });
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+    assert.equal(session.restreamEventId, "restream-event-1");
+    assert.deepEqual(session.destinationBroadcastIds, [
+      "facebook-live-9",
+      "youtube-event-1",
+    ]);
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service keeps chat when one platform disappears and returns", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({
+        ok: true,
+        events: [
+          {
+            id: "restream-event-1",
+            destinations: [{ channelId: 11 }, { channelId: 22 }],
+          },
+        ],
+      }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-mid-service",
+      startedAt: Date.now() - 60_000,
+      messageCount: 3,
+      connected: true,
+      restreamEventId: "restream-event-1",
+      destinationBroadcastIds: ["facebook-live-9", "youtube-event-1"],
+    });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-yt",
+      connectionUuid: "connection-uuid-yt",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+    await waitFor(
+      () =>
+        (firestore.read("restreamSessions", "db-1")?.activeConnectionCount ||
+          0) >= 1,
+    );
+
+    // Mark idle, then restore only Facebook first (order change + partial set).
+    fakeWs.sockets[0].emit("close");
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === false,
+    );
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets.at(-1).emit("open");
+    emitConnectionInfo(fakeWs.sockets.at(-1), {
+      connectionIdentifier: "conn-fb",
+      connectionUuid: "connection-uuid-fb",
+      eventSourceId: 19,
+      status: "connected",
+      target: {
+        liveVideo: { id: "facebook-live-9", title: "Sunday Live" },
+        page: { name: "Church Page" },
+        websiteChannelId: 22,
+      },
+    });
+
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 3);
+    assert.equal(session.restreamEventId, "restream-event-1");
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service keeps chat when YouTube and Facebook destination ids differ for the same service", async () => {
+  const decision = decideRestreamSessionBoundary({
+    previousSession: {
+      sessionId: "session-1",
+      messageCount: 4,
+      startedAt: Date.now() - 60_000,
+      destinationBroadcastIds: ["youtube-event-1"],
+    },
+    currentRestreamEventId: "",
+    currentDestinationBroadcastIds: ["facebook-live-9"],
+    now: Date.now(),
+  });
+  assert.equal(decision.action, "keep");
+  assert.equal(decision.suggestion?.reason, "possible_new_service");
+
+  const sameServiceWithEvent = decideRestreamSessionBoundary({
+    previousSession: {
+      sessionId: "session-1",
+      messageCount: 4,
+      startedAt: Date.now() - 60_000,
+      restreamEventId: "restream-event-1",
+      destinationBroadcastIds: ["youtube-event-1"],
+    },
+    currentRestreamEventId: "restream-event-1",
+    currentDestinationBroadcastIds: ["facebook-live-9"],
+    now: Date.now(),
+  });
+  assert.equal(sameServiceWithEvent.action, "keep");
+  assert.equal(sameServiceWithEvent.reason, "confirmed_same_restream_event");
+  assert.equal(sameServiceWithEvent.suggestion, undefined);
+});
+
+test("restream service auto-resets only for a confirmed different Restream Event ID", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({
+        ok: true,
+        events: [
+          {
+            id: "restream-event-new",
+            destinations: [{ channelId: 11 }],
+          },
+        ],
+      }),
+    });
+    seedConnectedToken(firestore);
     firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
@@ -917,7 +1510,8 @@ test("restream service resets chat when a different broadcast connects after a l
       messageCount: 2,
       connected: false,
       wentIdleAt: Date.now() - 20 * 60 * 1000,
-      broadcastKey: "youtube-event-old",
+      restreamEventId: "restream-event-old",
+      destinationBroadcastIds: ["youtube-event-old"],
     });
     firestore.seed("restreamMessages", "m1", {
       churchId: "church-1",
@@ -930,130 +1524,430 @@ test("restream service resets chat when a different broadcast connects after a l
     });
 
     await service.ensureReceiver("church-1");
-    sockets[0].emit("open");
-    sockets[0].emit("message", {
-      data: JSON.stringify({
-        action: "connection_info",
-        payload: {
-          connectionIdentifier: "conn-1",
-          connectionUuid: "connection-uuid-1",
-          eventSourceId: 13,
-          status: "connected",
-          target: {
-            event: { id: "youtube-event-new", title: "Wednesday Live" },
-            owner: { displayName: "Main Channel" },
-          },
-        },
-      }),
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-new", title: "Wednesday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.sessionId !==
+        "session-last-week",
+    );
 
     const session = firestore.read("restreamSessions", "db-1");
     assert.notEqual(session.sessionId, "session-last-week");
     assert.equal(session.messageCount, 0);
-    assert.equal(session.broadcastKey, "youtube-event-new");
-    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+    assert.equal(session.restreamEventId, "restream-event-new");
+    assert.equal(
+      firestore.read("restreamMessages", "m1").sessionId,
+      "session-last-week",
+    );
+    assert.ok(boardDisplayUpdates.includes("db-1"));
+
+    const currentMessages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(currentMessages.length, 0);
   } finally {
-    globalThis.WebSocket = originalWebSocket;
+    fakeWs.restore();
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
   }
 });
 
-test("restream service resets chat for a different broadcast immediately after receiver startup", async () => {
-  const originalWebSocket = globalThis.WebSocket;
+test("restream service keeps chat for the same confirmed Restream Event ID", async () => {
   const originalClientId = process.env.RESTREAM_CLIENT_ID;
   const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
-
-  const sockets = [];
-  globalThis.WebSocket = class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = new Map();
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      const next = this.listeners.get(type) || [];
-      next.push(handler);
-      this.listeners.set(type, next);
-    }
-
-    emit(type, payload) {
-      const handlers = this.listeners.get(type) || [];
-      handlers.forEach((handler) => handler(payload));
-    }
-
-    close() {
-      return undefined;
-    }
-  };
+  const fakeWs = installFakeWebSocket();
   process.env.RESTREAM_CLIENT_ID = "client-id";
   process.env.RESTREAM_CLIENT_SECRET = "client-secret";
 
   try {
-    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
-    firestore.seed("restreamTokens", "church-1", {
-      churchId: "church-1",
-      database: "db-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      accessTokenExpiresAt: Date.now() + 3_600_000,
-      accountLabel: "Main account",
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({
+        ok: true,
+        events: [
+          {
+            id: "restream-event-1",
+            destinations: [{ channelId: 11 }],
+          },
+        ],
+      }),
     });
+    seedConnectedToken(firestore);
     firestore.seed("restreamSessions", "db-1", {
       churchId: "church-1",
       database: "db-1",
-      sessionId: "session-last-week",
-      startedAt: 100,
+      sessionId: "session-mid-service",
+      startedAt: Date.now() - 60_000,
       messageCount: 2,
-      connected: true,
-      broadcastKey: "youtube-event-old",
-    });
-    firestore.seed("restreamMessages", "m1", {
-      churchId: "church-1",
-      database: "db-1",
-      sessionId: "session-last-week",
-      text: "Last week's message",
-      postedAt: 50,
-      isHighlighted: false,
-      hidden: false,
+      connected: false,
+      wentIdleAt: Date.now() - 20 * 60 * 1000,
+      restreamEventId: "restream-event-1",
     });
 
-    // Receiver startup first marks the stale persisted connection idle. The
-    // next broadcast must still reset immediately even though wentIdleAt was
-    // only just recorded during startup.
     await service.ensureReceiver("church-1");
-    sockets[0].emit("open");
-    sockets[0].emit("message", {
-      data: JSON.stringify({
-        action: "connection_info",
-        payload: {
-          connectionIdentifier: "conn-1",
-          connectionUuid: "connection-uuid-1",
-          eventSourceId: 13,
-          status: "connected",
-          target: {
-            event: { id: "youtube-event-new", title: "Sunday Live" },
-            owner: { displayName: "Main Channel" },
-          },
-        },
-      }),
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
 
     const session = firestore.read("restreamSessions", "db-1");
-    assert.notEqual(session.sessionId, "session-last-week");
-    assert.equal(session.messageCount, 0);
-    assert.equal(session.broadcastKey, "youtube-event-new");
-    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+    assert.equal(session.restreamEventId, "restream-event-1");
+    assert.equal(session.sessionSuggestion ?? null, null);
+    assert.deepEqual(boardDisplayUpdates, []);
   } finally {
-    globalThis.WebSocket = originalWebSocket;
+    fakeWs.restore();
     process.env.RESTREAM_CLIENT_ID = originalClientId;
     process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
   }
+});
+
+test("restream service keeps chat and exposes status suggestion for ambiguous identity", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-mid-service",
+      startedAt: Date.now() - 60_000,
+      messageCount: 2,
+      connected: false,
+      destinationBroadcastIds: ["youtube-event-old"],
+    });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 19,
+      status: "connected",
+      target: {
+        liveVideo: { id: "facebook-live-new", title: "Maybe new" },
+        page: { name: "Church Page" },
+        websiteChannelId: 22,
+      },
+    });
+
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.sessionSuggestion
+          ?.reason === "possible_new_service",
+    );
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+
+    const status = await service.getStatusForChurch({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(
+      status.session.sessionSuggestion?.reason,
+      "possible_new_service",
+    );
+
+    const kept = await service.dismissSessionSuggestion({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(kept.session.sessionId, "session-mid-service");
+    assert.equal(kept.session.sessionSuggestion, null);
+    assert.ok(
+      firestore.read("restreamSessions", "db-1")?.sessionSuggestionDismissed,
+    );
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("dismissed day-boundary suggestion stays dismissed across a second live transition", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+  const startedAt = Date.now() - 48 * 60 * 60 * 1000;
+
+  try {
+    const { firestore, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-yesterday",
+      startedAt,
+      messageCount: 2,
+      connected: false,
+    });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.sessionSuggestion
+          ?.reason === "day_boundary",
+    );
+
+    await service.dismissSessionSuggestion({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(
+      firestore.read("restreamSessions", "db-1")?.sessionSuggestion ?? null,
+      null,
+    );
+
+    fakeWs.sockets[0].emit("close");
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === false,
+    );
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets.at(-1).emit("open");
+    emitConnectionInfo(fakeWs.sockets.at(-1), {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
+
+    const afterSecondLive = firestore.read("restreamSessions", "db-1");
+    assert.equal(afterSecondLive.sessionId, "session-yesterday");
+    assert.equal(afterSecondLive.sessionSuggestion ?? null, null);
+    assert.equal(
+      afterSecondLive.lastBoundaryDecision?.reason,
+      "day_boundary_activity",
+    );
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("decideRestreamSessionBoundary honors dismissed suggestion fingerprints", () => {
+  const startedAt = Date.now() - 48 * 60 * 60 * 1000;
+  const fingerprint = ["day_boundary", "", "", String(startedAt)].join("|");
+  const decision = decideRestreamSessionBoundary({
+    previousSession: {
+      sessionId: "session-1",
+      messageCount: 2,
+      startedAt,
+      sessionSuggestionDismissed: {
+        reason: "day_boundary",
+        fingerprint,
+      },
+    },
+    currentRestreamEventId: "",
+    currentDestinationBroadcastIds: [],
+    now: Date.now(),
+  });
+  assert.equal(decision.action, "keep");
+  assert.equal(decision.reason, "day_boundary_activity");
+  assert.equal(decision.suggestion, undefined);
+});
+
+test("unmatched Event channel mapping keeps the session instead of auto-resetting", async () => {
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+  const fakeWs = installFakeWebSocket();
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness({
+      fetchInProgressEvents: async () => ({
+        ok: true,
+        events: [
+          {
+            id: "unrelated-in-progress-event",
+            destinations: [{ channelId: 99 }],
+          },
+        ],
+      }),
+    });
+    seedConnectedToken(firestore);
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-mid-service",
+      startedAt: Date.now() - 60_000,
+      messageCount: 2,
+      connected: false,
+      restreamEventId: "restream-event-1",
+      destinationBroadcastIds: ["youtube-event-1"],
+    });
+
+    await service.ensureReceiver("church-1");
+    fakeWs.sockets[0].emit("open");
+    emitConnectionInfo(fakeWs.sockets[0], {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connected",
+      target: {
+        event: { id: "youtube-event-1", title: "Sunday Live" },
+        owner: { displayName: "Main Channel" },
+        websiteChannelId: 11,
+      },
+    });
+
+    await waitFor(
+      () => firestore.read("restreamSessions", "db-1")?.connected === true,
+    );
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+    assert.equal(session.restreamEventId, "restream-event-1");
+    assert.deepEqual(boardDisplayUpdates, []);
+  } finally {
+    fakeWs.restore();
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("resolveRestreamEventId matches active chat channels to in-progress events", () => {
+  const connections = new Map([
+    [
+      "yt",
+      {
+        status: "connected",
+        target: { websiteChannelId: 11, event: { id: "yt-1" } },
+      },
+    ],
+    [
+      "fb",
+      {
+        status: "connected",
+        target: { websiteChannelId: 22, liveVideo: { id: "fb-1" } },
+      },
+    ],
+  ]);
+  assert.equal(
+    resolveRestreamEventId(
+      [
+        {
+          id: "event-a",
+          destinations: [{ channelId: 11 }, { channelId: 22 }],
+        },
+        {
+          id: "event-b",
+          destinations: [{ channelId: 99 }],
+        },
+      ],
+      connections,
+    ),
+    "event-a",
+  );
+  assert.equal(resolveRestreamEventId([], connections), "");
+  assert.equal(
+    resolveRestreamEventId(
+      [
+        { id: "event-a", destinations: [{ channelId: 11 }] },
+        { id: "event-b", destinations: [{ channelId: 22 }] },
+      ],
+      connections,
+    ),
+    "",
+  );
+  // Unmatched channels must not fall through to “trust the sole event.”
+  assert.equal(
+    resolveRestreamEventId(
+      [
+        {
+          id: "stale-or-unrelated-event",
+          destinations: [{ channelId: 99 }],
+        },
+      ],
+      connections,
+    ),
+    "",
+  );
+  // Without channel ids, a single in-progress event remains usable.
+  assert.equal(
+    resolveRestreamEventId(
+      [{ id: "solo-event", destinations: [{ channelId: 11 }] }],
+      new Map([
+        [
+          "discord",
+          {
+            status: "connected",
+            target: { channel: { id: "c1", name: "general" } },
+          },
+        ],
+      ]),
+    ),
+    "solo-event",
+  );
+  assert.deepEqual(collectDestinationBroadcastIds(connections), [
+    "fb-1",
+    "yt-1",
+  ]);
+  assert.equal(
+    beganOnPreviousLocalCalendarDay(Date.now() - 48 * 60 * 60 * 1000),
+    true,
+  );
 });
 
 test("restream service persists sessions and messages in RTDB when Firestore is unavailable", async () => {
@@ -1075,6 +1969,7 @@ test("restream service persists sessions and messages in RTDB when Firestore is 
 
   const messageId = "message-1";
   const freshSession = realtimeDb.read(currentSessionPath);
+  const postedAt = Date.now();
   await realtimeDb
     .ref(
       `server/restream/v1/restreamMessagesByDatabase/db-1/${freshSession.sessionId}/${messageId}`,
@@ -1085,13 +1980,15 @@ test("restream service persists sessions and messages in RTDB when Firestore is 
       sessionId: freshSession.sessionId,
       author: "Evan",
       text: "Saved in RTDB",
-      postedAt: 123,
+      postedAt,
+      messageTimestamp: postedAt,
+      expiresAt: postedAt + RESTREAM_MESSAGE_RETENTION_MS,
       isHighlighted: false,
       hidden: false,
     });
   await realtimeDb.ref(currentSessionPath).update({
     messageCount: 1,
-    lastEventAt: 123,
+    lastEventAt: postedAt,
     sessionId: freshSession.sessionId,
   });
 
@@ -1125,11 +2022,114 @@ test("restream service persists sessions and messages in RTDB when Firestore is 
       sessionId: freshSession.sessionId,
       author: "Evan",
       text: "Saved in RTDB",
-      postedAt: 123,
+      postedAt,
+      messageTimestamp: postedAt,
+      expiresAt: postedAt + RESTREAM_MESSAGE_RETENTION_MS,
       isHighlighted: false,
       hidden: false,
     },
   );
+});
+
+test("RTDB Restream persistence deduplicates concurrent deliveries and counts distinct messages", async () => {
+  const fakeWs = installFakeWebSocket();
+  const realtimeDb = createRealtimeDbMock();
+  const tokenPath = "server/restream/v1/restreamTokens/church-1";
+  await realtimeDb.ref(tokenPath).set({
+    churchId: "church-1",
+    database: "db-1",
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    accessTokenExpiresAt: Date.now() + 3_600_000,
+    accountLabel: "Main account",
+  });
+
+  try {
+    const first = createServiceHarness({
+      useFirestore: false,
+      realtimeDb,
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
+    });
+    const second = createServiceHarness({
+      useFirestore: false,
+      realtimeDb,
+      fetchInProgressEvents: async () => ({ ok: false, events: [] }),
+    });
+    await first.service.resetSession({ churchId: "church-1", database: "db-1" });
+    await Promise.all([
+      first.service.ensureReceiver("church-1"),
+      second.service.ensureReceiver("church-1"),
+    ]);
+
+    fakeWs.sockets.forEach((socket) => {
+      socket.emit("open");
+      emitConnectionInfo(socket, {
+        connectionIdentifier: "conn-1",
+        connectionUuid: "connection-uuid-1",
+        eventSourceId: 13,
+        status: "connected",
+        target: {
+          event: { id: "event-shared", title: "Sunday Live" },
+          owner: { displayName: "Main Channel" },
+          websiteChannelId: 11,
+        },
+      });
+    });
+    await waitFor(
+      () =>
+        realtimeDb.read("server/restream/v1/restreamSessions/db-1")
+          ?.connected === true,
+    );
+
+    const eventTimestamp = Math.floor(Date.now() / 1000);
+    const makeEvent = (id, timestamp) => ({
+      data: JSON.stringify({
+        action: "event",
+        timestamp,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: `event-${id}`,
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: { displayName: "Evan" },
+            liveChatMessageId: id,
+            text: id,
+          },
+        },
+      }),
+    });
+
+    const duplicate = makeEvent("youtube-message-1", eventTimestamp);
+    fakeWs.sockets.forEach((socket) => socket.emit("message", duplicate));
+    await waitFor(
+      () => realtimeDb.read("server/restream/v1/restreamSessions/db-1")?.messageCount === 1,
+    );
+
+    fakeWs.sockets[0].emit(
+      "message",
+      makeEvent("youtube-message-2", eventTimestamp + 1),
+    );
+    fakeWs.sockets[1].emit(
+      "message",
+      makeEvent("youtube-message-3", eventTimestamp + 2),
+    );
+    await waitFor(
+      () => realtimeDb.read("server/restream/v1/restreamSessions/db-1")?.messageCount === 3,
+    );
+
+    const messages = await first.service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(messages.length, 3);
+    assert.equal(
+      realtimeDb.read("server/restream/v1/restreamSessions/db-1").messageCount,
+      3,
+    );
+  } finally {
+    fakeWs.restore();
+  }
 });
 
 test("restream service surfaces connection issues when Restream has no live chat source", async () => {
@@ -1341,7 +2341,9 @@ test("restream service stores YouTube messages from the documented chat action e
     // must use the bounded lookup and leave both the document count and the
     // session count unchanged.
     sockets[0].emit("message", viewerEvent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => firestore.metrics.queryGets.length >= queryCountBeforeDedupe + 2,
+    );
 
     const dedupeQueries = firestore.metrics.queryGets.slice(
       queryCountBeforeDedupe,
@@ -1349,8 +2351,7 @@ test("restream service stores YouTube messages from the documented chat action e
     assert.equal(dedupeQueries.length, 2);
     assert.equal(
       dedupeQueries.every(
-        (query) =>
-          query.name === "restreamMessages" && query.limit === 1,
+        (query) => query.name === "restreamMessages" && query.limit === 1,
       ),
       true,
     );
@@ -1477,7 +2478,10 @@ test("restream service deduplicates the same event across receiver instances", a
     assert.equal(messages.length, 1);
     assert.equal(session.messageCount, 1);
     assert.equal(dedupeQueries.length, 2);
-    assert.equal(dedupeQueries.every((query) => query.limit === 1), true);
+    assert.equal(
+      dedupeQueries.every((query) => query.limit === 1),
+      true,
+    );
     assert.equal(
       firstSseEvents.some((event) => event.includes('"message-created"')),
       true,
@@ -1566,13 +2570,18 @@ test("restream service deduplicates the same event across receiver instances", a
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(
-      (await first.service.listCurrentSessionMessages({
-        churchId: "church-1",
-        database: "db-1",
-      })).length,
+      (
+        await first.service.listCurrentSessionMessages({
+          churchId: "church-1",
+          database: "db-1",
+        })
+      ).length,
       3,
     );
-    assert.equal(sharedFirestore.read("restreamSessions", "db-1").messageCount, 3);
+    assert.equal(
+      sharedFirestore.read("restreamSessions", "db-1").messageCount,
+      3,
+    );
 
     sockets[0].emit("message", retryEvent);
     await waitFor(
@@ -1580,10 +2589,12 @@ test("restream service deduplicates the same event across receiver instances", a
         sharedFirestore.read("restreamSessions", "db-1")?.messageCount === 4,
     );
     assert.equal(
-      (await first.service.listCurrentSessionMessages({
-        churchId: "church-1",
-        database: "db-1",
-      })).length,
+      (
+        await first.service.listCurrentSessionMessages({
+          churchId: "church-1",
+          database: "db-1",
+        })
+      ).length,
       4,
     );
   } finally {
@@ -1657,6 +2668,7 @@ test("restream service deduplicates legacy messages with random document IDs", a
       author: "Evan",
       text: "Legacy message",
       postedAt,
+      messageTimestamp: postedAt,
       isHighlighted: false,
       hidden: false,
     });
@@ -1693,8 +2705,8 @@ test("restream service deduplicates legacy messages with random document IDs", a
       churchId: "church-1",
       database: "db-1",
     });
-    const dedupeQueries = firestore.metrics
-      .queryGets.slice(queryCountBeforeDedupe)
+    const dedupeQueries = firestore.metrics.queryGets
+      .slice(queryCountBeforeDedupe)
       .filter((query) =>
         query.filters.some((filter) => filter.field === "fingerprint"),
       );
@@ -1737,7 +2749,7 @@ test("restream service persists oauth state across the connect callback", async 
         refresh_token: "refresh-token",
         expires_in: 3600,
         refreshTokenExpiresIn: 31536000,
-        scope: "chat.read channels.read",
+        scope: "chat.read channels.read stream.read",
       },
     };
   };
@@ -1780,11 +2792,27 @@ test("restream service persists oauth state across the connect callback", async 
     const url = new URL(authorizeUrl);
     const state = url.searchParams.get("state");
     assert.ok(state);
+    assert.equal(
+      url.searchParams.get("scope"),
+      "chat.read channels.read stream.read",
+    );
 
     const storedState = firestore.read("restreamOauthStates", state);
     assert.equal(storedState?.churchId, "church-1");
     assert.equal(storedState?.database, "db-1");
     assert.equal(storedState?.connectRequestId, connectStart.connectRequestId);
+    assert.equal(
+      Date.parse(storedState?.ttlExpireAt),
+      storedState?.expiresAt,
+    );
+    const storedConnectRequest = firestore.read(
+      "restreamConnectRequests",
+      connectStart.connectRequestId,
+    );
+    assert.equal(
+      Date.parse(storedConnectRequest?.ttlExpireAt),
+      storedConnectRequest?.expiresAt,
+    );
 
     const pendingStatus = await service.getConnectStatus({
       connectRequestId: connectStart.connectRequestId,

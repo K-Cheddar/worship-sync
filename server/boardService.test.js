@@ -297,7 +297,8 @@ test("board docs and archived docs keep expected identifiers", () => {
 
   assert.equal(boardDoc._id, "board:board-youth");
   assert.equal(boardDoc.docType, "board");
-  assert.equal(archiveBoardDoc(boardDoc).archived, true);
+  assert.equal(archiveBoardDoc(boardDoc, 456).archived, true);
+  assert.equal(archiveBoardDoc(boardDoc, 456).archivedAt, 456);
 });
 
 test("post helpers build deterministic prefixes and public filters", () => {

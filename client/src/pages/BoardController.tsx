@@ -45,7 +45,6 @@ import {
   getBoardDocId,
   getBoardLabel,
   normalizeBoardPresentationFontScale,
-  getBoardPostRange,
   boardHasOnlyPreviousDayPosts,
   isCurrentBoardView,
   isWorshipSyncModeratorBoardPost,
@@ -74,6 +73,7 @@ import {
 } from "../types";
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
+import RestreamSessionSuggestionBanner from "../boards/RestreamSessionSuggestionBanner";
 import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
 import { BoardYouTubeChatComposer } from "../boards/BoardYouTubeChatComposer";
 import { BoardActivitySourceBadge } from "../boards/BoardActivitySourceBadge";
@@ -86,6 +86,8 @@ import {
   useRestreamSession,
 } from "../boards/useRestreamSession";
 import { useYouTubeConnectionStatus } from "../boards/useYouTubeConnectionStatus";
+import { classifyBoardControllerChange } from "../boards/boardControllerChangeHandling";
+import { getLocalBoardPosts } from "../boards/boardSyncData";
 
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
@@ -156,23 +158,11 @@ const getBoardDocsById = async (
   }, {});
 };
 
-const getBoardPosts = async (
-  db: PouchDB.Database,
-  boardId: string,
-): Promise<DBBoardPost[]> => {
-  const range = getBoardPostRange(boardId);
-  const result = (await db.allDocs({
-    include_docs: true,
-    ...range,
-  })) as AllDocsResult<DBBoardPost>;
-
-  return sortBoardPostsAscending(
-    result.rows.flatMap((row) => (row.doc ? [row.doc] : [])),
-  );
-};
-
 const getHighlightedBoardPostCount = (posts: DBBoardPost[]): number =>
   filterHighlightedBoardPosts(posts).length;
+
+const getBoardAliasRevision = (alias: DBBoardAlias): string =>
+  alias._rev || `updated-at:${alias.updatedAt}`;
 
 const getCurrentBoardHighlightedCount = async (
   db: PouchDB.Database,
@@ -184,7 +174,9 @@ const getCurrentBoardHighlightedCount = async (
     return getHighlightedBoardPostCount(viewedPosts);
   }
 
-  return getHighlightedBoardPostCount(await getBoardPosts(db, currentBoardId));
+  return getHighlightedBoardPostCount(
+    await getLocalBoardPosts(db, currentBoardId),
+  );
 };
 
 const getSelectedAliasViewData = async (
@@ -199,7 +191,7 @@ const getSelectedAliasViewData = async (
       : alias.currentBoardId;
   const [boardsById, posts] = await Promise.all([
     getBoardDocsById(db, boardIds),
-    getBoardPosts(db, boardIdToView),
+    getLocalBoardPosts(db, boardIdToView),
   ]);
   const currentBoardHighlightedCount = await getCurrentBoardHighlightedCount(
     db,
@@ -238,7 +230,8 @@ const SessionResetToastAction = ({
 );
 
 export const BoardControllerContent = () => {
-  const { db, status, pullFromRemote, retryNow } = useBoardSync() || {};
+  const { db, status, pullFromRemote, retryNow, subscribeToChanges } =
+    useBoardSync() || {};
   const { database, loginState, churchId, userId, logout, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
   const { showToast, removeToast } = useToast();
@@ -280,13 +273,21 @@ export const BoardControllerContent = () => {
   const [freshBoardConfirmOpen, setFreshBoardConfirmOpen] =
     useState(false);
   const loadRequestIdRef = useRef(0);
+  const activeDbRef = useRef<PouchDB.Database | undefined>(db);
+  const activeDatabaseRef = useRef(database);
   const boardIdToViewRef = useRef("");
   const selectedBoardIdRef = useRef("");
   const selectedAliasIdRef = useRef("");
+  const selectedAliasRevisionRef = useRef<string | null>(null);
+  const selectedAliasBoardIdsRef = useRef<Set<string>>(new Set());
+  const currentBoardIdRef = useRef("");
   // Board ids we've already prompted about, so the "start fresh session"
   // toast appears once per stale board rather than on every re-render or
   // background sync.
   const promptedFreshSessionBoardIdsRef = useRef<Set<string>>(new Set());
+
+  activeDbRef.current = db;
+  activeDatabaseRef.current = database;
 
   const isXlUp = useMediaQuery("(min-width: 1280px)");
   const isMobileStack = !isXlUp;
@@ -312,6 +313,7 @@ export const BoardControllerContent = () => {
   const loadSelectedAlias = useCallback(async () => {
     if (!db || !selectedAliasId) {
       loadRequestIdRef.current += 1;
+      selectedAliasRevisionRef.current = null;
       setSelectedAlias(null);
       setBoardsById({});
       setPosts([]);
@@ -321,35 +323,57 @@ export const BoardControllerContent = () => {
     }
 
     const requestId = ++loadRequestIdRef.current;
+    const requestAliasId = selectedAliasId;
+    const requestDb = db;
+    const requestDatabase = database;
+    let requestAliasRevision = selectedAliasRevisionRef.current;
+    const isCurrentRequest = () =>
+      requestId === loadRequestIdRef.current &&
+      activeDbRef.current === requestDb &&
+      activeDatabaseRef.current === requestDatabase &&
+      selectedAliasIdRef.current === requestAliasId &&
+      selectedAliasRevisionRef.current === requestAliasRevision;
+
     setIsLoading(true);
     try {
-      const alias = (await db.get(getAliasDocId(selectedAliasId))) as DBBoardAlias;
+      const alias = (await requestDb.get(
+        getAliasDocId(requestAliasId),
+      )) as DBBoardAlias;
       const nextViewData = await getSelectedAliasViewData(
-        db,
+        requestDb,
         alias,
         selectedBoardId,
       );
 
-      if (requestId !== loadRequestIdRef.current) {
+      if (!isCurrentRequest()) {
         return;
       }
 
+      requestAliasRevision = getBoardAliasRevision(alias);
+      selectedAliasRevisionRef.current = requestAliasRevision;
       setSelectedAlias(alias);
       setBoardsById(nextViewData.boardsById);
       setPosts(nextViewData.posts);
       setCurrentBoardHighlightedCount(
         nextViewData.currentBoardHighlightedCount,
       );
+      const nextSelectedBoardId =
+        nextViewData.boardIdToView === alias.currentBoardId
+          ? ""
+          : nextViewData.boardIdToView;
+      if (selectedBoardIdRef.current !== nextSelectedBoardId) {
+        setSelectedBoardId(nextSelectedBoardId);
+      }
     } catch (error) {
-      if (requestId === loadRequestIdRef.current) {
+      if (isCurrentRequest()) {
         console.warn("Board link is not ready in local sync yet:", error);
       }
     } finally {
-      if (requestId === loadRequestIdRef.current) {
+      if (isCurrentRequest()) {
         setIsLoading(false);
       }
     }
-  }, [db, selectedAliasId, selectedBoardId]);
+  }, [database, db, selectedAliasId, selectedBoardId]);
 
   useEffect(() => {
     selectedBoardIdRef.current = selectedBoardId;
@@ -357,6 +381,7 @@ export const BoardControllerContent = () => {
 
   useEffect(() => {
     selectedAliasIdRef.current = selectedAliasId;
+    selectedAliasRevisionRef.current = null;
   }, [selectedAliasId]);
 
   useEffect(() => {
@@ -365,79 +390,72 @@ export const BoardControllerContent = () => {
 
   useEffect(() => {
     if (!db) return;
-    const changes = db
-      .changes({ since: "now", live: true, include_docs: true })
-      .on("change", (change) => {
-        if (!change || typeof change.id !== "string") {
-          void loadAliases();
-          void loadSelectedAlias();
-          return;
-        }
-        const boardId = boardIdToViewRef.current;
-        if (boardId && change.id.startsWith(`post:${boardId}:`)) {
-          if (change.deleted) {
-            setPosts((prev) => prev.filter((p) => p._id !== change.id));
-          } else {
-            const updated = change.doc as unknown as DBBoardPost;
-            setPosts((prev) => {
-              const idx = prev.findIndex((p) => p._id === updated._id);
-              if (idx !== -1) {
-                const next = [...prev];
-                next[idx] = updated;
-                return next;
-              }
-              return sortBoardPostsAscending([...prev, updated]);
-            });
-          }
-        } else if (!change.deleted && change.doc && change.id.startsWith("alias:")) {
-          const updatedAlias = change.doc as unknown as DBBoardAlias;
-          setAliases((prev) => {
-            const idx = prev.findIndex((a) => a.aliasId === updatedAlias.aliasId);
-            if (idx !== -1) {
-              const next = [...prev];
-              next[idx] = updatedAlias;
-              return next;
-            }
-            return [...prev, updatedAlias].sort((a, b) => a.title.localeCompare(b.title));
-          });
-          if (selectedAliasIdRef.current === updatedAlias.aliasId) {
-            const selectedBoardId = selectedBoardIdRef.current;
-
-            setSelectedAlias(updatedAlias);
-
-            void (async () => {
-              try {
-                const nextViewData = await getSelectedAliasViewData(
-                  db,
-                  updatedAlias,
-                  selectedBoardId,
-                );
-                if (selectedAliasIdRef.current !== updatedAlias.aliasId) return;
-                setSelectedBoardId(
-                  nextViewData.boardIdToView === updatedAlias.currentBoardId
-                    ? ""
-                    : nextViewData.boardIdToView,
-                );
-                setBoardsById(nextViewData.boardsById);
-                setPosts(nextViewData.posts);
-                setCurrentBoardHighlightedCount(
-                  nextViewData.currentBoardHighlightedCount,
-                );
-              } catch (error) {
-                console.warn("Board link is not ready in local sync yet:", error);
-              }
-            })();
-          }
-        } else {
-          void loadAliases();
-          void loadSelectedAlias();
-        }
+    const unsubscribe = subscribeToChanges?.((change) => {
+      const action = classifyBoardControllerChange(change, {
+        viewedBoardId: boardIdToViewRef.current,
+        currentBoardId: currentBoardIdRef.current,
+        selectedAliasBoardIds: selectedAliasBoardIdsRef.current,
       });
 
+      if (action.type === "ignore") {
+        return;
+      }
+
+      if (action.type === "reload-aliases-and-selected") {
+        void loadAliases();
+        void loadSelectedAlias();
+        return;
+      }
+
+      if (action.type === "reload-selected") {
+        void loadSelectedAlias();
+        return;
+      }
+
+      if (action.type === "active-board-post") {
+        if (change.deleted) {
+          setPosts((prev) => prev.filter((p) => p._id !== change.id));
+        } else {
+          const updated = change.doc as unknown as DBBoardPost;
+          setPosts((prev) => {
+            const idx = prev.findIndex((p) => p._id === updated._id);
+            if (idx !== -1) {
+              const next = [...prev];
+              next[idx] = updated;
+              return next;
+            }
+            return sortBoardPostsAscending([...prev, updated]);
+          });
+        }
+        return;
+      }
+
+      // alias-doc
+      if (!change.deleted && change.doc && typeof change.id === "string") {
+        const updatedAlias = change.doc as unknown as DBBoardAlias;
+        setAliases((prev) => {
+          const idx = prev.findIndex((a) => a.aliasId === updatedAlias.aliasId);
+          if (idx !== -1) {
+            const next = [...prev];
+            next[idx] = updatedAlias;
+            return next;
+          }
+          return [...prev, updatedAlias].sort((a, b) =>
+            a.title.localeCompare(b.title),
+          );
+        });
+        if (selectedAliasIdRef.current === updatedAlias.aliasId) {
+          selectedAliasRevisionRef.current = getBoardAliasRevision(updatedAlias);
+          setSelectedAlias(updatedAlias);
+          void loadSelectedAlias();
+        }
+      }
+    });
+
     return () => {
-      changes.cancel();
+      unsubscribe?.();
     };
-  }, [db, loadAliases, loadSelectedAlias]);
+  }, [db, loadAliases, loadSelectedAlias, subscribeToChanges]);
 
   useEffect(() => {
     void loadSelectedAlias();
@@ -459,6 +477,10 @@ export const BoardControllerContent = () => {
     : undefined;
   const boardIdToView = selectedBoardId || selectedAlias?.currentBoardId || "";
   boardIdToViewRef.current = boardIdToView;
+  currentBoardIdRef.current = selectedAlias?.currentBoardId || "";
+  selectedAliasBoardIdsRef.current = selectedAlias
+    ? new Set([selectedAlias.currentBoardId, ...selectedAlias.history])
+    : new Set();
   const isViewingCurrent = !selectedBoardId || isCurrentBoardView(selectedAlias, selectedBoardId);
   const publicBoardUrl = selectedAlias
     ? buildBoardPublicUrl(selectedAlias.aliasId, "board")
@@ -777,6 +799,14 @@ export const BoardControllerContent = () => {
           You appear to be offline. Live messages may not update until you reconnect.
         </p>
       ) : null}
+      {churchId && restreamSession.session?.sessionSuggestion ? (
+        <RestreamSessionSuggestionBanner
+          churchId={churchId}
+          suggestion={restreamSession.session.sessionSuggestion}
+          onResolved={reloadRestreamSession}
+          showToast={showToast}
+        />
+      ) : null}
       {restreamSession.session?.streamTitle ? (
         <p className="text-sm text-gray-200">
           Stream name:{" "}
@@ -834,6 +864,7 @@ export const BoardControllerContent = () => {
   );
   const hasRestreamStatus =
     restreamSession.isOffline ||
+    Boolean(restreamSession.session?.sessionSuggestion) ||
     Boolean(restreamSession.session?.streamTitle) ||
     !restreamSession.oauthConfigured ||
     getRestreamStatusIssues(

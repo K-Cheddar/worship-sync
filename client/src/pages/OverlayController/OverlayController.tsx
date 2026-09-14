@@ -23,8 +23,9 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { OVERLAY_CONTROLLER_ID } from "../../utils/controllerProfiles";
+import BoardSyncProvider from "../../boards/BoardSyncContext";
 
-const OverlayController = () => {
+const OverlayControllerContent = () => {
   const dispatch = useDispatch();
   const { layoutRef } = useControllerPageLifecycle();
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
@@ -224,5 +225,11 @@ const OverlayController = () => {
     </ActiveControllerProvider>
   );
 };
+
+const OverlayController = () => (
+  <BoardSyncProvider>
+    <OverlayControllerContent />
+  </BoardSyncProvider>
+);
 
 export default OverlayController;

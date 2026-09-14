@@ -251,9 +251,10 @@ export const createAliasDoc = ({
   updatedAt: timestamp,
 });
 
-export const archiveBoardDoc = (boardDoc) => ({
+export const archiveBoardDoc = (boardDoc, timestamp = Date.now()) => ({
   ...boardDoc,
   archived: true,
+  archivedAt: timestamp,
 });
 
 export const rotateAliasDoc = ({

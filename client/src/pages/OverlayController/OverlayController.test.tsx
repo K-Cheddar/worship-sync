@@ -29,6 +29,11 @@ jest.mock("../../hooks/useMediaQuery", () => ({
   useMediaQuery: () => false,
 }));
 
+jest.mock("../../boards/BoardSyncContext", () => ({
+  __esModule: true,
+  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 jest.mock("../Controller/useControllerPageLifecycle", () => ({
   useControllerPageLifecycle: () => ({ layoutRef: { current: null } }),
 }));

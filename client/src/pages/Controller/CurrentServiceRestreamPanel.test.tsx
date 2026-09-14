@@ -228,6 +228,11 @@ describe("CurrentServiceRestreamPanel", () => {
       expect(onUnreadCountChange).toHaveBeenLastCalledWith(2);
     });
     expect(setItemSpy).not.toHaveBeenCalled();
+    // The workspace keeps the chat panel mounted while its parent applies the
+    // CSS hidden state. Hidden messages still need to remain available when the
+    // operator opens the tab without forcing a remount.
+    expect(screen.getByText("First message")).toBeInTheDocument();
+    expect(screen.getByText("Second message")).toBeInTheDocument();
 
     rerender(
       <CurrentServiceRestreamPanel
@@ -238,6 +243,9 @@ describe("CurrentServiceRestreamPanel", () => {
         showToast={jest.fn()}
       />,
     );
+
+    expect(screen.getByText("First message")).toBeInTheDocument();
+    expect(screen.getByText("Second message")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(onUnreadCountChange).toHaveBeenLastCalledWith(0);

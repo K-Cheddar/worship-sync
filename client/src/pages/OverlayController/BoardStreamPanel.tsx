@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -20,6 +21,7 @@ import { shallowEqual } from "react-redux";
 import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { useBoardData } from "../../boards/useBoardData";
 import { useBoardEventStream } from "../../boards/useBoardEventStream";
+import { useSyncedBoardPosts } from "../../boards/useSyncedBoard";
 import { useRestreamSession } from "../../boards/useRestreamSession";
 import {
   filterHighlightedBoardPosts,
@@ -28,6 +30,8 @@ import {
   getStoredBoardDisplayAliasId,
 } from "../../boards/boardUtils";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import type { DBBoardPost } from "../../types";
+import type { BoardSyncStatus } from "../../boards/BoardSyncContext";
 import { cn } from "@/utils/cnHelper";
 import {
   DropdownMenu,
@@ -36,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
 import { createPortal } from "react-dom";
+import { debugBoardSync } from "../../boards/boardSyncDebug";
 
 type BoardStreamPanelProps = {
   /** Combined controller mode moves the selected post controls into a shared detail column. */
@@ -59,6 +64,17 @@ const DEFAULT_DURATION = 8;
 
 const FIELD_CLASS = "text-sm flex gap-2 items-center w-full";
 const LABEL_CLASS = "w-24";
+
+type BoardStreamPanelData = {
+  posts: DBBoardPost[];
+  hasLoadedOnce: boolean;
+  error: string;
+  connectionStatus: {
+    status: BoardSyncStatus;
+    retryCount: number;
+  };
+  retryNow: () => void;
+};
 
 const MIN_FONT_SIZE_DISPLAY = 12;
 const MAX_FONT_SIZE_DISPLAY = 32;
@@ -179,35 +195,31 @@ const BoardStreamFontSizeField = memo(function BoardStreamFontSizeField({
   );
 });
 
-const BoardStreamPanel = ({
+const BoardStreamPanelContent = ({
+  aliasId,
+  posts,
+  hasLoadedOnce,
+  error,
+  connectionStatus,
+  retryNow,
   detailTarget,
   isDetailActive = true,
   onDetailRequested,
-}: BoardStreamPanelProps) => {
+}: BoardStreamPanelProps & BoardStreamPanelData) => {
   const dispatch = useDispatch();
   const liveStreamIds = useSelector(selectOverlayTargetIds, shallowEqual);
   const isStreamTransmitting = liveStreamIds.length > 0;
 
-  const { churchId } = useContext(GlobalInfoContext) ?? {};
-  const aliasId = getStoredBoardDisplayAliasId();
-
-  const { posts, hasLoadedOnce, connectionStatus, loadBoard, loadPosts } =
-    useBoardData(aliasId);
-
+  const { churchId, logout } = useContext(GlobalInfoContext) ?? {};
   const { messages: restreamMessages } = useRestreamSession(churchId ?? "");
 
-  useBoardEventStream(aliasId, (event) => {
-    if (event.type === "connected") return;
-    if (event.type === "board-hard-reset") {
-      void loadBoard();
-    } else if (
-      event.type === "post-created" ||
-      event.type === "post-updated" ||
-      event.type === "board-soft-reset"
-    ) {
-      void loadPosts();
-    }
-  });
+  useEffect(() => {
+    debugBoardSync("overlay-board-state-updated", {
+      aliasId,
+      postCount: posts.length,
+      highlightedCount: filterHighlightedBoardPosts(posts).length,
+    });
+  }, [aliasId, posts]);
 
   const highlightedItems = useMemo((): HighlightedPostItem[] => {
     const boardItems: HighlightedPostItem[] = filterHighlightedBoardPosts(
@@ -285,6 +297,44 @@ const BoardStreamPanel = ({
           <p className="text-sm">
             No board configured. Set a board alias on the Board Display page.
           </p>
+        </div>
+      );
+    }
+
+    if (connectionStatus.status === "paused") {
+      return (
+        <div className="flex flex-1 items-center justify-center p-6 text-center text-slate-400">
+          <div>
+            <p className="text-sm">Sign-in is required to load board highlights.</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Sign in again to reconnect this operator surface.
+            </p>
+            {logout ? (
+              <Button
+                className="mt-4 justify-center"
+                variant="cta"
+                onClick={() => void logout()}
+              >
+                Sign in again
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    if (connectionStatus.status === "failed") {
+      return (
+        <div className="flex flex-1 items-center justify-center p-6 text-center text-slate-400">
+          <div>
+            <p className="text-sm">Could not connect to board highlights.</p>
+            <p className="mt-2 text-xs text-slate-500">
+              {error || "Check the connection, then try again."}
+            </p>
+            <Button className="mt-4 justify-center" onClick={retryNow}>
+              Try again
+            </Button>
+          </div>
         </div>
       );
     }
@@ -537,6 +587,49 @@ const BoardStreamPanel = ({
         </div>
       </div>
     </div>
+  );
+};
+
+const AuthenticatedBoardStreamPanel = ({
+  aliasId,
+  ...props
+}: BoardStreamPanelProps & { aliasId: string }) => {
+  const board = useSyncedBoardPosts(aliasId);
+  return <BoardStreamPanelContent {...props} aliasId={aliasId} {...board} />;
+};
+
+const PublicBoardStreamPanel = ({
+  aliasId,
+  ...props
+}: BoardStreamPanelProps & { aliasId: string }) => {
+  const board = useBoardData(aliasId);
+
+  useBoardEventStream(aliasId, (event) => {
+    if (event.type === "connected") return;
+    if (event.type === "board-hard-reset") {
+      void board.loadBoard();
+    } else if (
+      event.type === "post-created" ||
+      event.type === "post-updated" ||
+      event.type === "board-soft-reset"
+    ) {
+      void board.loadPosts();
+    }
+  });
+
+  return <BoardStreamPanelContent {...props} aliasId={aliasId} {...board} />;
+};
+
+const BoardStreamPanel = (props: BoardStreamPanelProps) => {
+  const { loginState } = useContext(GlobalInfoContext) ?? {};
+  const aliasId = getStoredBoardDisplayAliasId();
+
+  // Guest mode is an intentionally unauthenticated demo surface. Keep its
+  // public API/SSE path while ensuring authenticated operators use PouchDB only.
+  return loginState === "success" ? (
+    <AuthenticatedBoardStreamPanel {...props} aliasId={aliasId} />
+  ) : (
+    <PublicBoardStreamPanel {...props} aliasId={aliasId} />
   );
 };
 

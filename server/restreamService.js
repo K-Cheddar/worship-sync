@@ -1,5 +1,15 @@
 import crypto from "node:crypto";
 import axios from "axios";
+import {
+  getRestreamMessageCanonicalTimestampMs,
+  getRestreamMessageExpirationDate,
+  getRestreamMessageExpirationTimestampMs,
+  getRestreamTemporaryTtlDate,
+  RESTREAM_CONNECT_STATE_TTL_MS,
+  RESTREAM_MESSAGE_CANONICAL_TIMESTAMP_FIELD,
+  RESTREAM_MESSAGE_TTL_FIELD,
+  RESTREAM_TEMPORARY_TTL_FIELD,
+} from "./restreamRetention.js";
 
 const RESTREAM_TOKEN_COLLECTION = "restreamTokens";
 const RESTREAM_SESSION_COLLECTION = "restreamSessions";
@@ -8,10 +18,10 @@ const RESTREAM_OAUTH_STATE_COLLECTION = "restreamOauthStates";
 const RESTREAM_CONNECT_REQUEST_COLLECTION = "restreamConnectRequests";
 const RESTREAM_RTDB_ROOT = "server/restream/v1";
 const RESTREAM_RTDB_MESSAGE_INDEX = "restreamMessagesByDatabase";
-const STATE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
 const MAX_MESSAGE_QUERY = 500;
 const RESTREAM_CONNECT_POLL_INTERVAL_MS = 1500;
+const RTDB_EXPIRED_MESSAGE_CLEANUP_LIMIT = 100;
 
 const RESTREAM_MESSAGE_KIND_VIEWER = "viewer_message";
 const RESTREAM_MESSAGE_KIND_MODERATOR_REPLY = "moderator_reply";
@@ -143,9 +153,9 @@ const readConnectionStreamTitle = (connectionInfo) => {
   return resolved?.trim() || "";
 };
 
-/** Identifies the actual broadcast (video/event), not just the destination
- * platform connection, so a reconnecting connection can be told apart from a
- * genuinely different stream. Falls back to url when no id is present. */
+/** Platform-specific destination id/url (YouTube video id, Facebook live
+ * video id, etc.). These differ across destinations of the *same* Restream
+ * event, so they must never alone define Worship Sync session identity. */
 const readConnectionBroadcastId = (connectionInfo) => {
   const target = connectionInfo?.target ?? {};
   const candidates = [
@@ -162,6 +172,224 @@ const readConnectionBroadcastId = (connectionInfo) => {
     (value) => typeof value === "string" && value.trim(),
   );
   return resolved?.trim() || "";
+};
+
+const readConnectionWebsiteChannelId = (connectionInfo) => {
+  const target = connectionInfo?.target ?? {};
+  const candidates = [
+    target?.websiteChannelId,
+    connectionInfo?.websiteChannelId,
+  ];
+  const resolved = candidates.find(
+    (value) =>
+      (typeof value === "number" && Number.isFinite(value)) ||
+      (typeof value === "string" && value.trim()),
+  );
+  return resolved === undefined || resolved === null
+    ? ""
+    : String(resolved).trim();
+};
+
+const uniqueSortedStrings = (values) =>
+  Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+/** Collect platform destination ids from healthy connections only. */
+export const collectDestinationBroadcastIds = (connectionMap) => {
+  const connections = connectionMap ? Array.from(connectionMap.values()) : [];
+  return uniqueSortedStrings(
+    connections
+      .filter(isConnectionHealthy)
+      .map((connectionInfo) => readConnectionBroadcastId(connectionInfo)),
+  );
+};
+
+const setsOverlap = (left, right) => {
+  if (!left.length || !right.length) return false;
+  const rightSet = new Set(right);
+  return left.some((value) => rightSet.has(value));
+};
+
+export const beganOnPreviousLocalCalendarDay = (
+  startedAt,
+  now = Date.now(),
+) => {
+  const started = Number(startedAt);
+  if (!Number.isFinite(started) || started <= 0) return false;
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  return started < startOfToday.getTime();
+};
+
+/**
+ * Map Restream Events API rows to the active chat using destination channel
+ * ids when possible. Returns "" when identity is unknown or ambiguous.
+ */
+export const resolveRestreamEventId = (events, connectionMap) => {
+  const list = (Array.isArray(events) ? events : [])
+    .map((event) => ({
+      id: String(event?.id || "").trim(),
+      channelIds: uniqueSortedStrings(
+        (Array.isArray(event?.destinations) ? event.destinations : []).map(
+          (destination) => destination?.channelId,
+        ),
+      ),
+    }))
+    .filter((event) => event.id);
+  if (!list.length) return "";
+
+  const activeChannelIds = new Set(
+    Array.from(connectionMap?.values?.() || [])
+      .filter(isConnectionHealthy)
+      .map((connectionInfo) => readConnectionWebsiteChannelId(connectionInfo))
+      .filter(Boolean),
+  );
+
+  if (activeChannelIds.size > 0) {
+    const matched = list.filter((event) =>
+      event.channelIds.some((channelId) => activeChannelIds.has(channelId)),
+    );
+    // Active chat channels that match zero or multiple in-progress events are
+    // failed/ambiguous mapping — never fall through to “trust the sole event.”
+    return matched.length === 1 ? matched[0].id : "";
+  }
+
+  // No channel ids on healthy connections (e.g. Discord-only): only trust a
+  // single in-progress event.
+  return list.length === 1 ? list[0].id : "";
+};
+
+const buildSuggestionFingerprint = ({
+  reason,
+  restreamEventId,
+  destinationBroadcastIds,
+  startedAt,
+}) =>
+  [
+    String(reason || "").trim(),
+    String(restreamEventId || "").trim(),
+    uniqueSortedStrings(destinationBroadcastIds).join(","),
+    Number.isFinite(Number(startedAt)) ? String(Number(startedAt)) : "",
+  ].join("|");
+
+/**
+ * Confidence-based Restream session boundary decision.
+ * Transport/connectivity never forces a reset. Only a confirmed different
+ * Restream Event ID auto-resets; everything else keeps the session.
+ */
+export const decideRestreamSessionBoundary = ({
+  previousSession,
+  currentRestreamEventId = "",
+  currentDestinationBroadcastIds = [],
+  now = Date.now(),
+}) => {
+  const previousEventId = String(previousSession?.restreamEventId || "").trim();
+  const currentEventId = String(currentRestreamEventId || "").trim();
+  const messageCount = Number(previousSession?.messageCount || 0);
+  const previousDestinationIds = uniqueSortedStrings(
+    previousSession?.destinationBroadcastIds,
+  );
+  const currentDestinationIds = uniqueSortedStrings(
+    currentDestinationBroadcastIds,
+  );
+
+  if (previousEventId && currentEventId) {
+    if (previousEventId === currentEventId) {
+      return {
+        action: "keep",
+        reason: "confirmed_same_restream_event",
+        restreamEventId: currentEventId,
+      };
+    }
+    return {
+      action: "reset",
+      reason: "confirmed_new_restream_event",
+      restreamEventId: currentEventId,
+      previousServiceIdentity: previousEventId,
+      nextServiceIdentity: currentEventId,
+    };
+  }
+
+  const keepBase = {
+    action: "keep",
+    reason: "reconnect_or_connection_recovery",
+    restreamEventId: currentEventId || previousEventId || "",
+  };
+
+  if (!(messageCount > 0)) {
+    return keepBase;
+  }
+
+  const dismissed = previousSession?.sessionSuggestionDismissed;
+  const maybeSuggest = (suggestion) => {
+    const fingerprint = buildSuggestionFingerprint({
+      reason: suggestion.reason,
+      restreamEventId: currentEventId,
+      destinationBroadcastIds: currentDestinationIds,
+      startedAt: previousSession?.startedAt,
+    });
+    if (
+      dismissed &&
+      String(dismissed.reason || "") === suggestion.reason &&
+      String(dismissed.fingerprint || "") === fingerprint
+    ) {
+      return {
+        ...keepBase,
+        reason: suggestion.decisionReason,
+        restreamEventId: currentEventId || previousEventId || "",
+      };
+    }
+    return {
+      ...keepBase,
+      reason: suggestion.decisionReason,
+      restreamEventId: currentEventId || previousEventId || "",
+      suggestion: {
+        reason: suggestion.reason,
+        message: suggestion.message,
+        suggestedAt: now,
+        fingerprint,
+      },
+    };
+  };
+
+  // Same Restream Event confirmed on only one side still means keep; do not
+  // prompt from destination churn while Event identity is only partially known.
+  if (previousEventId || currentEventId) {
+    return {
+      ...keepBase,
+      reason: "partial_restream_event_identity",
+      restreamEventId: currentEventId || previousEventId,
+    };
+  }
+
+  if (beganOnPreviousLocalCalendarDay(previousSession?.startedAt, now)) {
+    return maybeSuggest({
+      decisionReason: "day_boundary_activity",
+      reason: "day_boundary",
+      message:
+        "This Restream session started on a previous day. Start a new session if this is a new service, or keep the current chat.",
+    });
+  }
+
+  if (
+    previousDestinationIds.length > 0 &&
+    currentDestinationIds.length > 0 &&
+    !setsOverlap(previousDestinationIds, currentDestinationIds)
+  ) {
+    return maybeSuggest({
+      decisionReason: "ambiguous_destination_change",
+      reason: "possible_new_service",
+      message:
+        "Restream destinations look different from this session. Start a new session if this is a new service, or keep the current chat.",
+    });
+  }
+
+  return keepBase;
 };
 
 const readConnectionPlatform = (connectionInfo, eventTypeId) => {
@@ -279,18 +507,25 @@ const formatConnectionIssue = (connectionInfo) => {
 
 const buildConnectionInsights = (connectionMap) => {
   const connections = Array.from(connectionMap.values());
-  const preferredConnection =
-    connections.find(isConnectionHealthy) || connections[0] || null;
+  const healthyConnections = connections.filter(isConnectionHealthy);
+  // Title is display-only. Prefer any healthy connection that exposes one;
+  // never treat "preferred" ordering as service identity.
+  const titledConnection =
+    healthyConnections.find((connectionInfo) =>
+      readConnectionStreamTitle(connectionInfo),
+    ) ||
+    connections.find((connectionInfo) =>
+      readConnectionStreamTitle(connectionInfo),
+    ) ||
+    null;
   return {
     platformSummary: buildPlatformSummary(connectionMap),
-    streamTitle: preferredConnection
-      ? readConnectionStreamTitle(preferredConnection)
+    streamTitle: titledConnection
+      ? readConnectionStreamTitle(titledConnection)
       : "",
-    broadcastKey: preferredConnection
-      ? readConnectionBroadcastId(preferredConnection)
-      : "",
+    destinationBroadcastIds: collectDestinationBroadcastIds(connectionMap),
     totalConnectionCount: connections.length,
-    activeConnectionCount: connections.filter(isConnectionHealthy).length,
+    activeConnectionCount: healthyConnections.length,
     connectionIssues: connections
       .filter(isConnectionFailed)
       .map(formatConnectionIssue)
@@ -315,6 +550,7 @@ export const createRestreamService = ({
   getIntegrationsPath,
   onBoardDisplayUpdate,
   redirectBaseUrl,
+  fetchInProgressEvents,
 }) => {
   const store = createMemoryStore();
   const receivers = new Map();
@@ -424,6 +660,12 @@ export const createRestreamService = ({
 
     const rtdb = getRtdb();
     if (rtdb) {
+      const rtdbData = Object.fromEntries(
+        Object.entries(data).map(([key, value]) => [
+          key,
+          value instanceof Date ? value.getTime() : value,
+        ]),
+      );
       const docRef = rtdb.ref(getRtdbDocPath(collectionName, id));
       const existingSnapshot = await docRef.get();
       const existingValue =
@@ -432,11 +674,13 @@ export const createRestreamService = ({
         typeof existingSnapshot.val() === "object"
           ? existingSnapshot.val()
           : {};
-      const nextValue = merge ? { ...existingValue, ...data } : data;
+      const nextValue = merge
+        ? { ...existingValue, ...rtdbData }
+        : rtdbData;
       if (merge) {
         await docRef.set(nextValue);
       } else {
-        await docRef.set(data);
+        await docRef.set(rtdbData);
       }
 
       if (collectionName === RESTREAM_MESSAGE_COLLECTION) {
@@ -483,6 +727,27 @@ export const createRestreamService = ({
   };
 
   const createMessageDocFallback = async (id, data) => {
+    const rtdb = getRtdb();
+    if (rtdb) {
+      const docRef = rtdb.ref(getRtdbDocPath(RESTREAM_MESSAGE_COLLECTION, id));
+      const transactionResult = await docRef.transaction((current) => {
+        if (current !== null && current !== undefined) return;
+        return data;
+      });
+      if (!transactionResult.committed) return false;
+
+      await rtdb
+        .ref(
+          getRtdbMessageIndexPath({
+            database: data.database,
+            sessionId: data.sessionId,
+            messageId: id,
+          }),
+        )
+        .set(data);
+      return true;
+    }
+
     const existing = await getDoc(RESTREAM_MESSAGE_COLLECTION, id);
     if (existing) return false;
     await setDoc(RESTREAM_MESSAGE_COLLECTION, id, data);
@@ -536,7 +801,9 @@ export const createRestreamService = ({
         .where("database", "==", database)
         .where("sessionId", "==", sessionId);
       if (Number.isFinite(limit)) {
-        query = query.orderBy("postedAt", "desc").limit(limit);
+        query = query
+          .orderBy(RESTREAM_MESSAGE_CANONICAL_TIMESTAMP_FIELD, "desc")
+          .limit(limit);
       }
       const snapshot = await query.get();
       return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -544,26 +811,69 @@ export const createRestreamService = ({
 
     const rtdb = getRtdb();
     if (rtdb) {
-      const indexedSnapshot = await rtdb
-        .ref(
-          `${RESTREAM_RTDB_ROOT}/${RESTREAM_RTDB_MESSAGE_INDEX}/${encodeRtdbKey(
-            database,
-          )}/${encodeRtdbKey(sessionId)}`,
-        )
-        .get();
+      const indexRef = rtdb.ref(
+        `${RESTREAM_RTDB_ROOT}/${RESTREAM_RTDB_MESSAGE_INDEX}/${encodeRtdbKey(
+          database,
+        )}/${encodeRtdbKey(sessionId)}`,
+      );
+      const filterAndCleanupExpired = async (messages) => {
+        const now = nowMs();
+        const expired = messages.filter((message) => {
+          const expiresAt = getRestreamMessageExpirationTimestampMs(message);
+          return Number.isFinite(expiresAt) && expiresAt <= now;
+        });
+        const cleanup = expired
+          .filter((message) => message?.id)
+          .slice(0, RTDB_EXPIRED_MESSAGE_CLEANUP_LIMIT);
+
+        await Promise.allSettled(
+          cleanup.map((message) =>
+            Promise.all([
+              rtdb
+                .ref(getRtdbDocPath(RESTREAM_MESSAGE_COLLECTION, message.id))
+                .remove(),
+              rtdb
+                .ref(
+                  getRtdbMessageIndexPath({
+                    database,
+                    sessionId,
+                    messageId: message.id,
+                  }),
+                )
+                .remove(),
+            ]),
+          ),
+        );
+
+        const expiredIds = new Set(expired.map((message) => message.id));
+        return messages.filter((message) => !expiredIds.has(message.id));
+      };
+      const indexedQuery =
+        Number.isFinite(limit) &&
+        typeof indexRef.orderByChild === "function" &&
+        typeof indexRef.limitToLast === "function"
+          ? indexRef
+              .orderByChild(RESTREAM_MESSAGE_CANONICAL_TIMESTAMP_FIELD)
+              .limitToLast(limit)
+          : indexRef;
+      const indexedSnapshot = await indexedQuery.get();
       if (indexedSnapshot.exists()) {
         const value = indexedSnapshot.val();
         if (value && typeof value === "object") {
-          return Object.entries(value).map(([id, doc]) => ({
-            id: decodeRtdbKey(id),
-            ...(doc && typeof doc === "object" ? doc : {}),
-          }));
+          return filterAndCleanupExpired(
+            Object.entries(value).map(([id, doc]) => ({
+              id: decodeRtdbKey(id),
+              ...(doc && typeof doc === "object" ? doc : {}),
+            })),
+          );
         }
       }
 
       const rtdbRows = await listRtdbCollection(RESTREAM_MESSAGE_COLLECTION);
-      return rtdbRows.filter(
-        (item) => item.database === database && item.sessionId === sessionId,
+      return filterAndCleanupExpired(
+        rtdbRows.filter(
+          (item) => item.database === database && item.sessionId === sessionId,
+        ),
       );
     }
 
@@ -705,6 +1015,11 @@ export const createRestreamService = ({
     connectionIssues: [],
     activeConnectionCount: 0,
     totalConnectionCount: 0,
+    destinationBroadcastIds: [],
+    restreamEventId: "",
+    sessionSuggestion: null,
+    sessionSuggestionDismissed: null,
+    lastBoundaryDecision: null,
     accountLabel: "",
     enabled: false,
     connected: false,
@@ -738,16 +1053,39 @@ export const createRestreamService = ({
   };
 
   const incrementSessionMessageCountFallback = async (database, patch) => {
+    const rtdb = getRtdb();
+    if (rtdb) {
+      const sessionRef = rtdb.ref(
+        getRtdbDocPath(RESTREAM_SESSION_COLLECTION, database),
+      );
+      const transactionResult = await sessionRef.transaction((current) => {
+        const session =
+          current && typeof current === "object" ? current : {};
+        return {
+          ...session,
+          ...patch,
+          messageCount: Number(session.messageCount || 0) + 1,
+        };
+      });
+      const session = transactionResult.snapshot.val() || {};
+      return { id: database, ...session };
+    }
+
     const current = await getDoc(RESTREAM_SESSION_COLLECTION, database);
     const next = {
       ...(current || { id: database }),
       ...patch,
       messageCount: Number(current?.messageCount || 0) + 1,
     };
-    await setDoc(RESTREAM_SESSION_COLLECTION, database, {
-      ...patch,
-      messageCount: next.messageCount,
-    });
+    await setDoc(
+      RESTREAM_SESSION_COLLECTION,
+      database,
+      {
+        ...patch,
+        messageCount: next.messageCount,
+      },
+      { merge: true },
+    );
     return next;
   };
 
@@ -758,12 +1096,21 @@ export const createRestreamService = ({
     messageId,
     message,
   }) => {
+    const messageTimestamp = getRestreamMessageCanonicalTimestampMs(message);
     const messageData = {
       ...message,
       id: messageId,
       churchId,
       database,
       sessionId,
+      [RESTREAM_MESSAGE_CANONICAL_TIMESTAMP_FIELD]: messageTimestamp,
+      // Retention is physical data lifecycle, not session visibility/reset.
+      // Keep the expiry fixed when moderation fields are updated later.
+      [RESTREAM_MESSAGE_TTL_FIELD]: getRestreamMessageExpirationDate({
+        ...message,
+        messageTimestamp,
+        now: messageTimestamp,
+      }),
     };
     const sessionPatch = {
       lastEventAt: message.postedAt,
@@ -795,8 +1142,7 @@ export const createRestreamService = ({
           return { created: false, messageId, stale: true };
         }
 
-        const nextMessageCount =
-          Number(sessionBase.messageCount || 0) + 1;
+        const nextMessageCount = Number(sessionBase.messageCount || 0) + 1;
         const nextSession = {
           id: database,
           ...sessionBase,
@@ -818,7 +1164,16 @@ export const createRestreamService = ({
       });
     }
 
-    const created = await createMessageDocFallback(messageId, messageData);
+    const fallbackMessageData = {
+      ...messageData,
+      // Realtime Database stores JSON values rather than Firestore timestamps.
+      [RESTREAM_MESSAGE_TTL_FIELD]: messageData[RESTREAM_MESSAGE_TTL_FIELD]
+        ?.getTime(),
+    };
+    const created = await createMessageDocFallback(
+      messageId,
+      fallbackMessageData,
+    );
     if (!created) return { created: false, messageId };
 
     const nextSession = await incrementSessionMessageCountFallback(
@@ -880,6 +1235,8 @@ export const createRestreamService = ({
         platformSummary: receiverInsights?.platformSummary?.length
           ? receiverInsights.platformSummary
           : session.platformSummary || [],
+        restreamEventId: session.restreamEventId || "",
+        sessionSuggestion: session.sessionSuggestion || null,
       },
     };
   };
@@ -893,8 +1250,18 @@ export const createRestreamService = ({
     });
     return messages
       .sort((a, b) => {
-        if ((b.postedAt || 0) !== (a.postedAt || 0)) {
-          return (b.postedAt || 0) - (a.postedAt || 0);
+        const aTimestamp =
+          getRestreamMessageCanonicalTimestampMs({
+            ...a,
+            fallbackToNow: false,
+          }) ?? 0;
+        const bTimestamp =
+          getRestreamMessageCanonicalTimestampMs({
+            ...b,
+            fallbackToNow: false,
+          }) ?? 0;
+        if (bTimestamp !== aTimestamp) {
+          return bTimestamp - aTimestamp;
         }
         return String(b.id).localeCompare(String(a.id));
       })
@@ -922,8 +1289,18 @@ export const createRestreamService = ({
             RESTREAM_MESSAGE_KIND_MODERATOR_REPLY,
       )
       .sort((a, b) => {
-        if ((a.postedAt || 0) !== (b.postedAt || 0)) {
-          return (a.postedAt || 0) - (b.postedAt || 0);
+        const aTimestamp =
+          getRestreamMessageCanonicalTimestampMs({
+            ...a,
+            fallbackToNow: false,
+          }) ?? 0;
+        const bTimestamp =
+          getRestreamMessageCanonicalTimestampMs({
+            ...b,
+            fallbackToNow: false,
+          }) ?? 0;
+        if (aTimestamp !== bTimestamp) {
+          return aTimestamp - bTimestamp;
         }
         return String(a.id).localeCompare(String(b.id));
       });
@@ -971,7 +1348,8 @@ export const createRestreamService = ({
     );
     url.searchParams.set("redirect_uri", getRedirectUri());
     url.searchParams.set("state", state);
-    url.searchParams.set("scope", "chat.read channels.read");
+    // stream.read is required for /v2/user/events/in-progress (Restream Event ID).
+    url.searchParams.set("scope", "chat.read channels.read stream.read");
     return url.toString();
   };
 
@@ -1080,64 +1458,126 @@ export const createRestreamService = ({
   };
 
   /**
-   * How long the receiver must show zero active connections before a later
-   * reconnect *with no recorded prior broadcast identity* counts as a new
-   * stream. Our own chat WebSocket to Restream reconnects (briefly zeroing
-   * `receiver.connections`) far more often than an operator actually starts a
-   * new broadcast, so a short threshold would wipe live chat mid-service on
-   * an ordinary network blip. This is only a fallback: when we can compare
-   * broadcast identity (below), a resumed connection to the *same* broadcast
-   * never resets, no matter how long the gap was.
+   * Worship Sync Restream session identity is independent of chat transport.
+   * Reconnects, idle gaps, preferred-connection ordering, and platform-specific
+   * broadcast ids must never alone reset sessionId. Only a confirmed Restream
+   * Event ID change (or an explicit operator reset) starts a new session.
    */
-  const NEW_STREAM_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
-
-  /**
-   * A dropped connection reconnecting to the *same* video/event id is the
-   * same broadcast recovering (flaky venue internet, a platform-side ingest
-   * hiccup) — never a new stream, regardless of how long it was down. Only
-   * fall back to the elapsed-idle heuristic when we can't compare identity on
-   * both sides (e.g. a platform that doesn't expose a stable id/url).
-   */
-  const compareBroadcastIdentity = (previousSession, insights) => {
-    const previousBroadcastKey = String(
-      previousSession?.broadcastKey || "",
-    ).trim();
-    const currentBroadcastKey = String(insights?.broadcastKey || "").trim();
-    if (previousBroadcastKey && currentBroadcastKey) {
-      return previousBroadcastKey === currentBroadcastKey
-        ? "same"
-        : "different";
+  const defaultFetchInProgressEvents = async (accessToken) => {
+    const response = await axios.get(
+      "https://api.restream.io/v2/user/events/in-progress",
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        validateStatus: (status) => status >= 200 && status < 500,
+      },
+    );
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, events: [], missingScope: true };
     }
-    return "unknown";
+    if (response.status < 200 || response.status >= 300) {
+      return { ok: false, events: [], missingScope: false };
+    }
+    const events = Array.isArray(response.data)
+      ? response.data
+      : Array.isArray(response.data?.events)
+        ? response.data.events
+        : [];
+    return { ok: true, events, missingScope: false };
   };
 
-  const maybeAutoResetForNewStream = async (
+  const resolveLiveRestreamEventId = async (churchId, connectionMap) => {
+    try {
+      const tokenDoc = await ensureValidToken(churchId);
+      const fetchEvents =
+        typeof fetchInProgressEvents === "function"
+          ? fetchInProgressEvents
+          : defaultFetchInProgressEvents;
+      const result = await fetchEvents(tokenDoc.accessToken);
+      if (!result?.ok) return "";
+      return resolveRestreamEventId(result.events, connectionMap);
+    } catch (error) {
+      console.warn(
+        "[restream] could not resolve Restream Event ID for session boundary:",
+        error?.message || error,
+      );
+      return "";
+    }
+  };
+
+  const logSessionChange = ({
+    reason,
+    churchId,
+    database,
+    previousSessionId,
+    nextSessionId,
+    previousServiceIdentity,
+    nextServiceIdentity,
+  }) => {
+    console.info("[restream] session changed", {
+      reason,
+      churchId,
+      database,
+      previousSessionId: previousSessionId || "",
+      nextSessionId: nextSessionId || "",
+      previousServiceIdentity: previousServiceIdentity || "",
+      nextServiceIdentity: nextServiceIdentity || "",
+    });
+  };
+
+  const applySessionBoundaryOnLive = async (
     receiver,
     previousSession,
     insights,
   ) => {
-    if (!(Number(previousSession?.messageCount || 0) > 0)) return;
-    const identityComparison = compareBroadcastIdentity(
-      previousSession,
-      insights,
+    const currentRestreamEventId = await resolveLiveRestreamEventId(
+      receiver.churchId,
+      receiver.connections,
     );
-    if (identityComparison === "same") return;
-    if (identityComparison === "different") {
+    const decision = decideRestreamSessionBoundary({
+      previousSession,
+      currentRestreamEventId,
+      currentDestinationBroadcastIds: insights.destinationBroadcastIds,
+      now: nowMs(),
+    });
+
+    if (decision.action === "reset") {
       await resetSession({
         churchId: receiver.churchId,
         database: receiver.database,
+        reason: decision.reason,
+        previousServiceIdentity: decision.previousServiceIdentity,
+        nextServiceIdentity: decision.nextServiceIdentity,
       });
       return;
     }
-    const idleSince = Number(previousSession?.wentIdleAt || 0);
-    if (!idleSince || nowMs() - idleSince < NEW_STREAM_IDLE_THRESHOLD_MS) {
-      return;
-    }
-    await resetSession({
+
+    const patch = {
+      lastBoundaryDecision: {
+        at: nowMs(),
+        action: "keep",
+        reason: decision.reason,
+      },
+      ...(decision.restreamEventId
+        ? { restreamEventId: decision.restreamEventId }
+        : {}),
+      ...liveDestinationIdsPatch(insights),
+      // Re-evaluate on every live transition so stale prompts do not linger
+      // after reconnect or confirmed same-event recovery.
+      sessionSuggestion: decision.suggestion || null,
+    };
+
+    await syncSessionSnapshot({
       churchId: receiver.churchId,
       database: receiver.database,
+      patch,
+      emitType: "status-updated",
+      emitPayload: { connectionState: receiver.state },
     });
   };
+
+  const liveDestinationIdsPatch = (insights) => ({
+    destinationBroadcastIds: insights.destinationBroadcastIds || [],
+  });
 
   const persistReceiverSnapshot = async (receiver) => {
     const insights = buildConnectionInsights(receiver.connections);
@@ -1157,13 +1597,13 @@ export const createRestreamService = ({
       accountLabel: receiver.accountLabel || "",
       platformSummary: insights.platformSummary,
       streamTitle: insights.streamTitle,
-      // Only advance the recorded broadcast identity while actually live, so
-      // a dropped connection keeps pointing at the broadcast it dropped from
-      // until we know whether the same one resumed or a different one did.
-      ...(liveChatReady ? { broadcastKey: insights.broadcastKey } : {}),
+      // Record destination ids only while live so a temporary empty connection
+      // map during reconnect does not erase the last known destinations.
+      ...(liveChatReady ? liveDestinationIdsPatch(insights) : {}),
       connectionIssues: insights.connectionIssues,
       activeConnectionCount: insights.activeConnectionCount,
       totalConnectionCount: insights.totalConnectionCount,
+      // wentIdleAt is diagnostic only; it never drives session resets.
       ...(wasLive && !liveChatReady ? { wentIdleAt: nowMs() } : {}),
     };
     await syncSessionSnapshot({
@@ -1178,7 +1618,7 @@ export const createRestreamService = ({
       startedAt: receiver.sessionStartedAt,
     });
     if (!wasLive && liveChatReady) {
-      await maybeAutoResetForNewStream(receiver, previousSession, insights);
+      await applySessionBoundaryOnLive(receiver, previousSession, insights);
     }
   };
 
@@ -1373,8 +1813,7 @@ export const createRestreamService = ({
     // behavior unchanged when Firestore is not configured.
     const messages = await queryMessages({ database, sessionId });
     return (
-      messages.find((message) => message.fingerprint === fingerprint)?.id ||
-      ""
+      messages.find((message) => message.fingerprint === fingerprint)?.id || ""
     );
   };
 
@@ -1609,6 +2048,30 @@ export const createRestreamService = ({
     });
   };
 
+  // Restream can deliver the connection_info action that starts a session
+  // boundary and a chat event back-to-back. Keep all actions for one receiver
+  // in arrival order so an event cannot read the previous session while the
+  // boundary is still resolving.
+  const processSocketAction = async (receiver, rawData) => {
+    if (receivers.get(receiver.churchId) !== receiver) return;
+    try {
+      await handleSocketAction(receiver, rawData);
+    } catch (error) {
+      if (receivers.get(receiver.churchId) !== receiver) return;
+      receiver.lastError = "Could not process a Restream chat update.";
+      void persistReceiverSnapshot(receiver).catch(() => undefined);
+      console.error("Could not process a Restream chat update:", error);
+    }
+  };
+
+  const enqueueSocketAction = (receiver, rawData) => {
+    const next = receiver.socketActionQueue.then(() =>
+      processSocketAction(receiver, rawData),
+    );
+    receiver.socketActionQueue = next;
+    return next;
+  };
+
   const connectReceiver = async (churchId) => {
     const existing = receivers.get(churchId);
     if (
@@ -1645,6 +2108,7 @@ export const createRestreamService = ({
         existing?.pendingReplyUuidToMessageId || new Map(),
       suppressReplyCreatedClientUuids:
         existing?.suppressReplyCreatedClientUuids || new Set(),
+      socketActionQueue: existing?.socketActionQueue || Promise.resolve(),
     };
 
     receivers.set(churchId, receiver);
@@ -1662,10 +2126,7 @@ export const createRestreamService = ({
       void persistReceiverSnapshot(receiver);
     });
     ws.addEventListener("message", (event) => {
-      void handleSocketAction(receiver, event.data).catch(() => {
-        receiver.lastError = "Could not process a Restream chat update.";
-        void persistReceiverSnapshot(receiver).catch(() => undefined);
-      });
+      void enqueueSocketAction(receiver, event.data);
     });
     ws.addEventListener("error", () => {
       receiver.lastError = "Could not connect to Restream chat.";
@@ -1708,7 +2169,8 @@ export const createRestreamService = ({
 
     const connectRequestId = createId("restream_connect");
     const connectRequestSecret = crypto.randomBytes(24).toString("hex");
-    const expiresAt = nowMs() + STATE_TTL_MS;
+    const expiresAt = nowMs() + RESTREAM_CONNECT_STATE_TTL_MS;
+    const ttlExpireAt = getRestreamTemporaryTtlDate(expiresAt);
     const state = createId("restream_state");
     await saveConnectRequestDoc(
       connectRequestId,
@@ -1721,6 +2183,7 @@ export const createRestreamService = ({
         status: CONNECT_STATUS_PENDING,
         createdAt: nowMs(),
         expiresAt,
+        [RESTREAM_TEMPORARY_TTL_FIELD]: ttlExpireAt,
         completedAt: null,
         expiredAt: null,
         failedAt: null,
@@ -1736,6 +2199,7 @@ export const createRestreamService = ({
       returnTo: clampRoute(returnTo),
       connectRequestId,
       expiresAt,
+      [RESTREAM_TEMPORARY_TTL_FIELD]: ttlExpireAt,
     });
     return {
       authorizeUrl: createAuthorizeUrl(state),
@@ -1877,7 +2341,10 @@ export const createRestreamService = ({
         lastError: "",
         platformSummary: [],
         streamTitle: "",
-        broadcastKey: "",
+        destinationBroadcastIds: [],
+        restreamEventId: "",
+        sessionSuggestion: null,
+        sessionSuggestionDismissed: null,
         connectionIssues: [],
         activeConnectionCount: 0,
         totalConnectionCount: 0,
@@ -1953,7 +2420,14 @@ export const createRestreamService = ({
     scheduleBoardDisplayUpdate(database);
   };
 
-  const resetSession = async ({ churchId, database }) => {
+  const resetSession = async ({
+    churchId,
+    database,
+    reason = "manual_reset",
+    previousServiceIdentity = "",
+    nextServiceIdentity = "",
+  }) => {
+    const previousSession = await getDoc(RESTREAM_SESSION_COLLECTION, database);
     const nextStartedAt = nowMs();
     const receiver = receivers.get(churchId);
     const insights = receiver
@@ -1961,18 +2435,25 @@ export const createRestreamService = ({
       : {
           platformSummary: [],
           streamTitle: "",
+          destinationBroadcastIds: [],
           connectionIssues: [],
           activeConnectionCount: 0,
           totalConnectionCount: 0,
         };
+    const resolvedNextServiceIdentity =
+      String(nextServiceIdentity || "").trim() ||
+      (receiver
+        ? await resolveLiveRestreamEventId(churchId, receiver.connections)
+        : "");
     const tokenDoc = await getTokenDoc(churchId);
+    const nextSessionId = createId("restream_session");
     await setDoc(
       RESTREAM_SESSION_COLLECTION,
       database,
       {
         churchId,
         database,
-        sessionId: createId("restream_session"),
+        sessionId: nextSessionId,
         startedAt: nextStartedAt,
         messageCount: 0,
         lastEventAt: undefined,
@@ -1984,18 +2465,64 @@ export const createRestreamService = ({
         lastError: receiver?.lastError || insights.connectionIssues[0] || "",
         platformSummary: insights.platformSummary,
         streamTitle: insights.streamTitle,
-        broadcastKey: insights.broadcastKey,
+        destinationBroadcastIds: insights.destinationBroadcastIds || [],
+        restreamEventId: resolvedNextServiceIdentity,
+        sessionSuggestion: null,
+        sessionSuggestionDismissed: null,
+        lastBoundaryDecision: {
+          at: nextStartedAt,
+          action: "reset",
+          reason,
+        },
         connectionIssues: insights.connectionIssues,
         activeConnectionCount: insights.activeConnectionCount,
         totalConnectionCount: insights.totalConnectionCount,
       },
       { merge: false },
     );
+    logSessionChange({
+      reason,
+      churchId,
+      database,
+      previousSessionId: previousSession?.sessionId,
+      nextSessionId,
+      previousServiceIdentity:
+        previousServiceIdentity || previousSession?.restreamEventId || "",
+      nextServiceIdentity: resolvedNextServiceIdentity,
+    });
     await persistIntegrationStatus(churchId, {
       ...(nextStartedAt ? { sessionStartedAt: nextStartedAt } : {}),
     });
     emitSse(churchId, "session-reset", {});
     scheduleBoardDisplayUpdate(database);
+  };
+
+  const dismissSessionSuggestion = async ({ churchId, database }) => {
+    const session = await getDoc(RESTREAM_SESSION_COLLECTION, database);
+    if (!session) return getStatusForChurch({ churchId, database });
+    const suggestion = session.sessionSuggestion;
+    await syncSessionSnapshot({
+      churchId,
+      database,
+      patch: {
+        sessionSuggestion: null,
+        sessionSuggestionDismissed: suggestion
+          ? {
+              reason: suggestion.reason || "",
+              fingerprint: suggestion.fingerprint || "",
+              dismissedAt: nowMs(),
+            }
+          : session.sessionSuggestionDismissed || null,
+        lastBoundaryDecision: {
+          at: nowMs(),
+          action: "keep",
+          reason: "operator_keep_current_chat",
+        },
+      },
+      emitType: "status-updated",
+      emitPayload: { connectionState: session.connectionState },
+    });
+    return getStatusForChurch({ churchId, database });
   };
 
   const initializeConnections = async () => {
@@ -2026,6 +2553,7 @@ export const createRestreamService = ({
     setMessageHidden,
     setMessageHighlighted,
     resetSession,
+    dismissSessionSuggestion,
     initializeConnections,
     ensureReceiver: connectReceiver,
     isOauthConfigured,

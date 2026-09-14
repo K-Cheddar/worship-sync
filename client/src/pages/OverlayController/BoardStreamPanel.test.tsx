@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
 import BoardStreamPanel from "./BoardStreamPanel";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -9,7 +10,10 @@ import {
 } from "../../store/presentationSlice";
 
 const mockDispatch = jest.fn();
+const mockUseSyncedBoardPosts = jest.fn();
+const mockUseBoardSync = jest.fn();
 const mockUseBoardData = jest.fn();
+const mockUseBoardEventStream = jest.fn();
 const mockUseRestreamSession = jest.fn();
 const mockDisplayWindow = jest.fn(() => (
   <div data-testid="display-window-preview" />
@@ -25,37 +29,58 @@ jest.mock("../../hooks", () => ({
     selector(mockState),
 }));
 
+jest.mock("../../boards/BoardSyncContext", () => ({
+  __esModule: true,
+  useBoardSync: (...args: unknown[]) => mockUseBoardSync(...args),
+}));
+
+jest.mock("../../boards/useSyncedBoard", () => ({
+  useSyncedBoardPosts: (...args: unknown[]) => mockUseSyncedBoardPosts(...args),
+}));
+
 jest.mock("../../boards/useBoardData", () => ({
   useBoardData: (...args: unknown[]) => mockUseBoardData(...args),
 }));
 
 jest.mock("../../boards/useBoardEventStream", () => ({
-  useBoardEventStream: jest.fn(),
+  useBoardEventStream: (...args: unknown[]) => mockUseBoardEventStream(...args),
 }));
 
 jest.mock("../../boards/useRestreamSession", () => ({
   useRestreamSession: (...args: unknown[]) => mockUseRestreamSession(...args),
 }));
 
-jest.mock("../../boards/boardUtils", () => ({
-  filterHighlightedBoardPosts: (posts: Array<{ highlighted?: boolean }>) =>
-    posts.filter((post) => post.highlighted),
-  getBoardAuthorNameColorClass: () => "text-cyan-100",
-  getBoardAuthorNameHexColor: (post: {
-    source?: string;
-    authorId?: string;
-  }) => {
-    if (post.source === "restream") return "#ff0000";
-    if (post.authorId) return "#00ff00";
-    return "#e7e5e4";
-  },
-  getStoredBoardDisplayAliasId: () => "board-alias",
+jest.mock("../../boards/boardSyncDebug", () => ({
+  debugBoardSync: jest.fn(),
 }));
+
+jest.mock("../../boards/boardUtils", () => {
+  const actual = jest.requireActual("../../boards/boardUtils");
+  return {
+    ...actual,
+    filterHighlightedBoardPosts: (posts: Array<{ highlighted?: boolean }>) =>
+      posts.filter((post) => post.highlighted),
+    getBoardAuthorNameColorClass: () => "text-cyan-100",
+    getBoardAuthorNameHexColor: (post: {
+      source?: string;
+      authorId?: string;
+    }) => {
+      if (post.source === "restream") return "#ff0000";
+      if (post.authorId) return "#00ff00";
+      return "#e7e5e4";
+    },
+    getStoredBoardDisplayAliasId: () => "board-alias",
+  };
+});
 
 jest.mock("../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
   default: () => mockDisplayWindow(),
 }));
+
+const actualUseSyncedBoardPosts = jest.requireActual(
+  "../../boards/useSyncedBoard",
+).useSyncedBoardPosts as typeof import("../../boards/useSyncedBoard").useSyncedBoardPosts;
 
 jest.mock("../../components/ColorField/ColorField", () => ({
   __esModule: true,
@@ -132,12 +157,16 @@ jest.mock("../../components/ui/DropdownMenu", () => ({
 describe("BoardStreamPanel", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
+    mockUseBoardSync.mockReset();
+    mockUseSyncedBoardPosts.mockReset();
+    mockUseBoardData.mockReset();
+    mockUseBoardEventStream.mockReset();
     mockDisplayWindow.mockClear();
     mockState = {
       presentation: fromLegacyPresentationShape({ isStreamTransmitting: true }),
     };
 
-    mockUseBoardData.mockReturnValue({
+    mockUseSyncedBoardPosts.mockReturnValue({
       posts: [
         {
           _id: "board-2",
@@ -164,9 +193,9 @@ describe("BoardStreamPanel", () => {
         },
       ],
       hasLoadedOnce: true,
+      error: "",
       connectionStatus: { status: "connected" },
-      loadBoard: jest.fn(),
-      loadPosts: jest.fn(),
+      retryNow: jest.fn(),
     });
 
     mockUseRestreamSession.mockReturnValue({
@@ -269,5 +298,152 @@ describe("BoardStreamPanel", () => {
 
     expect(onDetailRequested).toHaveBeenCalledTimes(1);
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("renders a local replicated highlight without an HTTP posts refetch", async () => {
+    const listeners: Array<(change: unknown) => void> = [];
+    const initialPost = {
+      _id: "post:board-current:1",
+      type: "post",
+      boardId: "board-current",
+      text: "Local initial highlight",
+      author: "Board author",
+      timestamp: 1,
+      hidden: false,
+      highlighted: true,
+    };
+    const updatedPost = {
+      ...initialPost,
+      _id: "post:board-current:2",
+      text: "Local replicated highlight",
+      timestamp: 2,
+    };
+    const db = {
+      get: jest.fn().mockResolvedValue({
+        _id: "alias:board-alias",
+        type: "alias",
+        aliasId: "board-alias",
+        currentBoardId: "board-current",
+        history: [],
+      }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [{ doc: initialPost }] }),
+    };
+    mockUseBoardSync.mockReturnValue({
+      db,
+      connectionStatus: { status: "connected", retryCount: 0 },
+      subscribeToChanges: (listener: (change: unknown) => void) => {
+        listeners.push(listener);
+        return () => undefined;
+      },
+      retryNow: jest.fn(),
+    });
+    mockUseSyncedBoardPosts.mockImplementation((aliasId: string) =>
+      actualUseSyncedBoardPosts(aliasId),
+    );
+
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+        <BoardStreamPanel />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByText("Local initial highlight")).toBeInTheDocument();
+    const allDocsCalls = db.allDocs.mock.calls.length;
+
+    await act(async () => {
+      listeners.forEach((listener) =>
+        listener({ id: updatedPost._id, doc: updatedPost }),
+      );
+    });
+
+    expect(
+      await screen.findByText("Local replicated highlight"),
+    ).toBeInTheDocument();
+    expect(db.allDocs).toHaveBeenCalledTimes(allDocsCalls);
+  });
+
+  it("keeps the public API/SSE board path for guest overlay sessions", () => {
+    mockUseBoardData.mockReturnValue({
+      posts: [
+        {
+          _id: "public-post",
+          author: "Guest board author",
+          text: "Guest-visible highlight",
+          timestamp: 1,
+          hidden: false,
+          highlighted: true,
+        },
+      ],
+      hasLoadedOnce: true,
+      connectionStatus: { status: "connected", retryCount: 0 },
+      loadBoard: jest.fn(),
+      loadPosts: jest.fn(),
+    });
+
+    render(
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({ loginState: "guest" }) as any}
+      >
+        <BoardStreamPanel />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByText("Guest-visible highlight")).toBeInTheDocument();
+    expect(mockUseBoardData).toHaveBeenCalledWith("board-alias");
+    expect(mockUseBoardEventStream).toHaveBeenCalledWith(
+      "board-alias",
+      expect.any(Function),
+    );
+    expect(mockUseSyncedBoardPosts).not.toHaveBeenCalled();
+  });
+
+  it("offers retry when authenticated board sync fails", async () => {
+    const user = userEvent.setup();
+    const retryNow = jest.fn();
+    mockUseSyncedBoardPosts.mockReturnValue({
+      posts: [],
+      hasLoadedOnce: false,
+      error: "Could not read the local board replica.",
+      connectionStatus: { status: "failed", retryCount: 3 },
+      retryNow,
+    });
+
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+        <BoardStreamPanel />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(
+      screen.getByText("Could not read the local board replica."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(retryNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers sign-in when authenticated board sync is paused", async () => {
+    const user = userEvent.setup();
+    const logout = jest.fn().mockResolvedValue(undefined);
+    mockUseSyncedBoardPosts.mockReturnValue({
+      posts: [],
+      hasLoadedOnce: true,
+      error: "",
+      connectionStatus: { status: "paused", retryCount: 0 },
+      retryNow: jest.fn(),
+    });
+
+    render(
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({ logout }) as any}
+      >
+        <BoardStreamPanel />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(
+      screen.getByText(/Sign-in is required to load board highlights/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign in again" }));
+    expect(logout).toHaveBeenCalledTimes(1);
   });
 });
