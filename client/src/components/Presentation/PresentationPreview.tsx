@@ -52,6 +52,12 @@ type PresentationPreviewProps = {
    * visually tied to the screen it affects rather than floating below the tile.
    */
   footer?: ReactNode;
+  /**
+   * When false, keep DisplayWindow and its file-video elements mounted, pause
+   * them at their current position, and suppress animation/local capture while
+   * a parent panel stays CSS-hidden.
+   */
+  isVisible?: boolean;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -77,6 +83,7 @@ const PresentationPreview = ({
   fillWidth = false,
   previewOverride,
   footer,
+  isVisible = true,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
@@ -100,7 +107,7 @@ const PresentationPreview = ({
   );
 
   useEffect(() => {
-    if (hideHeader || minimalHeader) return;
+    if (!isVisible || hideHeader || minimalHeader) return;
 
     const updateHeaderLabelVisibility = () => {
       const headerWidth = headerRef.current?.clientWidth ?? 0;
@@ -159,7 +166,7 @@ const PresentationPreview = ({
     updateHeaderLabelVisibility();
 
     return () => observer.disconnect();
-  }, [hideHeader, minimalHeader, name]);
+  }, [hideHeader, isVisible, minimalHeader, name]);
 
   const displayWindowProps = {
     boxes: info.slide?.boxes || [],
@@ -191,8 +198,12 @@ const PresentationPreview = ({
     prevTimerInfo,
     time: info.time,
     prevTime: prevInfo.time,
-    shouldAnimate: true,
+    shouldAnimate: isVisible,
+    // Keep the stable video slots mounted while hidden so returning to Displays
+    // resumes the same preview position instead of reloading from the start.
     shouldPlayVideo: true,
+    suspendVideoPlayback: !isVisible,
+    videoPreloadRole: "preview",
     showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
     monitorLayoutMode:
@@ -205,8 +216,8 @@ const PresentationPreview = ({
     videoPlayback: info.videoPlayback,
     // Same-machine booth tiles must show live local video, not still previews,
     // so operators can trust what the audience sees.
-    canCaptureLocalVideo: true,
-    directLocalVideoCapture: true,
+    canCaptureLocalVideo: isVisible,
+    directLocalVideoCapture: isVisible,
     playLocalVideoAudio: false,
   } as const;
 
@@ -347,6 +358,9 @@ const PresentationPreview = ({
             <div
               className={cn(info.displayType === "stream" && "bg-gray-500/35")}
             >
+              {/* Keep DisplayWindow mounted while the parent tab is only
+                  CSS-hidden. Its file-video elements remain mounted but are
+                  paused by suspendVideoPlayback. */}
               {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
           </div>

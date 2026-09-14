@@ -7,7 +7,10 @@ import {
   readVideoMetadata,
   saveLocalVideoFile,
 } from "../../utils/localVideoFileAssets";
-import { createLocalMediaFromFile } from "./localMediaImport";
+import {
+  createLocalMediaFromFile,
+  LocalImagePlaybackError,
+} from "./localMediaImport";
 
 jest.mock("../../utils/generateRandomId");
 jest.mock("../../utils/localImageAssets", () => ({
@@ -62,6 +65,18 @@ describe("createLocalMediaFromFile", () => {
         }),
       }),
     );
+  });
+
+  it("offers cloud conversion when a recognized image cannot be decoded locally", async () => {
+    mockedReadImageDimensions.mockRejectedValueOnce(
+      new Error("The selected image could not be read."),
+    );
+    const file = new File(["image"], "design.avif", { type: "image/avif" });
+
+    await expect(
+      createLocalMediaFromFile(file, "church-1", "local-only"),
+    ).rejects.toBeInstanceOf(LocalImagePlaybackError);
+    expect(mockedSaveLocalImage).not.toHaveBeenCalled();
   });
 
   it("keeps a locally undecodable MOV and marks cloud playback as authoritative", async () => {

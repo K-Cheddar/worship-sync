@@ -77,6 +77,27 @@ describe("LocalAssetStore", () => {
     expect(imported.storedFileName).toMatch(/^[a-f0-9]{64}\.\w+$/);
   });
 
+  it("stores AVIF images in the Electron-backed asset store", async () => {
+    const source = join(root, "design.avif");
+    writeFileSync(source, "avif-bytes");
+    const store = new LocalAssetStore(join(root, "managed"));
+
+    const imported = await store.importFile({
+      assetId: "avif-asset",
+      kind: "image",
+      sourcePath: source,
+      fileName: "design.avif",
+      contentType: "image/avif",
+    });
+
+    expect(imported.contentType).toBe("image/avif");
+    await expect(store.resolvePath("avif-asset")).resolves.toEqual(
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ contentType: "image/avif" }),
+      }),
+    );
+  });
+
   it("imports downloaded conversion bytes into managed storage", async () => {
     const store = new LocalAssetStore(join(root, "managed"));
     const bytes = new Uint8Array([0, 1, 2, 3]);

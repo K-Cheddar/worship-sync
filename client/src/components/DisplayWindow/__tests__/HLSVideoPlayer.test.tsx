@@ -3,7 +3,10 @@ import HLSPlayer from "../HLSVideoPlayer";
 import { serverNow } from "../../../utils/serverTime";
 import {
   getVideoPreviewSnapshot,
+  restartVideoPreview,
   resetVideoBackgroundPlaybackForTests,
+  seekVideoPreview,
+  VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
 } from "../../../utils/videoBackgroundPlayback";
 
 jest.mock("../../../utils/serverTime", () => ({
@@ -86,9 +89,9 @@ describe("HLSVideoPlayer", () => {
     resetVideoBackgroundPlaybackForTests();
     mockServerNow.mockReturnValue(1_000_000);
     mockInstances.length = 0;
-    jest.spyOn(console, "error").mockImplementation(() => { });
-    jest.spyOn(console, "warn").mockImplementation(() => { });
-    jest.spyOn(console, "log").mockImplementation(() => { });
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest.spyOn(console, "log").mockImplementation(() => {});
 
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
@@ -134,11 +137,13 @@ describe("HLSVideoPlayer", () => {
     );
 
     const video = screen.getByTestId("hls-video-player");
+    (video as HTMLVideoElement).playbackRate = 1.02;
     fireEvent.error(video);
 
     expect(console.log).toHaveBeenCalledWith(
       "[HLSPlayer] Falling back to original URL: https://cdn.example.com/video.mp4",
     );
+    expect((video as HTMLVideoElement).playbackRate).toBe(1);
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(2);
   });
 
@@ -181,7 +186,9 @@ describe("HLSVideoPlayer", () => {
 
   it("uses native HLS fallback when hls.js is unsupported but canPlayType supports it", () => {
     mockIsSupported.mockReturnValue(false);
-    (HTMLMediaElement.prototype.canPlayType as jest.Mock).mockReturnValue("probably");
+    (HTMLMediaElement.prototype.canPlayType as jest.Mock).mockReturnValue(
+      "probably",
+    );
 
     render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);
     const video = screen.getByTestId("hls-video-player");
@@ -193,10 +200,41 @@ describe("HLSVideoPlayer", () => {
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalled();
   });
 
-  it("sets preload to auto for media-cache sources", () => {
+  it("buffers cached media and finite output files, but not remote preview tiles", () => {
     render(<HLSPlayer src="media-cache://clip.mp4" />);
     const video = screen.getByTestId("hls-video-player");
     expect(video.getAttribute("preload")).toBe("auto");
+
+    render(
+      <HLSPlayer
+        src="https://cdn.example.com/clip.mp4"
+        playbackRole="output"
+      />,
+    );
+    expect(screen.getAllByTestId("hls-video-player")[1]).toHaveAttribute(
+      "preload",
+      "auto",
+    );
+
+    render(
+      <HLSPlayer
+        src="https://cdn.example.com/preview.mp4"
+        playbackRole="output"
+        preloadRole="preview"
+      />,
+    );
+    expect(screen.getAllByTestId("hls-video-player")[2]).toHaveAttribute(
+      "preload",
+      "metadata",
+    );
+  });
+
+  it("keeps HLS preload conservative for segmented streams", () => {
+    render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);
+    expect(screen.getByTestId("hls-video-player")).toHaveAttribute(
+      "preload",
+      "metadata",
+    );
   });
 
   it("notifies paint-ready after metadata and a current frame are available", () => {
@@ -440,7 +478,7 @@ describe("HLSVideoPlayer", () => {
    * The cached-URL swap and the media-cache fallback both reload the element
    * mid-flight. A resume cue carries applySeek: false so lyric advances do not
    * restart the clip, but a freshly loaded element sits at 0 and has to catch
-   * up or the video silently rewinds to the beginning.
+   * up when the cue is meaningfully away from 0.
    */
   it("seeks a freshly loaded source to the cue position even when the cue says keep the playhead", () => {
     const play = jest.fn().mockResolvedValue(undefined);
@@ -476,7 +514,87 @@ describe("HLSVideoPlayer", () => {
     expect(play).toHaveBeenCalled();
   });
 
-  it("re-seeks a surface that has drifted away from the cue clock", () => {
+  it("does not seek a fresh element when the cue is already within epsilon of currentTime", () => {
+    const play = jest.fn().mockResolvedValue(undefined);
+    const currentTimeSetter = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+
+    render(
+      <HLSPlayer
+        src="media-cache://start.mp4"
+        playback={{
+          mediaKey: "remote:video-start",
+          positionSeconds: 0,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 1,
+          applySeek: false,
+        }}
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => 0,
+      set: currentTimeSetter,
+    });
+    mockServerNow.mockReturnValue(1_000_000);
+    fireEvent.loadedMetadata(video);
+
+    expect(currentTimeSetter).not.toHaveBeenCalled();
+    expect(play).toHaveBeenCalled();
+  });
+
+  it("does not seek a fresh element when the resolved cue is within epsilon", () => {
+    const play = jest.fn().mockResolvedValue(undefined);
+    const currentTimeSetter = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+
+    render(
+      <HLSPlayer
+        src="media-cache://near-zero.mp4"
+        playback={{
+          mediaKey: "remote:video-near",
+          positionSeconds: 0.02,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 1,
+          applySeek: true,
+        }}
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => 0,
+      set: currentTimeSetter,
+    });
+    mockServerNow.mockReturnValue(1_000_000);
+    fireEvent.loadedMetadata(video);
+
+    expect(currentTimeSetter).not.toHaveBeenCalled();
+    expect(play).toHaveBeenCalled();
+  });
+
+  it("ignores small cue drift without seeking or changing playback rate", () => {
     jest.useFakeTimers();
     const play = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
@@ -509,18 +627,447 @@ describe("HLSVideoPlayer", () => {
       fireEvent.loadedMetadata(video);
       expect(video.currentTime).toBeCloseTo(5, 3);
 
-      // The element stalls two seconds behind the shared timeline.
-      video.currentTime = 5;
-      mockServerNow.mockReturnValue(1_002_000);
+      video.currentTime = 5.3;
+      mockServerNow.mockReturnValue(1_000_500);
       act(() => {
         jest.advanceTimersByTime(2000);
       });
 
-      expect(video.currentTime).toBeCloseTo(7, 3);
+      expect(video.currentTime).toBeCloseTo(5.3, 3);
+      expect(video.playbackRate).toBe(1);
     } finally {
       jest.useRealTimers();
       restorePaused();
     }
+  });
+
+  it("speeds up a moderately behind surface without seeking", () => {
+    jest.useFakeTimers();
+    const play = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const restorePaused = stubPaused(false);
+    (window as { __wsVideoDebug?: boolean }).__wsVideoDebug = true;
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: false,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: true,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      video.currentTime = 4.8;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(video.currentTime).toBeCloseTo(4.8, 3);
+      expect(video.playbackRate).toBeCloseTo(1.014, 3);
+      expect(console.log).toHaveBeenCalledWith(
+        "[video-cue] player.drift",
+        expect.objectContaining({
+          expectedPosition: 5.5,
+          actualPosition: 4.8,
+          signedDrift: expect.closeTo(0.7, 3),
+          currentPlaybackRate: 1,
+          correction: "speed up",
+          targetPlaybackRate: expect.closeTo(1.014, 3),
+          sourceKind: "network",
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+      restorePaused();
+      delete (window as { __wsVideoDebug?: boolean }).__wsVideoDebug;
+    }
+  });
+
+  it("slows down a moderately ahead surface without seeking", () => {
+    jest.useFakeTimers();
+    const play = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const restorePaused = stubPaused(false);
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: false,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: true,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      video.currentTime = 6.2;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(video.currentTime).toBeCloseTo(6.2, 3);
+      expect(video.playbackRate).toBeCloseTo(0.986, 3);
+    } finally {
+      jest.useRealTimers();
+      restorePaused();
+    }
+  });
+
+  it("returns playback rate to 1x when moderate drift is corrected", () => {
+    jest.useFakeTimers();
+    const play = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const restorePaused = stubPaused(false);
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: false,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: true,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      video.currentTime = 4.8;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(video.playbackRate).toBeCloseTo(1.014, 3);
+
+      video.currentTime = 5.45;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(video.playbackRate).toBe(1);
+    } finally {
+      jest.useRealTimers();
+      restorePaused();
+    }
+  });
+
+  it("hard seeks if moderate drift does not recover before its deadline", () => {
+    jest.useFakeTimers();
+    const play = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const restorePaused = stubPaused(false);
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: false,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: true,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      video.currentTime = 4.8;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(video.playbackRate).toBeCloseTo(1.014, 3);
+
+      act(() => {
+        jest.advanceTimersByTime(VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS);
+      });
+
+      expect(video.currentTime).toBeCloseTo(5.5, 3);
+      expect(video.playbackRate).toBe(1);
+    } finally {
+      jest.useRealTimers();
+      restorePaused();
+    }
+  });
+
+  it("hard seeks a surface with a genuinely large cue error", () => {
+    jest.useFakeTimers();
+    const play = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const restorePaused = stubPaused(false);
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: false,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: true,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      video.playbackRate = 1.02;
+      video.currentTime = 3;
+      mockServerNow.mockReturnValue(1_000_500);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(video.currentTime).toBeCloseTo(5.5, 3);
+      expect(video.playbackRate).toBe(1);
+    } finally {
+      jest.useRealTimers();
+      restorePaused();
+    }
+  });
+
+  it("does not rate-correct paused cues", () => {
+    jest.useFakeTimers();
+    const pause = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      writable: true,
+      value: pause,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+
+    try {
+      render(
+        <HLSPlayer
+          src="https://cdn.example.com/loop.mp4"
+          playback={{
+            mediaKey: "remote:video-1",
+            positionSeconds: 5,
+            paused: true,
+            atServerMs: 1_000_000,
+            generation: 1,
+            applySeek: false,
+          }}
+        />,
+      );
+
+      const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+      fireEvent.loadedMetadata(video);
+      expect(video.currentTime).toBe(5);
+      video.currentTime = 2;
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      expect(video.currentTime).toBe(2);
+      expect(video.playbackRate).toBe(1);
+      expect(pause).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("resets playback rate when the cue or source is replaced", () => {
+    const { rerender, unmount } = render(
+      <HLSPlayer
+        src="https://cdn.example.com/video-a.mp4"
+        playback={{
+          mediaKey: "remote:video-1",
+          positionSeconds: 5,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 1,
+          applySeek: true,
+        }}
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    fireEvent.loadedMetadata(video);
+
+    video.playbackRate = 1.02;
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video-a.mp4"
+        playback={undefined}
+      />,
+    );
+    expect(video.playbackRate).toBe(1);
+
+    video.playbackRate = 1.02;
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video-b.mp4"
+        playback={undefined}
+      />,
+    );
+    expect(video.playbackRate).toBe(1);
+
+    video.playbackRate = 1.02;
+    unmount();
+    expect(video.playbackRate).toBe(1);
+  });
+
+  it("resets playback rate when a new playing cue generation is applied", () => {
+    const { rerender } = render(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        playback={{
+          mediaKey: "remote:video-1",
+          positionSeconds: 5,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 1,
+          applySeek: true,
+        }}
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    fireEvent.loadedMetadata(video);
+
+    video.playbackRate = 1.014;
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        playback={{
+          mediaKey: "remote:video-1",
+          positionSeconds: 5,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 2,
+          applySeek: false,
+        }}
+      />,
+    );
+
+    expect(video.playbackRate).toBe(1);
+  });
+
+  it("keeps a hidden preview element mounted and resumes its position", () => {
+    const play = jest.fn().mockResolvedValue(undefined);
+    const pause = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: play,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      writable: true,
+      value: pause,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+
+    const { rerender } = render(
+      <HLSPlayer src="https://cdn.example.com/video.mp4" suspendPlayback />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    fireEvent.loadedMetadata(video);
+    video.currentTime = 17;
+
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        suspendPlayback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("hls-video-player")).toBe(video);
+    expect(video.currentTime).toBe(17);
+    expect(pause).toHaveBeenCalled();
+    expect(play).toHaveBeenCalled();
+  });
+
+  it("keeps explicit preview seek and restart exact and at 1x", () => {
+    render(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        playbackRole="preview"
+        mediaKey="remote:video-1"
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    video.playbackRate = 1.02;
+
+    seekVideoPreview(17);
+    expect(video.currentTime).toBe(17);
+    expect(video.playbackRate).toBe(1);
+
+    video.playbackRate = 1.02;
+    restartVideoPreview();
+    expect(video.currentTime).toBe(0);
+    expect(video.playbackRate).toBe(1);
   });
 
   it("retries playback when the element stays paused under a playing cue", () => {

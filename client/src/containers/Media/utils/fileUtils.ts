@@ -1,6 +1,7 @@
 import { FileType } from "../MediaUploadInput.types";
 import {
   getFileExtension,
+  isRecognizedImageFile,
   isSupportedVideoFile,
   SUPPORTED_VIDEO_EXTENSIONS,
 } from "../../../utils/mediaFileTypes";
@@ -8,16 +9,14 @@ import {
 export const detectFileType = (file: File): FileType => {
   if (isSupportedVideoFile(file)) {
     return "video";
-  } else if (file.type.startsWith("image/")) {
+  } else if (isRecognizedImageFile(file)) {
     return "image";
   }
   // Fallback: check extension
   const extension = getFileExtension(file.name);
-  const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"];
-  
   if (SUPPORTED_VIDEO_EXTENSIONS.has(extension)) {
     return "video";
-  } else if (imageExtensions.includes(extension || "")) {
+  } else if (isRecognizedImageFile(file)) {
     return "image";
   }
   
@@ -30,7 +29,10 @@ export const validateFiles = (files: File[]): { valid: File[]; invalid: File[] }
   const invalid: File[] = [];
 
   files.forEach((file) => {
-    if (isSupportedVideoFile(file) || file.type.startsWith("image/")) {
+    if (
+      isSupportedVideoFile(file) ||
+      isRecognizedImageFile(file)
+    ) {
       valid.push(file);
     } else {
       invalid.push(file);

@@ -38,6 +38,8 @@ type LocalVideoInputViewProps = {
   publishPreview?: boolean;
   showErrors?: boolean;
   transparentBackground?: boolean;
+  /** True once a usable capture/preview frame (or terminal status) can paint. */
+  onPaintReadyChange?: (ready: boolean) => void;
 };
 
 const getRenderedPixelSize = (element: HTMLElement) => {
@@ -105,6 +107,7 @@ const LocalVideoInputView = ({
   publishPreview = false,
   showErrors = true,
   transparentBackground = false,
+  onPaintReadyChange,
 }: LocalVideoInputViewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const realtimeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -600,6 +603,19 @@ const LocalVideoInputView = ({
     };
   }, [input.sourceId, restartDetail]);
 
+  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
+  // Terminal / remote-unavailable UIs are also "ready" so a missing capture
+  // cannot block the parent transition stage forever.
+  const paintReady =
+    isShowingPicture ||
+    Boolean(errorDetail) ||
+    Boolean(restartDetail) ||
+    !isLocal;
+
+  useEffect(() => {
+    onPaintReadyChange?.(paintReady);
+  }, [onPaintReadyChange, paintReady]);
+
   if (!isLocal) {
     if (!showErrors) {
       return (
@@ -619,7 +635,6 @@ const LocalVideoInputView = ({
   }
 
   // A relayed picture from another app window outranks a local restart notice.
-  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
   const statusDetail = errorDetail ?? (isShowingPicture ? null : restartDetail);
 
   return (

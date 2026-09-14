@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, TimerInfo } from "../../types";
 import DisplayBox from "./DisplayBox";
 import MonitorDisplayBox from "./MonitorDisplayBox";
@@ -13,6 +13,16 @@ import {
   MONITOR_BAND_NEXT_PX,
   MONITOR_BAND_CLOCK_TIMER_PX,
 } from "../../constants";
+import DisplayBoxTransitionStage, {
+  getDisplayBoxesLayerKey,
+  type DisplayBoxTransitionSnapshot,
+  type LaneMediaPlaybackOptions,
+} from "./DisplayBoxTransitionStage";
+import {
+  getLaneBackgroundMediaKey,
+  NONE_LANE_BACKGROUND_MEDIA,
+  type LaneBackgroundMedia,
+} from "./laneBackgroundMedia";
 
 function renderBand(
   bandHeightPx: number,
@@ -54,11 +64,6 @@ type MonitorViewProps = {
   time?: number;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
-  activeVideoUrl?: string;
-  isWindowVideoLoaded?: boolean;
-  prevActiveVideoUrl?: string;
-  isPrevWindowVideoLoaded?: boolean;
-  holdOutgoingVideo?: boolean;
   scaleFactor: number;
   effectiveShowClock: boolean;
   effectiveShowTimer: boolean;
@@ -66,8 +71,11 @@ type MonitorViewProps = {
   timerFontSize: number;
   /** 'next' = slide up, 'prev' = slide down, 'jump' = fade. Defaults to 'next' when undefined. */
   transitionDirection?: "next" | "prev" | "jump";
-  /** File-video and local-capture media behind the monitor's text and chrome. */
+  /** File-video and local-capture media behind next-slide monitor chrome only. */
   currentMediaLayer?: React.ReactNode;
+  /** Single-slide monitor hosts this media inside the transition stage. */
+  backgroundMedia?: LaneBackgroundMedia;
+  mediaPlayback?: LaneMediaPlaybackOptions;
 };
 
 const MonitorView = ({
@@ -82,12 +90,6 @@ const MonitorView = ({
   effectiveWidth,
   time,
   timerInfo,
-  prevTimerInfo,
-  activeVideoUrl,
-  isWindowVideoLoaded,
-  prevActiveVideoUrl,
-  isPrevWindowVideoLoaded,
-  holdOutgoingVideo,
   scaleFactor,
   effectiveShowClock,
   effectiveShowTimer,
@@ -95,8 +97,20 @@ const MonitorView = ({
   timerFontSize,
   transitionDirection = "next",
   currentMediaLayer,
+  backgroundMedia = NONE_LANE_BACKGROUND_MEDIA,
+  mediaPlayback,
 }: MonitorViewProps) => {
   const useNextSlideLayout = showNextSlide && nextBoxes.length > 0;
+  const singleSlideSnapshot = useMemo<DisplayBoxTransitionSnapshot>(() => {
+    const mediaKey = getLaneBackgroundMediaKey(backgroundMedia);
+    return {
+      key: `${getDisplayBoxesLayerKey(boxes)}::${mediaKey}::${time ?? ""}`,
+      boxes,
+      time,
+      timerInfo,
+      backgroundMedia,
+    };
+  }, [backgroundMedia, boxes, time, timerInfo]);
 
   const renderCurrentBand = () => (
     <>
@@ -256,50 +270,46 @@ const MonitorView = ({
             transformOrigin: "top center",
           }}
         >
-          {currentMediaLayer}
-          {boxes.map((box, i) => (
-            <DisplayBox
-              key={`current-${box.id ?? i}`}
-              box={box}
-              width={effectiveWidth}
-              showBackground={showBackground}
-              index={i}
-              shouldAnimate={shouldAnimate}
-              prevBox={prevBoxes[i]}
-              time={time}
-              timerInfo={timerInfo}
-              activeVideoUrl={activeVideoUrl}
-              isWindowVideoLoaded={isWindowVideoLoaded}
-              prevActiveVideoUrl={prevActiveVideoUrl}
-              isPrevWindowVideoLoaded={isPrevWindowVideoLoaded}
-              holdOutgoingVideo={holdOutgoingVideo}
-              referenceWidth={REFERENCE_WIDTH}
-              referenceHeight={REFERENCE_HEIGHT}
-              scaleFactor={scaleFactor}
-            />
-          ))}
-          {prevBoxes.map((box, i) => (
-            <DisplayBox
-              key={`prev-${box.id ?? i}`}
-              box={box}
-              width={effectiveWidth}
-              showBackground={showBackground}
-              index={i}
-              shouldAnimate={shouldAnimate}
-              prevBox={boxes[i]}
-              time={time}
-              timerInfo={prevTimerInfo}
-              activeVideoUrl={activeVideoUrl}
-              isWindowVideoLoaded={isWindowVideoLoaded}
-              prevActiveVideoUrl={prevActiveVideoUrl}
-              isPrevWindowVideoLoaded={isPrevWindowVideoLoaded}
-              holdOutgoingVideo={holdOutgoingVideo}
-              isPrev
-              referenceWidth={REFERENCE_WIDTH}
-              referenceHeight={REFERENCE_HEIGHT}
-              scaleFactor={scaleFactor}
-            />
-          ))}
+          <DisplayBoxTransitionStage
+            snapshot={singleSlideSnapshot}
+            shouldAnimate={shouldAnimate}
+            mediaPlayback={mediaPlayback}
+            renderLane={(
+              laneSnapshot,
+              isPrevious,
+              reportPaintReady,
+              laneMedia,
+            ) => {
+              const laneFileVideoUrl =
+                laneSnapshot.backgroundMedia.kind === "fileVideo"
+                  ? laneSnapshot.backgroundMedia.originalSrc
+                  : undefined;
+              return laneSnapshot.boxes.map((box, index) => (
+                <DisplayBox
+                  key={index}
+                  box={box}
+                  width={effectiveWidth}
+                  showBackground={showBackground}
+                  index={index}
+                  shouldAnimate={false}
+                  time={laneSnapshot.time}
+                  timerInfo={laneSnapshot.timerInfo}
+                  activeVideoUrl={laneFileVideoUrl}
+                  isWindowVideoLoaded={laneMedia.fullFramePaintReady}
+                  isPrev={isPrevious}
+                  referenceWidth={REFERENCE_WIDTH}
+                  referenceHeight={REFERENCE_HEIGHT}
+                  scaleFactor={scaleFactor}
+                  onPaintReadyChange={(ready) =>
+                    reportPaintReady(index, ready)
+                  }
+                  isTransitionManaged
+                  paintBackground={laneMedia.paintBackground}
+                  paintForeground={laneMedia.paintForeground}
+                />
+              ));
+            }}
+          />
         </div>
       </div>
 

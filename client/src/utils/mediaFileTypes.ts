@@ -17,12 +17,61 @@ const VIDEO_EXTENSION_CONTENT_TYPES: Record<string, string> = {
   wmv: "video/x-ms-wmv",
 };
 
+export const IMAGE_CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "image/avif": ".avif",
+  "image/bmp": ".bmp",
+  "image/gif": ".gif",
+  "image/heic": ".heic",
+  "image/heif": ".heif",
+  "image/jpeg": ".jpg",
+  "image/jxl": ".jxl",
+  "image/png": ".png",
+  "image/svg+xml": ".svg",
+  "image/tiff": ".tiff",
+  "image/webp": ".webp",
+  "image/x-icon": ".ico",
+};
+
+const IMAGE_EXTENSION_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(
+    Object.entries(IMAGE_CONTENT_TYPE_EXTENSIONS).map(([type, extension]) => [
+      extension.slice(1),
+      type,
+    ]),
+  ),
+  jpe: "image/jpeg",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+};
+
 export const SUPPORTED_VIDEO_EXTENSIONS = new Set(
   Object.keys(VIDEO_EXTENSION_CONTENT_TYPES),
 );
 
 export const getFileExtension = (fileName: string) =>
   fileName.split(".").pop()?.trim().toLowerCase() || "";
+
+/**
+ * Recognize image inputs broadly. The browser/Electron decoder remains the
+ * authority for local playback; unsupported decoders can use cloud conversion.
+ */
+export const isRecognizedImageFile = (
+  file: Pick<File, "name" | "type">,
+) =>
+  file.type.toLowerCase().startsWith("image/") ||
+  Object.prototype.hasOwnProperty.call(
+    IMAGE_EXTENSION_CONTENT_TYPES,
+    getFileExtension(file.name),
+  );
+
+export const getImageContentType = (file: Pick<File, "name" | "type">) => {
+  const declaredType = file.type.split(";", 1)[0].trim().toLowerCase();
+  if (declaredType.startsWith("image/")) return declaredType;
+  return (
+    IMAGE_EXTENSION_CONTENT_TYPES[getFileExtension(file.name)] ||
+    "application/octet-stream"
+  );
+};
 
 /**
  * File.type is empty or generic for some files selected through Windows and

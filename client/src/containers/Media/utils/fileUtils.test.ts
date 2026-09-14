@@ -18,6 +18,16 @@ describe("media file classification", () => {
     expect(validateFiles(files)).toEqual({ valid: files, invalid: [] });
   });
 
+  it("accepts image formats for local decoding or cloud conversion", () => {
+    const files = [
+      new File(["image"], "design.avif", { type: "image/avif" }),
+      new File(["image"], "photo.heic", { type: "" }),
+      new File(["image"], "artwork.svg", { type: "image/svg+xml" }),
+    ];
+
+    expect(validateFiles(files)).toEqual({ valid: files, invalid: [] });
+  });
+
   it("still rejects files with no supported media type or extension", () => {
     const file = new File(["data"], "notes.txt", {
       type: "application/octet-stream",
@@ -25,4 +35,5 @@ describe("media file classification", () => {
 
     expect(validateFiles([file])).toEqual({ valid: [], invalid: [file] });
   });
+
 });

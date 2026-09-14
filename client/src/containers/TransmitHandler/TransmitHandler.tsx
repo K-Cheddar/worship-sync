@@ -71,6 +71,12 @@ type TransmitHandlerProps = {
   showClearStreamOverlaysButton?: boolean;
   /** When set, each screen shows at most this many quick links (e.g. 4 on main controller). */
   maxQuickLinks?: number;
+  /**
+   * When false, presentation tiles stay mounted, pause file-video playback,
+   * and skip animation/capture work. Used by Current Service while Displays is
+   * CSS-hidden.
+   */
+  isPreviewActive?: boolean;
 };
 
 const TransmitHandler = ({
@@ -83,6 +89,7 @@ const TransmitHandler = ({
   showStreamOverlayOnlyToggle = false,
   showClearStreamOverlaysButton = false,
   maxQuickLinks,
+  isPreviewActive = true,
 }: TransmitHandlerProps) => {
   // Outputs this surface shows: the displays the active controller owns, then
   // narrowed to the render profiles the caller asked for. `visibleScreens` stays
@@ -530,6 +537,7 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
                     {board}
@@ -549,6 +557,7 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
                     {board}
@@ -569,6 +578,7 @@ const TransmitHandler = ({
                     previewScale={previewScale}
                     fillWidth={fillWidth}
                     readOnly={readOnly}
+                    isVisible={isPreviewActive}
                     footer={displayFooter}
                   />
                   {/* Belongs to the primary stream only — it would otherwise

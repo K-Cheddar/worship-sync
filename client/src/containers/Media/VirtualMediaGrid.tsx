@@ -2,6 +2,7 @@ import {
   forwardRef,
   useImperativeHandle,
   useLayoutEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -86,6 +87,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     const tileRowHeightRef = useRef(tileRowHeight);
     tileRowHeightRef.current = tileRowHeight;
     const shouldSyncTileRowHeightRef = useRef(true);
+    const gridRef = useRef<HTMLDivElement>(null);
 
     const rows = useMemo<VirtualRow[]>(() => {
       const result: VirtualRow[] = [];
@@ -118,6 +120,29 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     const virtualizerRef = useRef(virtualizer);
     virtualizerRef.current = virtualizer;
 
+    const measureRowElement = useCallback((el: HTMLDivElement | null) => {
+      virtualizerRef.current.measureElement(el);
+      if (!el) return;
+
+      const row = rowsRef.current[Number(el.dataset.index)];
+      // Update the tile height estimate from the first real measurement.
+      if (row?.type === "tiles" && shouldSyncTileRowHeightRef.current) {
+        const h = el.getBoundingClientRect().height;
+        if (h > 0) {
+          shouldSyncTileRowHeightRef.current = false;
+          if (Math.abs(h - tileRowHeightRef.current) > 1) {
+            setTileRowHeight(h);
+          }
+        }
+      }
+    }, []);
+
+    const measureVisibleRows = useCallback(() => {
+      gridRef.current
+        ?.querySelectorAll<HTMLDivElement>("[data-index]")
+        .forEach(measureRowElement);
+    }, [measureRowElement]);
+
     // Flush stale size cache when the measured tile height changes.
     const prevTileRowHeightRef = useRef(tileRowHeight);
     useLayoutEffect(() => {
@@ -137,8 +162,9 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
         prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
         virtualizerRef.current.measure();
+        measureVisibleRows();
       }
-    }, [cols]);
+    }, [cols, measureVisibleRows]);
 
     useImperativeHandle(
       ref,
@@ -160,7 +186,11 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     );
 
     return (
-      <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+      <div
+        ref={gridRef}
+        className="relative"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = rows[virtualRow.index];
           if (!row) return null;
@@ -169,19 +199,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
             <div
               key={virtualRow.key}
               data-index={virtualRow.index}
-              ref={(el) => {
-                virtualizer.measureElement(el);
-                // Update the tile height estimate from the first real measurement.
-                if (el && row.type === "tiles" && shouldSyncTileRowHeightRef.current) {
-                  const h = el.getBoundingClientRect().height;
-                  if (h > 0) {
-                    shouldSyncTileRowHeightRef.current = false;
-                    if (Math.abs(h - tileRowHeightRef.current) > 1) {
-                      setTileRowHeight(h);
-                    }
-                  }
-                }
-              }}
+              ref={measureRowElement}
               className="absolute left-0 top-0 w-full"
               style={{
                 transform: `translateY(${virtualRow.start}px)`,

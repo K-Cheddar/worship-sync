@@ -15,7 +15,18 @@ import {
   saveLocalVideoFile,
   validateLocalVideoFile,
 } from "../../utils/localVideoFileAssets";
+import { getImageContentType } from "../../utils/mediaFileTypes";
 import { detectFileType } from "./utils/fileUtils";
+
+export class LocalImagePlaybackError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "This image cannot be displayed on this device. You can convert it for offline playback.",
+      { cause },
+    );
+    this.name = "LocalImagePlaybackError";
+  }
+}
 
 export class LocalVideoPlaybackError extends Error {
   constructor(cause: unknown) {
@@ -49,15 +60,21 @@ const createLocalImageMedia = async (
 ): Promise<MediaType> => {
   const error = validateLocalImageFile(file);
   if (error) throw new Error(error);
-  const dimensions = await readImageDimensions(file);
+  let dimensions: { width: number; height: number };
+  try {
+    dimensions = await readImageDimensions(file);
+  } catch (error) {
+    throw new LocalImagePlaybackError(error);
+  }
   const assetId = `local_image_${generateRandomId()}`;
   const now = new Date().toISOString();
+  const contentType = getImageContentType(file);
   await saveLocalImage({
     id: assetId,
     workspaceId,
     blob: file,
     fileName: file.name,
-    contentType: file.type,
+    contentType,
     size: file.size,
     width: dimensions.width,
     height: dimensions.height,
@@ -68,7 +85,7 @@ const createLocalImageMedia = async (
     path: "",
     createdAt: now,
     updatedAt: now,
-    format: file.type.replace("image/", "") || "image",
+    format: contentType.replace("image/", "") || "image",
     height: dimensions.height,
     width: dimensions.width,
     name: file.name,
@@ -84,7 +101,7 @@ const createLocalImageMedia = async (
       ownerDeviceId: getOrCreateDeviceId(),
       ownerLabel: getTrustedDeviceLabel(),
       fileName: file.name,
-      contentType: file.type,
+      contentType,
       storagePolicy,
     },
   };

@@ -6,6 +6,7 @@ type ProgressPopupProps = {
   uploadStatus: UploadStatus;
   overallProgress: number;
   statusMessage: string;
+  progressLabel?: "Upload" | "Add";
   currentFileIndex: number;
   totalFiles: number;
   onRestore: () => void;
@@ -16,6 +17,7 @@ export const ProgressPopup = ({
   uploadStatus,
   overallProgress,
   statusMessage,
+  progressLabel = "Upload",
   currentFileIndex,
   totalFiles,
   onRestore,
@@ -29,7 +31,7 @@ export const ProgressPopup = ({
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-white">
-            Upload Progress{" "}
+            {progressLabel} Progress{" "}
             <span className="text-gray-400 font-normal">
               {Math.round(uploadStatus === "ready" ? 100 : overallProgress)}%
             </span>

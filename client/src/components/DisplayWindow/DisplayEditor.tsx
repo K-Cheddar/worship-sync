@@ -7,6 +7,7 @@ import cn from "classnames";
 import { Box } from "../../types";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import InstantImageSwap from "./InstantImageSwap";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
@@ -533,8 +534,9 @@ const DisplayEditorComponent = ({
               : `Available on ${box.mediaInfo?.localImage?.ownerLabel || "the source device"} only.`}
           </p>
         </div>
-      ) : background ? (
-        <img
+      ) : background ||
+        (localImage.isLocalImage && localImage.status === "loading") ? (
+        <InstantImageSwap
           className={cn(
             "display-box-background h-full w-full absolute",
             box.shouldKeepAspectRatio && "object-contain",
@@ -546,7 +548,10 @@ const DisplayEditorComponent = ({
             filter: `brightness(${box.brightness}%)`,
           }}
           src={background}
-          alt={box.label}
+          alt={box.label ?? ""}
+          holdWhileLoading={
+            localImage.isLocalImage && localImage.status === "loading"
+          }
         />
       ) : null}
       {typeof onChange === "function" && index !== 0 && (

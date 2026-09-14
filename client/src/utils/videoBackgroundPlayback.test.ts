@@ -14,6 +14,7 @@ import {
   applyVideoBackgroundTransport,
   reportVideoPreviewState,
   resetVideoBackgroundPlaybackForTests,
+  resolveVideoCueCorrection,
   resolveEditorPreviewVideoPlayback,
   resolveSyncedVideoPlayback,
   resolveVideoCueDrift,
@@ -564,6 +565,57 @@ describe("videoBackgroundPlayback", () => {
       // Cue clock is at 39.5s of a 40s loop; the surface already wrapped to 0.2s.
       (serverNow as jest.Mock).mockReturnValue(1_029_500);
       expect(resolveVideoCueDrift(playingCue, 0.2, 40)).toBeCloseTo(-0.7, 3);
+    });
+  });
+
+  describe("resolveVideoCueCorrection", () => {
+    it("leaves small drift alone and restores a corrected rate in tolerance", () => {
+      expect(resolveVideoCueCorrection(0.2, 1)).toEqual({
+        correction: "none",
+        playbackRate: 1,
+        shouldSeek: false,
+      });
+      expect(resolveVideoCueCorrection(0.2, 1.02)).toEqual({
+        correction: "return to 1x",
+        playbackRate: 1,
+        shouldSeek: false,
+      });
+    });
+
+    it("uses bounded rate convergence for moderate drift", () => {
+      expect(resolveVideoCueCorrection(0.7, 1)).toEqual({
+        correction: "speed up",
+        playbackRate: 1.014,
+        shouldSeek: false,
+      });
+      expect(resolveVideoCueCorrection(-0.7, 1)).toEqual({
+        correction: "slow down",
+        playbackRate: 0.986,
+        shouldSeek: false,
+      });
+      expect(resolveVideoCueCorrection(1.4, 1)).toEqual({
+        correction: "speed up",
+        playbackRate: 1.02,
+        shouldSeek: false,
+      });
+      expect(resolveVideoCueCorrection(-1.4, 1)).toEqual({
+        correction: "slow down",
+        playbackRate: 0.98,
+        shouldSeek: false,
+      });
+    });
+
+    it("uses a hard seek for large or invalid drift", () => {
+      expect(resolveVideoCueCorrection(1.5, 1.02)).toEqual({
+        correction: "hard seek",
+        playbackRate: 1,
+        shouldSeek: true,
+      });
+      expect(resolveVideoCueCorrection(Number.NaN, 1.02)).toEqual({
+        correction: "hard seek",
+        playbackRate: 1,
+        shouldSeek: true,
+      });
     });
   });
 });

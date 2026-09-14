@@ -12,11 +12,8 @@ export type CreateItemTypeOption = {
   access?: AccessType[];
 };
 
-/**
- * Presentation (main) controller: songs first — that is the primary library.
- * Aux controllers: custom first — operators usually build their own slides there.
- */
-const PRESENTATION_CREATE_ITEM_TYPES: CreateItemTypeOption[] = [
+/** Canonical create-type definitions; order comes from the controller map below. */
+const CREATE_ITEM_TYPE_OPTIONS: CreateItemTypeOption[] = [
   {
     type: "song",
     label: "Song",
@@ -39,56 +36,60 @@ const PRESENTATION_CREATE_ITEM_TYPES: CreateItemTypeOption[] = [
   },
 ];
 
-const AUX_CREATE_ITEM_TYPES: CreateItemTypeOption[] = [
-  {
-    type: "free",
-    label: "Custom Item",
-    access: ["full", "music"],
-  },
-  {
-    type: "song",
-    label: "Song",
-    access: ["full", "music"],
-  },
-  {
-    type: "bible",
-    label: "Bible",
-    access: ["full"],
-  },
-  {
-    type: "timer",
-    label: "Timer",
-    access: ["full"],
-  },
-];
+const CREATE_ITEM_TYPE_BY_ID = new Map(
+  CREATE_ITEM_TYPE_OPTIONS.map((option) => [option.type, option]),
+);
+
+/**
+ * Presentation / overlay: songs first — primary library workflow.
+ * Aux: custom first — operators usually build their own slides there.
+ */
+const CREATE_ITEM_TYPE_ORDER: Record<ControllerProfileType, ItemType[]> = {
+  presentation: ["song", "bible", "free", "timer"],
+  overlay: ["song", "bible", "free", "timer"],
+  "aux-presentation": ["free", "song", "bible", "timer"],
+};
 
 export const getCreateItemTypeOptions = (
   controllerType: ControllerProfileType,
 ): CreateItemTypeOption[] =>
-  controllerType === "aux-presentation"
-    ? AUX_CREATE_ITEM_TYPES
-    : PRESENTATION_CREATE_ITEM_TYPES;
+  CREATE_ITEM_TYPE_ORDER[controllerType].flatMap((type) => {
+    const option = CREATE_ITEM_TYPE_BY_ID.get(type);
+    return option ? [option] : [];
+  });
 
 export const getDefaultCreateItemType = (
   controllerType: ControllerProfileType,
 ): ItemType => (controllerType === "aux-presentation" ? "free" : "song");
 
+/** Meta fields that do not count as operator-entered create content. */
+const CREATE_ITEM_META_KEYS = new Set<keyof CreateItemState>([
+  "type",
+  "hasUserSelectedType",
+]);
+
 /**
- * True when the Redux draft is still the global blank default (song, empty
- * fields). Used so aux can switch the default to Custom without wiping an
- * in-progress draft or an explicit type the operator already chose.
+ * True when the draft has no operator-entered content (name, lyrics, timer
+ * values, import results, etc.). `type` and `hasUserSelectedType` are ignored
+ * so a controller can adopt its preferred default for a blank form.
+ *
+ * New CreateItemState fields are included automatically via initialCreateItemState.
  */
-export const isUnstartedCreateItemDraft = (draft: CreateItemState): boolean =>
-  draft.name === initialCreateItemState.name &&
-  draft.type === initialCreateItemState.type &&
-  draft.text === initialCreateItemState.text &&
-  draft.songArtist === initialCreateItemState.songArtist &&
-  draft.songAlbum === initialCreateItemState.songAlbum &&
-  draft.songMetadata === initialCreateItemState.songMetadata &&
-  draft.hours === initialCreateItemState.hours &&
-  draft.minutes === initialCreateItemState.minutes &&
-  draft.seconds === initialCreateItemState.seconds &&
-  draft.time === initialCreateItemState.time &&
-  draft.timerType === initialCreateItemState.timerType &&
-  draft.lyricsImportCandidates.length === 0 &&
-  draft.lyricsImportError === initialCreateItemState.lyricsImportError;
+export const isContentBlankCreateItemDraft = (
+  draft: CreateItemState,
+): boolean => {
+  for (const key of Object.keys(
+    initialCreateItemState,
+  ) as (keyof CreateItemState)[]) {
+    if (CREATE_ITEM_META_KEYS.has(key)) continue;
+
+    const value = draft[key];
+    const initial = initialCreateItemState[key];
+    if (Array.isArray(value) && Array.isArray(initial)) {
+      if (value.length !== 0) return false;
+      continue;
+    }
+    if (value !== initial) return false;
+  }
+  return true;
+};

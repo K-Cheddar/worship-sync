@@ -5,13 +5,20 @@ import {
   clearVideoPreviewState,
   logVideoCue,
   reportVideoPreviewState,
+  resolveVideoCueCorrection,
   resolveVideoCueDrift,
   resolveVideoPlaybackPosition,
   subscribeVideoPreviewCommands,
+  VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
+  VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
   VIDEO_CUE_DRIFT_TOLERANCE_SECONDS,
   type VideoPreviewCommand,
 } from "../../utils/videoBackgroundPlayback";
-import { isInstantVideoSource } from "../../utils/isInstantVideoSource";
+import {
+  getVideoPreload,
+  getVideoSourceKind,
+  isHLSVideoSource,
+} from "../../utils/isInstantVideoSource";
 
 type HLSPlayerProps = {
   src: string;
@@ -25,6 +32,10 @@ type HLSPlayerProps = {
   volume?: number;
   /** Editor preview reports playhead and follows operator commands. */
   playbackRole?: "preview" | "output";
+  /** Buffering policy can differ from playback behavior for controller tiles. */
+  preloadRole?: "preview" | "output";
+  /** Keep the element mounted but pause it while its containing preview is hidden. */
+  suspendPlayback?: boolean;
   mediaKey?: string;
   /** Live/output cue applied when this surface is following a send. */
   playback?: VideoBackgroundPlaybackCue;
@@ -88,7 +99,11 @@ const applyCueToVideo = (
   cue: VideoBackgroundPlaybackCue,
   options: { seek: boolean },
 ) => {
-  if (options.seek) {
+  const shouldSeek = options.seek || cue.paused;
+  if (shouldSeek) {
+    video.playbackRate = 1;
+  }
+  if (shouldSeek) {
     const target = resolveVideoPlaybackPosition(cue, finiteDuration(video));
     if (Math.abs(video.currentTime - target) > SEEK_EPSILON_SECONDS) {
       video.currentTime = target;
@@ -111,6 +126,8 @@ const HLSPlayer = ({
   muted = true,
   volume = 1,
   playbackRole,
+  preloadRole,
+  suspendPlayback = false,
   mediaKey,
   playback,
 }: HLSPlayerProps) => {
@@ -124,6 +141,8 @@ const HLSPlayer = ({
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
   playbackRoleRef.current = playbackRole;
+  const suspendPlaybackRef = useRef(suspendPlayback);
+  suspendPlaybackRef.current = suspendPlayback;
   const onLoadedDataRef = useRef(onLoadedData);
   onLoadedDataRef.current = onLoadedData;
   /** Src whose metadata (and therefore duration) the element already has. */
@@ -133,6 +152,8 @@ const HLSPlayer = ({
   /** Src for which DisplayWindow may already hide the poster still. */
   const paintReadySrcRef = useRef<string | null>(null);
   const appliedGenerationRef = useRef<number | null>(null);
+  /** Local deadline for a persistent rate correction; never synced. */
+  const rateCorrectionStartedAtRef = useRef<number | null>(null);
   /** A seek computed before the duration landed could not wrap a looping cue. */
   const appliedWithoutDurationRef = useRef(false);
   /** Invalidates in-flight seeked/loadeddata waits across rapid source swaps. */
@@ -232,8 +253,19 @@ const HLSPlayer = ({
       return;
     }
 
+    if (suspendPlaybackRef.current) {
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
+      video.pause();
+      return;
+    }
+
     const cue = playbackRef.current;
     if (!cue) {
+      // A rate correction belongs only to the cue that requested it. Do not
+      // let it leak into local preview playback after the cue is removed.
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
       if (syncedSrcRef.current === activeSrc) return;
       syncedSrcRef.current = activeSrc;
       appliedGenerationRef.current = null;
@@ -243,10 +275,20 @@ const HLSPlayer = ({
       return;
     }
 
+    const isNewCueGeneration = appliedGenerationRef.current !== cue.generation;
+    if (isNewCueGeneration) {
+      // Playback-rate correction is render-only state for one cue generation.
+      // A new slide must never inherit the prior slide's 1.014x/0.986x rate.
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
+    } else if (cue.paused) {
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
+    }
     const hasDuration = finiteDuration(video) !== undefined;
-    // A freshly loaded element sits at 0, so it has to seek even for a cue
-    // that tells live surfaces to keep their playhead — that is the case when
-    // the cached URL resolves (or falls back) underneath a running video.
+    // A freshly loaded element sits at 0, so it has to seek when the cue is
+    // meaningfully away from 0. Cue ~0 on a fresh element is already correct —
+    // forcing seek there only adds seeked/decode latency before paint-ready.
     const isFreshSrc = syncedSrcRef.current !== activeSrc;
     const canFixWrap = appliedWithoutDurationRef.current && hasDuration;
     if (
@@ -261,14 +303,25 @@ const HLSPlayer = ({
       return;
     }
 
-    const seek = cue.applySeek || isFreshSrc || canFixWrap;
+    const targetPosition = resolveVideoPlaybackPosition(
+      cue,
+      finiteDuration(video),
+    );
+    const awayFromCue =
+      Math.abs(video.currentTime - targetPosition) > SEEK_EPSILON_SECONDS;
+    const seek =
+      cue.paused ||
+      canFixWrap ||
+      ((cue.applySeek || isFreshSrc) && awayFromCue);
     logVideoCue("player.apply", {
       role: playbackRoleRef.current,
       generation: cue.generation,
       paused: cue.paused,
       seek,
       isFreshSrc,
+      awayFromCue,
       from: video.currentTime,
+      target: targetPosition,
       duration: video.duration,
     });
     applyCueToVideo(video, cue, { seek });
@@ -290,6 +343,8 @@ const HLSPlayer = ({
   const handleEnded = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
+    video.playbackRate = 1;
+    rateCorrectionStartedAtRef.current = null;
     const cue = playbackRef.current;
     video.currentTime = cue
       ? resolveVideoPlaybackPosition(cue, finiteDuration(video))
@@ -347,6 +402,8 @@ const HLSPlayer = ({
           didFallback = true;
           console.log(`[HLSPlayer] Falling back to original URL: ${fallback}`);
           // The element restarts at 0, so the next sync has to re-seek.
+          el.playbackRate = 1;
+          rateCorrectionStartedAtRef.current = null;
           readySrcRef.current = null;
           syncedSrcRef.current = null;
           video.src = fallback;
@@ -429,12 +486,13 @@ const HLSPlayer = ({
         };
       }
 
-      return () => { };
+      return () => {};
     },
     [handleEnded, handleMediaReady],
   );
 
   useEffect(() => {
+    const video = videoRef.current;
     clearPaintReadyWaits();
     paintReadyWaitGenerationRef.current += 1;
     readySrcRef.current = null;
@@ -442,21 +500,27 @@ const HLSPlayer = ({
     paintReadySrcRef.current = null;
     appliedGenerationRef.current = null;
     appliedWithoutDurationRef.current = false;
-    if (!videoRef.current || !src) return;
+    rateCorrectionStartedAtRef.current = null;
+    if (video) video.playbackRate = 1;
+    if (!video || !src) return;
 
-    if (src.endsWith(".m3u8")) {
-      const stopHls = playHLS(videoRef.current, src);
+    if (isHLSVideoSource(src)) {
+      const stopHls = playHLS(video, src);
       return () => {
         clearPaintReadyWaits();
         paintReadyWaitGenerationRef.current += 1;
         stopHls?.();
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
       };
     }
-    const stopNative = playNative(videoRef.current, src);
+    const stopNative = playNative(video, src);
     return () => {
       clearPaintReadyWaits();
       paintReadyWaitGenerationRef.current += 1;
       stopNative?.();
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
     };
   }, [src, playNative, playHLS, clearPaintReadyWaits]);
 
@@ -502,6 +566,32 @@ const HLSPlayer = ({
     syncPlayback();
   }, [playback, src, syncPlayback]);
 
+  // Hidden controller tabs keep the video element and decoded position alive,
+  // but must not continue decoding or advancing a tile that is not visible.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (suspendPlayback) {
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
+      video.pause();
+      return;
+    }
+
+    syncPlayback();
+    const cue = playbackRef.current;
+    if (video.paused && cue && !cue.paused) {
+      startPlayback(video);
+    } else if (
+      video.paused &&
+      !cue &&
+      playbackRoleRef.current !== "preview" &&
+      readySrcRef.current === srcRef.current
+    ) {
+      startPlayback(video);
+    }
+  }, [suspendPlayback, syncPlayback]);
+
   /**
    * Holds every cue-following surface on the cue clock. Decode start latency,
    * buffering stalls and background-tab throttling all push a surface off the
@@ -509,16 +599,22 @@ const HLSPlayer = ({
    * disagree, and two outputs disagree with each other.
    */
   useEffect(() => {
-    if (!playback || playback.paused) return;
+    if (!playback || playback.paused || suspendPlayback) return;
     const video = videoRef.current;
     if (!video) return;
 
     let resumeRetries = 0;
     const id = window.setInterval(() => {
       const cue = playbackRef.current;
-      if (!cue || cue.paused) return;
+      if (!cue || cue.paused || suspendPlaybackRef.current) {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
+        return;
+      }
       if (syncedSrcRef.current !== srcRef.current) return;
       if (video.paused) {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
         // Recovers a resume whose play() was rejected or stalled.
         if (resumeRetries < MAX_RESUME_RETRIES) {
           resumeRetries += 1;
@@ -531,12 +627,59 @@ const HLSPlayer = ({
 
       const duration = finiteDuration(video);
       const drift = resolveVideoCueDrift(cue, video.currentTime, duration);
-      if (Math.abs(drift) <= VIDEO_CUE_DRIFT_TOLERANCE_SECONDS) return;
-      video.currentTime = resolveVideoPlaybackPosition(cue, duration);
+      let correction = resolveVideoCueCorrection(drift, video.playbackRate);
+      const expectedPosition = resolveVideoPlaybackPosition(cue, duration);
+      const isRateCorrection =
+        correction.correction === "speed up" ||
+        correction.correction === "slow down";
+      let correctionElapsedMs = 0;
+      if (isRateCorrection) {
+        const nowMs = Date.now();
+        const startedAtMs = rateCorrectionStartedAtRef.current ?? nowMs;
+        rateCorrectionStartedAtRef.current = startedAtMs;
+        correctionElapsedMs = nowMs - startedAtMs;
+        if (correctionElapsedMs >= VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS) {
+          correction = {
+            correction: "hard seek",
+            playbackRate: 1,
+            shouldSeek: true,
+          };
+        }
+      } else {
+        rateCorrectionStartedAtRef.current = null;
+      }
+      if (correction.shouldSeek) {
+        rateCorrectionStartedAtRef.current = null;
+      }
+      logVideoCue("player.drift", {
+        role: playbackRoleRef.current,
+        sourceKind: getVideoSourceKind(srcRef.current),
+        expectedPosition,
+        actualPosition: video.currentTime,
+        signedDrift: drift,
+        currentPlaybackRate: video.playbackRate,
+        correction: correction.correction,
+        targetPlaybackRate: correction.playbackRate,
+        correctionElapsedMs,
+        rateCorrectionDeadlineMs: VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
+        toleranceSeconds: VIDEO_CUE_DRIFT_TOLERANCE_SECONDS,
+        hardSeekThresholdSeconds: VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
+      });
+
+      if (video.playbackRate !== correction.playbackRate) {
+        video.playbackRate = correction.playbackRate;
+      }
+      if (!correction.shouldSeek) return;
+      if (
+        !Number.isFinite(video.currentTime) ||
+        Math.abs(video.currentTime - expectedPosition) > SEEK_EPSILON_SECONDS
+      ) {
+        video.currentTime = expectedPosition;
+      }
     }, DRIFT_CHECK_INTERVAL_MS);
 
     return () => window.clearInterval(id);
-  }, [playback]);
+  }, [playback, suspendPlayback]);
 
   // The preview element is the single source of measured playhead/duration,
   // including while a cue drives it — the transport scrubber needs a duration
@@ -582,17 +725,25 @@ const HLSPlayer = ({
       const video = videoRef.current;
       if (!video) return;
       if (command.type === "play") {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
         startPlayback(video);
         return;
       }
       if (command.type === "pause") {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
         video.pause();
         return;
       }
       if (command.type === "seek") {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
         video.currentTime = command.positionSeconds;
         return;
       }
+      video.playbackRate = 1;
+      rateCorrectionStartedAtRef.current = null;
       video.currentTime = 0;
       startPlayback(video);
     };
@@ -600,7 +751,7 @@ const HLSPlayer = ({
     return subscribeVideoPreviewCommands(applyCommand);
   }, [playback, playbackRole]);
 
-  const preloadValue = isInstantVideoSource(src) ? "auto" : "metadata";
+  const preloadValue = getVideoPreload(src, preloadRole ?? playbackRole);
 
   return (
     <video
@@ -609,7 +760,8 @@ const HLSPlayer = ({
       preload={preloadValue}
       className={
         className ||
-        `absolute inset-0 h-full w-full z-0 ${videoBox?.shouldKeepAspectRatio ? "object-contain" : "object-cover"
+        `absolute inset-0 h-full w-full z-0 ${
+          videoBox?.shouldKeepAspectRatio ? "object-contain" : "object-cover"
         }`
       }
       style={{

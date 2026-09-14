@@ -7,6 +7,7 @@ import { createLocalMediaFromFile } from "./localMediaImport";
 import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
 import type { MediaType } from "../../types";
 import { convertMuxVideoToLocalMp4 } from "./utils/muxUpload";
+import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 
 const mockValidateFiles = jest.fn((files: File[]) => ({
   valid: files,
@@ -53,9 +54,16 @@ jest.mock("./utils/muxUpload", () => ({
   uploadVideoToMux: jest.fn(),
 }));
 
+jest.mock("./utils/cloudinaryUpload", () => ({
+  convertCloudinaryImageToLocalWebp: jest.fn(),
+}));
+
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
 const mockedEnqueueUpload = jest.mocked(enqueueLocalImageUpload);
 const mockedConvertMuxVideo = jest.mocked(convertMuxVideoToLocalMp4);
+const mockedConvertCloudinaryImage = jest.mocked(
+  convertCloudinaryImageToLocalWebp,
+);
 
 const localImage = (): MediaType => ({
   path: "",
@@ -100,11 +108,15 @@ const renderUploadInput = (
 describe("MediaUploadInput", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDetectFileType.mockImplementation(() => "image");
     localStorage.clear();
     mockedCreateLocalMedia.mockResolvedValue(localImage());
     mockedEnqueueUpload.mockResolvedValue({} as never);
     mockedConvertMuxVideo.mockResolvedValue(
       new File(["converted"], "photo.mp4", { type: "video/mp4" }),
+    );
+    mockedConvertCloudinaryImage.mockResolvedValue(
+      new File(["converted"], "photo.webp", { type: "image/webp" }),
     );
     (window as { electronAPI?: unknown }).electronAPI = {
       setUploadInProgress: jest.fn().mockResolvedValue(true),
@@ -178,6 +190,9 @@ describe("MediaUploadInput", () => {
         expect.objectContaining({ id: "local_image_1" }),
       );
     });
+    expect(
+      screen.getByRole("heading", { name: /Add Progress/i }),
+    ).toBeInTheDocument();
     expect(mockedEnqueueUpload).not.toHaveBeenCalled();
   });
 
@@ -237,6 +252,67 @@ describe("MediaUploadInput", () => {
         expect.objectContaining({ id: "local_image_1" }),
       );
     });
+  });
+
+  it("offers a temporary cloud conversion when a local image cannot play", async () => {
+    const playbackError = new Error(
+      "This image cannot be displayed on this device. You can convert it for offline playback.",
+    );
+    playbackError.name = "LocalImagePlaybackError";
+    const convertedFile = new File(["converted"], "design.jpg", {
+      type: "image/jpeg",
+    });
+    const onLocalMediaAdded = jest.fn();
+    const sourceFile = new File(["source"], "design.heic", {
+      type: "image/heic",
+    });
+    mockedCreateLocalMedia
+      .mockRejectedValueOnce(playbackError)
+      .mockResolvedValueOnce(localImage());
+    mockedConvertCloudinaryImage.mockResolvedValueOnce(convertedFile);
+    renderUploadInput(onLocalMediaAdded);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [sourceFile] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Convert design.heic" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert design.heic" }));
+
+    await waitFor(() => {
+      expect(mockedConvertCloudinaryImage).toHaveBeenCalledWith(
+        sourceFile,
+        "preset-1",
+        expect.objectContaining({
+          isCancelled: expect.any(Function),
+          onProgress: expect.any(Function),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(mockedCreateLocalMedia).toHaveBeenLastCalledWith(
+        convertedFile,
+        "church-1",
+        "local-only",
+        { importBytes: true },
+      );
+    });
+    expect(mockedEnqueueUpload).toHaveBeenCalledWith({
+      assetId: "local_image_1",
+      itemId: "",
+      workspaceId: "church-1",
+      uploadPreset: "preset-1",
+    });
+    expect(onLocalMediaAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "local_image_1" }),
+    );
   });
 
   it("updates Electron upload progress while adding files", async () => {

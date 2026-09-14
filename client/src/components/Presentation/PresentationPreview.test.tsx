@@ -1,7 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import PresentationPreview from "./PresentationPreview";
 
-const mockDisplayWindow = jest.fn((_: any) => <div data-testid="display-window" />);
+const mockDisplayWindow = jest.fn((_: any) => (
+  <div data-testid="display-window" />
+));
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => jest.fn(),
@@ -45,7 +47,7 @@ describe("PresentationPreview", () => {
         this.callback([], this as unknown as ResizeObserver);
       }
 
-      disconnect() { }
+      disconnect() {}
     }
 
     Object.defineProperty(window, "ResizeObserver", {
@@ -108,7 +110,7 @@ describe("PresentationPreview", () => {
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
@@ -129,13 +131,15 @@ describe("PresentationPreview", () => {
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Live:" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides both labels when the header is too narrow", async () => {
@@ -150,13 +154,17 @@ describe("PresentationPreview", () => {
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Clear" }),
+      ).not.toBeInTheDocument();
     });
-    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Live:" }),
+    ).not.toBeInTheDocument();
   });
 
   it("uses full monitor layout only for monitor previews", () => {
@@ -169,7 +177,7 @@ describe("PresentationPreview", () => {
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     expect(mockDisplayWindow).toHaveBeenCalledWith(
@@ -190,7 +198,7 @@ describe("PresentationPreview", () => {
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     expect(mockDisplayWindow).toHaveBeenCalledWith(
@@ -219,6 +227,64 @@ describe("PresentationPreview", () => {
         canCaptureLocalVideo: true,
         directLocalVideoCapture: true,
         playLocalVideoAudio: false,
+      }),
+    );
+  });
+
+  it("keeps DisplayWindow mounted while hidden and only gates expensive playback flags", () => {
+    const { rerender } = render(
+      <PresentationPreview
+        name="Projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        isVisible={false}
+      />,
+    );
+
+    expect(screen.getByTestId("display-window")).toBeInTheDocument();
+    expect(mockDisplayWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shouldAnimate: false,
+        shouldPlayVideo: true,
+        suspendVideoPlayback: true,
+        videoPreloadRole: "preview",
+        canCaptureLocalVideo: false,
+        directLocalVideoCapture: false,
+      }),
+    );
+
+    const nextInfo = {
+      ...basePresentation,
+      time: 42,
+    } as typeof basePresentation;
+
+    rerender(
+      <PresentationPreview
+        name="Projector"
+        info={nextInfo}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        isVisible
+      />,
+    );
+
+    expect(screen.getByTestId("display-window")).toBeInTheDocument();
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        time: 42,
+        shouldAnimate: true,
+        shouldPlayVideo: true,
+        suspendVideoPlayback: false,
+        videoPreloadRole: "preview",
+        canCaptureLocalVideo: true,
+        directLocalVideoCapture: true,
       }),
     );
   });

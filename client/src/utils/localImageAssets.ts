@@ -10,6 +10,7 @@ import type {
 import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
+import { isRecognizedImageFile } from "./mediaFileTypes";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -24,13 +25,6 @@ const MAX_LOCAL_IMAGE_BYTES = 25 * 1024 * 1024;
 const THUMBNAIL_MAX_WIDTH = 160;
 const THUMBNAIL_MAX_HEIGHT = 90;
 const THUMBNAIL_QUALITY = 0.78;
-const ALLOWED_IMAGE_TYPES = new Set([
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-
 const normalizeCloudinaryUrl = (value: string) => {
   if (!value) return "";
   try {
@@ -250,8 +244,8 @@ export const parseLocalImageAssetId = (value: string | undefined) => {
 };
 
 export const validateLocalImageFile = (file: File): string | null => {
-  if (!ALLOWED_IMAGE_TYPES.has(file.type.toLowerCase())) {
-    return "Choose a PNG, JPEG, WebP, or GIF image.";
+  if (!isRecognizedImageFile(file)) {
+    return "Choose a supported image file.";
   }
   if (file.size <= 0) return "Choose an image that is not empty.";
   if (!window.electronAPI && file.size > MAX_LOCAL_IMAGE_BYTES) {

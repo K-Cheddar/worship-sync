@@ -284,6 +284,49 @@ describe("CreateItem", () => {
 
     expect(screen.getByLabelText("Song:")).toBeChecked();
     expect(store.getState().createItem.type).toBe("song");
+    expect(store.getState().createItem.hasUserSelectedType).toBe(true);
+  });
+
+  it("keeps an explicit blank song choice on aux after remount", async () => {
+    const store = createTestStore();
+    const view = renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Custom Item:")).toBeChecked();
+    });
+
+    fireEvent.click(screen.getByLabelText("Song:"));
+    view.unmount();
+
+    renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    expect(screen.getByLabelText("Song:")).toBeChecked();
+    expect(store.getState().createItem.type).toBe("song");
+  });
+
+  it("adopts the presentation default when a blank aux draft opens on main", async () => {
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: false,
+      },
+    });
+
+    renderCreateItem({ store });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Song:")).toBeChecked();
+    });
+    expect(store.getState().createItem.type).toBe("song");
   });
 
   it("persists the song draft when leaving and returning", () => {
@@ -367,6 +410,7 @@ describe("CreateItem", () => {
       ...initialCreateItemState,
       name: "Grace",
       type: "song",
+      hasUserSelectedType: true,
     });
   });
 

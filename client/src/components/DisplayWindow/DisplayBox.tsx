@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -11,7 +18,10 @@ import {
   REFERENCE_HEIGHT,
   DEFAULT_FONT_PX,
 } from "../../constants";
-import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import {
+  useCachedMediaUrl,
+  useResolvedCachedMediaUrl,
+} from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import { shouldSkipDisplayTextAnimation } from "./utils";
@@ -52,8 +62,6 @@ type BoxTransitionLayer = {
   targetOpacity: number;
   enabled: boolean;
 };
-const LOCAL_IMAGE_BACKGROUND_FADE_MS = 500;
-
 const getBackgroundTransitionIdentity = (
   box: Box | undefined,
   rawImage?: string,
@@ -79,21 +87,23 @@ type DisplayBoxProps = {
   isPrev?: boolean;
   time?: number;
   timerInfo?: TimerInfo;
+  /** Lane-hosted file video URL for this box's snapshot, when present. */
   activeVideoUrl?: string;
+  /** True once the lane's full-frame file video has a usable frame. */
   isWindowVideoLoaded?: boolean;
-  /** Outgoing file-video lane still playing under the prev DisplayBox. */
-  prevActiveVideoUrl?: string;
-  isPrevWindowVideoLoaded?: boolean;
-  /**
-   * While true, the outgoing video lane is held at full opacity waiting for the
-   * incoming clip. Keep the incoming still hidden so it does not cover that video.
-   */
-  holdOutgoingVideo?: boolean;
   referenceWidth?: number;
   referenceHeight?: number;
   scaleFactor?: number;
   brightness?: number;
   isSimpleFont?: boolean;
+  /** Reports whether this box's background has decoded pixels ready to reveal. */
+  onPaintReadyChange?: (ready: boolean) => void;
+  /** The parent owns opacity and requires a source that will not swap mid-fade. */
+  isTransitionManaged?: boolean;
+  /** When false, skip still/box backgrounds (stage already paints them). */
+  paintBackground?: boolean;
+  /** When false, hide lyrics/text (used for a non-fading still hold layer). */
+  paintForeground?: boolean;
 };
 
 const DisplayBox = ({
@@ -108,13 +118,14 @@ const DisplayBox = ({
   timerInfo,
   activeVideoUrl,
   isWindowVideoLoaded,
-  prevActiveVideoUrl,
-  isPrevWindowVideoLoaded,
-  holdOutgoingVideo,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
   brightness,
   isSimpleFont,
+  onPaintReadyChange,
+  isTransitionManaged = false,
+  paintBackground = true,
+  paintForeground = true,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -130,40 +141,21 @@ const DisplayBox = ({
     : videoUrl;
   const shouldImageBeHidden = useMemo(() => {
     if (!isVideoBg || !resolvedVideoUrl) return false;
-    if (
-      resolvedVideoUrl === activeVideoUrl &&
-      isWindowVideoLoaded
-    ) {
-      return true;
-    }
-    // Prev boxes must hide their still while the outgoing video lane is still
-    // mounted — otherwise exit reads as video → still → fade.
-    if (
-      isPrev &&
-      resolvedVideoUrl === prevActiveVideoUrl &&
-      isPrevWindowVideoLoaded
-    ) {
-      return true;
-    }
-    // Do not fade the incoming still over a held outgoing video; that flash is
-    // what reads as a black gap between cached clips.
-    if (!isPrev && holdOutgoingVideo && !isWindowVideoLoaded) {
-      return true;
-    }
-    return false;
+    // Hide the poster/thumbnail while this lane's real file-video surface is up.
+    return (
+      resolvedVideoUrl === activeVideoUrl && Boolean(isWindowVideoLoaded)
+    );
   }, [
     isVideoBg,
     resolvedVideoUrl,
     activeVideoUrl,
     isWindowVideoLoaded,
-    isPrev,
-    prevActiveVideoUrl,
-    isPrevWindowVideoLoaded,
-    holdOutgoingVideo,
   ]);
 
   const background = box.background;
-  const shouldShowBackground = showBackground && background;
+  const shouldShowBackground = Boolean(
+    paintBackground && showBackground && background,
+  );
   const localVideoThumbnail = useLocalVideoFileUrl(
     box.mediaInfo?.localVideoFile,
     "thumbnail",
@@ -191,21 +183,28 @@ const DisplayBox = ({
     previousDisplayImage = prevLocalVideoThumbnail.url;
   }
   const cachedImage = useCachedMediaUrl(rawImage);
+  const resolvedCachedImage = useResolvedCachedMediaUrl(rawImage);
+  const [managedRemoteImage, setManagedRemoteImage] = useState(
+    resolvedCachedImage,
+  );
   // Object URLs already point at IndexedDB-backed bytes on this device. Sending
   // them through Electron's remote-media cache adds IPC and can retain the
   // previous URL for one render during a relink.
   const [deferredRemoteImage, setDeferredRemoteImage] = useState(cachedImage);
-  let displayImage = deferredRemoteImage;
+  let displayImage = isTransitionManaged
+    ? managedRemoteImage
+    : deferredRemoteImage;
   if (localImage.isLocalImage) {
     displayImage = localImage.url;
   } else if (localVideoThumbnail.url) {
     displayImage = localVideoThumbnail.url;
   }
-  const [loadedLocalImageUrl, setLoadedLocalImageUrl] = useState<string>();
-  const [settledLocalImageUrl, setSettledLocalImageUrl] = useState<string>();
-  const isLocalImageReadyToPaint = Boolean(
-    displayImage && loadedLocalImageUrl === displayImage,
+  const [decodedImageUrl, setDecodedImageUrl] = useState<string>();
+  const isImageReadyToPaint = Boolean(
+    displayImage && decodedImageUrl === displayImage,
   );
+  const isLocalImageReadyToPaint =
+    !localImage.isLocalImage || isImageReadyToPaint;
   const backgroundImageRef = useRef<HTMLImageElement>(null);
   const displayImageBoxIdRef = useRef(box.id);
   const displayRawImageRef = useRef(rawImage);
@@ -231,6 +230,14 @@ const DisplayBox = ({
     : isPrev || skipBackgroundAnimation
       ? targetCurrentImgOpacity
       : 0;
+  // Once a local image has decoded, GSAP owns its opacity for the rest of the
+  // transition. Re-applying the initial value on a later React render could
+  // reset the image to 0 and cause the transmit preview's visible flash.
+  const renderedBackgroundOpacity = localImage.isLocalImage
+    ? isLocalImageReadyToPaint
+      ? undefined
+      : 0
+    : initialBackgroundOpacity;
   const initialTextOpacity = !shouldAnimate
     ? undefined
     : isPrev || skipTextAnimation
@@ -238,6 +245,20 @@ const DisplayBox = ({
       : 0;
 
   useEffect(() => {
+    if (
+      isTransitionManaged &&
+      !managedRemoteImage &&
+      resolvedCachedImage
+    ) {
+      // Freeze this lane on the first fully resolved Electron/cache URL. The
+      // lane is remounted for the next snapshot, so a later cache-map update
+      // cannot replace the visible image after its transition has begun.
+      setManagedRemoteImage(resolvedCachedImage);
+    }
+  }, [isTransitionManaged, managedRemoteImage, resolvedCachedImage]);
+
+  useEffect(() => {
+    if (isTransitionManaged) return;
     if (localImage.isLocalImage || localVideoThumbnail.url) {
       displayImageBoxIdRef.current = box.id;
       displayRawImageRef.current = rawImage;
@@ -270,43 +291,56 @@ const DisplayBox = ({
     box.id,
     cachedImage,
     deferredRemoteImage,
+    isTransitionManaged,
     localImage.isLocalImage,
     localVideoThumbnail.url,
     rawImage,
     shouldAnimate,
   ]);
 
+  const markImageDecoded = useCallback(
+    (image: HTMLImageElement, imageUrl: string) => {
+      const commitReady = () => {
+        if (
+          backgroundImageRef.current === image &&
+          displayImage === imageUrl
+        ) {
+          setDecodedImageUrl(imageUrl);
+        }
+      };
+
+      if (typeof image.decode !== "function") {
+        commitReady();
+        return;
+      }
+
+      void image.decode().then(commitReady).catch(() => {
+        // `load` already established usable pixels. Some Electron/Chromium
+        // versions reject decode() after a successful load when the resource
+        // was satisfied by an object URL cache.
+        if (image.complete && image.naturalWidth > 0) commitReady();
+      });
+    },
+    [displayImage],
+  );
+
   useLayoutEffect(() => {
-    if (!localImage.isLocalImage || !displayImage) return;
+    if (!displayImage) return;
     const image = backgroundImageRef.current;
     if (image?.complete && image.naturalWidth > 0) {
-      setLoadedLocalImageUrl(displayImage);
+      markImageDecoded(image, displayImage);
     }
-  }, [displayImage, localImage.isLocalImage]);
+  }, [displayImage, markImageDecoded]);
+
+  const backgroundPaintReady =
+    !shouldShowBackground ||
+    shouldImageBeHidden ||
+    localImage.status === "unavailable" ||
+    Boolean(displayImage && isImageReadyToPaint);
 
   useEffect(() => {
-    if (
-      !shouldAnimate ||
-      !localImage.isLocalImage ||
-      !displayImage ||
-      !isLocalImageReadyToPaint ||
-      !previousDisplayImage
-    ) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setSettledLocalImageUrl(displayImage);
-    }, LOCAL_IMAGE_BACKGROUND_FADE_MS);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [
-    displayImage,
-    isLocalImageReadyToPaint,
-    localImage.isLocalImage,
-    previousDisplayImage,
-    shouldAnimate,
-  ]);
+    onPaintReadyChange?.(backgroundPaintReady);
+  }, [backgroundPaintReady, onPaintReadyChange]);
 
   /**
    * Every layer transitions on one timeline at one label.
@@ -340,7 +374,12 @@ const DisplayBox = ({
         isPrev || shouldImageBeHidden ? "snapToEnd" : "keepVisible",
       // 0 once the video is up: the still is only a placeholder for it.
       targetOpacity: targetCurrentImgOpacity,
-      enabled: Boolean(shouldShowBackground),
+      // A local <img> exists before its pixels are ready. Starting the fade in
+      // that state made Electron show the new frame, reset it to transparent at
+      // `onLoad`, then run a second fade. Wait for paint readiness so there is
+      // exactly one background transition.
+      enabled: Boolean(shouldShowBackground) &&
+        (!localImage.isLocalImage || isLocalImageReadyToPaint),
     },
   ];
 
@@ -475,16 +514,21 @@ const DisplayBox = ({
       {shouldShowBackground &&
         localImage.isLocalImage &&
         !isPrev &&
-        (!isLocalImageReadyToPaint ||
-          (shouldAnimate && settledLocalImageUrl !== displayImage)) &&
+        // Keep the faded fallback mounted for the rest of an animated slide.
+        // Electron can composite one black frame when it removes this CSS-
+        // animated image at the exact time the incoming GSAP layer settles.
+        // A transparent fallback is visually inert and is replaced with the
+        // next box, so it safely preserves the compositor's stable layers.
+        (!isLocalImageReadyToPaint || shouldAnimate) &&
         previousDisplayImage && (
           <img
             aria-hidden
             alt=""
             data-testid="display-box-background-fallback"
             className={cn(
-              "display-box-background-fallback absolute h-full w-full",
+              "display-box-background-fallback absolute h-full w-full transition-opacity duration-500 ease-in-out",
               prevBox?.shouldKeepAspectRatio && "object-contain",
+              isLocalImageReadyToPaint ? "opacity-0" : "opacity-100",
             )}
             src={previousDisplayImage}
           />
@@ -513,30 +557,28 @@ const DisplayBox = ({
             )}
             src={displayImage}
             alt={box.label}
-            onLoad={() => {
-              if (localImage.isLocalImage) {
-                setLoadedLocalImageUrl(displayImage);
-              }
+            onLoad={(event) => {
+              markImageDecoded(event.currentTarget, displayImage);
             }}
             style={{
               // Broken-image alt text inherits parent fontSize; keep it readable, not slide-sized.
               fontSize: 16,
               opacity:
-                localImage.isLocalImage && !isLocalImageReadyToPaint
-                  ? 0
-                  : initialBackgroundOpacity,
+                renderedBackgroundOpacity,
             }}
           />
         ) : null)}
-      <p
-        className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute overflow-hidden"
-        style={{
-          ...textStyles,
-          opacity: initialTextOpacity,
-        }}
-      >
-        {renderContent()}
-      </p>
+      {paintForeground ? (
+        <p
+          className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute overflow-hidden"
+          style={{
+            ...textStyles,
+            opacity: initialTextOpacity,
+          }}
+        >
+          {renderContent()}
+        </p>
+      ) : null}
     </div>
   );
 };

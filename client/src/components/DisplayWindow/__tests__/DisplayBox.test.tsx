@@ -83,6 +83,7 @@ jest.mock("@gsap/react", () => ({
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
 }));
 
 jest.mock("../../../hooks/useLocalImageUrl", () => ({
@@ -338,6 +339,11 @@ describe("DisplayBox", () => {
     expect(
       screen.getByTestId("display-box-background-fallback"),
     ).toBeInTheDocument();
+    expect(
+      mockTimeline.fromTo.mock.calls.filter(
+        ([selector]) => selector === ".display-box-background",
+      ),
+    ).toHaveLength(0);
 
     fireEvent.load(incomingImage);
 
@@ -353,6 +359,11 @@ describe("DisplayBox", () => {
       "fadeIn",
     );
     expect(
+      mockTimeline.fromTo.mock.calls.filter(
+        ([selector]) => selector === ".display-box-background",
+      ),
+    ).toHaveLength(1);
+    expect(
       screen.getByTestId("display-box-background-fallback"),
     ).toBeInTheDocument();
 
@@ -360,8 +371,33 @@ describe("DisplayBox", () => {
       jest.advanceTimersByTime(500);
     });
     expect(
-      screen.queryByTestId("display-box-background-fallback"),
-    ).not.toBeInTheDocument();
+      screen.getByTestId("display-box-background-fallback"),
+    ).toHaveClass("opacity-0");
+    expect(incomingImage).not.toHaveStyle({ opacity: "0" });
+  });
+
+  it("reports paint readiness only after the selected image has loaded", () => {
+    const onPaintReadyChange = jest.fn();
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: true,
+      status: "ready",
+      url: "blob:incoming-local-image",
+    });
+
+    render(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        onPaintReadyChange={onPaintReadyChange}
+      />,
+    );
+
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.load(screen.getByAltText("Main"));
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
   });
 
   it("keeps matching text visible while the background crossfades out", () => {
@@ -690,7 +726,7 @@ describe("DisplayBox", () => {
     expect(screen.getByAltText("Main")).toHaveClass("opacity-100");
   });
 
-  it("lifts the prev still while the outgoing video lane is still playing", () => {
+  it("lifts the still while the lane file video is paint-ready", () => {
     setLocalVideoFileResolution({
       isLocalVideoFile: true,
       isOwner: true,
@@ -705,17 +741,15 @@ describe("DisplayBox", () => {
         showBackground
         index={0}
         isPrev
-        activeVideoUrl="worshipsync-media://asset/other-video?v=rev-1"
+        activeVideoUrl="worshipsync-media://asset/video-1?v=rev-1"
         isWindowVideoLoaded
-        prevActiveVideoUrl="worshipsync-media://asset/video-1?v=rev-1"
-        isPrevWindowVideoLoaded
       />,
     );
 
     expect(screen.getByAltText("Main")).toHaveClass("opacity-0");
   });
 
-  it("keeps the incoming still down while the outgoing video is held", () => {
+  it("keeps the still hidden until the lane file video is paint-ready", () => {
     setLocalVideoFileResolution({
       isLocalVideoFile: true,
       isOwner: true,
@@ -740,11 +774,10 @@ describe("DisplayBox", () => {
         showBackground
         index={0}
         activeVideoUrl="worshipsync-media://asset/video-2?v=rev-1"
-        holdOutgoingVideo
       />,
     );
 
-    expect(screen.getByAltText("Main")).toHaveClass("opacity-0");
+    expect(screen.getByAltText("Main")).toHaveClass("opacity-100");
   });
 
   it("keeps a cloud video still when no local thumbnail is available", () => {

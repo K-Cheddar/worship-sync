@@ -15,6 +15,7 @@ import {
 import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { IMAGE_CONTENT_TYPE_EXTENSIONS } from "../src/utils/mediaFileTypes";
 
 export type LocalAssetKind = "image" | "video" | "audio" | "pdf";
 
@@ -54,10 +55,7 @@ type LocalAssetIndex = {
 const ASSET_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
 const CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
-  "image/gif": ".gif",
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
+  ...IMAGE_CONTENT_TYPE_EXTENSIONS,
   "video/3gpp": ".3gp",
   "video/3gpp2": ".3g2",
   "video/mpeg": ".mpeg",
@@ -78,10 +76,12 @@ const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
   "application/pdf": ".pdf",
 };
 const CONTENT_TYPE_KINDS: Readonly<Record<string, LocalAssetKind>> = {
-  "image/gif": "image",
-  "image/jpeg": "image",
-  "image/png": "image",
-  "image/webp": "image",
+  ...Object.fromEntries(
+    Object.keys(IMAGE_CONTENT_TYPE_EXTENSIONS).map((contentType) => [
+      contentType,
+      "image",
+    ]),
+  ),
   "video/3gpp": "video",
   "video/3gpp2": "video",
   "video/mpeg": "video",

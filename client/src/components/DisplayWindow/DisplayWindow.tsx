@@ -34,7 +34,6 @@ import DisplayBoardPostOverlay from "./DisplayBoardPostOverlay";
 import HLSPlayer from "./HLSVideoPlayer";
 import MonitorView from "./MonitorView";
 import ProjectorClockTimer from "./ProjectorClockTimer";
-import VideoBackgroundLayer from "./VideoBackgroundLayer";
 import { useSelector } from "../../hooks";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
@@ -56,19 +55,15 @@ import {
 } from "../../utils/videoBackgroundPlayback";
 import LocalVideoInputLayer from "./LocalVideoInputLayer";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-
-type FileVideoSlotId = "a" | "b";
-
-type FileVideoSlotContent = {
-  mediaKey: string;
-  originalSrc: string;
-  resolvedSrc: string;
-  videoBox: Box;
-  paintReady: boolean;
-};
-
-const otherFileVideoSlot = (slotId: FileVideoSlotId): FileVideoSlotId =>
-  slotId === "a" ? "b" : "a";
+import DisplayBoxTransitionStage, {
+  type DisplayBoxTransitionSnapshot,
+  type LaneMediaPlaybackOptions,
+  getDisplayBoxesLayerKey,
+} from "./DisplayBoxTransitionStage";
+import {
+  getLaneBackgroundMediaKey,
+  resolveLaneBackgroundMedia,
+} from "./laneBackgroundMedia";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -80,36 +75,10 @@ const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
 const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
 const STREAM_PREV_BOARD_POST_EXIT_MS = 500;
 const DISPLAY_PREV_LAYER_VISIBLE_MS = 500;
-/** Max time to keep outgoing file video up waiting for the incoming clip to decode. */
-const PREV_FILE_VIDEO_HOLD_MAX_MS = 2000;
 const STREAM_PREV_TEXT_LAYER_VISIBLE_MS = 350;
 
 type StreamOverlayKeepAliveMap = Record<string, number>;
 type StreamOverlayKeepAliveMode = "max" | "replace";
-
-const getBoxesLayerKey = (boxes: Box[]) =>
-  boxes
-    .map((box) =>
-      [
-        box.id,
-        box.words,
-        box.background,
-        box.mediaInfo?.background,
-        box.mediaInfo?.type,
-        box.brightness,
-      ].join("~"),
-    )
-    .join("|");
-
-const getBoxVisualKey = (box: Box) =>
-  [
-    box.id,
-    box.words,
-    box.background,
-    box.mediaInfo?.background,
-    box.mediaInfo?.type,
-    box.brightness,
-  ].join("~");
 
 /** Stable empty list so suppressing prev does not churn effect deps. */
 const EMPTY_BOXES: Box[] = [];
@@ -316,7 +285,12 @@ type DisplayWindowProps = {
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
+  /** Keep file-video elements mounted while paused, e.g. in a hidden preview tab. */
+  suspendVideoPlayback?: boolean;
+  /** Render file-video backgrounds; use suspendVideoPlayback to pause without unloading. */
   shouldPlayVideo?: boolean;
+  /** Buffering policy for file-video backgrounds; output defaults to auto. */
+  videoPreloadRole?: "preview" | "output";
   time?: number;
   prevTime?: number;
   selectBox?: (index: number) => void;
@@ -367,7 +341,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       stbOverlayInfo,
       prevStbOverlayInfo,
       shouldAnimate = false,
+      suspendVideoPlayback = false,
       shouldPlayVideo = false,
+      videoPreloadRole,
       time,
       prevTime,
       bibleDisplayInfo,
@@ -421,10 +397,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const [actualWidthPx, setActualWidthPx] = useState<number>(0);
     const [actualHeightPx, setActualHeightPx] = useState<number>(0);
-    const [displayPrevLayerState, setDisplayPrevLayerState] = useState({
-      key: "",
-      visible: false,
-    });
     const [streamPrevTextLayerBoxes, setStreamPrevTextLayerBoxes] = useState<
       Box[]
     >([]);
@@ -432,7 +404,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       useState<LocalVideoInputPresentation>();
     const [hiddenPrevLocalVideoSourceId, setHiddenPrevLocalVideoSourceId] =
       useState<string>();
-    const displayPrevLayerTokenRef = useRef(0);
     const streamPrevTextLayerTokenRef = useRef(0);
     // First transition key seen by this instance. Opening a display onto already
     // live Redux state includes stale prevInfo; that key must fade in current
@@ -522,6 +493,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       ? prevLocalVideoInput
       : undefined;
     useLayoutEffect(() => {
+      // Projector/slide surfaces host local video inside the transition stage.
+      if (isDisplay && !shouldUseFullMonitorLayout) {
+        setActivePrevLocalVideoInput(undefined);
+        setHiddenPrevLocalVideoSourceId(undefined);
+        return;
+      }
       if (
         !shouldAnimate ||
         !effectivePrevLocalVideoInput ||
@@ -539,9 +516,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }, DISPLAY_PREV_LAYER_VISIBLE_MS);
       return () => window.clearTimeout(timeoutId);
     }, [
+      isDisplay,
       localVideoInput?.sourceId,
       effectivePrevLocalVideoInput,
       shouldAnimate,
+      shouldUseFullMonitorLayout,
     ]);
     const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() =>
       serverNow(),
@@ -1044,20 +1023,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return () => window.clearTimeout(timeoutId);
     }, [isStream, overlayPreviewMode, streamOverlayHideUntilMs]);
 
-    const slideHasWords = useMemo(
-      () => boxes.some((box) => Boolean(box.words?.trim())),
-      [boxes],
-    );
     const displayPrevLayerKey = useMemo(
-      () => getBoxesLayerKey(prevBoxes),
+      () => getDisplayBoxesLayerKey(prevBoxes),
       [prevBoxes],
     );
     const currentDisplayLayerKey = useMemo(
-      () => getBoxesLayerKey(boxes),
+      () => getDisplayBoxesLayerKey(boxes),
       [boxes],
     );
     // Include transmit `time` so re-sending the same visual slide still counts as
-    // a new transition (prev layer can remount; matching text can hold).
+    // a new transition for stream text and other prev-state consumers.
     const rawDisplayTransitionKey = `${currentDisplayLayerKey}::${displayPrevLayerKey}::${time ?? ""}`;
     if (initialDisplayTransitionKeyRef.current === null) {
       initialDisplayTransitionKeyRef.current = rawDisplayTransitionKey;
@@ -1071,24 +1046,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Suppress the prev *layer* on the first stale Redux pair; skip-text still
     // compares against the raw prevBoxes prop below.
     const effectivePrevBoxes = canCrossfadeFromPrev ? prevBoxes : EMPTY_BOXES;
-    const displayTransitionKey = canCrossfadeFromPrev
-      ? `${currentDisplayLayerKey}::${displayPrevLayerKey}::${time ?? ""}`
-      : `${currentDisplayLayerKey}::`;
-    const shouldRenderIncomingDisplayPrevLayer =
-      isDisplay &&
-      !shouldUseFullMonitorLayout &&
-      effectivePrevBoxes.length > 0 &&
-      displayPrevLayerState.key !== displayTransitionKey;
-    const shouldRenderStoredDisplayPrevLayer =
-      isDisplay &&
-      !shouldUseFullMonitorLayout &&
-      effectivePrevBoxes.length > 0 &&
-      displayPrevLayerState.visible &&
-      displayPrevLayerState.key === displayTransitionKey;
-    const activeDisplayPrevLayerBoxes =
-      shouldRenderIncomingDisplayPrevLayer || shouldRenderStoredDisplayPrevLayer
-        ? effectivePrevBoxes
-        : EMPTY_BOXES;
 
     const bibleLayerKey = getStreamTextLayerKey(bibleDisplayInfo);
     const prevBibleLayerKey = getStreamTextLayerKey(prevBibleDisplayInfo);
@@ -1155,37 +1112,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       !hasActiveStreamOverlay;
 
     useLayoutEffect(() => {
-      if (
-        !isDisplay ||
-        shouldUseFullMonitorLayout ||
-        effectivePrevBoxes.length === 0
-      ) {
-        setDisplayPrevLayerState((current) =>
-          current.visible ? { key: current.key, visible: false } : current,
-        );
-        return;
-      }
-
-      const token = ++displayPrevLayerTokenRef.current;
-      setDisplayPrevLayerState({ key: displayTransitionKey, visible: true });
-
-      const timeoutId = window.setTimeout(() => {
-        setDisplayPrevLayerState((current) =>
-          displayPrevLayerTokenRef.current === token
-            ? { key: current.key, visible: false }
-            : current,
-        );
-      }, DISPLAY_PREV_LAYER_VISIBLE_MS);
-
-      return () => window.clearTimeout(timeoutId);
-    }, [
-      displayTransitionKey,
-      isDisplay,
-      shouldUseFullMonitorLayout,
-      effectivePrevBoxes.length,
-    ]);
-
-    useLayoutEffect(() => {
       if (!isStream || overlayPreviewMode || effectivePrevBoxes.length === 0) {
         setStreamPrevTextLayerBoxes((current) =>
           current.length === 0 ? current : [],
@@ -1203,13 +1129,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }, STREAM_PREV_TEXT_LAYER_VISIBLE_MS);
 
       return () => window.clearTimeout(timeoutId);
-      // `displayTransitionKey` includes transmit time so same-slide re-clicks
+      // `rawDisplayTransitionKey` includes transmit time so same-slide re-clicks
       // remount the stream prev text layer instead of skipping the handoff.
     }, [
       isStream,
       overlayPreviewMode,
       effectivePrevBoxes,
-      displayTransitionKey,
+      rawDisplayTransitionKey,
     ]);
 
     // Determine the active background video (if any) from boxes
@@ -1264,70 +1190,20 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       desiredVideoUrl = localVideoFile.url;
     }
 
-    const [fileVideoSlots, setFileVideoSlots] = useState<
-      Record<FileVideoSlotId, FileVideoSlotContent | null>
-    >({ a: null, b: null });
-    const [currentFileVideoSlotId, setCurrentFileVideoSlotId] =
-      useState<FileVideoSlotId>("a");
-    const [prevFileVideoSlotId, setPrevFileVideoSlotId] =
-      useState<FileVideoSlotId | null>(null);
-    const [forceReleasePrevFileVideo, setForceReleasePrevFileVideo] =
-      useState(false);
-    const prevFileVideoTokenRef = useRef(0);
-    const activeVideoMediaKeyRef = useRef<string | undefined>(undefined);
-    const fileVideoSlotsRef = useRef(fileVideoSlots);
-    fileVideoSlotsRef.current = fileVideoSlots;
-    const currentFileVideoSlotIdRef = useRef(currentFileVideoSlotId);
-    currentFileVideoSlotIdRef.current = currentFileVideoSlotId;
-
-    const currentFileVideoSlot = fileVideoSlots[currentFileVideoSlotId];
-    const prevFileVideoSlot = prevFileVideoSlotId
-      ? fileVideoSlots[prevFileVideoSlotId]
-      : null;
-    const activeVideoUrl = currentFileVideoSlot?.originalSrc;
-    const isWindowVideoLoaded = Boolean(currentFileVideoSlot?.paintReady);
-
-    // Resolve cache for the incoming original URL only. Prev slots already store
-    // a resolved src so their players are not remounted onto a new protocol.
-    const isCurrentLocalProtocol = Boolean(
-      activeVideoUrl?.startsWith("worshipsync-media://") ||
-      activeVideoUrl?.startsWith("blob:"),
-    );
-    const cachedCurrentVideoUrl = useCachedVideoUrl(
-      isCurrentLocalProtocol ? undefined : activeVideoUrl,
-    );
-    const resolvedCurrentVideoUrl = isCurrentLocalProtocol
-      ? activeVideoUrl
-      : cachedCurrentVideoUrl;
-
-    // Once cache resolution lands, write it onto the current slot without
-    // touching the previous slot's playing element.
-    useEffect(() => {
-      if (!activeVideoUrl || !resolvedCurrentVideoUrl) return;
-      setFileVideoSlots((prev) => {
-        const current = prev[currentFileVideoSlotId];
-        if (
-          !current ||
-          current.originalSrc !== activeVideoUrl ||
-          current.resolvedSrc === resolvedCurrentVideoUrl
-        ) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [currentFileVideoSlotId]: {
-            ...current,
-            resolvedSrc: resolvedCurrentVideoUrl,
-          },
-        };
-      });
-    }, [activeVideoUrl, currentFileVideoSlotId, resolvedCurrentVideoUrl]);
-
+    // Underlay surfaces (editor, stream, next-slide monitor) use a single
+    // current player — animated displays host media inside the transition stage.
     const showClock = resolvedDisplaySettings.showClock;
     const showTimer = resolvedDisplaySettings.showTimer;
     const showNextSlide = resolvedDisplaySettings.showNextSlide;
     const clockFontSize = resolvedDisplaySettings.clockFontSize;
     const timerFontSize = resolvedDisplaySettings.timerFontSize;
+    const useMonitorNextSlideLayout =
+      shouldUseFullMonitorLayout &&
+      showNextSlide &&
+      (nextBoxes?.length ?? 0) > 0;
+    const hostsBackgroundMediaInStage =
+      (isDisplay && !shouldUseFullMonitorLayout) ||
+      (shouldUseFullMonitorLayout && !useMonitorNextSlideLayout);
 
     // Previews and quick-link thumbnails leave this off; only live output
     // surfaces and the transmit-handler tiles render the clock and timer.
@@ -1344,186 +1220,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ? showTimer
         : false;
 
-    // Two stable slots (a/b). On a clip change the outgoing slot keeps its key
-    // and <video> element; only its role flips to previous. Remounting the
-    // outgoing clip into a new lane was causing the appear/disappear jerk.
-    useEffect(() => {
-      const canKeepPrevLane = shouldAnimate && !isEditor;
-      const incomingKey = videoMediaKey;
-      const slotId = currentFileVideoSlotIdRef.current;
-      const current = fileVideoSlotsRef.current[slotId];
-
-      const promoteCurrentToPrev = (): FileVideoSlotId => {
-        if (
-          !canKeepPrevLane ||
-          !current?.paintReady ||
-          !current.resolvedSrc ||
-          current.mediaKey === incomingKey
-        ) {
-          setPrevFileVideoSlotId(null);
-          return slotId;
-        }
-        prevFileVideoTokenRef.current += 1;
-        setPrevFileVideoSlotId(slotId);
-        return otherFileVideoSlot(slotId);
-      };
-
-      if (desiredVideoUrl) {
-        if (
-          current &&
-          current.originalSrc === desiredVideoUrl &&
-          current.mediaKey === incomingKey
-        ) {
-          if (videoBox && current.videoBox !== videoBox) {
-            setFileVideoSlots((prev) => ({
-              ...prev,
-              [slotId]: {
-                ...current,
-                videoBox,
-              },
-            }));
-          }
-          return;
-        }
-
-        // Local asset URL often arrives after we already promoted the outgoing
-        // slot while awaiting resolution. Fill the prepared current slot only —
-        // calling promote again would clear the held previous clip.
-        if (
-          !current &&
-          incomingKey &&
-          activeVideoMediaKeyRef.current === incomingKey &&
-          videoBox
-        ) {
-          setFileVideoSlots((prev) => ({
-            ...prev,
-            [slotId]: {
-              mediaKey: incomingKey,
-              originalSrc: desiredVideoUrl,
-              resolvedSrc:
-                desiredVideoUrl.startsWith("worshipsync-media://") ||
-                  desiredVideoUrl.startsWith("blob:") ||
-                  desiredVideoUrl.startsWith("media-cache://")
-                  ? desiredVideoUrl
-                  : "",
-              videoBox,
-              paintReady: false,
-            },
-          }));
-          return;
-        }
-
-        const nextSlotId = promoteCurrentToPrev();
-        activeVideoMediaKeyRef.current = incomingKey;
-        setCurrentFileVideoSlotId(nextSlotId);
-        setFileVideoSlots((prev) => ({
-          ...prev,
-          [nextSlotId]:
-            incomingKey && videoBox
-              ? {
-                mediaKey: incomingKey,
-                originalSrc: desiredVideoUrl,
-                // Remote URLs wait for cache resolution so we never start on
-                // https:// then remount onto media-cache:// mid-transition.
-                resolvedSrc:
-                  desiredVideoUrl.startsWith("worshipsync-media://") ||
-                    desiredVideoUrl.startsWith("blob:") ||
-                    desiredVideoUrl.startsWith("media-cache://")
-                    ? desiredVideoUrl
-                    : "",
-                videoBox,
-                paintReady: false,
-              }
-              : null,
-        }));
-        return;
-      }
-
-      // Local files can report isLocalVideoFile before the asset URL is ready.
-      // Do not treat that gap as "no video" or the outgoing clip clears/reloads.
-      if (isAwaitingLocalVideoUrl) {
-        if (
-          canKeepPrevLane &&
-          current?.paintReady &&
-          incomingKey &&
-          current.mediaKey !== incomingKey
-        ) {
-          const nextSlotId = promoteCurrentToPrev();
-          activeVideoMediaKeyRef.current = incomingKey;
-          setCurrentFileVideoSlotId(nextSlotId);
-          setFileVideoSlots((prev) => ({
-            ...prev,
-            [nextSlotId]: null,
-          }));
-        }
-        return;
-      }
-
-      if (current) {
-        if (current.paintReady && canKeepPrevLane) {
-          prevFileVideoTokenRef.current += 1;
-          setPrevFileVideoSlotId(slotId);
-        } else {
-          setPrevFileVideoSlotId(null);
-        }
-        activeVideoMediaKeyRef.current = undefined;
-        setFileVideoSlots((prev) => ({
-          ...prev,
-          [slotId]: null,
-        }));
-      }
-    }, [
-      desiredVideoUrl,
-      isAwaitingLocalVideoUrl,
-      isEditor,
-      shouldAnimate,
-      videoBox,
-      videoMediaKey,
-    ]);
-
-    useLayoutEffect(() => {
-      if (!prevFileVideoSlotId) {
-        setForceReleasePrevFileVideo(false);
-        return;
-      }
-      setForceReleasePrevFileVideo(false);
-      const timeoutId = window.setTimeout(() => {
-        setForceReleasePrevFileVideo(true);
-      }, PREV_FILE_VIDEO_HOLD_MAX_MS);
-      return () => window.clearTimeout(timeoutId);
-    }, [prevFileVideoSlotId]);
-
-    const releasePrevFileVideoCrossfade =
-      !prevFileVideoSlot ||
-      forceReleasePrevFileVideo ||
-      isWindowVideoLoaded ||
-      !activeVideoUrl;
-
-    useLayoutEffect(() => {
-      if (!prevFileVideoSlotId || !releasePrevFileVideoCrossfade) return;
-      const token = prevFileVideoTokenRef.current;
-      const slotToClear = prevFileVideoSlotId;
-      const timeoutId = window.setTimeout(() => {
-        if (token !== prevFileVideoTokenRef.current) return;
-        setPrevFileVideoSlotId((current) =>
-          current === slotToClear ? null : current,
-        );
-        setFileVideoSlots((prev) =>
-          prev[slotToClear]
-            ? {
-              ...prev,
-              [slotToClear]: null,
-            }
-            : prev,
-        );
-      }, DISPLAY_PREV_LAYER_VISIBLE_MS);
-      return () => window.clearTimeout(timeoutId);
-    }, [prevFileVideoSlotId, releasePrevFileVideoCrossfade]);
-
-    // Do not treat media-cache:// as loaded on URL alone. Cached files still
-    // need decode + cue seek before a frame exists; dropping the poster early
-    // leaves a black stage between clips on Electron.
-
     // Overlay activity hides lyrics/Bible/formatted text only. Hide Content
     // still hides and mutes local video so operators can drop the camera.
     const localVideoContentVisible = !isStream || !streamItemContentBlocked;
@@ -1536,56 +1232,150 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       displayType !== "slide" &&
       (!isStream || !streamItemContentBlocked),
     );
+
+    const stageBackgroundMedia = useMemo(
+      () =>
+        resolveLaneBackgroundMedia({
+          boxes,
+          showBackground,
+          shouldPlayVideo:
+            shouldPlayVideo && !isAwaitingLocalVideoUrl,
+          localVideoInput: hostsBackgroundMediaInStage
+            ? localVideoInput
+            : undefined,
+          resolvedFileVideoUrl: desiredVideoUrl,
+        }),
+      [
+        boxes,
+        desiredVideoUrl,
+        hostsBackgroundMediaInStage,
+        isAwaitingLocalVideoUrl,
+        localVideoInput,
+        shouldPlayVideo,
+        showBackground,
+      ],
+    );
+
+    const displayBoxTransitionSnapshot =
+      useMemo<DisplayBoxTransitionSnapshot>(() => {
+        const mediaKey = getLaneBackgroundMediaKey(stageBackgroundMedia);
+        return {
+          key: `${currentDisplayLayerKey}::${mediaKey}::${time ?? ""}`,
+          boxes,
+          time,
+          timerInfo,
+          backgroundMedia: stageBackgroundMedia,
+        };
+      }, [
+        boxes,
+        currentDisplayLayerKey,
+        stageBackgroundMedia,
+        time,
+        timerInfo,
+      ]);
+
+    const laneMediaPlayback = useMemo<LaneMediaPlaybackOptions>(
+      () => ({
+        fileVideoAudioEnabled: localVideoFileAudioEnabled,
+        volume: localVideoVolume,
+        playbackRole: isEditor ? "preview" : "output",
+        preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
+        suspendPlayback: suspendVideoPlayback,
+        activeFileVideoPlayback: activeVideoPlayback,
+        isEditor,
+        localVideo: {
+          playAudio:
+            canCaptureLocalVideo &&
+            playLocalVideoAudio &&
+            resolvedDisplaySettings.localVideoAudioEnabled &&
+            localVideoInput?.audioEnabled !== false &&
+            localVideoContentVisible,
+          captureEnabled:
+            canCaptureLocalVideo &&
+            (displayType === "editor" || directLocalVideoCapture),
+          receiveHighQuality: canCaptureLocalVideo,
+          publishPreview: canCaptureLocalVideo && displayType === "editor",
+          showErrors: !canCaptureLocalVideo || displayType === "editor",
+          transparentBackground: displayType === "stream",
+          contentVisible: localVideoContentVisible,
+        },
+      }),
+      [
+        activeVideoPlayback,
+        canCaptureLocalVideo,
+        directLocalVideoCapture,
+        displayType,
+        isEditor,
+        localVideoContentVisible,
+        localVideoFileAudioEnabled,
+        localVideoInput?.audioEnabled,
+        localVideoVolume,
+        playLocalVideoAudio,
+        resolvedDisplaySettings.localVideoAudioEnabled,
+        suspendVideoPlayback,
+        videoPreloadRole,
+      ],
+    );
+
+    // Stream / editor / next-slide monitor: underlay local video with optional
+    // prev timeout. Stage-hosted displays keep capture inside the lane.
+    const useUnderlayLocalVideo =
+      Boolean(localVideoInput || effectivePrevLocalVideoInput) &&
+      !hostsBackgroundMediaInStage;
     const immediatePrevLocalVideoInput =
-      shouldAnimate &&
+      useUnderlayLocalVideo &&
+        shouldAnimate &&
         effectivePrevLocalVideoInput &&
         effectivePrevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
         effectivePrevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
         ? effectivePrevLocalVideoInput
         : undefined;
-    const renderedPrevLocalVideoInput =
-      immediatePrevLocalVideoInput ??
-      (activePrevLocalVideoInput?.sourceId !== localVideoInput?.sourceId
-        ? activePrevLocalVideoInput
-        : undefined);
-    const localVideoLayer = localVideoInput ? (
-      <LocalVideoInputLayer
-        key={`local-video-${localVideoInput.sourceId}`}
-        input={localVideoInput}
-        shouldAnimate={shouldAnimate}
-        playAudio={
-          canCaptureLocalVideo &&
-          playLocalVideoAudio &&
-          resolvedDisplaySettings.localVideoAudioEnabled &&
-          localVideoInput.audioEnabled !== false &&
-          localVideoContentVisible
-        }
-        volume={localVideoVolume}
-        captureEnabled={
-          canCaptureLocalVideo &&
-          (displayType === "editor" || directLocalVideoCapture)
-        }
-        receiveHighQuality={canCaptureLocalVideo}
-        publishPreview={canCaptureLocalVideo && displayType === "editor"}
-        showErrors={!canCaptureLocalVideo || displayType === "editor"}
-        transparentBackground={displayType === "stream"}
-        contentVisible={localVideoContentVisible}
-      />
-    ) : null;
-    const previousLocalVideoLayer = renderedPrevLocalVideoInput ? (
-      <LocalVideoInputLayer
-        key={`local-video-${renderedPrevLocalVideoInput.sourceId}`}
-        input={renderedPrevLocalVideoInput}
-        isPrevious
-        shouldAnimate={shouldAnimate}
-        playAudio={false}
-        captureEnabled={false}
-        receiveHighQuality={canCaptureLocalVideo}
-        showErrors={false}
-        transparentBackground={displayType === "stream"}
-        contentVisible={localVideoContentVisible}
-      />
-    ) : null;
+    const renderedPrevLocalVideoInput = useUnderlayLocalVideo
+      ? immediatePrevLocalVideoInput ??
+        (activePrevLocalVideoInput?.sourceId !== localVideoInput?.sourceId
+          ? activePrevLocalVideoInput
+          : undefined)
+      : undefined;
+    const localVideoLayer =
+      useUnderlayLocalVideo && localVideoInput ? (
+        <LocalVideoInputLayer
+          key={`local-video-${localVideoInput.sourceId}`}
+          input={localVideoInput}
+          shouldAnimate={shouldAnimate}
+          playAudio={
+            canCaptureLocalVideo &&
+            playLocalVideoAudio &&
+            resolvedDisplaySettings.localVideoAudioEnabled &&
+            localVideoInput.audioEnabled !== false &&
+            localVideoContentVisible
+          }
+          volume={localVideoVolume}
+          captureEnabled={
+            canCaptureLocalVideo &&
+            (displayType === "editor" || directLocalVideoCapture)
+          }
+          receiveHighQuality={canCaptureLocalVideo}
+          publishPreview={canCaptureLocalVideo && displayType === "editor"}
+          showErrors={!canCaptureLocalVideo || displayType === "editor"}
+          transparentBackground={displayType === "stream"}
+          contentVisible={localVideoContentVisible}
+        />
+      ) : null;
+    const previousLocalVideoLayer =
+      useUnderlayLocalVideo && renderedPrevLocalVideoInput ? (
+        <LocalVideoInputLayer
+          key={`local-video-${renderedPrevLocalVideoInput.sourceId}`}
+          input={renderedPrevLocalVideoInput}
+          isPrevious
+          shouldAnimate={shouldAnimate}
+          playAudio={false}
+          captureEnabled={false}
+          receiveHighQuality={canCaptureLocalVideo}
+          showErrors={false}
+          transparentBackground={displayType === "stream"}
+          contentVisible={localVideoContentVisible}
+        />
+      ) : null;
     const localVideoMediaLayers = (
       <>
         {previousLocalVideoLayer}
@@ -1593,72 +1383,56 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       </>
     );
 
-    const shouldRenderFileVideo =
-      showBackground && shouldPlayVideo && !localVideoInput;
-    const markCurrentFileVideoPaintReady = (paintReady: boolean) => {
-      setFileVideoSlots((prev) => {
-        const current = prev[currentFileVideoSlotId];
-        if (!current || current.paintReady === paintReady) return prev;
-        return {
-          ...prev,
-          [currentFileVideoSlotId]: {
-            ...current,
-            paintReady,
-          },
-        };
-      });
-    };
-    const renderFileVideoSlot = (
-      slotId: FileVideoSlotId,
-      role: "current" | "previous",
-    ) => {
-      const content = fileVideoSlots[slotId];
-      if (!content?.resolvedSrc) return null;
-      const isPrevious = role === "previous";
-      return (
-        <VideoBackgroundLayer
-          key={`file-video-slot-${slotId}`}
-          laneKey={slotId}
-          isPrevious={isPrevious}
-          shouldAnimate={shouldAnimate && Boolean(prevFileVideoSlot)}
-          paintReady={content.paintReady}
-          releaseCrossfade={
-            isPrevious ? releasePrevFileVideoCrossfade : true
-          }
+    // Single-player underlay for surfaces that do not use the transition stage.
+    const shouldRenderUnderlayFileVideo =
+      !hostsBackgroundMediaInStage &&
+      showBackground &&
+      shouldPlayVideo &&
+      !localVideoInput &&
+      Boolean(desiredVideoUrl) &&
+      !isAwaitingLocalVideoUrl;
+    const underlayIsLocalProtocol = Boolean(
+      desiredVideoUrl?.startsWith("worshipsync-media://") ||
+        desiredVideoUrl?.startsWith("blob:") ||
+        desiredVideoUrl?.startsWith("media-cache://"),
+    );
+    const underlayCachedVideoUrl = useCachedVideoUrl(
+      shouldRenderUnderlayFileVideo && !underlayIsLocalProtocol
+        ? desiredVideoUrl
+        : undefined,
+    );
+    const underlayResolvedVideoUrl = underlayIsLocalProtocol
+      ? desiredVideoUrl
+      : underlayCachedVideoUrl;
+    const [underlayPaintReady, setUnderlayPaintReady] = useState(false);
+    useEffect(() => {
+      setUnderlayPaintReady(false);
+    }, [desiredVideoUrl, videoMediaKey]);
+    const fileVideoMediaLayers =
+      shouldRenderUnderlayFileVideo && underlayResolvedVideoUrl && videoBox ? (
+        <div
+          className="pointer-events-none absolute inset-0"
+          data-testid="current-video-background-layer"
+          data-paint-ready={underlayPaintReady ? "true" : "false"}
         >
           <HLSPlayer
-            src={content.resolvedSrc}
-            originalSrc={content.originalSrc}
-            onLoadedData={
-              isPrevious
-                ? undefined
-                : () => markCurrentFileVideoPaintReady(true)
-            }
-            onError={
-              isPrevious
-                ? undefined
-                : () => markCurrentFileVideoPaintReady(false)
-            }
-            videoBox={content.videoBox}
-            muted={isPrevious || !localVideoFileAudioEnabled}
+            src={underlayResolvedVideoUrl}
+            originalSrc={desiredVideoUrl}
+            onLoadedData={() => setUnderlayPaintReady(true)}
+            onError={() => setUnderlayPaintReady(false)}
+            videoBox={videoBox}
+            muted={!localVideoFileAudioEnabled}
             volume={localVideoVolume}
             playbackRole={isEditor ? "preview" : "output"}
-            mediaKey={
-              !isPrevious && isEditor ? content.mediaKey : undefined
+            preloadRole={
+              videoPreloadRole ?? (isEditor ? "preview" : "output")
             }
-            playback={isPrevious ? undefined : activeVideoPlayback}
+            suspendPlayback={suspendVideoPlayback}
+            mediaKey={isEditor ? videoMediaKey : undefined}
+            playback={activeVideoPlayback}
           />
-        </VideoBackgroundLayer>
-      );
-    };
-    const fileVideoMediaLayers = shouldRenderFileVideo ? (
-      <>
-        {prevFileVideoSlotId
-          ? renderFileVideoSlot(prevFileVideoSlotId, "previous")
-          : null}
-        {renderFileVideoSlot(currentFileVideoSlotId, "current")}
-      </>
-    ) : null;
+        </div>
+      ) : null;
 
     const mediaBackgroundLayers = (
       <>
@@ -1666,6 +1440,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         {localVideoMediaLayers}
       </>
     );
+
+    const activeVideoUrl =
+      stageBackgroundMedia.kind === "fileVideo"
+        ? stageBackgroundMedia.originalSrc
+        : desiredVideoUrl;
+    const isWindowVideoLoaded =
+      hostsBackgroundMediaInStage || underlayPaintReady;
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
@@ -1695,20 +1476,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               time={time}
               timerInfo={timerInfo}
               prevTimerInfo={prevTimerInfo}
-              activeVideoUrl={activeVideoUrl}
-              isWindowVideoLoaded={isWindowVideoLoaded}
-              prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
-              isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
               scaleFactor={scaleFactor}
               effectiveShowClock={effectiveShowClock}
               effectiveShowTimer={effectiveShowTimer}
               clockFontSize={clockFontSize}
               timerFontSize={timerFontSize}
               transitionDirection={transitionDirection}
-              currentMediaLayer={mediaBackgroundLayers}
-              holdOutgoingVideo={
-                Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
+              currentMediaLayer={
+                useMonitorNextSlideLayout ? mediaBackgroundLayers : undefined
               }
+              backgroundMedia={stageBackgroundMedia}
+              mediaPlayback={laneMediaPlayback}
             />
           </div>
         );
@@ -1717,65 +1495,53 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       const currentDisplayLayer =
         isDisplay && !shouldUseFullMonitorLayout ? (
           <div className="absolute inset-0" data-testid="current-display-layer">
-            {boxes.map((box, index) => (
-              <DisplayBox
-                key={`current-${getBoxVisualKey(box)}`}
-                box={box}
-                width={effectiveWidth}
-                showBackground={showBackground}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                prevBox={prevBoxes[index]}
-                time={time}
-                timerInfo={timerInfo}
-                activeVideoUrl={activeVideoUrl}
-                isWindowVideoLoaded={isWindowVideoLoaded}
-                prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
-                isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
-                holdOutgoingVideo={
-                  Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
-                }
-                referenceWidth={REFERENCE_WIDTH}
-                referenceHeight={REFERENCE_HEIGHT}
-                scaleFactor={scaleFactor}
-                brightness={
-                  isSlide && index === 0 && slideHasWords ? 30 : undefined
-                }
-                isSimpleFont={isSlide}
-              />
-            ))}
-          </div>
-        ) : null;
-
-      const prevDisplayLayer =
-        isDisplay &&
-          !shouldUseFullMonitorLayout &&
-          activeDisplayPrevLayerBoxes.length > 0 ? (
-          <div className="absolute inset-0" data-testid="prev-display-layer">
-            {activeDisplayPrevLayerBoxes.map((box, index) => (
-              <DisplayBox
-                key={`prev-${getBoxVisualKey(box)}`}
-                box={box}
-                width={effectiveWidth}
-                showBackground={showBackground}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                prevBox={boxes[index]}
-                time={time}
-                timerInfo={prevTimerInfo}
-                activeVideoUrl={activeVideoUrl}
-                isWindowVideoLoaded={isWindowVideoLoaded}
-                prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
-                isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
-                holdOutgoingVideo={
-                  Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
-                }
-                isPrev
-                referenceWidth={REFERENCE_WIDTH}
-                referenceHeight={REFERENCE_HEIGHT}
-                scaleFactor={scaleFactor}
-              />
-            ))}
+            <DisplayBoxTransitionStage
+              snapshot={displayBoxTransitionSnapshot}
+              shouldAnimate={shouldAnimate}
+              mediaPlayback={laneMediaPlayback}
+              renderLane={(
+                laneSnapshot,
+                isPrevious,
+                reportPaintReady,
+                laneMedia,
+              ) => {
+                const laneHasWords = laneSnapshot.boxes.some((box) =>
+                  Boolean(box.words?.trim()),
+                );
+                const laneFileVideoUrl =
+                  laneSnapshot.backgroundMedia.kind === "fileVideo"
+                    ? laneSnapshot.backgroundMedia.originalSrc
+                    : undefined;
+                return laneSnapshot.boxes.map((box, index) => (
+                  <DisplayBox
+                    key={index}
+                    box={box}
+                    width={effectiveWidth}
+                    showBackground={showBackground}
+                    index={index}
+                    shouldAnimate={false}
+                    time={laneSnapshot.time}
+                    timerInfo={laneSnapshot.timerInfo}
+                    activeVideoUrl={laneFileVideoUrl}
+                    isWindowVideoLoaded={laneMedia.fullFramePaintReady}
+                    isPrev={isPrevious}
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                    scaleFactor={scaleFactor}
+                    brightness={
+                      isSlide && index === 0 && laneHasWords ? 30 : undefined
+                    }
+                    isSimpleFont={isSlide}
+                    onPaintReadyChange={(ready) =>
+                      reportPaintReady(index, ready)
+                    }
+                    isTransitionManaged
+                    paintBackground={laneMedia.paintBackground}
+                    paintForeground={laneMedia.paintForeground}
+                  />
+                ));
+              }}
+            />
           </div>
         ) : null;
 
@@ -1830,7 +1596,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         <div className="absolute inset-0" data-testid="editor-layer">
           {boxes.map((box, index) => (
             <DisplayEditor
-              key={`editor-${box.id}`}
+              // Keep the editor box mounted across slide selection so its
+              // editor-only image swap can retain the old decoded frame until
+              // the next local image is ready. The change remains an instant
+              // cut; no display transition runs in the editor.
+              key={`editor-${index}`}
               box={box}
               width={effectiveWidth}
               onChange={onChange}
@@ -1852,13 +1622,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const innerContent = (
         <>
-          {fileVideoMediaLayers}
+          {!hostsBackgroundMediaInStage && fileVideoMediaLayers}
 
-          {!isStream && localVideoMediaLayers}
+          {!isStream && !hostsBackgroundMediaInStage && localVideoMediaLayers}
 
           {editorLayer}
           {currentDisplayLayer}
-          {prevDisplayLayer}
 
           {isDisplay && !shouldUseFullMonitorLayout && (
             <ProjectorClockTimer

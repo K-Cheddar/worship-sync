@@ -2,7 +2,7 @@ import { initialCreateItemState } from "../../store/createItemSlice";
 import {
   getCreateItemTypeOptions,
   getDefaultCreateItemType,
-  isUnstartedCreateItemDraft,
+  isContentBlankCreateItemDraft,
 } from "./createItemTypeDefaults";
 
 describe("createItemTypeDefaults", () => {
@@ -20,21 +20,28 @@ describe("createItemTypeDefaults", () => {
     expect(getDefaultCreateItemType("aux-presentation")).toBe("free");
   });
 
-  it("treats the blank global song draft as unstarted", () => {
-    expect(isUnstartedCreateItemDraft(initialCreateItemState)).toBe(true);
+  it("uses the same presentation order for the overlay controller", () => {
+    expect(
+      getCreateItemTypeOptions("overlay").map((option) => option.type),
+    ).toEqual(["song", "bible", "free", "timer"]);
+    expect(getDefaultCreateItemType("overlay")).toBe("song");
   });
 
-  it("does not treat a typed or non-song draft as unstarted", () => {
+  it("treats blank drafts as content-blank regardless of type", () => {
+    expect(isContentBlankCreateItemDraft(initialCreateItemState)).toBe(true);
     expect(
-      isUnstartedCreateItemDraft({
-        ...initialCreateItemState,
-        name: "Welcome",
-      }),
-    ).toBe(false);
-    expect(
-      isUnstartedCreateItemDraft({
+      isContentBlankCreateItemDraft({
         ...initialCreateItemState,
         type: "free",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat a typed draft as content-blank", () => {
+    expect(
+      isContentBlankCreateItemDraft({
+        ...initialCreateItemState,
+        name: "Welcome",
       }),
     ).toBe(false);
   });

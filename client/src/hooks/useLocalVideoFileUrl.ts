@@ -183,18 +183,35 @@ export const useLocalVideoFileUrl = (
       return;
     }
     let active = true;
-    setState((current) =>
-      current.key === referenceKey && current.value.status === "ready"
-        ? current
-        : {
-            key: referenceKey,
-            value: {
-              isLocalVideoFile: true,
-              isOwner: true,
-              status: "loading",
-            },
-          },
-    );
+    setState((current) => {
+      const peeked =
+        purpose === "thumbnail"
+          ? peekLocalVideoFileThumbnailUrl(
+              reference.id,
+              reference.contentRevision,
+            )
+          : peekLocalVideoFileUrl(reference.id, reference.contentRevision);
+      // Keep a known-good URL while the lease refreshes so display snapshots do
+      // not briefly collapse to kind:"none" and tear down the outgoing player.
+      const retainedUrl =
+        current.key === referenceKey ? (current.value.url ?? peeked) : peeked;
+      if (
+        current.key === referenceKey &&
+        current.value.status === "ready" &&
+        current.value.url
+      ) {
+        return current;
+      }
+      return {
+        key: referenceKey,
+        value: {
+          isLocalVideoFile: true,
+          isOwner: true,
+          status: retainedUrl ? "ready" : "loading",
+          url: retainedUrl,
+        },
+      };
+    });
     const lease =
       purpose === "thumbnail"
         ? acquireLocalVideoFileThumbnailUrl(

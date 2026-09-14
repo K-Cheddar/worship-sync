@@ -380,6 +380,17 @@ export type RestreamConnectionState =
   | "reconnecting"
   | "disconnected";
 
+export type RestreamSessionSuggestionReason =
+  | "day_boundary"
+  | "possible_new_service";
+
+export type RestreamSessionSuggestion = {
+  reason: RestreamSessionSuggestionReason | string;
+  message: string;
+  suggestedAt?: number;
+  fingerprint?: string;
+};
+
 export type RestreamSession = {
   churchId: string;
   database: string;
@@ -398,6 +409,8 @@ export type RestreamSession = {
   activeConnectionCount?: number;
   totalConnectionCount?: number;
   platformSummary: string[];
+  restreamEventId?: string;
+  sessionSuggestion?: RestreamSessionSuggestion | null;
 };
 
 export type RestreamMessageKind = "viewer_message" | "moderator_reply";

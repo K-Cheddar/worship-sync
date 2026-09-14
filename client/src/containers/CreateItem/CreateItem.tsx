@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import {
   FileQuestion,
@@ -78,7 +78,7 @@ import {
 import {
   getCreateItemTypeOptions,
   getDefaultCreateItemType,
-  isUnstartedCreateItemDraft,
+  isContentBlankCreateItemDraft,
 } from "./createItemTypeDefaults";
 
 const buildCreateItemOverrideState = (
@@ -88,6 +88,7 @@ const buildCreateItemOverrideState = (
   ...initialCreateItemState,
   name,
   type,
+  hasUserSelectedType: true,
 });
 
 type MobileSongTab = "create" | "import";
@@ -271,21 +272,19 @@ const CreateItem = ({
     setSearchParams,
   ]);
 
-  // Aux defaults to Custom; main stays Song. Seed once per mount from the
-  // blank global draft so we do not fight an explicit type click or wipe work.
-  const hasAppliedControllerDefaultRef = useRef(false);
+  // Blank drafts adopt the active controller's default type. An explicit type
+  // choice (radio, ?type= override, or import) sets hasUserSelectedType and is
+  // kept across remounts even when the form fields are still empty.
   useEffect(() => {
     if (isEmbedded) return;
     if (searchParams.get("type") && searchParams.get("name")) return;
-    if (hasAppliedControllerDefaultRef.current) return;
-
-    hasAppliedControllerDefaultRef.current = true;
+    if (createItemDraft.hasUserSelectedType) return;
+    if (!isContentBlankCreateItemDraft(createItemDraft)) return;
 
     const preferredType = getDefaultCreateItemType(
       createControllerProfile.type,
     );
     if (preferredType === selectedType) return;
-    if (!isUnstartedCreateItemDraft(createItemDraft)) return;
 
     dispatch(
       setCreateItem({
@@ -761,7 +760,10 @@ const CreateItem = ({
                 <RadioGroup
                   value={selectedType}
                   onValueChange={(v) =>
-                    updateCreateItemDraft({ type: v as ItemType })
+                    updateCreateItemDraft({
+                      type: v as ItemType,
+                      hasUserSelectedType: true,
+                    })
                   }
                   className="flex flex-col gap-2"
                 >

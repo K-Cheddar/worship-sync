@@ -32,6 +32,7 @@ import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
 import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import { useControllerBasePath } from "../../context/activeController";
 import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
 import { resolveServiceItemLocalVideoFile } from "../../utils/resolveServiceItemLocalVideoFile";
@@ -448,6 +449,13 @@ const ServiceItems = () => {
     setHeadingRenameOpen(false);
   }, [selectedHeading]);
 
+  const revealSelectedOutlineItemIfReselected = (listId: string) => {
+    if (listId !== selectedItemListId) return;
+    const row = serviceItemsByListId.get(listId);
+    if (!row || row.type === "heading") return;
+    requestOutlineSelectionScroll();
+  };
+
   const handleItemClick = (listId: string, e: React.MouseEvent) => {
     if (skipNextServiceItemClickRef.current) {
       skipNextServiceItemClickRef.current = false;
@@ -462,6 +470,7 @@ const ServiceItems = () => {
       setSelectedListIds(new Set([listId]));
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
+      revealSelectedOutlineItemIfReselected(listId);
       return;
     }
     if (e.shiftKey) {
@@ -514,6 +523,7 @@ const ServiceItems = () => {
     setSelectedListIds(new Set([listId]));
     setAnchorListId(listId);
     dispatch(setActiveItemInList(listId));
+    revealSelectedOutlineItemIfReselected(listId);
   };
 
   const handleEnterMultiSelectMode = useCallback(
