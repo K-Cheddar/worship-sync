@@ -39,6 +39,9 @@ const AccountBrandingPage = lazy(
 const AccountIntegrationsPage = lazy(
   () => import("./Account/pages/AccountIntegrationsPage"),
 );
+const AccountWorkspacePage = lazy(
+  () => import("./Account/pages/AccountWorkspacePage"),
+);
 
 const AccountSectionErrorFallback = () => (
   <div
@@ -202,6 +205,14 @@ const AccountRoutes = () => (
           element={
             <AccountSectionRoute>
               <AccountIntegrationsPage />
+            </AccountSectionRoute>
+          }
+        />
+        <Route
+          path={ACCOUNT_SECTIONS[5].routePath}
+          element={
+            <AccountSectionRoute>
+              <AccountWorkspacePage />
             </AccountSectionRoute>
           }
         />
