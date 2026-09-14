@@ -32,6 +32,10 @@
 !.agents/skills/persisted-mutation-safety/**
 !.agents/skills/schedule-mutation-safety/
 !.agents/skills/schedule-mutation-safety/**
+!.agents/skills/react-quality/
+!.agents/skills/react-quality/**
+!.agents/patterns/
+!.agents/patterns/**
 .claude/settings.local.json
 
 .DS_Store

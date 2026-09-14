@@ -254,6 +254,8 @@ If confidence is limited, the review should say so clearly rather than implying 
 
 **Coding conventions**
 
+For substantive React or TypeScript implementation and review work, use `$react-quality` after `$implementation-planning`. It establishes state ownership, effect, async, type, and behavior-test review; use its routing to the more specific mutation, performance, and display skills instead of duplicating those methods.
+
 - Use Tailwind for styling
 - Write DRY code; prefer reusable components over ad hoc markup
 - Avoid nested ternaries

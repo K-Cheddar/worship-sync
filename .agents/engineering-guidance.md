@@ -28,7 +28,7 @@ Choose enforcement for the nature of the lesson; do not accumulate one-off revie
 
 Every repository-local skill or guidance file referenced by tracked agent instructions must also be versioned in the repository.
 
-Repository Phase 1 skills under `.agents/skills/` are canonical and versioned. This repository does not use `.claude/skills/` adapters for repository-authored skills: a portable adapter that does not duplicate content has not been verified. Consumers must load the canonical files through their own supported skill-discovery mechanism; do not assume cross-agent discovery without verifying it.
+Repository-authored skills under `.agents/skills/` are canonical and versioned. This repository does not use `.claude/skills/` adapters for repository-authored skills: a portable adapter that does not duplicate content has not been verified. Consumers must load the canonical files through their own supported skill-discovery mechanism; do not assume cross-agent discovery without verifying it.
 
 ## CI follow-up
 
@@ -38,4 +38,4 @@ Recommended follow-up: once the current tree is verified clean, add an explicit 
 
 ## Future work
 
-Do not create `react-quality` yet. Build it later from recurring real-world review findings and WorshipSync-specific examples, not generic React advice.
+`react-quality` is the canonical, evidence-based skill for substantive React and TypeScript work. Expand it only from recurring WorshipSync findings and verified repository examples; do not add broad React guidance speculatively.
