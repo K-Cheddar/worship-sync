@@ -142,6 +142,66 @@ describe("buildOccurrenceSummaryGroups", () => {
     const names = groups.flatMap((g) => g.positions.map((p) => p.name));
     expect(names).toEqual(["Director"]);
   });
+
+  it("includes an occurrence-added slot on a baseline position", () => {
+    const columnsWithExtra = buildScheduleColumns({
+      occurrences: [{ occurrenceId: "occ-1" }],
+      requirementsByOccurrence: new Map([["occ-1", requirements]]),
+      additionalPositionSlots: { "occ-1": [makeSlotKey("crew", 2)] },
+      positions,
+      teamPositionIds,
+    });
+    const assignmentsRow = {
+      [makeSlotKey("director", 0)]: cell("m-dir"),
+      [makeSlotKey("crew", 0)]: cell("m-a"),
+      [makeSlotKey("crew", 1)]: cell("m-b"),
+      [makeSlotKey("crew", 2)]: cell("m-prod"),
+      [makeSlotKey("producer", 0)]: cell("m-prod"),
+    };
+    const groups = buildOccurrenceSummaryGroups({
+      columns: columnsWithExtra,
+      requirements,
+      assignmentsRow,
+      members,
+      duplicateFirstNames: new Set(),
+      additionalSlotKeys: [makeSlotKey("crew", 2)],
+    });
+    const crew = groups[0].positions[1];
+    expect(crew.requiredCount).toBe(3);
+    expect(crew.members.map((m) => m.name)).toEqual([
+      "Kevin",
+      "David",
+      "Brandon",
+    ]);
+  });
+
+  it("includes a position that only exists as an occurrence-added slot", () => {
+    const directorOnly: PositionRequirement[] = [
+      { positionId: "director", count: 1 },
+    ];
+    const columnsWithExtra = buildScheduleColumns({
+      occurrences: [{ occurrenceId: "occ-1" }],
+      requirementsByOccurrence: new Map([["occ-1", directorOnly]]),
+      additionalPositionSlots: { "occ-1": [makeSlotKey("producer", 0)] },
+      positions,
+      teamPositionIds,
+    });
+    const groups = buildOccurrenceSummaryGroups({
+      columns: columnsWithExtra,
+      requirements: directorOnly,
+      assignmentsRow: {
+        [makeSlotKey("director", 0)]: cell("m-dir"),
+      },
+      members,
+      duplicateFirstNames: new Set(),
+      additionalSlotKeys: [makeSlotKey("producer", 0)],
+    });
+    const names = groups.flatMap((g) => g.positions.map((p) => p.name));
+    expect(names).toEqual(["Director", "Producer"]);
+    const producer = groups[1].positions[0];
+    expect(producer.requiredCount).toBe(1);
+    expect(producer.members).toEqual([]);
+  });
 });
 
 describe("formatOccurrenceMessage", () => {
@@ -171,6 +231,44 @@ describe("formatOccurrenceMessage", () => {
         "Director: Jahlani",
         "Camera Crew: Kevin, David",
         "Producer: TBD",
+      ].join("\n"),
+    );
+  });
+
+  it("lists assignees from occurrence-added slots in the copied message", () => {
+    const columnsWithExtra = buildScheduleColumns({
+      occurrences: [{ occurrenceId: "occ-1" }],
+      requirementsByOccurrence: new Map([["occ-1", requirements]]),
+      additionalPositionSlots: { "occ-1": [makeSlotKey("crew", 2)] },
+      positions,
+      teamPositionIds,
+    });
+    const groups = buildOccurrenceSummaryGroups({
+      columns: columnsWithExtra,
+      requirements,
+      assignmentsRow: {
+        [makeSlotKey("director", 0)]: cell("m-dir"),
+        [makeSlotKey("crew", 0)]: cell("m-a"),
+        [makeSlotKey("crew", 1)]: cell("m-b"),
+        [makeSlotKey("crew", 2)]: cell("m-shadow"),
+        [makeSlotKey("producer", 0)]: cell("m-prod"),
+      },
+      members,
+      duplicateFirstNames: new Set(),
+      additionalSlotKeys: [makeSlotKey("crew", 2)],
+    });
+    expect(
+      formatOccurrenceMessage({
+        startsAt: "2026-05-30T14:00:00.000Z",
+        groups,
+      }),
+    ).toBe(
+      [
+        "Schedule for May 30, 2026",
+        "",
+        "Director: Jahlani",
+        "Camera Crew: Kevin, David, Sam",
+        "Producer: Brandon",
       ].join("\n"),
     );
   });

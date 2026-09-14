@@ -84,6 +84,16 @@ describe("ScheduleBoardCell", () => {
     expect(activateSlot).not.toHaveBeenCalled();
   });
 
+  it("uses a pointer cursor when the assignment is editable", () => {
+    renderCell();
+    expect(screen.getByRole("button")).toHaveClass("cursor-pointer");
+  });
+
+  it("uses the default cursor when editing is disabled", () => {
+    renderCell({ canEdit: false });
+    expect(screen.getByRole("button")).toHaveClass("cursor-default");
+  });
+
   // Members can now add their own blockouts after a schedule is built, so a
   // filled slot can go stale. The picker only warns while filling a slot.
   it("flags an assignee who has blocked the service date out", () => {

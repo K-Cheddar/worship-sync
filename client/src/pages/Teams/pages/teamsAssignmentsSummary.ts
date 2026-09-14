@@ -11,7 +11,7 @@ import { isHydratedSchedule } from "../../../api/authTypes";
 import { getOccurrenceDate } from "../../../utils/teamScheduleOccurrences";
 import {
   buildScheduleColumns,
-  getRequiredCount,
+  isOccurrenceStaffingSlot,
   makeSlotKey,
   parseSlotKey,
   resolveOccurrenceRequirements,
@@ -305,15 +305,16 @@ export const getOccurrenceAssignmentSummary = ({
         positions,
         teamPositionIds,
       });
-      const additionalSlotKeys = new Set(
-        schedule.additionalPositionSlots?.[scheduleOccurrenceId] || [],
-      );
+      const additionalSlotKeys =
+        schedule.additionalPositionSlots?.[scheduleOccurrenceId] || [];
       for (const column of columns) {
         // Same guard the grid and board render with: core slots plus roles
         // explicitly added for this date.
-        const isRequired =
-          column.slot < getRequiredCount(requirements, column.positionId);
-        if (!isRequired && !additionalSlotKeys.has(column.columnKey)) continue;
+        if (
+          !isOccurrenceStaffingSlot(column, requirements, additionalSlotKeys)
+        ) {
+          continue;
+        }
         covered.add(column.columnKey);
         rows.push(
           rowFor({
@@ -327,9 +328,7 @@ export const getOccurrenceAssignmentSummary = ({
             memberProfileImageUrl: memberProfileImageUrlFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
-            canNotify: canNotifyFor(
-              cells?.[column.columnKey]?.primaryMemberId,
-            ),
+            canNotify: canNotifyFor(cells?.[column.columnKey]?.primaryMemberId),
             microphoneIds:
               schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[
                 column.columnKey

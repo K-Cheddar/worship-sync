@@ -130,7 +130,9 @@ export const createTeamsAuthHandlers = ({
   getUserByUid,
   getChurchById,
   sendEmail,
+  emailDeliveryConfigured = false,
   renderScheduleAssignmentEmail,
+  renderServicePlanShareEmail,
   sendRosterMemberInvite,
   logAuthEvent,
 }) => {
@@ -1556,6 +1558,44 @@ export const createTeamsAuthHandlers = ({
     return safe;
   };
 
+  // Service-plan readers without Teams access may read plan content, but they
+  // must not receive roster assignments embedded in a saved plan. This covers
+  // default paired workstations and human services:view readers. Booth
+  // workstations retain the existing Teams-backed plan behavior.
+  const hasTeamsPlanAccess = (bootstrap) =>
+    bootstrap?.role === "admin" ||
+    bootstrap?.permissions?.teams === "view" ||
+    bootstrap?.permissions?.teams === "edit" ||
+    bootstrap?.permissions?.services === "edit" ||
+    Object.keys(bootstrap?.permissions?.teamScopes || {}).length > 0;
+
+  const isPlanOnlyReader = (bootstrap) =>
+    bootstrap?.sessionKind === "workstation"
+      ? bootstrap.device?.serviceWorkspaceAccess !== true
+      : !hasTeamsPlanAccess(bootstrap);
+
+  const withoutServicePlanAssignments = (plan, bootstrap) => {
+    const safe = withoutServicePlanSecrets(plan);
+    if (!isPlanOnlyReader(bootstrap) || !Array.isArray(safe?.sections)) {
+      return safe;
+    }
+    return {
+      ...safe,
+      sections: safe.sections.map((section) => ({
+        ...section,
+        elements: Array.isArray(section?.elements)
+          ? section.elements.map((element) => {
+              const viewerElement = { ...element };
+              delete viewerElement.assignees;
+              delete viewerElement.assignedMemberId;
+              delete viewerElement.assignedName;
+              return viewerElement;
+            })
+          : [],
+      })),
+    };
+  };
+
   /** Whether this request may edit Teams data, as a boolean rather than a throw. */
   const hasServicesEditAccess = async (req, churchId) => {
     try {
@@ -1571,6 +1611,65 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicServicePlanUrl = (token) =>
     `${APP_BASE_URL}/services/${encodeURIComponent(String(token || "").trim())}`;
+
+  const MAX_SERVICE_PLAN_EMAIL_RECIPIENTS = 10;
+  const MAX_SERVICE_PLAN_EMAIL_SUBJECT_LENGTH = 200;
+  const MAX_SERVICE_PLAN_EMAIL_MESSAGE_LENGTH = 5000;
+
+  const validateServicePlanEmailText = (value, label, maxLength) => {
+    if (typeof value !== "string") {
+      throw httpError(400, `${label} is required.`);
+    }
+    const trimmed = value.trim();
+    if (!trimmed) throw httpError(400, `${label} is required.`);
+    if (trimmed.length > maxLength) {
+      throw httpError(400, `${label} must be ${maxLength} characters or fewer.`);
+    }
+    return trimmed;
+  };
+
+  const validateServicePlanEmailRecipients = (value) => {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw httpError(400, "Add at least one email address.");
+    }
+    if (value.length > MAX_SERVICE_PLAN_EMAIL_RECIPIENTS) {
+      throw httpError(
+        400,
+        `Email up to ${MAX_SERVICE_PLAN_EMAIL_RECIPIENTS} recipients at a time.`,
+      );
+    }
+
+    const recipients = [];
+    for (const rawRecipient of value) {
+      if (typeof rawRecipient !== "string") {
+        throw httpError(400, "Enter valid email addresses.");
+      }
+      const recipient = normalizeEmail(rawRecipient);
+      if (
+        recipient.length > 254 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)
+      ) {
+        throw httpError(400, "Enter valid email addresses.");
+      }
+      if (!recipients.includes(recipient)) recipients.push(recipient);
+    }
+    return recipients;
+  };
+
+  const formatServicePlanEmailDate = (date, startsAt) => {
+    const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))
+      ? `${date}T00:00:00.000Z`
+      : startsAt;
+    const parsed = new Date(dateValue || "");
+    if (Number.isNaN(parsed.getTime())) return "Date to be confirmed";
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(parsed);
+  };
 
   const ensureChurchCurrentServiceTokens = async (churchId, adminUid) => {
     const church = await getDoc(COLLECTIONS.churches, churchId);
@@ -8233,7 +8332,7 @@ export const createTeamsAuthHandlers = ({
     async getServicePlan(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireServicePlansView(req, churchId);
+        const reader = await requireServicePlansView(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8276,7 +8375,7 @@ export const createTeamsAuthHandlers = ({
         }
         return res.json({
           success: true,
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          servicePlan: withoutServicePlanAssignments(servicePlan, reader),
           ...(publicUrls ? { publicUrls } : {}),
         });
       } catch (error) {
@@ -8288,10 +8387,48 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async getServicePlanPublicSnapshot(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        const reader = await requireServicePlansView(req, churchId);
+        if (!hasTeamsPlanAccess(reader)) {
+          return res.json({ success: true, snapshot: null });
+        }
+        const planKey = decodeURIComponent(req.params.planKey);
+        const servicePlan = await getDoc(
+          COLLECTIONS.servicePlans,
+          buildServicePlanDocId(churchId, planKey),
+        );
+        if (
+          !servicePlan ||
+          servicePlan.churchId !== churchId ||
+          !servicePlan.published ||
+          !servicePlan.publicLinkToken
+        ) {
+          return res.json({ success: true, snapshot: null });
+        }
+        const snapshot = await buildPublicServicePlan({
+          plan: servicePlan,
+          viewMode: "team",
+          token: servicePlan.publicLinkToken,
+        });
+        return res.json({ success: true, snapshot });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load the detailed service view.",
+        );
+      }
+    },
+
     async getServicePlanAssignments(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireServicePlansView(req, churchId);
+        const reader = await requireServicePlansView(req, churchId);
+        if (isPlanOnlyReader(reader)) {
+          return res.json({ success: true, assignments: [] });
+        }
         const planKey = decodeURIComponent(req.params.planKey);
         const servicePlan = await getDoc(
           COLLECTIONS.servicePlans,
@@ -8736,6 +8873,148 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not publish this service plan.",
+        );
+      }
+    },
+
+    async sendServicePlanShareEmail(req, res) {
+      const churchId = req.params.churchId;
+      const planKey = decodeURIComponent(req.params.planKey);
+      let recipientCount = 0;
+      try {
+        await assertCsrf(req);
+        await requireServicesEdit(req, churchId);
+        const recipients = validateServicePlanEmailRecipients(
+          req.body?.recipients,
+        );
+        recipientCount = recipients.length;
+        const subject = validateServicePlanEmailText(
+          req.body?.subject,
+          "Subject",
+          MAX_SERVICE_PLAN_EMAIL_SUBJECT_LENGTH,
+        );
+        const message = validateServicePlanEmailText(
+          req.body?.message,
+          "Message",
+          MAX_SERVICE_PLAN_EMAIL_MESSAGE_LENGTH,
+        );
+        enforceRateLimit({
+          scope: "service-plan-share-email",
+          key: `${getClientIp(req)}:${churchId}`,
+          limit: 10,
+          windowMs: 60 * 60 * 1000,
+          blockMs: 60 * 60 * 1000,
+        });
+
+        const servicePlan = await getDoc(
+          COLLECTIONS.servicePlans,
+          buildServicePlanDocId(churchId, planKey),
+        );
+        if (!servicePlan || servicePlan.churchId !== churchId) {
+          throw httpError(404, "Service plan not found.");
+        }
+        const shareToken = String(
+          servicePlan.publicGeneralLinkToken || servicePlan.publicLinkToken || "",
+        ).trim();
+        if (!servicePlan.published || !shareToken) {
+          throw httpError(
+            400,
+            "Enable shared links before emailing this service plan.",
+          );
+        }
+        if (!emailDeliveryConfigured) {
+          throw httpError(503, "Email is not configured on this server.");
+        }
+
+        // Prefer the general token so a broad email does not expose serving
+        // notes. Older published plans may only have the detailed token.
+        const shareUrl = buildPublicServicePlanUrl(shareToken);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const { html, text } = await renderServicePlanShareEmail({
+          churchName: String(church?.name || ""),
+          serviceName: String(servicePlan.name || "Service"),
+          serviceDate: formatServicePlanEmailDate(
+            servicePlan.date,
+            servicePlan.startsAt,
+          ),
+          message,
+          shareUrl,
+        });
+
+        const sendResults = await Promise.allSettled(
+          recipients.map((to) =>
+            sendEmail({
+              to,
+              subject,
+              textBody: text,
+              htmlBody: html,
+              tags: {
+                type: "service_plan_share",
+                churchId,
+              },
+            }),
+          ),
+        );
+        const failedRecipients = sendResults.flatMap((result, index) =>
+          result.status === "rejected" ? [recipients[index]] : [],
+        );
+        if (failedRecipients.length > 0) {
+          const sentCount = recipients.length - failedRecipients.length;
+          const firstFailure = sendResults.find(
+            (result) => result.status === "rejected",
+          );
+          const errorMessage =
+            firstFailure?.status === "rejected"
+              ? firstFailure.reason?.message || "send failed"
+              : "send failed";
+          if (sentCount === 0) {
+            logAuthEvent("warn", "service-plan.share-email.failed", {
+              churchId,
+              planKey,
+              recipientCount: recipients.length,
+              errorMessage,
+            });
+            return sendTeamsJsonError(
+              res,
+              httpError(502, "Could not send the service plan email."),
+              "Could not send the service plan email.",
+            );
+          }
+          logAuthEvent("warn", "service-plan.share-email.partial", {
+            churchId,
+            planKey,
+            sentCount,
+            failedCount: failedRecipients.length,
+            errorMessage,
+          });
+          return res.json({
+            success: false,
+            sent: sentCount,
+            failed: failedRecipients.length,
+            failedRecipients,
+          });
+        }
+        return res.json({
+          success: true,
+          sent: recipients.length,
+          failed: 0,
+          failedRecipients: [],
+        });
+      } catch (error) {
+        if (Number(error?.statusCode || 500) >= 500) {
+          logAuthEvent("warn", "service-plan.share-email.failed", {
+            churchId,
+            planKey,
+            recipientCount,
+            errorMessage: error?.message || "send failed",
+          });
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          Number(error?.statusCode) === 503 && error?.message
+            ? error.message
+            : "Could not send the service plan email.",
         );
       }
     },

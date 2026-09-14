@@ -1,4 +1,5 @@
 import { TriangleAlert } from "lucide-react";
+import { Link } from "react-router-dom";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
 import {
@@ -9,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 /** Radix reserves an empty string for clearing the current selection. */
 const NONE_MICROPHONE_VALUE = "__none__";
@@ -70,7 +72,17 @@ const ScheduleMicrophoneSelect = ({
     return <p className="text-[11px] text-amber-300">Microphones unavailable.</p>;
   }
   if (microphones.length === 0) {
-    return <p className="text-[11px] text-gray-500">No microphones configured</p>;
+    return (
+      <p className="text-[11px] text-gray-500">
+        No microphones configured.{" "}
+        <Link
+          to={TEAMS_SECTION_PATHS.microphones}
+          className="cursor-pointer font-medium text-cyan-300 hover:text-cyan-200"
+        >
+          Open Microphones
+        </Link>
+      </p>
+    );
   }
 
   return (

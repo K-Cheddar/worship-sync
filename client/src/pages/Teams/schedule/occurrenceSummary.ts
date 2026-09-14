@@ -11,8 +11,7 @@ import {
   shadowKindLabel,
 } from "../teamsUtils";
 import {
-  getRequiredCount,
-  makeSlotKey,
+  isOccurrenceStaffingSlot,
   type ScheduleSlotColumn,
 } from "./scheduleRequirements";
 
@@ -27,6 +26,7 @@ export type OccurrenceSummaryPosition = {
   positionId: string;
   name: string;
   groupId?: string;
+  /** Staffing target for this position on the occurrence (baseline + added slots). */
   requiredCount: number;
   /** Primary assignees first (in slot order), then shadows. */
   members: OccurrenceSummaryMember[];
@@ -47,7 +47,8 @@ export const OCCURRENCE_EMPTY_SLOT_LABEL = "TBD";
 /**
  * Collapse the per-slot schedule columns into per-position assignment summaries
  * for one occurrence, resolving member names and grouping by position group.
- * Only positions that this occurrence actually requires are included.
+ * Includes baseline requirement slots and any occurrence-added
+ * `additionalPositionSlots`.
  */
 export const buildOccurrenceSummaryGroups = ({
   columns,
@@ -55,12 +56,14 @@ export const buildOccurrenceSummaryGroups = ({
   assignmentsRow,
   members,
   duplicateFirstNames,
+  additionalSlotKeys,
 }: {
   columns: ScheduleSlotColumn[];
   requirements: PositionRequirement[] | undefined;
   assignmentsRow: Record<string, TeamScheduleCellAssignment> | undefined;
   members: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
+  additionalSlotKeys?: ReadonlySet<string> | readonly string[];
 }): OccurrenceSummaryGroup[] => {
   const memberById = new Map(
     members.map((member) => [member.memberId, member]),
@@ -73,13 +76,18 @@ export const buildOccurrenceSummaryGroups = ({
   for (const column of columns) {
     if (seen.has(column.positionId)) continue;
     seen.add(column.positionId);
-    const requiredCount = getRequiredCount(requirements, column.positionId);
-    if (requiredCount <= 0) continue;
+
+    const staffingColumns = columns.filter(
+      (candidate) =>
+        candidate.positionId === column.positionId &&
+        isOccurrenceStaffingSlot(candidate, requirements, additionalSlotKeys),
+    );
+    if (staffingColumns.length === 0) continue;
 
     const primaries: OccurrenceSummaryMember[] = [];
     const shadows: OccurrenceSummaryMember[] = [];
-    for (let slot = 0; slot < requiredCount; slot += 1) {
-      const cell = assignmentsRow?.[makeSlotKey(column.positionId, slot)];
+    staffingColumns.forEach((slotColumn) => {
+      const cell = assignmentsRow?.[slotColumn.columnKey];
       const primaryId = getCellPrimaryMemberId(cell);
       if (primaryId) {
         primaries.push({
@@ -95,13 +103,13 @@ export const buildOccurrenceSummaryGroups = ({
           kind: shadow.kind,
         });
       });
-    }
+    });
 
     positions.push({
       positionId: column.positionId,
       name: column.position.name,
       groupId: column.position.groupId,
-      requiredCount,
+      requiredCount: staffingColumns.length,
       members: [...primaries, ...shadows],
     });
   }

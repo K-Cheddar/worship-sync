@@ -30,6 +30,7 @@ export const TEAMS_SECTION_PATHS = {
   qualifications: "/teams-and-services/qualifications",
   services: "/teams-and-services/service-setup",
   forms: "/teams-and-services/forms",
+  microphones: "/teams-and-services/microphones",
 } as const;
 
 export type TeamsSectionPath =

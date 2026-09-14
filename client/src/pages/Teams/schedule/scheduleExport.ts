@@ -8,6 +8,7 @@ import {
   scheduleMemberName,
   shadowKindLabel,
 } from "../teamsUtils";
+import { isOccurrenceStaffingSlot } from "./scheduleRequirements";
 
 /**
  * Resolves a schedule into a flat, render-agnostic model for export. All the
@@ -44,8 +45,16 @@ export type ScheduleExportInput = {
   dateRangeLabel: string;
   columns: ScheduleExportColumn[];
   groups: ScheduleExportServiceGroup[];
-  /** Active slots for a position in one occurrence; inactive slots render muted. */
+  /**
+   * Baseline/core slot count for a position in one occurrence. Combined with
+   * `additionalPositionSlots` to decide which cells are active.
+   */
   requiredCountFor: (occurrenceId: string, positionId: string) => number;
+  /**
+   * Occurrence-added staffing slots (same map as the schedule document). When
+   * present, those keys stay active even beyond `requiredCountFor`.
+   */
+  additionalPositionSlots?: Record<string, string[]>;
   assignments:
     | Record<string, Record<string, TeamScheduleCellAssignment>>
     | undefined;
@@ -113,7 +122,19 @@ const buildCell = ({
   nameOf: (memberId: string) => string;
 }): ScheduleExportCell => {
   const requiredCount = input.requiredCountFor(occurrenceId, column.positionId);
-  if (column.slot >= requiredCount) {
+  // requiredCountFor is baseline-only; synthesize a one-position requirement so
+  // the shared staffing guard can also honor occurrence-added slot keys.
+  const requirements =
+    requiredCount > 0
+      ? [{ positionId: column.positionId, count: requiredCount }]
+      : undefined;
+  if (
+    !isOccurrenceStaffingSlot(
+      column,
+      requirements,
+      input.additionalPositionSlots?.[occurrenceId],
+    )
+  ) {
     return { state: "inactive", tokens: [], highlighted: false };
   }
 
