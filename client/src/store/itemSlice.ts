@@ -45,7 +45,7 @@ const defaultShouldSendTo: ShouldSendTo = {
 };
 
 const initialState: ItemState = {
-  isEditMode: false,
+  isLyricsEditorOpen: false,
   name: "",
   type: "",
   _id: "1",
@@ -307,8 +307,8 @@ export const itemSlice = createSlice({
         );
       }
     },
-    setIsEditMode: (state, action: PayloadAction<boolean>) => {
-      state.isEditMode = action.payload;
+    setIsLyricsEditorOpen: (state, action: PayloadAction<boolean>) => {
+      state.isLyricsEditorOpen = action.payload;
     },
     _setName: (state, action: PayloadAction<string>) => {
       state.name = action.payload;
@@ -1024,7 +1024,7 @@ export const {
   setSelectedSlide,
   setRestoreFocusToBox,
   _setSelectedArrangement,
-  setIsEditMode,
+  setIsLyricsEditorOpen,
   _setName,
   _updateArrangements,
   clearTransientState,

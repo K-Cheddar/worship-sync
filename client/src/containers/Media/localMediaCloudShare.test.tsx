@@ -111,13 +111,16 @@ describe("localMediaCloudShare", () => {
   });
 
   it("attaches Mux playback to the existing local video item", () => {
-    const patch = buildLocalVideoCloudSharePatch(ownedVideo(), {
-      playbackId: "play-1",
-      assetId: "asset-1",
-      playbackUrl: "https://stream.mux.com/play-1.m3u8",
-      thumbnailUrl: "https://image.mux.com/play-1/thumbnail.png",
-      name: "clip",
-    });
+    const patch = buildLocalVideoCloudSharePatch(
+      ownedVideo({ name: "Sermon Opener" }),
+      {
+        playbackId: "play-1",
+        assetId: "asset-1",
+        playbackUrl: "https://stream.mux.com/play-1.m3u8",
+        thumbnailUrl: "https://image.mux.com/play-1/thumbnail.png",
+        name: "clip",
+      },
+    );
     expect(patch.background).toBe("https://stream.mux.com/play-1.m3u8");
     expect(patch.muxPlaybackId).toBe("play-1");
     expect(patch.cloudUploadRequest).toBeNull();
@@ -125,5 +128,6 @@ describe("localMediaCloudShare", () => {
       "https://stream.mux.com/play-1.m3u8",
     );
     expect(patch.localVideoFile?.storagePolicy).toBe("local-and-cloud");
+    expect(patch.name).toBeUndefined();
   });
 });

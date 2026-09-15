@@ -544,8 +544,8 @@ export const createNewFreeForm = async ({
   const slideNameFromInput = resolvedMediaSource?.label?.trim();
   const slides =
     slideDefs && slideDefs.length > 0
-      ? slideDefs.map((def, index) =>
-          createNewSlide({
+      ? slideDefs.map((def, index) => {
+          const slide = createNewSlide({
             type: "Section",
             name: def.name || `Page ${index + 1}`,
             fontSize: DEFAULT_FONT_PX,
@@ -555,8 +555,13 @@ export const createNewFreeForm = async ({
             mediaSource: def.mediaSource,
             brightness,
             overflow,
-          }),
-        )
+            shouldKeepAspectRatio:
+              Boolean(def.mediaInfo || def.mediaSource),
+          });
+          // Media-created custom slides start without a visible text body.
+          slide.boxes[1].words = "";
+          return slide;
+        })
       : [
           createNewSlide({
             type: "Section",
@@ -568,6 +573,7 @@ export const createNewFreeForm = async ({
             mediaSource: resolvedMediaSource,
             brightness,
             overflow,
+            shouldKeepAspectRatio: Boolean(mediaInfo || resolvedMediaSource),
           }),
         ];
   const firstBackground = slides[0]?.boxes[0]?.background || background;

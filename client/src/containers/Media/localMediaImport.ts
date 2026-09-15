@@ -17,6 +17,7 @@ import {
 } from "../../utils/localVideoFileAssets";
 import { getImageContentType } from "../../utils/mediaFileTypes";
 import { detectFileType } from "./utils/fileUtils";
+import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
 
 export class LocalImagePlaybackError extends Error {
   constructor(cause: unknown) {
@@ -45,18 +46,25 @@ export const createLocalMediaFromFile = async (
   options: {
     allowCloudPlaybackFallback?: boolean;
     importBytes?: boolean;
+    displayName?: string;
   } = {},
 ): Promise<MediaType> => {
   if (detectFileType(file) === "video") {
     return createLocalVideoMedia(file, workspaceId, storagePolicy, options);
   }
-  return createLocalImageMedia(file, workspaceId, storagePolicy);
+  return createLocalImageMedia(
+    file,
+    workspaceId,
+    storagePolicy,
+    options.displayName,
+  );
 };
 
 const createLocalImageMedia = async (
   file: File,
   workspaceId: string,
   storagePolicy: LocalAssetStoragePolicy,
+  displayName?: string,
 ): Promise<MediaType> => {
   const error = validateLocalImageFile(file);
   if (error) throw new Error(error);
@@ -88,7 +96,7 @@ const createLocalImageMedia = async (
     format: contentType.replace("image/", "") || "image",
     height: dimensions.height,
     width: dimensions.width,
-    name: file.name,
+    name: normalizeMediaLibraryDisplayName(displayName ?? file.name),
     publicId: assetId,
     type: "image",
     id: assetId,
@@ -114,6 +122,7 @@ const createLocalVideoMedia = async (
   options: {
     allowCloudPlaybackFallback?: boolean;
     importBytes?: boolean;
+    displayName?: string;
   },
 ): Promise<MediaType> => {
   const error = validateLocalVideoFile(file);
@@ -160,7 +169,7 @@ const createLocalVideoMedia = async (
     format: contentType.replace("video/", "") || "video",
     height: metadata.height,
     width: metadata.width,
-    name: file.name,
+    name: normalizeMediaLibraryDisplayName(options.displayName ?? file.name),
     publicId: assetId,
     type: "video",
     id: assetId,

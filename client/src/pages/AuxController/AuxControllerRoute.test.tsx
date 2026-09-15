@@ -78,7 +78,7 @@ const renderRoute = (
         present: {
           preferences: { scrollbarWidth: "auto" },
           itemLists: {},
-          item: { isEditMode: false },
+          item: { isLyricsEditorOpen: false },
         },
       }),
     },

@@ -4,6 +4,7 @@ import type {
   ItemSlideType,
   ItemState,
   ServiceItem,
+  FormattedSection,
 } from "../types";
 import { getFormattedSections } from "./overflow";
 
@@ -30,6 +31,7 @@ export type OutlineSlideSection = {
   rev?: string;
   slides: ItemSlideType[];
   isActive: boolean;
+  formattedSections?: FormattedSection[];
 };
 
 export type OutlineVirtualRow =
@@ -62,6 +64,7 @@ type ActiveItemSlideSource = {
   slides?: ItemSlideType[];
   arrangements?: Arrangment[];
   selectedArrangement?: number;
+  formattedSections?: FormattedSection[];
 };
 
 /**
@@ -170,6 +173,9 @@ export const buildOutlineSlideSections = (
       rev: isActive ? undefined : doc?._rev,
       slides: resolveSlidesForOutlineItem(item, options),
       isActive,
+      formattedSections:
+        (isActive ? options.activeItem.formattedSections : doc?.formattedSections) ??
+        [],
     };
   });
 

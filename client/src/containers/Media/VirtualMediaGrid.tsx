@@ -34,6 +34,7 @@ export type VirtualMediaGridHandle = {
 
 export type VirtualMediaGridProps = {
   scrollRef: React.RefObject<HTMLElement | null>;
+  scrollElement?: HTMLElement | null;
   mediaItems: MediaType[];
   cols: number;
   showFolders: boolean;
@@ -54,12 +55,15 @@ export type VirtualMediaGridProps = {
   showBottomName: boolean;
   bottomNameClassName?: string;
   imageContainerClassName?: string;
+  mediaDragEnabled?: boolean;
+  orderedSelectedMediaIds?: string[];
 };
 
 export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaGridProps>(
   (
     {
       scrollRef,
+      scrollElement,
       mediaItems,
       cols,
       showFolders,
@@ -76,6 +80,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       showBottomName,
       bottomNameClassName,
       imageContainerClassName,
+      mediaDragEnabled = false,
+      orderedSelectedMediaIds = [],
     },
     ref,
   ) => {
@@ -88,7 +94,6 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     tileRowHeightRef.current = tileRowHeight;
     const shouldSyncTileRowHeightRef = useRef(true);
     const gridRef = useRef<HTMLDivElement>(null);
-
     const rows = useMemo<VirtualRow[]>(() => {
       const result: VirtualRow[] = [];
       if (showFolders) {
@@ -106,15 +111,14 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
 
     const virtualizer = useVirtualizer({
       count: rows.length,
-      getScrollElement: () => scrollRef.current,
+      getScrollElement: () =>
+        scrollElement === undefined ? scrollRef.current : scrollElement,
       estimateSize: (index) =>
         rowsRef.current[index]?.type === "tiles" ? tileRowHeightRef.current : FOLDER_ROW_HEIGHT,
       overscan: 3,
       paddingStart: 16,
       paddingEnd: 16,
       gap: ROW_GAP,
-      // Non-zero initial viewport so items render before the scroll element is measured.
-      initialRect: { width: 0, height: 600 },
     });
 
     const virtualizerRef = useRef(virtualizer);
@@ -142,6 +146,19 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         ?.querySelectorAll<HTMLDivElement>("[data-index]")
         .forEach(measureRowElement);
     }, [measureRowElement]);
+
+    // Folder rows have a different fixed size than tile rows. Invalidate the
+    // index-based cache only when that folder-row prefix changes; media
+    // updates keep the shared tile estimate and need no row remeasurement.
+    const folderRowCount = showFolders
+      ? childFolders.length + (canGoUp ? 1 : 0)
+      : 0;
+    const previousFolderRowCountRef = useRef(folderRowCount);
+    useLayoutEffect(() => {
+      if (previousFolderRowCountRef.current === folderRowCount) return;
+      previousFolderRowCountRef.current = folderRowCount;
+      virtualizerRef.current.measure();
+    }, [folderRowCount]);
 
     // Flush stale size cache when the measured tile height changes.
     const prevTileRowHeightRef = useRef(tileRowHeight);
@@ -260,6 +277,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                         showBottomName={showBottomName}
                         bottomNameClassName={bottomNameClassName}
                         imageContainerClassName={imageContainerClassName}
+                        mediaDragEnabled={mediaDragEnabled}
+                        orderedSelectedMediaIds={orderedSelectedMediaIds}
                       />
                     </div>
                   ))}

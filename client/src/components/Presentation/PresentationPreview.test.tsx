@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import PresentationPreview from "./PresentationPreview";
 
 const mockDisplayWindow = jest.fn((_: any) => (
@@ -12,6 +13,15 @@ jest.mock("../../hooks", () => ({
 jest.mock("../DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
   default: (props: unknown) => mockDisplayWindow(props),
+}));
+
+jest.mock("../QuickLink/QuickLink", () => ({
+  __esModule: true,
+  default: ({ label, onAction }: { label: string; onAction?: () => void }) => (
+    <button type="button" onClick={onAction}>
+      {label}
+    </button>
+  ),
 }));
 
 const basePresentation = {
@@ -287,5 +297,60 @@ describe("PresentationPreview", () => {
         directLocalVideoCapture: true,
       }),
     );
+  });
+
+  it("keeps the highest-priority links visible and puts the rest in overflow", async () => {
+    const user = userEvent.setup();
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[
+          { id: "q1", label: "Link 1" },
+          { id: "q2", label: "Link 2" },
+          { id: "q3", label: "Link 3" },
+          { id: "q4", label: "Link 4" },
+          { id: "q5", label: "Link 5" },
+          { id: "q6", label: "Link 6" },
+        ] as never[]}
+        timers={[]}
+      />,
+    );
+
+    expect(screen.getByTestId("quick-link-rail-projector")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 3" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link 4" })).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Show 3 more Quick Links" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Link 4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 5" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 6" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Link 4" })).toHaveLength(1);
+  });
+
+  it("does not render an overflow control when all links fit", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[{ id: "q1", label: "Only link" }] as never[]}
+        timers={[]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Only link" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show .* more Quick Links/ })).not.toBeInTheDocument();
   });
 });

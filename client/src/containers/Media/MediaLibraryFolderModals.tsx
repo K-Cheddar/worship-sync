@@ -16,9 +16,10 @@ import {
   wouldExceedMaxFolderDepth,
 } from "../../utils/mediaDocUtils";
 import generateRandomId from "../../utils/generateRandomId";
-import { normalizeMediaLibraryStoredName } from "./mediaLibraryMeta";
-
-const MEDIA_DISPLAY_NAME_MAX_LEN = 200;
+import {
+  MEDIA_DISPLAY_NAME_MAX_LEN,
+  normalizeMediaLibraryDisplayName,
+} from "./mediaLibraryMeta";
 
 export type MediaLibraryRenameMediaFormProps = {
   media: MediaType;
@@ -38,10 +39,9 @@ export function MediaLibraryRenameMediaForm({
   }, [media.id, media.name]);
 
   const handleSave = useCallback(() => {
-    const normalized = normalizeMediaLibraryStoredName(itemName);
+    const normalized = normalizeMediaLibraryDisplayName(itemName);
     if (!normalized) return;
-    const name = normalized.slice(0, MEDIA_DISPLAY_NAME_MAX_LEN);
-    onSave(name);
+    onSave(normalized);
     onClose();
   }, [itemName, onSave, onClose]);
 

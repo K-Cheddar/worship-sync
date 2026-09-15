@@ -38,6 +38,8 @@ import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
 import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { ProgressPopup } from "./components/ProgressPopup";
+import { useNativeFileDrop } from "./useNativeFileDrop";
+import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
 
 const isLocalMediaPlaybackError = (error: unknown) =>
   error instanceof Error &&
@@ -95,9 +97,8 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       });
     };
 
-    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const addFiles = useCallback((files: File[]) => {
       if (uploadDisabled) return;
-      const files = Array.from(event.target.files || []);
       if (files.length === 0) return;
 
       const { valid, invalid } = validateFiles(files);
@@ -108,6 +109,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
       const newFiles: FileUploadProgress[] = valid.map((file) => ({
         file,
+        displayName: file.name,
         fileType: detectFileType(file),
         status: "idle" as UploadStatus,
         progress: 0,
@@ -115,6 +117,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
       setSelectedFiles((prev) => [...prev, ...newFiles]);
       setError("");
+    }, [uploadDisabled]);
+
+    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+      addFiles(Array.from(event.target.files || []));
     };
 
     const handleRemoveFile = (index: number) => {
@@ -132,6 +138,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       );
     };
 
+    const updateFileDisplayName = (fileIndex: number, displayName: string) => {
+      updateFileStatus(fileIndex, { displayName });
+    };
+
     const uploadSingleFile = async (
       fileProgress: FileUploadProgress,
       fileIndex: number,
@@ -144,13 +154,23 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       );
 
       try {
-        const media = await createLocalMediaFromFile(
-          fileProgress.file,
-          churchId,
-          storagePolicy,
-          { allowCloudPlaybackFallback: storagePolicy === "local-and-cloud" },
-        );
-        onLocalMediaAdded(media);
+        const media =
+          fileProgress.localMedia ??
+          (await createLocalMediaFromFile(
+            fileProgress.file,
+            churchId,
+            storagePolicy,
+            {
+              allowCloudPlaybackFallback: storagePolicy === "local-and-cloud",
+              ...(fileProgress.displayName !== fileProgress.file.name
+                ? { displayName: fileProgress.displayName }
+                : {}),
+            },
+          ));
+        if (!fileProgress.localMedia) {
+          onLocalMediaAdded(media);
+          updateFileStatus(fileIndex, { localMedia: media });
+        }
         updateFileStatus(fileIndex, { progress: 40 });
 
         if (storagePolicy !== "local-and-cloud") {
@@ -254,21 +274,32 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         error: undefined,
       });
       try {
-        const convertedFile =
-          fileProgress.fileType === "image"
-            ? await convertCloudinaryImageToLocalWebp(
-                fileProgress.file,
-                resolvedUploadPreset,
-                callbacks,
-              )
-            : await convertMuxVideoToLocalMp4(fileProgress.file, callbacks);
-        const media = await createLocalMediaFromFile(
-          convertedFile,
-          churchId,
-          "local-only",
-          { importBytes: true },
-        );
-        onLocalMediaAdded(media);
+        let media = fileProgress.localMedia;
+        if (!media) {
+          const convertedFile =
+            fileProgress.fileType === "image"
+              ? await convertCloudinaryImageToLocalWebp(
+                  fileProgress.file,
+                  resolvedUploadPreset,
+                  callbacks,
+                )
+              : await convertMuxVideoToLocalMp4(fileProgress.file, callbacks);
+          media = await createLocalMediaFromFile(
+            convertedFile,
+            churchId,
+            "local-only",
+            {
+              importBytes: true,
+              ...(fileProgress.displayName !== fileProgress.file.name
+                ? { displayName: fileProgress.displayName }
+                : {}),
+            },
+          );
+          onLocalMediaAdded(media);
+          // Local conversion/import is durable. A later cloud-share failure
+          // must retry from this checkpoint instead of creating another item.
+          updateFileStatus(fileIndex, { localMedia: media });
+        }
         if (
           fileProgress.fileType === "image" &&
           uploadToCloud &&
@@ -318,6 +349,20 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         return;
       }
 
+      const normalizedNames = selectedFiles.map((fileProgress) =>
+        normalizeMediaLibraryDisplayName(fileProgress.displayName),
+      );
+      if (normalizedNames.some((name) => !name)) {
+        setError("Each media file needs a display name.");
+        return;
+      }
+      setSelectedFiles((prev) =>
+        prev.map((fileProgress, index) => ({
+          ...fileProgress,
+          displayName: normalizedNames[index],
+        })),
+      );
+
       const storagePolicy: LocalAssetStoragePolicy =
         !isGuestSession && uploadToCloud ? "local-and-cloud" : "local-only";
 
@@ -339,6 +384,13 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
       for (let i = 0; i < selectedFiles.length; i++) {
         if (cancelRequestedRef.current) break;
+
+        // A previous batch may have completed this row while another row
+        // failed. Retrying must only process unfinished rows.
+        if (selectedFiles[i].status === "ready") {
+          successCount++;
+          continue;
+        }
 
         setCurrentFileIndex(i);
         try {
@@ -435,19 +487,31 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       setIsMinimizedToButton(false);
     }, [uploadDisabled]);
 
+    const openModalWithFiles = useCallback((files: File[]) => {
+      if (uploadDisabled) return;
+      openModal();
+      addFiles(files);
+    }, [addFiles, openModal, uploadDisabled]);
+
     const isUploading = uploadStatus === "uploading" || uploadStatus === "processing";
+
+    const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
+      disabled: uploadDisabled || isUploading,
+      onFiles: addFiles,
+    });
 
     useImperativeHandle(
       ref,
       () => ({
         openModal,
+        openModalWithFiles,
         getUploadStatus: () => ({
           isUploading,
           progress: overallProgress,
           status: uploadStatus,
         }),
       }),
-      [openModal, isUploading, overallProgress, uploadStatus],
+      [openModal, openModalWithFiles, isUploading, overallProgress, uploadStatus],
     );
     const cloudEnabled = !isGuestSession && uploadToCloud;
     const showProgressPopup = (isUploading || uploadStatus === "ready" || uploadStatus === "error") && isMinimized && !isMinimizedToButton;
@@ -602,7 +666,15 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 disabled={isUploading || uploadDisabled}
                 className="hidden"
               />
-              <div className="flex flex-col items-center gap-2">
+              <div
+                {...fileDropHandlers}
+                className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-3 transition-colors ${isFileDragOver ? "border-blue-400 bg-blue-500/10" : "border-transparent"}`}
+              >
+                {isFileDragOver && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-blue-950/70 text-sm font-semibold text-blue-100">
+                    Drop files to add media
+                  </div>
+                )}
                 <Button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading || uploadDisabled}
@@ -614,6 +686,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                   files={selectedFiles}
                   isUploading={isUploading}
                   onRemoveFile={handleRemoveFile}
+                  onDisplayNameChange={updateFileDisplayName}
                 />
               </div>
               {selectedFiles.length > 0 && (

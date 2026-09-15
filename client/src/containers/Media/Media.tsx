@@ -61,6 +61,7 @@ import type { LocalVideoInputMediaSource } from "../../types";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
+import { useNativeFileDrop } from "./useNativeFileDrop";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -110,6 +111,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     onRelinkVideoInput: relinkVideoInput,
   });
   const { showAll, navigateToFolder } = c;
+  const handleDroppedFiles = useCallback(
+    (files: File[]) => c.mediaUploadInputRef.current?.openModalWithFiles(files),
+    [c.mediaUploadInputRef],
+  );
+  const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
+    disabled: c.isMediaReadOnly || !c.isMediaExpanded,
+    onFiles: handleDroppedFiles,
+  });
 
   useEffect(() => {
     if (!churchId) {
@@ -225,7 +234,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     <ErrorBoundary>
       <div
         className={cn(
-          c.isPanelVariant && "flex flex-col min-h-0 w-full",
+          c.isPanelVariant &&
+          "flex h-full flex-col min-h-0 w-full overflow-hidden",
           c.isPanelVariant &&
           (c.isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
           !c.isPanelVariant && "contents",
@@ -490,6 +500,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaMultiSelectMode={c.mediaMultiSelectMode}
           onMediaTileClick={c.handleMediaClick}
           onEnterMediaMultiSelectMode={c.enterMediaMultiSelectMode}
+          mediaDragEnabled={c.canDragMediaToSlides}
+          orderedSelectedMediaIds={c.orderedSelectedMediaIds}
+          nativeFileDropHandlers={fileDropHandlers}
+          isFileDragOver={isFileDragOver}
         />
 
         <DeleteModal

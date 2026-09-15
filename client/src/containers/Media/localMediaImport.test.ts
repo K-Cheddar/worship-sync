@@ -79,6 +79,34 @@ describe("createLocalMediaFromFile", () => {
     expect(mockedSaveLocalImage).not.toHaveBeenCalled();
   });
 
+  it("uses a custom image display name without changing the source filename", async () => {
+    const file = new File(["image"], "final-slide.png", { type: "image/png" });
+
+    const media = await createLocalMediaFromFile(file, "church-1", "local-only", {
+      displayName: "Welcome Slide",
+    });
+
+    expect(media.name).toBe("Welcome Slide");
+    expect(media.localImage?.fileName).toBe("final-slide.png");
+    expect(mockedSaveLocalImage).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: "final-slide.png", blob: file }),
+    );
+  });
+
+  it("uses a custom video display name without changing the source filename", async () => {
+    const file = new File(["video"], "final-video-v3.mp4", { type: "video/mp4" });
+
+    const media = await createLocalMediaFromFile(file, "church-1", "local-only", {
+      displayName: "Sermon Opener",
+    });
+
+    expect(media.name).toBe("Sermon Opener");
+    expect(media.localVideoFile?.fileName).toBe("final-video-v3.mp4");
+    expect(mockedSaveLocalVideoFile).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: "final-video-v3.mp4", blob: file }),
+    );
+  });
+
   it("keeps a locally undecodable MOV and marks cloud playback as authoritative", async () => {
     mockedReadVideoMetadata.mockRejectedValueOnce(
       new Error("The selected video could not be read."),

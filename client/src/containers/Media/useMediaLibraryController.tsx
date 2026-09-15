@@ -89,12 +89,11 @@ import {
   updateProjector,
   selectOutputSlot,
 } from "../../store/presentationSlice";
-import { setActiveItem } from "../../store/itemSlice";
+import { setActiveItem, updateSlides } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm } from "../../utils/itemUtil";
-import { createNewSlide } from "../../utils/slideCreation";
-import { DEFAULT_FONT_PX } from "../../constants";
+import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
@@ -110,6 +109,7 @@ import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
 import { buildVideoPlaybackCueForSend } from "../../utils/videoBackgroundPlayback";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -175,6 +175,7 @@ export function useMediaLibraryController({
     updater,
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
 
   const {
     list,
@@ -398,6 +399,17 @@ export function useMediaLibraryController({
     enableRangeSelection: true,
   });
 
+  const canDragMediaToSlides =
+    item.type === "free" &&
+    (access === "full" || access === "music");
+  const orderedSelectedMediaIds = useMemo(
+    () =>
+      list
+        .filter((media) => selectedMediaIds.has(media.id))
+        .map((media) => media.id),
+    [list, selectedMediaIds],
+  );
+
   useEffect(() => {
     reconcileSelectionWithMediaList(list);
   }, [list, reconcileSelectionWithMediaList]);
@@ -618,13 +630,8 @@ export function useMediaLibraryController({
     }
 
     if (!m.background) return;
-    const slide = createNewSlide({
-      type: "Section",
+    const slide = createSlideFromMedia(m, {
       name: "Section 1",
-      fontSize: DEFAULT_FONT_PX,
-      words: ["", ""],
-      background: m.background,
-      mediaInfo: m,
       brightness: defaultFreeFormBackgroundBrightness,
       overflow: defaultFreeFormFontMode,
     });
@@ -653,10 +660,13 @@ export function useMediaLibraryController({
   ]);
 
   const handleCreateCustomItemFromMedia = useCallback(async () => {
-    const m = selectedMedia;
-    if (!db || !mediaHasSendableContent(m)) return;
-    const displayName = mediaLibraryDisplayName(m);
-    const isLiveInput = isLocalVideoInputMedia(m);
+    const selectedMediaItems = list.filter((media) => selectedMediaIds.has(media.id));
+    if (!db || selectedMediaItems.length === 0 || !selectedMediaItems.every(mediaHasSendableContent)) return;
+    const m = selectedMediaItems[0];
+    const displayName = selectedMediaItems.length === 1
+      ? mediaLibraryDisplayName(m)
+      : "Media presentation";
+    const isLiveInput = selectedMediaItems.length === 1 && isLocalVideoInputMedia(m);
     try {
       const newItem = await createNewFreeForm({
         name: displayName,
@@ -669,6 +679,14 @@ export function useMediaLibraryController({
         brightness: defaultFreeFormBackgroundBrightness,
         overflow: defaultFreeFormFontMode,
         emptyBodyText: true,
+        slideDefs: selectedMediaItems.length > 1
+          ? selectedMediaItems.map((media, index) => ({
+            name: mediaLibraryDisplayName(media) || `Slide ${index + 1}`,
+            background: isLocalVideoInputMedia(media) ? "" : media.background,
+            mediaInfo: isLocalVideoInputMedia(media) ? undefined : media,
+            mediaSource: isLocalVideoInputMedia(media) ? media.localVideoInput : undefined,
+          }))
+          : undefined,
       });
       const listItem = {
         name: newItem.name,
@@ -699,13 +717,40 @@ export function useMediaLibraryController({
     }
   }, [
     controllerBasePath,
-    selectedMedia,
+    selectedMediaIds,
+    list,
     db,
     allItemsList,
     defaultFreeFormBackgroundBrightness,
     defaultFreeFormFontMode,
     dispatch,
     navigate,
+    showToast,
+  ]);
+
+  const handleAddSlidesFromMedia = useCallback(() => {
+    if (!itemSlideContext || item.type !== "free") return;
+    const selectedMediaItems = list.filter((media) => selectedMediaIds.has(media.id));
+    if (!selectedMediaItems.length || !selectedMediaItems.every(mediaHasSendableContent)) return;
+    const slides = selectedMediaItems.map((media) =>
+      createSlideFromMedia(media, {
+        brightness: defaultFreeFormBackgroundBrightness,
+        overflow: defaultFreeFormFontMode,
+      }),
+    );
+    dispatch(updateSlides({ slides: [...itemSlideContext.slides, ...slides] }));
+    showToast(
+      `${slides.length === 1 ? "Slide" : `${slides.length} slides`} added to this custom item.`,
+      "success",
+    );
+  }, [
+    defaultFreeFormBackgroundBrightness,
+    defaultFreeFormFontMode,
+    dispatch,
+    item.type,
+    itemSlideContext,
+    list,
+    selectedMediaIds,
     showToast,
   ]);
 
@@ -749,12 +794,15 @@ export function useMediaLibraryController({
       },
       itemSlideContext,
       controllerFromSelectedMedia:
-        selectedMediaIds.size === 1
+      selectedMediaIds.size > 0
           ? {
             isProjectorTransmitting,
             sendTargetLabel: projectorTargetLabel,
             onSendToProjector: handleSendSelectedMediaToProjector,
             onCreateCustomItem: handleCreateCustomItemFromMedia,
+            onAddSlides: canDragMediaToSlides
+              ? handleAddSlidesFromMedia
+              : undefined,
           }
           : undefined,
       notify: notifyMediaAction,
@@ -812,6 +860,8 @@ export function useMediaLibraryController({
     isProjectorTransmitting,
     handleSendSelectedMediaToProjector,
     handleCreateCustomItemFromMedia,
+    handleAddSlidesFromMedia,
+    canDragMediaToSlides,
     notifyMediaAction,
     triggerSlideBackgroundFeedback,
     onManageCanvaSource,
@@ -1665,5 +1715,7 @@ export function useMediaLibraryController({
     mediaItemsPerRow,
     mediaListRef,
     mediaGridRef,
+    canDragMediaToSlides,
+    orderedSelectedMediaIds,
   };
 }

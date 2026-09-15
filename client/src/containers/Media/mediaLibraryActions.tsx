@@ -87,6 +87,7 @@ export type ControllerFromSelectedMediaActions = {
   sendTargetLabel: string;
   onSendToProjector: () => void;
   onCreateCustomItem: () => void | Promise<void>;
+  onAddSlides?: () => void;
 };
 
 export type MediaLibraryBarAction = {
@@ -178,23 +179,11 @@ export function buildMediaLibraryBarActions(args: {
     onItemSlideBackgroundFeedback?.(feedbackId);
   };
 
-  if (hasMultipleSelection) {
-    return [
-      {
-        id: "delete-multiple",
-        label: `Delete ${selectedCount} items`,
-        icon: <Trash2 className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-        variant: "destructive",
-        onClick: onDeleteMultiple,
-      },
-    ];
-  }
-
   const m = primaryMedia;
   const mediaLabel = truncatedMediaToastLabel(m);
   const out: MediaLibraryBarAction[] = [];
 
-  if (flags.itemSlides) {
+  if (flags.itemSlides && !hasMultipleSelection) {
     const manualIdsForSubset = itemSlideContext
       ? filterExistingSlideIds(
         itemSlideContext.slides,
@@ -516,15 +505,27 @@ export function buildMediaLibraryBarActions(args: {
       sendTargetLabel,
       onSendToProjector,
       onCreateCustomItem,
+      onAddSlides,
     } = controllerFromSelectedMedia;
     /** Do not use `isLoading` (item document) here — it stays true during unrelated item fetches and incorrectly disables send. */
     const sendDisabled =
       !mediaHasSendableContent(m) || !isProjectorTransmitting;
-    const createLabel = isLocalVideoInputMedia(m)
-      ? "Create live input item"
-      : "Create custom item";
-    out.push(
-      {
+    const createLabel = hasMultipleSelection
+      ? "Create custom item"
+      : isLocalVideoInputMedia(m)
+        ? "Create live input item"
+        : "Create custom item";
+    if (onAddSlides && flags.itemSlides) {
+      out.push({
+        id: "add-slides-from-media",
+        label: hasMultipleSelection ? `Add ${selectedCount} slides` : "Add slide",
+        icon: <FilePlus2 className={MEDIA_LIBRARY_MEDIA_ACTION_CREATE_ICON_CLASS} />,
+        disabled: !db || !mediaHasSendableContent(m),
+        onClick: onAddSlides,
+      });
+    }
+    if (!hasMultipleSelection) {
+      out.push({
         id: "send-media-to-projector",
         label: `Send to ${sendTargetLabel}`,
         icon: (
@@ -537,8 +538,9 @@ export function buildMediaLibraryBarActions(args: {
         ),
         disabled: sendDisabled,
         onClick: onSendToProjector,
-      },
-      {
+      });
+    }
+    out.push({
         id: "create-custom-item-from-media",
         label: createLabel,
         icon: <FilePlus2 className={MEDIA_LIBRARY_MEDIA_ACTION_CREATE_ICON_CLASS} />,
@@ -546,16 +548,15 @@ export function buildMediaLibraryBarActions(args: {
         onClick: () => {
           void Promise.resolve(onCreateCustomItem());
         },
-      },
-    );
+    });
   }
 
   out.push({
-    id: "delete",
-    label: "Delete",
+    id: hasMultipleSelection ? "delete-multiple" : "delete",
+    label: hasMultipleSelection ? `Delete ${selectedCount} items` : "Delete",
     icon: <Trash2 className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
     variant: "destructive",
-    onClick: onDeleteSingle,
+    onClick: hasMultipleSelection ? onDeleteMultiple : onDeleteSingle,
   });
 
   return out;

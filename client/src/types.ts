@@ -284,7 +284,7 @@ export type ItemState = ItemProperties & {
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
-  isEditMode?: boolean;
+  isLyricsEditorOpen?: boolean;
   isLoading?: boolean;
   isSectionLoading?: boolean;
   isItemFormatting?: boolean;
@@ -320,6 +320,7 @@ export type FormattedLyrics = {
 
 export type FormattedSection = {
   sectionNum: number;
+  name?: string;
   words: string;
   slideSpan: number;
   id?: string;

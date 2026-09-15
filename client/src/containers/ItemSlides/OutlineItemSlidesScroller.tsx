@@ -16,7 +16,12 @@ import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
 import { useControllerBasePath } from "../../context/activeController";
-import type { Arrangment, ItemSlideType, TimerInfo } from "../../types";
+import type {
+  Arrangment,
+  FormattedSection,
+  ItemSlideType,
+  TimerInfo,
+} from "../../types";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { cn } from "../../utils/cnHelper";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -75,6 +80,7 @@ type OutlineItemSlidesScrollerProps = {
     index: number,
     options?: { skipNextClick?: boolean },
   ) => void;
+  onRenameSection?: (sectionNum: number, name: string) => void;
 };
 
 type OutlineActiveItemSource = {
@@ -85,6 +91,7 @@ type OutlineActiveItemSource = {
   slides?: ItemSlideType[];
   arrangements?: Arrangment[];
   selectedArrangement?: number;
+  formattedSections?: FormattedSection[];
 };
 
 const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
@@ -128,6 +135,7 @@ const OutlineItemSlidesScroller = ({
   selectSlide,
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
+  onRenameSection,
 }: OutlineItemSlidesScrollerProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -150,6 +158,7 @@ const OutlineItemSlidesScroller = ({
       slides: item.slides,
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
+      formattedSections: item.formattedSections,
     };
   }, shallowEqual);
   const activeItemListId = activeItem.listId;
@@ -939,6 +948,8 @@ const OutlineItemSlidesScroller = ({
                         itemType={section.type}
                         isMobile={isMobile}
                         draggedSection={isActive ? draggedSection : null}
+                        formattedSections={section.formattedSections}
+                        onRenameSection={isActive ? onRenameSection : undefined}
                         isStreamFormat={isStreamFormat}
                         getBibleInfo={getBibleInfoGetter(section.slides)}
                         borderWidth={sizeConfig.borderWidth}

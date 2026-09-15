@@ -10,9 +10,14 @@ export type FileType = "image" | "video";
 
 export type FileUploadProgress = {
   file: File;
+  /** Temporary user-facing name; the source File.name remains immutable. */
+  displayName: string;
   fileType: FileType;
   status: UploadStatus;
   progress: number;
+  /** Local import succeeds before an optional cloud share. Keep its identity
+   * so retrying a cloud failure does not create a second local media item. */
+  localMedia?: MediaType;
   error?: string;
   canConvertForOfflinePlayback?: boolean;
 };
@@ -30,6 +35,7 @@ export type MediaUploadInputProps = {
 
 export type MediaUploadInputRef = {
   openModal: () => void;
+  openModalWithFiles: (files: File[]) => void;
   getUploadStatus: () => {
     isUploading: boolean;
     progress: number;

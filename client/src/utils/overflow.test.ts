@@ -268,6 +268,42 @@ describe("overflow utilities", () => {
     expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
+  it("preserves a custom section name during free-form reflow", () => {
+    const item = {
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [
+        {
+          id: "s2",
+          name: "Section 2A",
+          type: "Custom",
+          overflow: "fit",
+          boxes: [
+            { background: "bg", width: 100, height: 100 },
+            {
+              words: "Updated",
+              fontSize: 40,
+              fontColor: "#fff",
+              width: 100,
+              height: 100,
+              topMargin: 0,
+              sideMargin: 0,
+              isBold: false,
+              isItalic: false,
+            },
+          ],
+        },
+      ],
+      formattedSections: [
+        { sectionNum: 2, name: "Announcements", words: "Updated", slideSpan: 1 },
+      ],
+    } as any;
+
+    const result = formatFree(item);
+    expect(result.formattedSections?.[0]?.name).toBe("Announcements");
+    expect(result.slides[0].name).toBe("Section 2");
+  });
+
   it("preserves live-input mediaSource when rebuilding a Section-named slide", () => {
     const mediaSource = {
       kind: "local-video-input" as const,
