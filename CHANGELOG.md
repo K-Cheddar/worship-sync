@@ -1,3 +1,30 @@
+# [2.34.0](https://github.com/K-Cheddar/worship-sync/compare/v2.33.1...v2.34.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* improve account people layout ([5ed5a50](https://github.com/K-Cheddar/worship-sync/commit/5ed5a5084d41afe81839a7e89768b33bca2e7061))
+* make restream message persistence idempotent ([49e5cb4](https://github.com/K-Cheddar/worship-sync/commit/49e5cb41552daefba5d51009af25c87a351fd789))
+
+
+### Features
+
+* add account workspace and service plan email support ([0eb3486](https://github.com/K-Cheddar/worship-sync/commit/0eb34864b2eff39e19b648016d357ea419a4db86))
+* connect account workspace navigation ([2d4a9f2](https://github.com/K-Cheddar/worship-sync/commit/2d4a9f26e96aa383841fc824f6481060c5e51a00))
+* expand current service and service plan workflows ([f4be7c6](https://github.com/K-Cheddar/worship-sync/commit/f4be7c64b179acbe78091f401592926e7a13fc47))
+* harden discussion boards and restream sessions ([636b6eb](https://github.com/K-Cheddar/worship-sync/commit/636b6eb4bb70bf6429cdf4867c7cffd7649db70d))
+* improve media and display rendering paths ([d717991](https://github.com/K-Cheddar/worship-sync/commit/d717991b023a8a280a7a5be6024bf7800743e2da))
+* improve presentation and media workflows ([82fa9b3](https://github.com/K-Cheddar/worship-sync/commit/82fa9b31622cff013aacc210bf70238e94a8aa0f))
+* improve service plan email sharing ([edeaacb](https://github.com/K-Cheddar/worship-sync/commit/edeaacb257469dcc15ee053d6ff3917a9f09652e))
+* refine auxiliary controller workflows ([450c99b](https://github.com/K-Cheddar/worship-sync/commit/450c99b5823b2a0f1c42024f166ef7f909a2b841))
+* strengthen team scheduling workflows ([f589f9b](https://github.com/K-Cheddar/worship-sync/commit/f589f9b3d09e4af062037d3f8ab0526b99a5a303))
+* support offline-compatible local video media ([ad9048a](https://github.com/K-Cheddar/worship-sync/commit/ad9048a12cc287af037f885554b38ff9f001125c))
+
+
+### Performance Improvements
+
+* improve live local video capture paths ([7a291b9](https://github.com/K-Cheddar/worship-sync/commit/7a291b9a1ceb44890807e94b71359f38881c73d2))
+
 ## [2.33.1](https://github.com/K-Cheddar/worship-sync/compare/v2.33.0...v2.33.1) (2026-09-10)
 
 
