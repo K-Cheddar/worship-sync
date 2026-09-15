@@ -554,6 +554,81 @@ describe("ItemSlides", () => {
     ]);
   });
 
+  it("reorders a multi-slide section relative to the target after removing it", () => {
+    mockState.undoable.present.item.slides = [
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-1-slide-${index + 1}`,
+        name: `Section 1${index ? "A" : ""}`,
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-2-slide-${index + 1}`,
+        name: `Section 2${index ? "A" : ""}`,
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-3-slide-${index + 1}`,
+        name: `Section 3${index ? "A" : ""}`,
+      })),
+    ];
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "section-1-slide-1",
+        data: { current: { kind: "slide", slideId: "section-1-slide-1" } },
+      },
+      over: {
+        id: "section-3-slide-1",
+        data: { current: { kind: "slide", slideId: "section-3-slide-1" } },
+      },
+    };
+
+    act(() => mockDndMonitorListener?.onDragOver?.(dragEvent));
+
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual([
+      "Section 2",
+      "Section 2A",
+      "Section 3",
+      "Section 3A",
+      "Section 1",
+      "Section 1A",
+    ]);
+  });
+
+  it("matches section numbers exactly when reordering custom sections", () => {
+    mockState.undoable.present.item.slides = [1, 2, 10].map((sectionNum) => ({
+      ...baseSlides[0],
+      id: `section-${sectionNum}`,
+      name: `Section ${sectionNum}`,
+    }));
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "section-1",
+        data: { current: { kind: "slide", slideId: "section-1" } },
+      },
+      over: {
+        id: "section-2",
+        data: { current: { kind: "slide", slideId: "section-2" } },
+      },
+    };
+
+    act(() => mockDndMonitorListener?.onDragOver?.(dragEvent));
+
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual(["Section 2", "Section 1", "Section 10"]);
+  });
+
   it("discards a free slide preview on drag cancel", () => {
     mockState.undoable.present.item.slides = Array.from(
       { length: 5 },

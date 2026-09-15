@@ -129,6 +129,7 @@ const QuickLink = ({
 
   return (
     <li
+      data-quick-link-tile={compact ? "true" : undefined}
       className={cn(
         "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit",
         compact && "border border-gray-500",

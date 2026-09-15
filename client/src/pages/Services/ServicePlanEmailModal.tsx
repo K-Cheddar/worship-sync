@@ -178,7 +178,7 @@ const ServicePlanEmailModal = ({
   const suggestions = recentRecipients.filter(
     (recipient) =>
       !recipients.some((current) => current.toLowerCase() === recipient.toLowerCase()) &&
-      recipient.includes(recipientInput.trim().toLowerCase()),
+      recipient.toLowerCase().includes(recipientInput.trim().toLowerCase()),
   );
 
   const commitRecipientText = (raw: string) => {

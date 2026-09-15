@@ -16,9 +16,7 @@ import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 import PopOver from "../PopOver/PopOver";
 
 const COMPACT_QUICK_LINK_COLUMNS = 1;
-const COMPACT_QUICK_LINK_TILE_HEIGHT = 76;
 const COMPACT_QUICK_LINK_GAP = 4;
-const FALLBACK_QUICK_LINK_CAPACITY = 4;
 
 type PresentationPreviewProps = {
   name: string;
@@ -104,7 +102,7 @@ const PresentationPreview = ({
   const quickLinkRailRef = useRef<HTMLUListElement | null>(null);
   const previewColumnRef = useRef<HTMLDivElement | null>(null);
   const [quickLinkCapacity, setQuickLinkCapacity] = useState(
-    FALLBACK_QUICK_LINK_CAPACITY,
+    1,
   );
   const [previewColumnHeight, setPreviewColumnHeight] = useState<number | null>(
     null,
@@ -126,15 +124,32 @@ const PresentationPreview = ({
 
     const updateQuickLinkCapacity = () => {
       const rail = quickLinkRailRef.current;
-      if (!rail || rail.clientHeight === 0) {
-        setQuickLinkCapacity(FALLBACK_QUICK_LINK_CAPACITY);
+      const tiles = rail
+        ? Array.from(
+            rail.querySelectorAll<HTMLElement>("[data-quick-link-tile]"),
+          )
+        : [];
+      if (!rail || tiles.length === 0 || rail.clientHeight === 0) {
+        setQuickLinkCapacity(1);
+        return;
+      }
+      const railStyle = window.getComputedStyle(rail);
+      const verticalPadding =
+        (parseFloat(railStyle.paddingTop) || 0) +
+        (parseFloat(railStyle.paddingBottom) || 0);
+      const availableHeight = Math.max(0, rail.clientHeight - verticalPadding);
+      const tileHeight = Math.max(
+        ...tiles.map((tile) => tile.getBoundingClientRect().height),
+      );
+      if (tileHeight <= 0) {
+        setQuickLinkCapacity(1);
         return;
       }
       const rows = Math.max(
         1,
         Math.floor(
-          (rail.clientHeight + COMPACT_QUICK_LINK_GAP) /
-          COMPACT_QUICK_LINK_TILE_HEIGHT,
+          (availableHeight + COMPACT_QUICK_LINK_GAP) /
+            (tileHeight + COMPACT_QUICK_LINK_GAP),
         ),
       );
       setQuickLinkCapacity(rows * COMPACT_QUICK_LINK_COLUMNS);
@@ -147,9 +162,14 @@ const PresentationPreview = ({
 
     const observer = new ResizeObserver(updateQuickLinkCapacity);
     if (quickLinkRailRef.current) observer.observe(quickLinkRailRef.current);
+    if (quickLinkRailRef.current) {
+      quickLinkRailRef.current
+        .querySelectorAll<HTMLElement>("[data-quick-link-tile]")
+        .forEach((tile) => observer.observe(tile));
+    }
     updateQuickLinkCapacity();
     return () => observer.disconnect();
-  }, [filteredQuickLinks.length, hideQuickLinks]);
+  }, [filteredQuickLinks.length, hideQuickLinks, quickLinkCapacity]);
 
   useEffect(() => {
     if (hideQuickLinks) return;

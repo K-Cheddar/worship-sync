@@ -151,25 +151,24 @@ const reorderSlidesForDrag = (
   const draggedSlide = slides.find((slide) => slide.id === activeId);
   if (!draggedSlide) return slides;
 
-  const sectionMatch = draggedSlide.name.match(/Section (\d+)/);
-  if (!sectionMatch) return slides;
-  const sectionNum = sectionMatch[1];
-  const sectionSlides = slides.filter((slide) =>
-    slide.name.includes(`Section ${sectionNum}`),
+  const sectionNum = getFreeSectionNumber(draggedSlide);
+  if (sectionNum == null) return slides;
+  const sectionSlides = slides.filter(
+    (slide) => getFreeSectionNumber(slide) === sectionNum,
   );
   const targetSlide = slides.find((slide) => slide.id === overId);
   if (!targetSlide) return slides;
 
   const targetIndex = slides.findIndex((slide) => slide.id === overId);
-  const targetSectionMatch = targetSlide.name.match(/Section (\d+)/);
-  if (targetSectionMatch && targetSectionMatch[1] !== sectionNum) {
+  const targetSectionNum = getFreeSectionNumber(targetSlide);
+  if (targetSectionNum != null && targetSectionNum !== sectionNum) {
     const targetSectionStart = slides.findIndex((slide) =>
-      slide.name.includes(`Section ${targetSectionMatch[1]}`),
+      getFreeSectionNumber(slide) === targetSectionNum,
     );
     const targetSectionEnd = slides.findIndex(
       (slide, index) =>
         index > targetSectionStart &&
-        !slide.name.includes(`Section ${targetSectionMatch[1]}`),
+        getFreeSectionNumber(slide) !== targetSectionNum,
     );
     if (
       targetIndex > targetSectionStart &&
@@ -179,12 +178,33 @@ const reorderSlidesForDrag = (
     }
   }
 
-  const firstSectionIndex = slides.findIndex((slide) =>
-    slide.name.includes(`Section ${sectionNum}`),
+  const firstSectionIndex = slides.findIndex(
+    (slide) => getFreeSectionNumber(slide) === sectionNum,
   );
   const updatedSlides = [...slides];
   updatedSlides.splice(firstSectionIndex, sectionSlides.length);
-  updatedSlides.splice(targetIndex, 0, ...sectionSlides);
+  const updatedTargetIndex = updatedSlides.findIndex(
+    (slide) => slide.id === overId,
+  );
+  if (updatedTargetIndex < 0) return slides;
+  let insertionIndex = updatedTargetIndex + 1;
+  if (targetSectionNum != null) {
+    const updatedTargetSectionStart = updatedSlides.findIndex(
+      (slide) => getFreeSectionNumber(slide) === targetSectionNum,
+    );
+    if (updatedTargetIndex === updatedTargetSectionStart) {
+      const updatedTargetSectionEnd = updatedSlides.findIndex(
+        (slide, index) =>
+          index > updatedTargetSectionStart &&
+          getFreeSectionNumber(slide) !== targetSectionNum,
+      );
+      insertionIndex =
+        updatedTargetSectionEnd < 0
+          ? updatedSlides.length
+          : updatedTargetSectionEnd;
+    }
+  }
+  updatedSlides.splice(insertionIndex, 0, ...sectionSlides);
   return updatedSlides;
 };
 

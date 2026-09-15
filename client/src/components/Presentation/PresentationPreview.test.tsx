@@ -8,20 +8,13 @@ const mockDisplayWindow = jest.fn((_: any) => (
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => jest.fn(),
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ undoable: { present: { overlays: { list: [] } } } }),
 }));
 
 jest.mock("../DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
   default: (props: unknown) => mockDisplayWindow(props),
-}));
-
-jest.mock("../QuickLink/QuickLink", () => ({
-  __esModule: true,
-  default: ({ label, onAction }: { label: string; onAction?: () => void }) => (
-    <button type="button" onClick={onAction}>
-      {label}
-    </button>
-  ),
 }));
 
 const basePresentation = {
@@ -72,6 +65,9 @@ describe("PresentationPreview", () => {
         if (this.getAttribute("data-measure") === "presentation-header") {
           return headerWidth;
         }
+        if (this.getAttribute("data-testid") === "quick-link-rail-projector") {
+          return 300;
+        }
         return 0;
       });
 
@@ -99,6 +95,9 @@ describe("PresentationPreview", () => {
         }
         if (measure === "presentation-toggle-label-width") {
           return makeRect(88) as DOMRect;
+        }
+        if (this.getAttribute("data-quick-link-tile") === "true") {
+          return { ...makeRect(0), height: 100 } as DOMRect;
         }
         return makeRect(0) as DOMRect;
       });
@@ -310,12 +309,12 @@ describe("PresentationPreview", () => {
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[
-          { id: "q1", label: "Link 1" },
-          { id: "q2", label: "Link 2" },
-          { id: "q3", label: "Link 3" },
-          { id: "q4", label: "Link 4" },
-          { id: "q5", label: "Link 5" },
-          { id: "q6", label: "Link 6" },
+          { id: "q1", label: "Link 1", action: "slide" },
+          { id: "q2", label: "Link 2", action: "slide" },
+          { id: "q3", label: "Link 3", action: "slide" },
+          { id: "q4", label: "Link 4", action: "slide" },
+          { id: "q5", label: "Link 5", action: "slide" },
+          { id: "q6", label: "Link 6", action: "slide" },
         ] as never[]}
         timers={[]}
       />,
@@ -323,17 +322,20 @@ describe("PresentationPreview", () => {
 
     expect(screen.getByTestId("quick-link-rail-projector")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Link 1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Link 3" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link 2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link 3" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Link 4" })).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: "Show 3 more Quick Links" }),
+      screen.getByRole("button", { name: "Show 5 more Quick Links" }),
     );
 
+    expect(screen.getByRole("button", { name: "Link 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 3" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Link 4" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Link 5" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Link 6" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Link 4" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Link 2" })).toHaveLength(1);
   });
 
   it("does not render an overflow control when all links fit", () => {
@@ -345,7 +347,7 @@ describe("PresentationPreview", () => {
         prevInfo={basePresentation}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
-        quickLinks={[{ id: "q1", label: "Only link" }] as never[]}
+        quickLinks={[{ id: "q1", label: "Only link", action: "slide" }] as never[]}
         timers={[]}
       />,
     );
