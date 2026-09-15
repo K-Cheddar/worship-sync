@@ -2474,8 +2474,12 @@ Opening Song to begin the worship experience.
       screen.getByRole("button", { name: /View simple view/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: /^Email$/i }),
+      screen.getByRole("button", { name: /Email detailed view/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Email simple view/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /^Email$/i })).not.toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /Save as template/i }),
     ).toBeInTheDocument();
@@ -2494,13 +2498,23 @@ Opening Song to begin the worship experience.
       screen.queryByText(/Serving links include notes/i),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: /^Email$/i }));
+    await user.click(screen.getByRole("button", { name: /Email detailed view/i }));
     expect(
       await screen.findByRole("heading", { name: "Email service plan" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /^Subject:/ })).toHaveDisplayValue(
       /Easter Sunday Service Plan/,
     );
+    expect(screen.getByText(/current detailed service plan link/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.keyboard("{Escape}");
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(screen.getByRole("button", { name: /Email simple view/i }));
+    expect(
+      await screen.findByText(/current simple service plan link/i),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     await user.keyboard("{Escape}");
@@ -2845,18 +2859,24 @@ Opening Song to begin the worship experience.
     await user.clear(sectionName);
     await user.type(sectionName, "Opening");
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /^Email$/i }));
+    await user.click(await screen.findByRole("button", { name: /Email detailed view/i }));
     await user.type(
-      await screen.findByRole("textbox", { name: /^To:/ }),
+      await screen.findByRole("textbox", { name: "To" }),
       "one@example.com",
     );
     await user.click(screen.getByRole("button", { name: "Send email" }));
 
     await waitFor(() => {
-      expect(mockSendServicePlanShareEmail).toHaveBeenCalled();
+      expect(mockSendServicePlanShareEmail).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-07-26",
+        expect.objectContaining({ shareVersion: "detailed" }),
+      );
     });
     expect(
-      await screen.findByText("Service plan email sent successfully."),
+      await screen.findByText(
+        "Service plan email sent successfully to one@example.com.",
+      ),
     ).toBeInTheDocument();
     expect(events).toEqual(["save", "send"]);
   });

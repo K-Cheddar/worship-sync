@@ -130,6 +130,7 @@ export const createTeamsAuthHandlers = ({
   getUserByUid,
   getChurchById,
   sendEmail,
+  servicePlanFromEmail,
   emailDeliveryConfigured = false,
   renderScheduleAssignmentEmail,
   renderServicePlanShareEmail,
@@ -1654,6 +1655,15 @@ export const createTeamsAuthHandlers = ({
       if (!recipients.includes(recipient)) recipients.push(recipient);
     }
     return recipients;
+  };
+
+  const validateServicePlanShareVersion = (value) => {
+    // Omitted values retain the previous email behavior for older clients.
+    if (value === undefined) return "simple";
+    if (value !== "detailed" && value !== "simple") {
+      throw httpError(400, "Choose a valid service plan version.");
+    }
+    return value;
   };
 
   const formatServicePlanEmailDate = (date, startsAt) => {
@@ -8883,7 +8893,7 @@ export const createTeamsAuthHandlers = ({
       let recipientCount = 0;
       try {
         await assertCsrf(req);
-        await requireServicesEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const recipients = validateServicePlanEmailRecipients(
           req.body?.recipients,
         );
@@ -8897,6 +8907,9 @@ export const createTeamsAuthHandlers = ({
           req.body?.message,
           "Message",
           MAX_SERVICE_PLAN_EMAIL_MESSAGE_LENGTH,
+        );
+        const shareVersion = validateServicePlanShareVersion(
+          req.body?.shareVersion,
         );
         enforceRateLimit({
           scope: "service-plan-share-email",
@@ -8913,10 +8926,7 @@ export const createTeamsAuthHandlers = ({
         if (!servicePlan || servicePlan.churchId !== churchId) {
           throw httpError(404, "Service plan not found.");
         }
-        const shareToken = String(
-          servicePlan.publicGeneralLinkToken || servicePlan.publicLinkToken || "",
-        ).trim();
-        if (!servicePlan.published || !shareToken) {
+        if (!servicePlan.published) {
           throw httpError(
             400,
             "Enable shared links before emailing this service plan.",
@@ -8925,13 +8935,21 @@ export const createTeamsAuthHandlers = ({
         if (!emailDeliveryConfigured) {
           throw httpError(503, "Email is not configured on this server.");
         }
+        const { publicLinkToken, publicGeneralLinkToken } =
+          await ensureServicePlanPublicTokens(
+            servicePlan,
+            sessionActorUid(admin),
+            buildServicePlanDocId(churchId, planKey),
+          );
 
-        // Prefer the general token so a broad email does not expose serving
-        // notes. Older published plans may only have the detailed token.
+        // The server derives the trusted token from the requested version;
+        // client-supplied URLs are never accepted.
+        const shareToken =
+          shareVersion === "detailed"
+            ? publicLinkToken
+            : publicGeneralLinkToken;
         const shareUrl = buildPublicServicePlanUrl(shareToken);
-        const church = await getDoc(COLLECTIONS.churches, churchId);
         const { html, text } = await renderServicePlanShareEmail({
-          churchName: String(church?.name || ""),
           serviceName: String(servicePlan.name || "Service"),
           serviceDate: formatServicePlanEmailDate(
             servicePlan.date,
@@ -8948,6 +8966,7 @@ export const createTeamsAuthHandlers = ({
               subject,
               textBody: text,
               htmlBody: html,
+              fromEmail: servicePlanFromEmail,
               tags: {
                 type: "service_plan_share",
                 churchId,

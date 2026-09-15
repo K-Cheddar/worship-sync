@@ -1726,10 +1726,13 @@ export const publishServicePlan = async (churchId: string, planKey: string) =>
     { method: "POST", body: JSON.stringify({}) },
   );
 
+export type ServicePlanShareVersion = "detailed" | "simple";
+
 export type ServicePlanShareEmailPayload = {
   recipients: string[];
   subject: string;
   message: string;
+  shareVersion: ServicePlanShareVersion;
 };
 
 export type ServicePlanShareEmailResult = {

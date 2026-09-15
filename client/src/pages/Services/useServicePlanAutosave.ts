@@ -275,7 +275,10 @@ export const useServicePlanAutosave = <
       const pending = pendingRef.current;
       pendingRef.current = null;
       if (!pending) return;
-      if (changeVersionRef.current <= savedVersionRef.current) return;
+      // `changeVersionRef` already belongs to the newly selected plan here.
+      // The captured snapshot is the authority for whether the plan we left
+      // still needs its final write.
+      if (pending.version <= savedVersionRef.current) return;
 
       void (async () => {
         if (inFlight) {

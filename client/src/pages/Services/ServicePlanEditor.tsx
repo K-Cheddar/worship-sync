@@ -78,6 +78,7 @@ import {
   updateServicePlanPublicLive,
   AuthApiError,
   type ServicePlanPublicUrls,
+  type ServicePlanShareVersion,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -587,6 +588,8 @@ const ServicePlanEditor = ({
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalInitialVersion, setEmailModalInitialVersion] =
+    useState<ServicePlanShareVersion>("detailed");
   const [showServiceDetails, setShowServiceDetails] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
   const [planActionsView, setPlanActionsView] = useState<
@@ -1412,6 +1415,13 @@ const ServicePlanEditor = ({
     }
   };
 
+  const openServicePlanEmailModal = (shareVersion: ServicePlanShareVersion) => {
+    setShareMenuOpen(false);
+    setPlanActionsOpen(false);
+    setEmailModalInitialVersion(shareVersion);
+    setEmailModalOpen(true);
+  };
+
   const handleSendServicePlanEmail = async (draft: ServicePlanEmailDraft) => {
     if (!churchId || !planKey || !plan) {
       throw new Error("This service plan is not ready to email. Try again in a moment.");
@@ -1918,6 +1928,19 @@ const ServicePlanEditor = ({
         >
           View
         </ButtonGroupItem>
+        <ButtonGroupItem
+          type="button"
+          variant="primary"
+          iconSize="sm"
+          svg={Mail}
+          color="#22d3ee"
+          disabled={shareActionsDisabled}
+          className="max-md:min-h-0"
+          aria-label={`Email ${label.toLowerCase()}`}
+          onClick={() => openServicePlanEmailModal(kind)}
+        >
+          Email
+        </ButtonGroupItem>
       </ButtonGroup>
     </div>
   );
@@ -1964,16 +1987,6 @@ const ServicePlanEditor = ({
     <>
       {shareViewActions("detailed", "Detailed view")}
       {shareViewActions("simple", "Simple view")}
-      <DropdownMenuItem
-        disabled={shareActionsDisabled}
-        onSelect={() => {
-          closeShareMenus();
-          setEmailModalOpen(true);
-        }}
-      >
-        <Mail aria-hidden />
-        Email
-      </DropdownMenuItem>
       <DropdownMenuSeparator className="my-1 bg-gray-600" />
       {renderSharePublishingItems()}
     </>
@@ -3023,6 +3036,7 @@ const ServicePlanEditor = ({
         <ServicePlanEmailModal
           serviceName={planName.trim() || occurrence.name || service.name || "Service"}
           dateLabel={formatServicePlanEmailDate(occurrence.startsAt, planTimezone)}
+          initialShareVersion={emailModalInitialVersion}
           onClose={() => setEmailModalOpen(false)}
           onSend={handleSendServicePlanEmail}
         />

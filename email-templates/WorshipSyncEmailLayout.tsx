@@ -107,7 +107,7 @@ export default function WorshipSyncEmailLayout({
               textAlign: "center",
             }}
           >
-            WorshipSync — live presentation for your church.
+            WorshipSync — From planning to presentation - worship in sync.
           </Text>
         </Container>
       </Body>

@@ -46,6 +46,7 @@ const validBody = {
   recipients: ["one@example.com", "two@example.com"],
   subject: "Easter Sunday Service Plan — July 26, 2026",
   message: "Here is the service plan.",
+  shareVersion: "simple",
   // The endpoint deliberately ignores client-supplied URLs.
   shareUrl: "https://example.invalid/not-the-plan",
 };
@@ -58,6 +59,7 @@ const createHarness = ({
 } = {}) => {
   const rateLimitCalls = [];
   const logs = [];
+  const setDocCalls = [];
   const handler = createTeamsAuthHandlers({
     COLLECTIONS,
     assertCsrf: async () => undefined,
@@ -76,10 +78,14 @@ const createHarness = ({
       }
       return null;
     },
+    setDoc: async (...args) => setDocCalls.push(args),
     normalizeEmail: (value) => value.trim().toLowerCase(),
+    hashValue: (value) => `hash:${value}`,
+    nowIso: () => "2026-07-01T00:00:00.000Z",
     enforceRateLimit: (options) => rateLimitCalls.push(options),
     getClientIp: () => "127.0.0.1",
     sendEmail,
+    servicePlanFromEmail: "WorshipSync Notifications <notifications@mail.worshipsync.net>",
     emailDeliveryConfigured,
     renderServicePlanShareEmail,
     logAuthEvent: (...args) => logs.push(args),
@@ -89,7 +95,12 @@ const createHarness = ({
       return error;
     },
   });
-  return { handler: handler.sendServicePlanShareEmail, rateLimitCalls, logs };
+  return {
+    handler: handler.sendServicePlanShareEmail,
+    rateLimitCalls,
+    logs,
+    setDocCalls,
+  };
 };
 
 const callHandler = async (harness, options = {}) => {
@@ -119,10 +130,69 @@ test("sends an authorized Service Plan email with the trusted public URL", async
     ["one@example.com", "two@example.com"],
   );
   assert.equal(sends[0].subject, validBody.subject);
+  assert.equal(
+    sends[0].fromEmail,
+    "WorshipSync Notifications <notifications@mail.worshipsync.net>",
+  );
   assert.match(sends[0].htmlBody, /https:\/\/www\.worshipsync\.net\/services\/general-token/);
   assert.match(sends[0].textBody, /https:\/\/www\.worshipsync\.net\/services\/general-token/);
+  assert.match(sends[0].htmlBody, /View Service Plan/);
   assert.doesNotMatch(sends[0].htmlBody, /example\.invalid/);
+  assert.doesNotMatch(sends[0].htmlBody, /This link opens the current version/);
+  assert.doesNotMatch(sends[0].textBody, /This link opens the current version/);
   assert.equal(harness.rateLimitCalls[0].scope, "service-plan-share-email");
+});
+
+test("sends the detailed public URL when the detailed version is selected", async () => {
+  const sends = [];
+  const harness = createHarness({
+    sendEmail: async (payload) => sends.push(payload),
+  });
+
+  const res = await callHandler(harness, {
+    body: { ...validBody, shareVersion: "detailed" },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.match(sends[0].htmlBody, /https:\/\/www\.worshipsync\.net\/services\/detailed-token/);
+  assert.match(sends[0].textBody, /https:\/\/www\.worshipsync\.net\/services\/detailed-token/);
+  assert.doesNotMatch(sends[0].htmlBody, /general-token/);
+});
+
+test("rejects an invalid Service Plan email version", async () => {
+  const sends = [];
+  const harness = createHarness({
+    sendEmail: async (payload) => sends.push(payload),
+  });
+
+  const res = await callHandler(harness, {
+    body: { ...validBody, shareVersion: "unknown" },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.match(res.payload.errorMessage, /valid service plan version/i);
+  assert.equal(sends.length, 0);
+});
+
+test("backfills and emails a general-only link for a legacy published plan", async () => {
+  const sends = [];
+  const harness = createHarness({
+    plan: { ...basePlan, publicGeneralLinkToken: undefined },
+    sendEmail: async (payload) => sends.push(payload),
+  });
+
+  const res = await callHandler(harness, { body: validBody });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(harness.setDocCalls.length, 1);
+  const patch = harness.setDocCalls[0][2];
+  assert.ok(patch.publicGeneralLinkToken);
+  assert.notEqual(patch.publicGeneralLinkToken, "detailed-token");
+  assert.match(
+    sends[0].htmlBody,
+    new RegExp(`/services/${patch.publicGeneralLinkToken}`),
+  );
+  assert.doesNotMatch(sends[0].htmlBody, /\/services\/detailed-token/);
 });
 
 test("rejects an unauthorized Service Plan email without sending", async () => {

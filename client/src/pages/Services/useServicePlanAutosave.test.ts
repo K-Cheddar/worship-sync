@@ -205,7 +205,9 @@ describe("useServicePlanAutosave", () => {
     view.rerender({
       ...options,
       resetKey: "plan-b",
-      changeVersion: 1,
+      // A newly loaded plan starts with a clean draft counter. This must not
+      // make the previous plan's captured pending version look saved.
+      changeVersion: 0,
       save: saveB,
       buildPayload: () => payloadFor("B"),
     });
