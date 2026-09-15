@@ -15,6 +15,7 @@ import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getFormattedSections } from "../../utils/overflow";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 const Item = () => {
   const { itemId, listId } = useParams();
@@ -44,6 +45,7 @@ const Item = () => {
   const { isLoading, isSectionLoading, _id: activeItemId, listId: activeListId } =
     useSelector((state: RootState) => state.undoable.present.item);
   const showSlidesLoadingOverlay = isSectionLoading && !isLoading;
+  const { mode } = usePresentationControllerMode();
   const activeItemRef = useRef({ id: activeItemId, listId: activeListId });
   activeItemRef.current = { id: activeItemId, listId: activeListId };
 
@@ -118,7 +120,7 @@ const Item = () => {
   return (
     <ErrorBoundary>
       <div className="flex-1 min-h-0 flex flex-col">
-        <SlideEditor access={access} />
+        <SlideEditor access={access} presentationMode={mode} />
         <LoadingOverlay
           isLoading={Boolean(showSlidesLoadingOverlay)}
           className="flex-1 min-h-0"

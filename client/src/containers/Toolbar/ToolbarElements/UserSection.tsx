@@ -58,7 +58,7 @@ const getPresenceRouteLabel = (presenceRoute?: string | null) => {
   return "Display";
 };
 
-const UserSection = () => {
+const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" }) => {
   const {
     user,
     userEmail,
@@ -239,10 +239,38 @@ const UserSection = () => {
           variant="tertiary"
           gap="gap-2"
           padding="py-0.5 px-1"
-          className="h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"
+          className={variant === "compact"
+            ? "h-auto min-h-0! rounded-md p-0! font-normal"
+            : "h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"}
           aria-label={accountAriaLabel}
         >
-          <div
+          {variant === "compact" ? (
+            <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
+              {anyAutosavePending ? (
+                <Loader2 className="size-3.5 animate-spin text-gray-400" aria-label="Syncing" />
+              ) : (
+                <Cloud className="size-3.5 text-emerald-400" aria-label="Synced" />
+              )}
+              <span className={anyAutosavePending ? "text-xs text-gray-400" : "text-xs text-emerald-400"}>
+                {anyAutosavePending ? "Syncing..." : "Synced"}
+              </span>
+              <span className="max-w-28 truncate text-sm font-semibold">
+                {toolbarFirstName || fullDisplayName || "—"}
+              </span>
+              {!isMobile && !isDemo ? (
+                <span className="flex items-center gap-1 text-sm tabular-nums" title="Active sessions">
+                  <Icon svg={Users} size="xs" color="#22d3ee" />
+                  {activeCount}
+                </span>
+              ) : null}
+              {chat?.unreadCount ? (
+                <span className="flex items-center gap-1 text-sm tabular-nums text-cyan-300" title="Unread team chat">
+                  <Icon svg={MessageCircle} size="xs" color="#22d3ee" />
+                  {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
+                </span>
+              ) : null}
+            </div>
+          ) : <div
             className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
             {(!isDemo || anyAutosavePending) ? (
@@ -319,7 +347,7 @@ const UserSection = () => {
                 </span>
               ) : null}
             </div>
-          </div>
+          </div>}
         </Button>
       }
     >

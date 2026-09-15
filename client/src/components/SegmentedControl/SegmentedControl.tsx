@@ -21,6 +21,7 @@ type SegmentedControlProps<T extends string> = {
   ariaLabel: string;
   variant?: SegmentedControlVariant;
   className?: string;
+  disabled?: boolean;
   /** Stretch segments evenly across the row — useful on narrow public/mobile screens. */
   fullWidth?: boolean;
 };
@@ -72,6 +73,7 @@ const SegmentedControl = <T extends string>({
   ariaLabel,
   variant = "admin",
   className,
+  disabled = false,
   fullWidth = false,
 }: SegmentedControlProps<T>) => {
   const styles = itemClassNames[variant];
@@ -95,6 +97,7 @@ const SegmentedControl = <T extends string>({
             variant="tertiary"
             isSelected={selected}
             padding="p-0"
+            disabled={disabled}
             aria-pressed={selected}
             className={cn(
               styles.base,

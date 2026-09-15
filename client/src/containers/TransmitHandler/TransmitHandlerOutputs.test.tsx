@@ -322,6 +322,40 @@ describe("mirror controls on an auxiliary controller", () => {
     expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
   });
 
+  it("toggles mirroring from the same control", async () => {
+    const user = userEvent.setup();
+    const store = createAuxStore();
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    const preview = within(screen.getByTestId("preview-Lobby"));
+    const mirrorButton = preview.getByRole("button", { name: "Mirror Main" });
+
+    await user.click(mirrorButton);
+
+    const stopButton = preview.getByRole("button", {
+      name: "Stop mirroring",
+    });
+    expect(stopButton).toHaveAttribute("aria-pressed", "true");
+    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
+      "projector",
+    );
+
+    await user.click(stopButton);
+
+    expect(
+      preview.getByRole("button", { name: "Mirror Main" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
+      "",
+    );
+  });
+
   it("does not offer Mirror on the presentation controller even when another projector exists", () => {
     renderHandler(createStore());
     expect(

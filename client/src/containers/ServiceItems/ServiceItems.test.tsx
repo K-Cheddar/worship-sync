@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
 const mockUseDisplayedUpcomingService = jest.fn();
@@ -64,7 +65,11 @@ jest.mock("../Toolbar/ToolbarElements/Outlines", () => ({
 
 jest.mock("../../components/ActionBar/ActionBar", () => ({
   __esModule: true,
-  default: () => <div data-testid="action-bar" />,
+  default: ({ items }: { items?: Array<{ label: string }> }) => (
+    <div data-testid="action-bar">
+      {items?.map((item) => <span key={item.label}>{item.label}</span>)}
+    </div>
+  ),
 }));
 
 jest.mock("../../components/FloatingWindow/FloatingWindow", () => ({
@@ -306,6 +311,25 @@ describe("ServiceItems", () => {
         </GlobalInfoContext.Provider>
       </ControllerInfoContext.Provider>,
     );
+
+  it("keeps the Service plan action available in Present mode", () => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+
+    render(
+      <ControllerInfoContext.Provider
+        value={{ access: "full", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <PresentationControllerModeProvider>
+            <ServiceItems />
+          </PresentationControllerModeProvider>
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("action-bar")).toHaveTextContent("Service plan");
+    expect(screen.getByTestId("action-bar")).not.toHaveTextContent("Add heading");
+  });
 
   it("requests a return to the selected slide when the current outline item is clicked again", () => {
     mockState.undoable.present.itemList.selectedItemListId = "row-timer";

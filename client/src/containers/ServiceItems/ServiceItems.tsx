@@ -48,6 +48,7 @@ import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService
 import NextServiceCountdownText from "../../components/NextServiceCountdownText/NextServiceCountdownText";
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -79,6 +80,8 @@ const ServiceItems = () => {
   );
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
+  const { mode } = usePresentationControllerMode();
+  const isEditMode = mode === "edit";
   const canMutateHeadingRow = access === "full";
   const musicCanOutlineMutateItem = (item: ServiceItemType) =>
     item.type === "song" || item.type === "free";
@@ -708,6 +711,9 @@ const ServiceItems = () => {
       ),
     })),
     [actionBarItems, getActionHandler, getActionIcon, openHeadingRenameWindow]);
+  const visibleActionBarItemDefs = isEditMode
+    ? actionBarItemDefs
+    : actionBarItemDefs.filter((item) => item.id === "open-service-plan");
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -752,9 +758,9 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
-        {actionBarItemDefs.length > 0 && (
+        {visibleActionBarItemDefs.length > 0 && (
           <div className="border-b border-white/10 px-2 py-1 min-w-0">
-            <ActionBar items={actionBarItemDefs} overflowMenuClassName="min-w-48" />
+            <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />
           </div>
         )}
         {selectedHeading && headingRenameOpen ? (
@@ -838,7 +844,7 @@ const ServiceItems = () => {
                           handleToggleHeadingCollapse(item.listId)
                         }
                         onItemClick={handleItemClick}
-                        canMutateOutline={canMutateHeadingRow}
+                        canMutateOutline={isEditMode && canMutateHeadingRow}
                         dragActiveId={activeId}
                       />
                     );
@@ -868,9 +874,9 @@ const ServiceItems = () => {
                       selectedListIds={selectedListIds}
                       initialItems={initialItems}
                       onItemClick={handleItemClick}
-                      canMutateOutline={canMutateServiceItemRow(item)}
-                      multiSelectMode={canMutateServiceItemRow(item) ? multiSelectMode : undefined}
-                      onEnterMultiSelectMode={canMutateServiceItemRow(item) ? handleEnterMultiSelectMode : undefined}
+                      canMutateOutline={isEditMode && canMutateServiceItemRow(item)}
+                      multiSelectMode={isEditMode && canMutateServiceItemRow(item) ? multiSelectMode : undefined}
+                      onEnterMultiSelectMode={isEditMode && canMutateServiceItemRow(item) ? handleEnterMultiSelectMode : undefined}
                       dragActiveId={activeId}
                     />
                   );

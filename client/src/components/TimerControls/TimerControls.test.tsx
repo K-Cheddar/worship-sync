@@ -86,7 +86,10 @@ jest.mock("./TimerControlButtons", () => ({
 
 const renderWithAccess = (
   access: "full" | "music" | "view",
-  timerControlsProps?: { variant?: "full" | "controlsOnly" },
+  timerControlsProps?: {
+    variant?: "full" | "controlsOnly";
+    showTimeInput?: boolean;
+  },
 ) => {
   return render(
     <GlobalInfoContext.Provider value={{ access, hostId: "host-1" } as any}>
@@ -175,5 +178,21 @@ describe("TimerControls access gating", () => {
       screen.queryByRole("button", { name: "Timer Type Selector" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+  });
+
+  it("shows the duration input when compact time input is enabled", () => {
+    renderWithAccess("full", { variant: "controlsOnly", showTimeInput: true });
+
+    expect(screen.getByRole("button", { name: "Duration Input" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Countdown Input" })).not.toBeInTheDocument();
+  });
+
+  it("shows the countdown input for countdown timers", () => {
+    mockState.timers.timers[0].timerType = "countdown";
+
+    renderWithAccess("full", { variant: "controlsOnly", showTimeInput: true });
+
+    expect(screen.getByRole("button", { name: "Countdown Input" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Duration Input" })).not.toBeInTheDocument();
   });
 });

@@ -47,6 +47,7 @@ type DisplayEditorProps = {
   selectBox?: (index: number) => void;
   isSelected?: boolean;
   isBoxLocked?: boolean;
+  showEditorBoxBorder?: boolean;
   disabled?: boolean;
   referenceWidth?: number;
   referenceHeight?: number;
@@ -63,6 +64,7 @@ const DisplayEditorComponent = ({
   index,
   isSelected,
   isBoxLocked,
+  showEditorBoxBorder = true,
   disabled = false,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
@@ -491,6 +493,7 @@ const DisplayEditorComponent = ({
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
+        showEditorBoxBorder &&
         (!isBoxLocked || isSelected) &&
         "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
@@ -682,6 +685,7 @@ const areDisplayEditorPropsEqual = (
   prevProps.index === nextProps.index &&
   prevProps.isSelected === nextProps.isSelected &&
   prevProps.isBoxLocked === nextProps.isBoxLocked &&
+  prevProps.showEditorBoxBorder === nextProps.showEditorBoxBorder &&
   prevProps.disabled === nextProps.disabled &&
   prevProps.referenceWidth === nextProps.referenceWidth &&
   prevProps.referenceHeight === nextProps.referenceHeight &&

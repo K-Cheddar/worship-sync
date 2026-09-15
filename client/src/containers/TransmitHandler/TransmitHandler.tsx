@@ -69,7 +69,7 @@ type TransmitHandlerProps = {
   variant?: "default" | "overlayStreamFocus";
   showStreamOverlayOnlyToggle?: boolean;
   showClearStreamOverlaysButton?: boolean;
-  /** When set, each screen shows at most this many quick links (e.g. 4 on main controller). */
+  /** Legacy layout hint retained for caller compatibility; the compact rail owns capacity now. */
   maxQuickLinks?: number;
   /**
    * When false, presentation tiles stay mounted, pause file-video playback,
@@ -88,7 +88,6 @@ const TransmitHandler = ({
   variant = "default",
   showStreamOverlayOnlyToggle = false,
   showClearStreamOverlaysButton = false,
-  maxQuickLinks,
   isPreviewActive = true,
 }: TransmitHandlerProps) => {
   // Outputs this surface shows: the displays the active controller owns, then
@@ -368,11 +367,10 @@ const TransmitHandler = ({
       map[output.id] = getQuickLinksForOutput(
         allQuickLinks,
         output,
-        maxQuickLinks,
       );
     }
     return map;
-  }, [allQuickLinks, maxQuickLinks, visibleOutputs]);
+  }, [allQuickLinks, visibleOutputs]);
 
   const overlayStreamQuickLinksBelowPreview = useMemo(() => {
     if (!primaryStreamOutput) return [];

@@ -99,6 +99,28 @@ describe("VideoBackgroundControls", () => {
     ).toBeInTheDocument();
   });
 
+  it("can show transport controls without send-mode guidance", () => {
+    render(
+      <VideoBackgroundControls
+        media={media}
+        mediaKey="remote:video-1"
+        sendMode="continue"
+        onSendModeChange={mockSendModeChange}
+        showSendMode={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Pause video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart video from the beginning" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop video" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Video timeline")).toBeInTheDocument();
+    expect(screen.queryByText("On send")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Sending this slide keeps the video playing from where it is now."),
+    ).not.toBeInTheDocument();
+  });
+
   it("pauses the preview and syncs live outputs when configured", async () => {
     const user = userEvent.setup();
     const commands: string[] = [];

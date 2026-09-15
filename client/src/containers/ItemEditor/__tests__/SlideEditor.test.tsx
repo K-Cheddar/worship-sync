@@ -2,12 +2,13 @@ import type { ReactNode } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
+import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
 let mockState: any;
 
-const mockSetIsEditMode = jest.fn((value: boolean) => ({
-  type: "item/setIsEditMode",
+const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
+  type: "item/setIsLyricsEditorOpen",
   payload: value,
 }));
 const mockUpdateSlides = jest.fn((payload: any) => ({
@@ -54,7 +55,7 @@ jest.mock("../../../store/itemSlice", () => ({
     type: "item/setSelectedSlide",
     payload: value,
   })),
-  setIsEditMode: (value: boolean) => mockSetIsEditMode(value),
+  setIsLyricsEditorOpen: (value: boolean) => mockSetIsLyricsEditorOpen(value),
   setSongMetadata: jest.fn((payload: unknown) => ({
     type: "item/setSongMetadata",
     payload,
@@ -697,12 +698,36 @@ describe("SlideEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit lyrics/i }));
 
     await waitFor(() => {
-      expect(mockSetIsEditMode).toHaveBeenCalledWith(true);
+      expect(mockSetIsLyricsEditorOpen).toHaveBeenCalledWith(true);
     });
     expect(mockDispatch).toHaveBeenCalledWith({
-      type: "item/setIsEditMode",
+      type: "item/setIsLyricsEditorOpen",
       payload: true,
     });
+  });
+
+  it("shows Edit Lyrics and the continuous-mode toggle in Present mode", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            type: "song",
+            arrangements: [{ name: "Default", slides: [], formattedLyrics: [] }],
+          },
+        },
+      },
+    });
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+
+    render(
+      <PresentationControllerModeProvider>
+        <SlideEditor access="full" />
+      </PresentationControllerModeProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: /edit lyrics/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse item editor" }));
+    expect(mockSetShouldShowItemEditor).toHaveBeenCalledWith(false);
   });
 
   it("opens song details sheet in edit mode when song name edit button is clicked", () => {
@@ -730,7 +755,7 @@ describe("SlideEditor", () => {
           item: {
             hasRemoteUpdate: true,
             hasPendingUpdate: true,
-            isEditMode: false,
+            isLyricsEditorOpen: false,
           },
         },
       },
@@ -763,7 +788,7 @@ describe("SlideEditor", () => {
           item: {
             hasRemoteUpdate: true,
             hasPendingUpdate: false,
-            isEditMode: false,
+            isLyricsEditorOpen: false,
           },
         },
       },
@@ -1092,6 +1117,35 @@ describe("SlideEditor", () => {
         screen.queryByTestId("timer-item-editor-collapsed-controls"),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("display-window")).toBeInTheDocument();
+    });
+
+    it("shows Bible actions when Bible item and editor is collapsed", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "bible",
+              bibleInfo: {
+                book: "Genesis",
+                chapter: "1",
+                version: "nkjv",
+              },
+            },
+            preferences: {
+              shouldShowItemEditor: false,
+              toolbarSection: "settings",
+            },
+          },
+        },
+      });
+
+      renderWithToastContext();
+
+      expect(
+        screen.getByTestId("bible-item-editor-collapsed-controls"),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("bible-actions")).toBeInTheDocument();
+      expect(screen.queryByTestId("display-window")).not.toBeInTheDocument();
     });
   });
 

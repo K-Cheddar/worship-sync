@@ -7,7 +7,7 @@ import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
-import { setIsEditMode } from "../../store/itemSlice";
+import { setIsLyricsEditorOpen } from "../../store/itemSlice";
 import { setOverlayControllerPanel } from "../../store/preferencesSlice";
 import { useControllerPageLifecycle } from "../Controller/useControllerPageLifecycle";
 import cn from "classnames";
@@ -51,7 +51,7 @@ const OverlayControllerContent = () => {
     overlayControllerPanel === "boardPosts" ||
     overlayControllerPanel === "overlaysAndPosts";
   useEffect(() => {
-    dispatch(setIsEditMode(false));
+    dispatch(setIsLyricsEditorOpen(false));
   }, [dispatch]);
 
   useEffect(() => {

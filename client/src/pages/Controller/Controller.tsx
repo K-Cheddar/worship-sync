@@ -23,7 +23,7 @@ import QuickLinks from "./QuickLinks";
 import Displays from "./Displays";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { setIsEditMode } from "../../store/itemSlice";
+import { setIsLyricsEditorOpen } from "../../store/itemSlice";
 import { setRequestOpenMediaPanel } from "../../store/preferencesSlice";
 import cn from "classnames";
 import { RootState } from "../../store/store";
@@ -36,6 +36,12 @@ import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { PRESENTATION_CONTROLLER_ID } from "../../utils/controllerProfiles";
+import { DndContext } from "@dnd-kit/core";
+import { ItemSlidesDndContext } from "../../containers/ItemSlides/ItemSlides";
+import { presentationCollisionDetection } from "../../utils/presentationDnd";
+import { useSensors } from "../../utils/dndUtils";
+import MediaDragOverlay from "../../containers/Media/MediaDragOverlay";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -48,8 +54,8 @@ const Controller = () => {
 
   const { user, churchName } = useContext(GlobalInfoContext) || {};
 
-  const isEditMode = useSelector(
-    (state: RootState) => state.undoable.present.item.isEditMode
+  const isLyricsEditorOpen = useSelector(
+    (state: RootState) => state.undoable.present.item.isLyricsEditorOpen
   );
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth
@@ -64,6 +70,7 @@ const Controller = () => {
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+  const sensors = useSensors();
 
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
@@ -76,7 +83,7 @@ const Controller = () => {
       setIsLeftPanelOpen(true);
     }
     if (!location.pathname.includes("/controller/item")) {
-      dispatch(setIsEditMode(false));
+      dispatch(setIsLyricsEditorOpen(false));
     }
   }, [location.pathname, dispatch]);
 
@@ -110,6 +117,9 @@ const Controller = () => {
 
   return (
     <ActiveControllerProvider profileId={PRESENTATION_CONTROLLER_ID}>
+    <ItemSlidesDndContext.Provider value="ancestor">
+    <DndContext sensors={sensors} collisionDetection={presentationCollisionDetection}>
+    <PresentationControllerModeProvider>
     <ControllerPageShell
       user={user}
       churchName={churchName}
@@ -122,7 +132,7 @@ const Controller = () => {
       <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
-        className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
+        className={cn("lg:hidden mr-2 h-1/4 z-10", isLyricsEditorOpen && "hidden")}
         svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
         onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
       />
@@ -177,7 +187,7 @@ const Controller = () => {
           <Button
             className={cn(
               "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
-              isEditMode && "hidden"
+              isLyricsEditorOpen && "hidden"
             )}
             svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
@@ -202,6 +212,10 @@ const Controller = () => {
         </>
       )}
     </ControllerPageShell>
+    </PresentationControllerModeProvider>
+    <MediaDragOverlay />
+    </DndContext>
+    </ItemSlidesDndContext.Provider>
     </ActiveControllerProvider>
   );
 };

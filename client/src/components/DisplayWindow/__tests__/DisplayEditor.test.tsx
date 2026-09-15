@@ -482,4 +482,19 @@ describe("DisplayEditor", () => {
       screen.getByText(/Available on Lobby PC only/i),
     ).toBeInTheDocument();
   });
+
+  it("hides the editor box outline when requested", () => {
+    render(
+      <DisplayEditor
+        box={baseBox}
+        width={960}
+        onChange={jest.fn()}
+        index={1}
+        isSelected
+        showEditorBoxBorder={false}
+      />,
+    );
+
+    expect(latestRndProps.className).not.toContain("outline-1");
+  });
 });

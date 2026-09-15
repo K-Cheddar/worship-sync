@@ -39,6 +39,8 @@ import {
   isPushOutputType,
 } from "../../../utils/displayOutputs";
 import { isViewOnlyAccess } from "../../../utils/accessTiers";
+import { toolbarTabClassName } from "./ToolbarButton";
+import cn from "classnames";
 
 const ToolbarMenu = ({
   variant = "default",
@@ -349,7 +351,7 @@ const ToolbarMenu = ({
         TriggeringButton={
           <Button
             variant="tertiary"
-            className="w-fit"
+            className={cn(toolbarTabClassName(false, false), "w-fit")}
             aria-label="Open menu"
             svg={MenuIcon}
             gap="gap-1.5"

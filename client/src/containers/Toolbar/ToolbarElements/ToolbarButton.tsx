@@ -21,7 +21,7 @@ export const toolbarTabClassName = (isActive: boolean, hidden: boolean) =>
     "text-xs rounded-none transition-colors duration-150",
     isActive &&
       "border-2 border-transparent border-b-cyan-500 bg-gray-950 text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
-    !isActive && "bg-black/25 hover:border-gray-600/90 hover:bg-gray-600/50",
+    !isActive && "bg-transparent hover:border-gray-600/90 hover:bg-gray-600/50",
     hidden && "hidden",
   );
 

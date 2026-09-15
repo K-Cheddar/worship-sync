@@ -296,6 +296,8 @@ type DisplayWindowProps = {
   selectBox?: (index: number) => void;
   selectedBox?: number;
   isBoxLocked?: boolean[];
+  /** Show editor-only box outlines used for positioning and selection. */
+  showEditorBoxBorder?: boolean;
   boxCursorPositions?: Record<number, number>;
   disabled?: boolean;
   className?: string;
@@ -361,6 +363,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       boardPostStreamInfo,
       prevBoardPostStreamInfo,
       isBoxLocked,
+      showEditorBoxBorder = true,
       boxCursorPositions,
       disabled = false,
       className,
@@ -1608,6 +1611,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               selectBox={selectBox}
               isSelected={selectedBox === index}
               isBoxLocked={isBoxLocked?.[index] ?? true}
+              showEditorBoxBorder={showEditorBoxBorder}
               disabled={disabled}
               referenceWidth={REFERENCE_WIDTH}
               referenceHeight={REFERENCE_HEIGHT}

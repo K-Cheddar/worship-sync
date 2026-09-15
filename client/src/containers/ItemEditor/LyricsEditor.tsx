@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSelector, useDispatch } from "../../hooks";
-import { setIsEditMode } from "../../store/itemSlice";
+import { setIsLyricsEditorOpen } from "../../store/itemSlice";
 import { RootState } from "../../store/store";
 import LyricsEditorLoadingSkeleton from "./LyricsEditorLoadingSkeleton";
 import LyricsEditorPanel from "./LyricsEditorPanel";
@@ -30,7 +30,7 @@ type LyricsEditorProps = {
  */
 const LyricsEditor = ({ song = null, isOpen, onClose, onSaveLyrics }: LyricsEditorProps) => {
   const controllerIsEditMode = useSelector(
-    (state: RootState) => state.undoable?.present?.item?.isEditMode ?? false,
+    (state: RootState) => state.undoable?.present?.item?.isLyricsEditorOpen ?? false,
   );
   const type = useSelector(
     (state: RootState) => state.undoable?.present?.item?.type,
@@ -44,7 +44,7 @@ const LyricsEditor = ({ song = null, isOpen, onClose, onSaveLyrics }: LyricsEdit
   useEffect(() => {
     if (isLibraryEditor) return;
     if (type !== "song") {
-      dispatch(setIsEditMode(false));
+      dispatch(setIsLyricsEditorOpen(false));
     }
   }, [type, dispatch, isLibraryEditor]);
 

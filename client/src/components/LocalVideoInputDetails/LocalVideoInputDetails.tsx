@@ -15,7 +15,7 @@ type LocalVideoInputDetailsProps = {
   source: LocalVideoInputMediaSource;
   canEdit: boolean;
   className?: string;
-  onEdit: () => void;
+  onEdit?: () => void;
 };
 
 const fitLabel = (fit: LocalVideoInputMediaSource["fit"]) =>

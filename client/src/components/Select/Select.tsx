@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/Select";
 
 type OptionSection = { group?: string; options: Option[] };
+export type SelectLabelLayout = "stacked" | "inline";
 
 /**
  * Radix throws on an item whose value is an empty string — it reserves "" for
@@ -62,6 +63,8 @@ export type SelectProps = {
   /** Optional text to show in the trigger for the selected option. */
   selectedValueLabel?: string;
   label?: string;
+  /** `stacked`: label above the field (default). `inline`: label to the left of the field. */
+  labelLayout?: SelectLabelLayout;
   labelClassName?: string;
   labelFontSize?: string;
   hideLabel?: boolean;
@@ -93,6 +96,7 @@ const Select = ({
   onChange,
   selectedValueLabel,
   label,
+  labelLayout = "stacked",
   hideLabel = false,
   className,
   labelClassName,
@@ -130,13 +134,20 @@ const Select = ({
   const sections = useMemo(() => toOptionSections(options), [options]);
 
   return (
-    <div className={cn("group relative h-fit", className)}>
+    <div
+      className={cn(
+        "group relative h-fit",
+        labelLayout === "inline" && "flex items-center gap-2",
+        className,
+      )}
+    >
       {label ? (
         <Label
           htmlFor={id}
           className={cn(
             labelFontSize,
             "font-semibold p-1",
+            labelLayout === "inline" && "shrink-0 p-0",
             hideLabel && "sr-only",
             labelClassName,
           )}

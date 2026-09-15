@@ -27,7 +27,7 @@ import { scrollToolbarTabIntoViewIfNeeded } from "../../../utils/scrollToolbarTa
 import GeneratedCreditsFloatingWindow from "../../../pages/CreditsEditor/GeneratedCreditsFloatingWindow";
 import { isViewOnlyAccess } from "../../../utils/accessTiers";
 export type ToolbarOverlayProps = {
-  isEditMode: boolean;
+  isLyricsEditorOpen: boolean;
   quickLinksDrawerOpen: boolean;
   onQuickLinksOpenChange: (open: boolean) => void;
 };
@@ -37,7 +37,7 @@ export type ToolbarOverlayProps = {
  * Generate-credits hook runs only when this subtree is mounted (overlay controller), not on the main controller.
  */
 const ToolbarOverlay = ({
-  isEditMode,
+  isLyricsEditorOpen,
   quickLinksDrawerOpen,
   onQuickLinksOpenChange,
 }: ToolbarOverlayProps) => {
@@ -138,7 +138,7 @@ const ToolbarOverlay = ({
       <div
         className={cn(
           "flex w-full flex-1 items-center gap-0 overflow-x-auto px-2 py-1 scrollbar-variable",
-          isEditMode && "hidden",
+          isLyricsEditorOpen && "hidden",
         )}
       >
         <ToolbarButton

@@ -158,7 +158,7 @@ export const useSyncedBoardPosts = (
         const nextBoardId = resolveBoardId(updatedAlias, requestedBoardId);
         const boardChanged = state.currentBoardId !== nextBoardId;
         state.aliasChangeVersion += 1;
-        state.boardVersion += 1;
+        if (boardChanged) state.boardVersion += 1;
         state.currentBoardId = nextBoardId;
         setAlias(updatedAlias);
 

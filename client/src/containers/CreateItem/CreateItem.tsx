@@ -184,6 +184,10 @@ const CreateItem = ({
     lyricsImportError = "",
   } = createItemDraft;
 
+  const hideFreeFormPasteText =
+    createControllerProfile.type === "aux-presentation" &&
+    selectedType === "free";
+
   const itemTypes = useMemo(
     () =>
       getCreateItemTypeOptions(createControllerProfile.type).filter(
@@ -841,7 +845,7 @@ const CreateItem = ({
               </div>
             )}
 
-            {(selectedType === "song" || selectedType === "free") && (
+            {!hideFreeFormPasteText && (selectedType === "song" || selectedType === "free") && (
               <TextArea
                 textareaClassName="min-h-56 rounded-md"
                 className={cn(

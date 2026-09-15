@@ -1,7 +1,10 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { useMemo, useState } from "react";
+import { Trash2 } from "lucide-react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import { useDispatch, useSelector } from "../../hooks";
-import { addToInitialItems } from "../../store/itemListSlice";
+import { addToInitialItems, removeItemFromList } from "../../store/itemListSlice";
+import generateRandomId from "../../utils/generateRandomId";
 import gsap from "gsap";
 import { ServiceItem as ServiceItemType, TimerInfo } from "../../types";
 import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
@@ -75,6 +78,21 @@ const ServiceItem = ({
       disabled: !canMutateOutline,
     });
   const previousItem = useRef<ServiceItemType | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const actions = useMemo(() => {
+    if (!canMutateOutline) return undefined;
+    return [{
+      action: (listId: string) => {
+        setIsDeleting(true);
+        window.setTimeout(() => {
+          dispatch(removeItemFromList(listId));
+          setIsDeleting(false);
+        }, 500);
+      },
+      svg: Trash2,
+      id: generateRandomId(),
+    }];
+  }, [canMutateOutline, dispatch]);
 
   const { isSelected, isInsertPoint } = getOutlineRowSelectionState(
     item.listId,
@@ -169,6 +187,20 @@ const ServiceItem = ({
             duration: 0.5,
             ease: "power1.inOut",
           });
+      } else if (isDeleting) {
+        gsap.timeline().fromTo(serviceItemRef.current, {
+          height: serviceItemRef.current.offsetHeight,
+          minHeight: serviceItemRef.current.style.minHeight,
+          borderBottomWidth: serviceItemRef.current.style.borderBottomWidth,
+          opacity: 1,
+        }, {
+          height: 0,
+          minHeight: 0,
+          opacity: 0,
+          borderBottomWidth: 0,
+          duration: 0.5,
+          ease: "power1.inOut",
+        });
       } else if (!initialItems.includes(item.listId)) {
         // initial animation for new items
         gsap
@@ -195,7 +227,7 @@ const ServiceItem = ({
           });
       }
     },
-    { scope: serviceItemRef, dependencies: [item] }
+    { scope: serviceItemRef, dependencies: [item, isDeleting] }
   );
 
   return (
@@ -225,6 +257,7 @@ const ServiceItem = ({
       localVideoFile={localVideoFile}
       timerValue={timer ? liveTimerValue : undefined}
       timerText={timerText}
+      actions={actions}
       displayId={`service-item-${item.listId}`}
       id={item.listId}
       isActive={isActive}

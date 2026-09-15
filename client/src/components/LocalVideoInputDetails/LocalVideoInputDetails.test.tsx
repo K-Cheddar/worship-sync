@@ -88,13 +88,7 @@ describe("LocalVideoInputDetails", () => {
   });
 
   it("hides Edit when read-only", () => {
-    render(
-      <LocalVideoInputDetails
-        source={source}
-        canEdit={false}
-        onEdit={jest.fn()}
-      />,
-    );
+    render(<LocalVideoInputDetails source={source} canEdit={false} />);
     expect(screen.queryByRole("button", { name: /edit/i })).not.toBeInTheDocument();
   });
 });

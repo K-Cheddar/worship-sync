@@ -32,7 +32,7 @@ import {
   discardPendingRemoteItem,
   setSelectedBox,
   setSelectedSlide,
-  setIsEditMode,
+  setIsLyricsEditorOpen,
   setSongMetadata,
   applyPersistedSongAudio,
   setSongLinks,
@@ -97,6 +97,7 @@ import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   buildLocalVideoInputPresentation,
 } from "../../utils/localVideoInput";
+import type { PresentationControllerMode } from "../../context/presentationControllerMode";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -134,7 +135,7 @@ const resolveFormattedSlideIndex = ({
     : Math.min(selectedSlide, maxSlideIndex);
 };
 
-const SlideEditor = ({ access }: { access?: AccessType }) => {
+const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessType; presentationMode?: PresentationControllerMode }) => {
   const dispatch = useDispatch();
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -147,7 +148,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedSlide,
     selectedBox,
     slides: __slides,
-    isEditMode,
+    isLyricsEditorOpen,
     isLoading,
     isSectionLoading,
     restoreFocusToBox,
@@ -184,6 +185,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   const { shouldShowItemEditor, toolbarSection = "settings" } = useSelector(
     (state: RootState) => state.undoable.present.preferences
   );
+  const isPresentMode = presentationMode === "present";
 
   const [isItemDetailsModalOpen, setIsItemDetailsModalOpen] = useState(false);
   const [isSongDetailsDrawerOpen, setIsSongDetailsDrawerOpen] = useState(false);
@@ -250,10 +252,10 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, []);
 
   useEffect(() => {
-    if (isEditMode) {
+    if (isLyricsEditorOpen) {
       setIsOpeningLyricsEditor(false);
     }
-  }, [isEditMode]);
+  }, [isLyricsEditorOpen]);
 
   const handleKeepLocalEdits = useCallback(() => {
     dispatch(discardPendingRemoteItem());
@@ -264,12 +266,12 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    if (hasRemoteUpdate && !isEditMode && !hasPendingUpdate) {
+    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
       handleReloadRemote();
       return;
     }
 
-    if (!hasRemoteUpdate || isEditMode) {
+    if (!hasRemoteUpdate || isLyricsEditorOpen) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
@@ -317,7 +319,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     hasRemoteUpdate,
     hasPendingUpdate,
     itemTypeLabel,
-    isEditMode,
+    isLyricsEditorOpen,
     removeToast,
     showToast,
   ]);
@@ -1351,6 +1353,19 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   );
 
   const leftColumnContent = useMemo(() => {
+    if (isPresentMode) {
+      if (selectedSlideMediaSource) {
+        return (
+          <LocalVideoInputDetails
+            className="w-full"
+            source={selectedSlideMediaSource}
+            canEdit={false}
+          />
+        );
+      }
+      if (type === "timer") return <TimerControls variant="controlsOnly" className="w-full" />;
+      return null;
+    }
     if (toolbarSection === "box-tools") {
       return (
         <SlideBoxes
@@ -1409,6 +1424,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     slides,
     selectedSlide,
     selectedSlideMediaSource,
+    isPresentMode,
   ]);
 
   const editorWrapperStyle = {
@@ -1423,7 +1439,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         <SlideEditorSkeleton />
       ) : !isEmpty ? (
         <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-          <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
+          {leftColumnContent ? <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
             <div className="flex h-full min-h-0 w-full flex-col gap-1">
               <LastUpdatedByline
                 updatedBy={baseItem?.updatedBy}
@@ -1432,11 +1448,16 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               />
               <div className="min-h-0 flex-1">{leftColumnContent}</div>
             </div>
-          </div>
+          </div> : null}
 
           <div className="relative lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0">
             <DisplayWindow
-              className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
+              className={cn(
+                isPresentMode
+                  ? "lg:max-h-[32vh] max-lg:max-h-[30vh]"
+                  : "lg:max-h-[42vh] max-lg:max-h-[30vh]",
+                "h-full w-full",
+              )}
               showBorder
               boxes={boxes}
               boxCursorPositions={cursorPositionsRef.current}
@@ -1448,7 +1469,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               displayType="editor"
               selectedBox={selectedBox}
               isBoxLocked={isBoxLocked}
-              disabled={!canEdit}
+              showEditorBoxBorder={!isPresentMode}
+              disabled={!canEdit || isPresentMode}
               shouldPlayVideo
               videoPlayback={editorVideoPlayback}
               localVideoInput={editorLocalVideoInput}
@@ -1494,7 +1516,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 overrideSmallMobile
               />
             </span>
-            {type === "song" ? (
+            {!isPresentMode && type === "song" ? (
               <Button
                 variant="tertiary"
                 disabled={isLoading || !canEdit}
@@ -1502,7 +1524,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 onClick={() => setIsSongDetailsDrawerOpen(true)}
                 aria-label={nameEditButtonAriaLabel}
               />
-            ) : (
+            ) : !isPresentMode ? (
               <Button
                 variant="tertiary"
                 disabled={isLoading || !canEdit}
@@ -1510,7 +1532,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 onClick={onNameEditButtonClick}
                 aria-label={nameEditButtonAriaLabel}
               />
-            )}
+            ) : null}
             <span className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]">
               <h2>{isLoading ? "" : name}</h2>
               {arrangement && (
@@ -1549,14 +1571,14 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               color="#22d3ee"
               className="text-sm"
               disabled={
-                isLoading || !canEdit || (isOpeningLyricsEditor && !isEditMode)
+                isLoading || !canEdit || (isOpeningLyricsEditor && !isLyricsEditorOpen)
               }
-              isLoading={isOpeningLyricsEditor && !isEditMode}
+              isLoading={isOpeningLyricsEditor && !isLyricsEditorOpen}
               onClick={() => {
                 setIsOpeningLyricsEditor(true);
                 // Defer so React can paint the button loading state before Redux + lyrics panel work.
                 window.setTimeout(() => {
-                  dispatch(setIsEditMode(true));
+                  dispatch(setIsLyricsEditorOpen(true));
                 }, 0);
               }}
               svg={PencilLine}
@@ -1568,6 +1590,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             variant="tertiary"
             padding="p-1"
             svg={shouldShowItemEditor ? ChevronsUpDown : ChevronsDownUp}
+            aria-label={shouldShowItemEditor ? "Collapse item editor" : "Expand item editor"}
             onClick={() =>
               dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
             }
@@ -1577,8 +1600,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         {shouldShowItemEditor ? (
           <div
             className={cn(
-              "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
-              "mb-2 z-1"
+              isPresentMode
+                ? "mb-2 flex min-h-0 w-full justify-center"
+                : "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center mb-2 z-1"
             )}
             data-show={true}
             style={editorWrapperStyle}
@@ -1593,7 +1617,20 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           >
             <TimerControls
               variant="controlsOnly"
+              showTimeInput
               className="w-full max-w-md"
+            />
+          </div>
+        ) : type === "bible" && item.bibleInfo ? (
+          <div
+            className="mb-2 z-1 flex w-full justify-center px-2 pb-2"
+            data-show={false}
+            data-testid="bible-item-editor-collapsed-controls"
+          >
+            <BibleItemActions
+              item={item}
+              className="flex-row items-center gap-8"
+              inlineVersionLabel
             />
           </div>
         ) : (
