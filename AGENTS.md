@@ -35,6 +35,7 @@ The canonical repository skills are in `.agents/skills/`. Skills own detailed pr
 - `$display-window`: projector, monitor, stream, preview, crossfade, media, video, overlay, timer, or display-layer work.
 - `/overlay`: overlay state-machine, timing, and Firebase synchronization work.
 - `$persisted-mutation-safety` and `$schedule-mutation-safety`: overlapping persisted writes and schedule mutations.
+- `$reliable-state-mutations`: async ownership boundaries, durable retry points, and interrupted stateful workflows.
 - `/brand-voice`: user-visible copy.
 
 ### Assumptions and decisions
@@ -81,6 +82,10 @@ For stream, preserve transparency and use `$display-window` and `/overlay` for d
 
 Use existing architectural patterns unless there is a clear, evidence-based reason to improve them. Keep public data shapes stable unless an intentional migration changes them; preserve backward compatibility for persisted and synchronized data where feasible. Keep state ownership and synchronization boundaries explicit. New async behavior must be cancellation-safe or interruption-safe where relevant. Prefer graceful degradation for optional integrations.
 
+When async work can outlive the entity, route, item, plan, session, or controller that started it, capture the required identity and state with the work item and treat identity changes as boundaries. Stale results may be ignored, but pending unsaved work must be deliberately completed, preserved, or cancelled; test realistic resets, including counters or versions returning to zero.
+
+For multi-step operations, retries resume after the last successfully completed durable step. Distinguish completed durable mutations from later failed work so a retry does not duplicate an earlier side effect.
+
 Use clear names, focused units, straightforward control flow, and comments only when they clarify a non-obvious invariant. Avoid hidden coupling between UI, remote, persisted, derived, and render-only state. For client details—including TypeScript, component, state, testing, and accessibility conventions—use `$react-quality`.
 
 Server changes must preserve client compatibility, validate input, handle errors safely, and account for upload and third-party failure modes without silently changing response shapes.
@@ -94,6 +99,8 @@ Tests represent behavior contracts. Do not rewrite an existing expectation merel
 3. Compatibility, security, operator workflow, and other consumers do not still require the old behavior.
 
 If that cannot be established, fix the implementation or clarify the intended behavior instead of weakening the test. Use focused tests for changed logic and risk-appropriate validation for live display, media, overlay, timer, synchronization, and persistence changes. State verification gaps plainly.
+
+Async and stateful regression tests must exercise interruption boundaries, including identity or route changes during pending work, durable success followed by later failure and retry, live events during loading, and stale responses after newer state is active. Reproduce the production transition and meaningful values; convenient test values that remove the failure condition are not valid coverage.
 
 ## Completion contract
 
@@ -150,12 +157,3 @@ A change is ready only when it is correct, low-regression, understandable, respo
 ## Brand voice
 
 For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `/brand-voice`.
-review should not treat the change as complete.
-
-When in doubt, favor protecting the live workflow over moving quickly.
-
-## Brand voice
-
-When writing or reviewing user-visible copy — labels, buttons, toasts, errors, empty states, onboarding, help text — use `/brand-voice` for the full voice guide, tone examples, and boundaries.
-
-\***\*Summary:\*\*** Steady, calm, professional casual. No panic language, no theology, no slang. Short sentences. Active voice. Always give a next step on errors.

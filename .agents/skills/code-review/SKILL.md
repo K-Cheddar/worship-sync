@@ -18,6 +18,16 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
 
+For async work, identity-tracking refs/state, promises, debounces/autosaves, retries, local and remote persistence, uploads, realtime listeners, session changes, or optimistic/live preview followed by commit, perform an explicit interruption and retry review:
+
+- What happens if the active entity changes while work is pending?
+- What happens if a later durable step fails, and what happens on retry?
+- Could retry duplicate an already-completed side effect?
+- Could a same-entity event invalidate an in-flight load without replacing it?
+- Can stale completion overwrite or suppress newer state?
+- Are previous-entity decisions accidentally based on current-entity refs or state?
+- Does the test reproduce the production transition and meaningful values?
+
 For React code, also review unnecessary derived state; effects used for derivation instead of render or event logic; dependencies; stale closures; async cancellation and races; state ownership; unnecessary rerenders in live paths; unstable objects/functions in hot paths; duplicated local/remote state; cleanup; accessibility; reuse of existing primitives; and mobile behavior.
 
 ## Required Review Output

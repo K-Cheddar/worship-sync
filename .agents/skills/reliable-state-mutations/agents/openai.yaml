@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reliable State Mutations"
+  short_description: "Protect async retries and state boundaries"
+  default_prompt: "Use $reliable-state-mutations to review async ownership, durable retry points, and interruption behavior."

@@ -34,6 +34,8 @@
 !.agents/skills/schedule-mutation-safety/**
 !.agents/skills/react-quality/
 !.agents/skills/react-quality/**
+!.agents/skills/reliable-state-mutations/
+!.agents/skills/reliable-state-mutations/**
 !.agents/patterns/
 !.agents/patterns/**
 .claude/settings.local.json
