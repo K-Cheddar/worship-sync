@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Quality"
+  short_description: "Ground React changes in WorshipSync evidence"
+  default_prompt: "Use $react-quality to plan or review this substantive React/TypeScript change."

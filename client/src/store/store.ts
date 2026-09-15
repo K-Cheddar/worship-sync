@@ -773,7 +773,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setSectionLoading.toString(),
   itemSlice.actions.setItemFormatting.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
-  itemSlice.actions.setIsEditMode.toString(),
+  itemSlice.actions.setIsLyricsEditorOpen.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
@@ -824,6 +824,7 @@ const excludedActions: string[] = [
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
   itemListsSlice.actions.selectItemList.toString(),
+  itemListsSlice.actions.setOutlineScope.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -935,7 +936,7 @@ listenerMiddleware.startListening({
     const excluded = isAnyOf(
       itemSlice.actions.setSelectedSlide,
       itemSlice.actions.setSelectedBox,
-      itemSlice.actions.setIsEditMode,
+      itemSlice.actions.setIsLyricsEditorOpen,
       itemSlice.actions.setItemIsLoading,
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
@@ -1069,7 +1070,7 @@ listenerMiddleware.startListening({
         !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
       const docMatchesCurrent = itemDocMatchesEditorState(doc, currentItem);
       const shouldBufferRemote =
-        !!(currentItem.hasPendingUpdate || currentItem.isEditMode) &&
+        !!(currentItem.hasPendingUpdate || currentItem.isLyricsEditorOpen) &&
         !docMatchesBase;
 
       if (shouldBufferRemote) {
@@ -3175,23 +3176,35 @@ const isCreditsPageReady = (state: RootState) => {
   return state.undoable.present.credits.isInitialized;
 };
 
-export const areControllerSlicesReady = (state: RootState) => {
-  return (
+export const areControllerSlicesReady = (
+  state: RootState,
+  options: { includeOverlayState?: boolean } = {},
+) => {
+  const sharedSlicesReady =
     state.allItems.isInitialized &&
     state.undoable.present.preferences.isInitialized &&
     state.undoable.present.itemList.isInitialized &&
-    state.undoable.present.overlays.isInitialized &&
     state.undoable.present.itemLists.isInitialized &&
-    isMediaLoadSettled(state.media) &&
+    isMediaLoadSettled(state.media);
+
+  if (!sharedSlicesReady || options.includeOverlayState === false) {
+    return sharedSlicesReady;
+  }
+
+  return (
+    state.undoable.present.overlays.isInitialized &&
     (state.undoable.present.overlayTemplates as { isInitialized: boolean })
       .isInitialized
   );
 };
 
+let initializationGeneration = 0;
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type === "RESET_INITIALIZATION") {
       hasFinishedInitialization = false;
+      initializationGeneration += 1;
     }
 
     const explicitPageReady =
@@ -3212,8 +3225,12 @@ listenerMiddleware.startListening({
   effect: async (_, listenerApi) => {
     if (!hasFinishedInitialization) {
       hasFinishedInitialization = true;
+      const generation = initializationGeneration;
       safeRequestIdleCallback(
         () => {
+          if (!hasFinishedInitialization || generation !== initializationGeneration) {
+            return;
+          }
           console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },

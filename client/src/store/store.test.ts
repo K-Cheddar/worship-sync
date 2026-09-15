@@ -420,6 +420,133 @@ describe("store module", () => {
     });
   });
 
+  it("enables aux history without overlay-only slices and preserves session boundaries", () => {
+    jest.useFakeTimers();
+    let storeModule: any;
+    let itemSliceModule: any;
+    let allItemsSliceModule: any;
+    let preferencesSliceModule: any;
+    let itemListSliceModule: any;
+    let itemListsSliceModule: any;
+    let mediaSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      allItemsSliceModule = require("./allItemsSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      preferencesSliceModule = require("./preferencesSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemListSliceModule = require("./itemListSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemListsSliceModule = require("./itemListsSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      mediaSliceModule = require("./mediaSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const item = {
+      name: "Original Name",
+      _id: "aux-item",
+      type: "song",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 0,
+      arrangements: [],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    };
+
+    store.dispatch(allItemsSliceModule.setIsInitialized(true));
+    store.dispatch(preferencesSliceModule.setIsInitialized(true));
+    store.dispatch(itemListSliceModule.setIsInitialized(true));
+    store.dispatch(itemListsSliceModule.setIsInitialized(true));
+    store.dispatch(mediaSliceModule.setIsInitialized(true));
+
+    expect(
+      storeModule.areControllerSlicesReady(store.getState(), {
+        includeOverlayState: false,
+      }),
+    ).toBe(true);
+    expect(storeModule.areControllerSlicesReady(store.getState())).toBe(false);
+
+    store.dispatch({ type: storeModule.CONTROLLER_PAGE_READY });
+    jest.runAllTimers();
+    store.dispatch(itemListsSliceModule.setOutlineScope("aux"));
+    expect(store.getState().undoable.past).toHaveLength(0);
+    store.dispatch(itemSlice.actions.setActiveItem(item));
+    store.dispatch(itemSlice.actions._setName("Edited Name"));
+
+    expect(store.getState().undoable.past).toHaveLength(1);
+    store.dispatch({ type: "@@redux-undo/UNDO" });
+    expect(store.getState().undoable.present.item.name).toBe("Original Name");
+    store.dispatch({ type: "@@redux-undo/REDO" });
+    expect(store.getState().undoable.present.item.name).toBe("Edited Name");
+
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    expect(store.getState().undoable.past).toHaveLength(0);
+  });
+
+  it("does not let a deferred initialization clear cross a reset", () => {
+    jest.useFakeTimers();
+    let storeModule: any;
+    let itemSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+    });
+
+    const store = storeModule.default;
+    store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
+    store.dispatch(
+      itemSliceModule.itemSlice.actions.setActiveItem({
+        ...createSongDoc(),
+        _id: "aux-item",
+        name: "Original Name",
+      }),
+    );
+    store.dispatch(itemSliceModule.itemSlice.actions._setName("Aux edit"));
+    expect(store.getState().undoable.past).toHaveLength(1);
+    store.dispatch({ type: "RESET_INITIALIZATION" });
+    jest.runAllTimers();
+
+    expect(store.getState().undoable.past).toHaveLength(1);
+  });
+
   it("does not write empty published credits to RTDB when store RESET runs", () => {
     let setMock: jest.Mock;
 
@@ -1594,7 +1721,7 @@ describe("store module", () => {
     store.dispatch(
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
-    store.dispatch(itemSlice.actions.setIsEditMode(true));
+    store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
     store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
     await flushListenerEffects();
 

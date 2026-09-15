@@ -27,6 +27,12 @@ import { formatMemberTeamsAccessSummary } from "../accountTeamsAccess";
 import { formatMemberServicesAccessSummary } from "../accountServicesAccess";
 import { formatMemberAccessLabel } from "../accountUtils";
 
+const peopleTableHeaderClassName =
+  "hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-3 px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr]";
+
+const peopleTableRowClassName =
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-3 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr]";
+
 const AccountPeoplePage = () => {
   const accountPage = useAccountPage();
   const {
@@ -62,7 +68,7 @@ const AccountPeoplePage = () => {
         </p>
         <div className="mt-4 space-y-0">
           {sortedInvites.length > 0 && (
-            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+            <div className={peopleTableHeaderClassName}>
               <span className="justify-self-start">Invite</span>
               <span className="justify-self-start">Access</span>
               <span className="justify-self-start">Info</span>
@@ -101,97 +107,101 @@ const AccountPeoplePage = () => {
               <div
                 key={invite.inviteId}
                 className={cn(
-                  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-2 py-1 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3",
+                  "px-2 py-1.5",
                   alternatingAdminListRowBg(inviteIndex),
                 )}
               >
-                <p className="min-w-0 justify-self-start truncate text-sm font-semibold">
-                  {invite.email}
-                </p>
-                <div className="min-w-0 pr-1 max-md:max-w-[8rem] justify-self-start text-left">
-                  <p className="min-w-0 truncate text-sm text-gray-300">
-                    {accessLabel}
+                <div className={peopleTableRowClassName}>
+                  <p className="min-w-0 justify-self-start truncate text-sm font-semibold">
+                    {invite.email}
                   </p>
-                </div>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={Info}
-                      iconSize="sm"
-                      aria-label={`Show details for invite to ${invite.email}`}
-                      title="Show invite details"
-                      className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                    />
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
-                  >
-                    <p className="font-semibold text-white">Invite details</p>
-                    <dl className="mt-2 space-y-1">
-                      <div>
-                        <dt className="inline text-gray-400">Access: </dt>
-                        <dd className="inline">{accessLabel}</dd>
-                      </div>
-                      <div>
-                        <dt className="inline text-gray-400">Teams: </dt>
-                        <dd className="inline">{teamsAccessSummary}</dd>
-                      </div>
-                      <div>
-                        <dt className="inline text-gray-400">Services: </dt>
-                        <dd className="inline">{servicesAccessSummary}</dd>
-                      </div>
-                      <div>
-                        <dt className="inline text-gray-400">Sent: </dt>
-                        <dd className="inline">{createdLabel}</dd>
-                      </div>
-                      <div>
-                        <dt className="inline text-gray-400">Expires: </dt>
-                        <dd className="inline">{expiresLabel}</dd>
-                      </div>
-                    </dl>
-                  </PopoverContent>
-                </Popover>
-                <div className="flex justify-self-end">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        svg={MoreHorizontal}
-                        iconSize="sm"
-                        aria-label={`Actions for invite to ${invite.email}`}
-                        title="Invite actions"
-                        className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                        disabled={destructiveConfirmRunning}
-                      />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onSelect={() => openInviteAccessSheet(invite)}
+                  <div className="min-w-0 justify-self-start pr-1 text-left max-md:max-w-[8rem]">
+                    <p className="min-w-0 truncate text-sm text-gray-300">
+                      {accessLabel}
+                    </p>
+                  </div>
+                  <div className="justify-self-start">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={Info}
+                          iconSize="sm"
+                          aria-label={`Show details for invite to ${invite.email}`}
+                          title="Show invite details"
+                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
+                        />
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
                       >
-                        <UserRoundCog />
-                        Edit access
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        disabled={
-                          destructiveConfirmRunning || isRevokeInviteConfirming
-                        }
-                        onSelect={() =>
-                          setDestructiveConfirm({
-                            kind: "revokeInvite",
-                            invite,
-                          })
-                        }
-                      >
-                        <Ban />
-                        Revoke invite
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        <p className="font-semibold text-white">Invite details</p>
+                        <dl className="mt-2 space-y-1">
+                          <div>
+                            <dt className="inline text-gray-400">Access: </dt>
+                            <dd className="inline">{accessLabel}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline text-gray-400">Teams: </dt>
+                            <dd className="inline">{teamsAccessSummary}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline text-gray-400">Services: </dt>
+                            <dd className="inline">{servicesAccessSummary}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline text-gray-400">Sent: </dt>
+                            <dd className="inline">{createdLabel}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline text-gray-400">Expires: </dt>
+                            <dd className="inline">{expiresLabel}</dd>
+                          </div>
+                        </dl>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <div className="flex justify-self-end">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={MoreHorizontal}
+                          iconSize="sm"
+                          aria-label={`Actions for invite to ${invite.email}`}
+                          title="Invite actions"
+                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
+                          disabled={destructiveConfirmRunning}
+                        />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onSelect={() => openInviteAccessSheet(invite)}
+                        >
+                          <UserRoundCog />
+                          Edit access
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={
+                            destructiveConfirmRunning || isRevokeInviteConfirming
+                          }
+                          onSelect={() =>
+                            setDestructiveConfirm({
+                              kind: "revokeInvite",
+                              invite,
+                            })
+                          }
+                        >
+                          <Ban />
+                          Revoke invite
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
               </div>
             );
@@ -207,7 +217,7 @@ const AccountPeoplePage = () => {
         </p>
         <div className="mt-4 space-y-0">
           {sortedMembers.length > 0 && (
-            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+            <div className={peopleTableHeaderClassName}>
               <span className="justify-self-start">Member</span>
               <span className="justify-self-start">Access</span>
               <span className="justify-self-start">Info</span>
@@ -253,7 +263,7 @@ const AccountPeoplePage = () => {
                     : alternatingAdminListRowBg(memberIndex),
                 )}
               >
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+                <div className={peopleTableRowClassName}>
                   <p className="flex min-w-0 items-center gap-2 justify-self-start truncate text-sm font-semibold">
                     <span className="truncate">{memberLabel}</span>
                     {isSelf && (
@@ -262,7 +272,7 @@ const AccountPeoplePage = () => {
                       </span>
                     )}
                   </p>
-                  <div className="min-w-0 pr-1 max-md:max-w-[8rem] justify-self-start text-left">
+                  <div className="min-w-0 justify-self-start pr-1 text-left max-md:max-w-[8rem]">
                     <p
                       className={cn(
                         "min-w-0 truncate text-sm",
@@ -273,69 +283,71 @@ const AccountPeoplePage = () => {
                       {formatMemberAccessLabel(member.appAccess)}
                     </p>
                   </div>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        svg={Info}
-                        iconSize="sm"
-                        aria-label={`Show details for ${memberLabel}`}
-                        title="Show member details"
-                        className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                      />
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
-                    >
-                      <p className="font-semibold text-white">Member details</p>
-                      <dl className="mt-2 space-y-1">
-                        <div>
-                          <dt className="inline text-gray-400">Access: </dt>
-                          <dd className="inline">
-                            {isAdminMember ? "Admin" : "Member"} |{" "}
-                            {formatMemberAccessLabel(member.appAccess)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="inline text-gray-400">Teams: </dt>
-                          <dd className="inline">{teamsAccessSummary}</dd>
-                        </div>
-                        <div>
-                          <dt className="inline text-gray-400">Services: </dt>
-                          <dd className="inline">{servicesAccessSummary}</dd>
-                        </div>
-                        {memberEmail ? (
+                  <div className="justify-self-start">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={Info}
+                          iconSize="sm"
+                          aria-label={`Show details for ${memberLabel}`}
+                          title="Show member details"
+                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
+                        />
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
+                      >
+                        <p className="font-semibold text-white">Member details</p>
+                        <dl className="mt-2 space-y-1">
                           <div>
-                            <dt className="inline text-gray-400">Email: </dt>
-                            <dd className="inline break-all">{memberEmail}</dd>
-                          </div>
-                        ) : null}
-                        {Array.isArray(memberUser?.linkedMethods) &&
-                        memberUser.linkedMethods.length > 0 ? (
-                          <div>
-                            <dt className="inline text-gray-400">
-                              Sign-in methods:{" "}
-                            </dt>
+                            <dt className="inline text-gray-400">Access: </dt>
                             <dd className="inline">
-                              {memberUser.linkedMethods.join(", ")}
+                              {isAdminMember ? "Admin" : "Member"} |{" "}
+                              {formatMemberAccessLabel(member.appAccess)}
                             </dd>
                           </div>
+                          <div>
+                            <dt className="inline text-gray-400">Teams: </dt>
+                            <dd className="inline">{teamsAccessSummary}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline text-gray-400">Services: </dt>
+                            <dd className="inline">{servicesAccessSummary}</dd>
+                          </div>
+                          {memberEmail ? (
+                            <div>
+                              <dt className="inline text-gray-400">Email: </dt>
+                              <dd className="inline break-all">{memberEmail}</dd>
+                            </div>
+                          ) : null}
+                          {Array.isArray(memberUser?.linkedMethods) &&
+                            memberUser.linkedMethods.length > 0 ? (
+                            <div>
+                              <dt className="inline text-gray-400">
+                                Sign-in methods:{" "}
+                              </dt>
+                              <dd className="inline">
+                                {memberUser.linkedMethods.join(", ")}
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                        {isAdminMember && !isSelf ? (
+                          <p className="mt-2 text-xs text-gray-400">
+                            Admins keep full access while they are admins.
+                          </p>
                         ) : null}
-                      </dl>
-                      {isAdminMember && !isSelf ? (
-                        <p className="mt-2 text-xs text-gray-400">
-                          Admins keep full access while they are admins.
-                        </p>
-                      ) : null}
-                      {isSelf ? (
-                        <p className="mt-2 text-xs text-cyan-200/75">
-                          You can’t edit or remove your own membership here.
-                        </p>
-                      ) : null}
-                    </PopoverContent>
-                  </Popover>
+                        {isSelf ? (
+                          <p className="mt-2 text-xs text-cyan-200/75">
+                            You can’t edit or remove your own membership here.
+                          </p>
+                        ) : null}
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <div className="flex justify-self-end">
                     {!isSelf && targetUserId ? (
                       <DropdownMenu>

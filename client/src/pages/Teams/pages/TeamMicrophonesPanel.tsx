@@ -1,4 +1,5 @@
 import { TriangleAlert } from "lucide-react";
+import { Link } from "react-router-dom";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
 import {
@@ -9,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import {
   teamMicrophoneSlotKey,
   type TeamsAssignmentSummaryRow,
@@ -106,8 +108,14 @@ const TeamMicrophonesPanel = ({
 
       {microphones.length === 0 ? (
         <p className="rounded-md border border-dashed border-gray-700 bg-black/20 px-3 py-4 text-xs text-gray-400">
-          No microphones in the church list yet. Add them under Microphones in
-          Teams and Services, then allocate them here.
+          No microphones in the church list yet.{" "}
+          <Link
+            to={TEAMS_SECTION_PATHS.microphones}
+            className="cursor-pointer font-medium text-cyan-300 hover:text-cyan-200"
+          >
+            Open Microphones
+          </Link>{" "}
+          to add them, then allocate them here.
         </p>
       ) : null}
 

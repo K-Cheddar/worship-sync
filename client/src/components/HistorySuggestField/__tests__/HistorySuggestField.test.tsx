@@ -205,6 +205,30 @@ describe("HistorySuggestField", () => {
       ).toBeInTheDocument();
     });
 
+    it("keeps removable and non-removable suggestion rows the same height class", () => {
+      const Wrapper = () => {
+        const [value, setValue] = useState("");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={["Alice", "Bob"]}
+            onRemoveHistoryValue={jest.fn()}
+            isHistoryValueRemovable={(suggestion) => suggestion === "Bob"}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      fireEvent.focus(screen.getByRole("textbox", { name: /Name/i }));
+
+      const rows = screen.getAllByTestId("history-suggestion-row");
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toHaveClass("min-h-8");
+      expect(rows[1]).toHaveClass("min-h-8");
+    });
+
     it("shows suggestions sorted alphabetically when empty", () => {
       const unsorted = ["Zara", "Alice", "Molly"];
       const Wrapper = () => {

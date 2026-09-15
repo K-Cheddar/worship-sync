@@ -26,6 +26,26 @@ jest.mock("../../hooks/useCachedMediaUrl", () => ({
 
 const mockUseLocalImageUrl = jest.mocked(useLocalImageUrl);
 const mockUseLocalVideoFileUrl = jest.mocked(useLocalVideoFileUrl);
+const mockUseDraggable = jest.fn(() => ({
+  attributes: {},
+  listeners: {},
+  setNodeRef: jest.fn(),
+  transform: null,
+  isDragging: false,
+}));
+
+jest.mock("@dnd-kit/core", () => ({
+  useDraggable: (options: unknown) => {
+    mockUseDraggable(options);
+    return {
+      attributes: {},
+      listeners: {},
+      setNodeRef: jest.fn(),
+      transform: null,
+      isDragging: false,
+    };
+  },
+}));
 
 const localVideo: MediaType = {
   path: "",
@@ -115,6 +135,10 @@ describe("MediaLibraryGridMediaTile", () => {
     expect(screen.getByRole("img", { name: "video-1" })).toHaveAttribute(
       "src",
       "blob:local-video-thumb",
+    );
+    expect(screen.getByRole("img", { name: "video-1" })).toHaveAttribute(
+      "draggable",
+      "false",
     );
   });
 
@@ -308,6 +332,50 @@ describe("MediaLibraryGridMediaTile", () => {
       expect.anything(),
       localVideo,
       2,
+    );
+  });
+
+  it("uses the selected media group only when the dragged tile is selected", () => {
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideo}
+        index={0}
+        isSelected
+        isMultiSelected
+        mediaMultiSelectMode
+        orderedSelectedMediaIds={["video-1", "image-2"]}
+        mediaDragEnabled
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(mockUseDraggable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { kind: "media", mediaIds: ["video-1", "image-2"] },
+      }),
+    );
+  });
+
+  it("ignores a stale selection when the dragged tile is unselected", () => {
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideo}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode
+        orderedSelectedMediaIds={["old-selection"]}
+        mediaDragEnabled
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(mockUseDraggable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { kind: "media", mediaIds: ["video-1"] },
+      }),
     );
   });
 });

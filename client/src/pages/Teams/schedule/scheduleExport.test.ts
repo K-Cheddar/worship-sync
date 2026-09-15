@@ -100,6 +100,116 @@ describe("buildScheduleExportModel", () => {
     expect(formatExportCellText(camera)).toBe("");
   });
 
+  it("keeps an occurrence-added slot active beyond the baseline required count", () => {
+    // Intentional: additionalPositionSlots are staffing needs for that date,
+    // so export must show them as empty or filled — not muted inactive cells.
+    const model = buildScheduleExportModel(
+      baseInput({
+        columns: [
+          {
+            columnKey: "dir::0",
+            positionId: "dir",
+            slot: 0,
+            label: "Director",
+          },
+          {
+            columnKey: "cam::0",
+            positionId: "cam",
+            slot: 0,
+            label: "Camera 1",
+          },
+          {
+            columnKey: "cam::1",
+            positionId: "cam",
+            slot: 1,
+            label: "Camera 2",
+          },
+        ],
+        requiredCountFor: (_occurrenceId, positionId) =>
+          positionId === "cam" ? 1 : 1,
+        additionalPositionSlots: { o1: ["cam::1"] },
+        assignments: {
+          o1: {
+            "dir::0": cell("m1"),
+            "cam::0": cell("m2"),
+          },
+        },
+      }),
+    );
+    const cells = model.groups[0].rows[0].cells;
+    expect(cells[1].state).toBe("filled");
+    expect(cells[2].state).toBe("empty");
+    expect(formatExportCellText(cells[2])).toBe("—");
+  });
+
+  it("activates a position that only exists as an occurrence-added slot", () => {
+    const model = buildScheduleExportModel(
+      baseInput({
+        columns: [
+          {
+            columnKey: "dir::0",
+            positionId: "dir",
+            slot: 0,
+            label: "Director",
+          },
+          { columnKey: "cam::0", positionId: "cam", slot: 0, label: "Camera" },
+        ],
+        requiredCountFor: (_occurrenceId, positionId) =>
+          positionId === "dir" ? 1 : 0,
+        additionalPositionSlots: { o1: ["cam::0"] },
+        assignments: {
+          o1: {
+            "dir::0": cell("m1"),
+            "cam::0": cell("m2"),
+          },
+        },
+      }),
+    );
+    const cells = model.groups[0].rows[0].cells;
+    expect(cells[0].state).toBe("filled");
+    expect(cells[1].state).toBe("filled");
+    expect(cells[1].tokens[0]?.name).toBe("Josh");
+  });
+
+  it("does not activate an added slot on a different occurrence", () => {
+    const model = buildScheduleExportModel(
+      baseInput({
+        columns: [
+          {
+            columnKey: "cam::0",
+            positionId: "cam",
+            slot: 0,
+            label: "Camera 1",
+          },
+          {
+            columnKey: "cam::1",
+            positionId: "cam",
+            slot: 1,
+            label: "Camera 2",
+          },
+        ],
+        groups: [
+          {
+            serviceName: "Sabbath",
+            timingLabel: "",
+            occurrences: [
+              { occurrenceId: "o1", rowLabel: "May 2" },
+              { occurrenceId: "o2", rowLabel: "May 9" },
+            ],
+          },
+        ],
+        requiredCountFor: () => 1,
+        additionalPositionSlots: { o1: ["cam::1"] },
+        assignments: {
+          o1: { "cam::0": cell("m2") },
+          o2: { "cam::0": cell("m2") },
+        },
+      }),
+    );
+    expect(model.groups[0].rows[0].cells[1].state).toBe("empty");
+    expect(model.groups[0].rows[1].cells[1].state).toBe("inactive");
+  });
+
   it("flags cells and tokens for the highlighted member and resolves their name", () => {
     const model = buildScheduleExportModel(
       baseInput({ highlightMemberId: "m3" }),

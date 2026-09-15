@@ -560,6 +560,7 @@ const FilteredItems = ({
         ...initialCreateItemState,
         name: candidate.trackName,
         type: "song",
+        hasUserSelectedType: true,
         text: getImportableLyricsFromTrack(candidate),
         songArtist: candidate.artistName,
         songAlbum: candidate.albumName || "",

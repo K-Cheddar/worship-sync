@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
 const mockUseDisplayedUpcomingService = jest.fn();
 const mockUseNextServiceCountdownText = jest.fn();
 const mockNavigate = jest.fn();
+const mockRequestOutlineSelectionScroll = jest.fn();
 let mockState: any;
 
 jest.mock("../../hooks", () => ({
@@ -46,6 +48,11 @@ jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
 }));
 
+jest.mock("../../utils/outlineSelectionScroll", () => ({
+  requestOutlineSelectionScroll: (...args: unknown[]) =>
+    mockRequestOutlineSelectionScroll(...args),
+}));
+
 jest.mock("../../components/ErrorBoundary/ErrorBoundary", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -58,7 +65,11 @@ jest.mock("../Toolbar/ToolbarElements/Outlines", () => ({
 
 jest.mock("../../components/ActionBar/ActionBar", () => ({
   __esModule: true,
-  default: () => <div data-testid="action-bar" />,
+  default: ({ items }: { items?: Array<{ label: string }> }) => (
+    <div data-testid="action-bar">
+      {items?.map((item) => <span key={item.label}>{item.label}</span>)}
+    </div>
+  ),
 }));
 
 jest.mock("../../components/FloatingWindow/FloatingWindow", () => ({
@@ -89,12 +100,14 @@ jest.mock("./ServiceItem", () => ({
     timer,
     timerText,
     selectedListIds,
+    onItemClick,
   }: {
     item: { listId: string; name: string; type: string };
     isActive: boolean;
     timer?: { remainingTime?: number };
     timerText?: ReactNode;
     selectedListIds: Set<string>;
+    onItemClick: (listId: string, e: React.MouseEvent) => void;
   }) => (
     <li
       data-testid={`row-${item.type}`}
@@ -102,7 +115,9 @@ jest.mock("./ServiceItem", () => ({
       data-list-selected={String(selectedListIds.has(item.listId))}
       data-timer-value={timer?.remainingTime ?? ""}
     >
-      {item.name}
+      <button type="button" onClick={(e) => onItemClick(item.listId, e)}>
+        {item.name}
+      </button>
       <span data-testid={`timer-text-${item.type}`}>{timerText}</span>
     </li>
   ),
@@ -284,5 +299,70 @@ describe("ServiceItems", () => {
       "data-list-selected",
       "false",
     );
+  });
+
+  const renderServiceItems = () =>
+    render(
+      <ControllerInfoContext.Provider
+        value={{ access: "view", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+  it("keeps the Service plan action available in Present mode", () => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+
+    render(
+      <ControllerInfoContext.Provider
+        value={{ access: "full", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <PresentationControllerModeProvider>
+            <ServiceItems />
+          </PresentationControllerModeProvider>
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("action-bar")).toHaveTextContent("Service plan");
+    expect(screen.getByTestId("action-bar")).not.toHaveTextContent("Add heading");
+  });
+
+  it("requests a return to the selected slide when the current outline item is clicked again", () => {
+    mockState.undoable.present.itemList.selectedItemListId = "row-timer";
+    renderServiceItems();
+
+    fireEvent.click(screen.getByRole("button", { name: "Timer" }));
+
+    expect(mockRequestOutlineSelectionScroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request outline scroll when a different outline item is clicked", () => {
+    mockState.undoable.present.itemList.selectedItemListId = "row-timer";
+    renderServiceItems();
+
+    fireEvent.click(screen.getByRole("button", { name: "Upcoming Service" }));
+
+    expect(mockRequestOutlineSelectionScroll).not.toHaveBeenCalled();
+  });
+
+  it("requests a return to the selected slide for a full-access operator re-click", () => {
+    mockState.undoable.present.itemList.selectedItemListId = "row-timer";
+    render(
+      <ControllerInfoContext.Provider
+        value={{ access: "full", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Timer" }));
+
+    expect(mockRequestOutlineSelectionScroll).toHaveBeenCalledTimes(1);
   });
 });

@@ -77,6 +77,7 @@ import { Slider } from "../../components/ui/Slider";
 import { VirtualMediaGrid } from "./VirtualMediaGrid";
 import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
+import { useNativeFileDrop } from "./useNativeFileDrop";
 import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import {
   MediaLibraryFolderModals,
@@ -246,6 +247,14 @@ const MediaModal = ({
   const location = useLocation();
   const { showToast } = useToast();
   const { db } = useContext(ControllerInfoContext) || {};
+  const handleDroppedFiles = useCallback(
+    (files: File[]) => mediaUploadInputRef?.current?.openModalWithFiles(files),
+    [mediaUploadInputRef],
+  );
+  const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
+    disabled: !isOpen || mediaUploadDisabled,
+    onFiles: handleDroppedFiles,
+  });
   const { getBarAction: getLocalMediaCloudShareBarAction } =
     useLocalMediaCloudShare();
 
@@ -896,7 +905,15 @@ const MediaModal = ({
       headerClassName="bg-homepage-canvas px-4 pb-0 pt-2"
       titleClassName="text-lg"
     >
-      <div className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+      <div
+        {...fileDropHandlers}
+        className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+      >
+        {isFileDragOver && (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-blue-950/75 text-lg font-semibold text-blue-100">
+            Drop files to add media
+          </div>
+        )}
         {/* Expanded fullscreen view */}
         <div
           className={cn(

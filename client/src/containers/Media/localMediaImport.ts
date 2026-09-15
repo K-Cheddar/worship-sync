@@ -10,39 +10,79 @@ import {
 } from "../../utils/localImageAssets";
 import {
   buildLocalVideoFileUrl,
+  getLocalVideoContentType,
   readVideoMetadata,
   saveLocalVideoFile,
   validateLocalVideoFile,
 } from "../../utils/localVideoFileAssets";
+import { getImageContentType } from "../../utils/mediaFileTypes";
 import { detectFileType } from "./utils/fileUtils";
+import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
+
+export class LocalImagePlaybackError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "This image cannot be displayed on this device. You can convert it for offline playback.",
+      { cause },
+    );
+    this.name = "LocalImagePlaybackError";
+  }
+}
+
+export class LocalVideoPlaybackError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "This video cannot be played on this device. You can convert it for offline playback.",
+      { cause },
+    );
+    this.name = "LocalVideoPlaybackError";
+  }
+}
 
 export const createLocalMediaFromFile = async (
   file: File,
   workspaceId: string,
   storagePolicy: LocalAssetStoragePolicy = "local-only",
+  options: {
+    allowCloudPlaybackFallback?: boolean;
+    importBytes?: boolean;
+    displayName?: string;
+  } = {},
 ): Promise<MediaType> => {
   if (detectFileType(file) === "video") {
-    return createLocalVideoMedia(file, workspaceId, storagePolicy);
+    return createLocalVideoMedia(file, workspaceId, storagePolicy, options);
   }
-  return createLocalImageMedia(file, workspaceId, storagePolicy);
+  return createLocalImageMedia(
+    file,
+    workspaceId,
+    storagePolicy,
+    options.displayName,
+  );
 };
 
 const createLocalImageMedia = async (
   file: File,
   workspaceId: string,
   storagePolicy: LocalAssetStoragePolicy,
+  displayName?: string,
 ): Promise<MediaType> => {
   const error = validateLocalImageFile(file);
   if (error) throw new Error(error);
-  const dimensions = await readImageDimensions(file);
+  let dimensions: { width: number; height: number };
+  try {
+    dimensions = await readImageDimensions(file);
+  } catch (error) {
+    throw new LocalImagePlaybackError(error);
+  }
   const assetId = `local_image_${generateRandomId()}`;
   const now = new Date().toISOString();
+  const contentType = getImageContentType(file);
   await saveLocalImage({
     id: assetId,
     workspaceId,
     blob: file,
     fileName: file.name,
-    contentType: file.type,
+    contentType,
     size: file.size,
     width: dimensions.width,
     height: dimensions.height,
@@ -53,10 +93,10 @@ const createLocalImageMedia = async (
     path: "",
     createdAt: now,
     updatedAt: now,
-    format: file.type.replace("image/", "") || "image",
+    format: contentType.replace("image/", "") || "image",
     height: dimensions.height,
     width: dimensions.width,
-    name: file.name,
+    name: normalizeMediaLibraryDisplayName(displayName ?? file.name),
     publicId: assetId,
     type: "image",
     id: assetId,
@@ -69,7 +109,7 @@ const createLocalImageMedia = async (
       ownerDeviceId: getOrCreateDeviceId(),
       ownerLabel: getTrustedDeviceLabel(),
       fileName: file.name,
-      contentType: file.type,
+      contentType,
       storagePolicy,
     },
   };
@@ -79,32 +119,57 @@ const createLocalVideoMedia = async (
   file: File,
   workspaceId: string,
   storagePolicy: LocalAssetStoragePolicy,
+  options: {
+    allowCloudPlaybackFallback?: boolean;
+    importBytes?: boolean;
+    displayName?: string;
+  },
 ): Promise<MediaType> => {
   const error = validateLocalVideoFile(file);
   if (error) throw new Error(error);
-  const metadata = await readVideoMetadata(file);
+  let metadata: { width: number; height: number; duration: number };
+  let preferCloudPlayback = false;
+  try {
+    metadata = await readVideoMetadata(file);
+  } catch (error) {
+    if (!options.allowCloudPlaybackFallback) {
+      throw new LocalVideoPlaybackError(error);
+    }
+    // Mux can ingest codecs that Chromium/Electron cannot decode locally. Keep
+    // the original file, then switch this media item to Mux HLS after the
+    // cloud upload finishes. These values are replaced by playable cloud data
+    // where available; they only keep the local record structurally valid.
+    metadata = { width: 1920, height: 1080, duration: 0 };
+    preferCloudPlayback = true;
+  }
   const assetId = `local_video_${generateRandomId()}`;
   const now = new Date().toISOString();
-  await saveLocalVideoFile({
+  const contentType = getLocalVideoContentType(file);
+  const localVideo = {
     id: assetId,
     workspaceId,
     blob: file,
     fileName: file.name,
-    contentType: file.type,
+    contentType,
     size: file.size,
     width: metadata.width,
     height: metadata.height,
     duration: metadata.duration,
     createdAt: now,
-  });
+  };
+  if (options.importBytes) {
+    await saveLocalVideoFile(localVideo, { importBytes: true });
+  } else {
+    await saveLocalVideoFile(localVideo);
+  }
   return {
     path: "",
     createdAt: now,
     updatedAt: now,
-    format: file.type.replace("video/", "") || "video",
+    format: contentType.replace("video/", "") || "video",
     height: metadata.height,
     width: metadata.width,
-    name: file.name,
+    name: normalizeMediaLibraryDisplayName(options.displayName ?? file.name),
     publicId: assetId,
     type: "video",
     id: assetId,
@@ -120,9 +185,10 @@ const createLocalVideoMedia = async (
       ownerDeviceId: getOrCreateDeviceId(),
       ownerLabel: getTrustedDeviceLabel(),
       fileName: file.name,
-      contentType: file.type,
+      contentType,
       storagePolicy,
       audioEnabled: true,
+      ...(preferCloudPlayback ? { preferCloudPlayback: true } : {}),
     },
   };
 };

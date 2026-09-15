@@ -37,15 +37,23 @@ import {
   updateStream,
 } from "../../store/presentationSlice";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
-import { createNewSlide } from "../../utils/slideCreation";
+import {
+  createNewSlide,
+  createSlideFromMedia,
+  insertSlidesAt,
+} from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
 import ItemSlide from "./ItemSlide";
 import ItemSlidesSkeleton from "./ItemSlidesSkeleton";
 import OutlineItemSlidesScroller from "./OutlineItemSlidesScroller";
 import {
   DndContext,
+  DragOverlay,
+  useDndMonitor,
   useDroppable,
+  useDndContext,
   DragEndEvent,
+  DragOverEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
 
@@ -55,6 +63,8 @@ import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import {
   useCallback,
   useContext,
+  Fragment,
+  createContext,
   useEffect,
   useMemo,
   useRef,
@@ -73,7 +83,10 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
 import { DEFAULT_FONT_PX } from "../../constants";
-import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
+import {
+  ensureSlidesHaveMonitorBandFormatting,
+  getFormattedSections,
+} from "../../utils/overflow";
 import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
 import { Slider } from "../../components/ui/Slider";
 import {
@@ -84,13 +97,22 @@ import {
   resolveOutputDefaults,
   shouldSendNextSlideForOutput,
 } from "../../utils/displaySettings";
-import { Presentation as PresentationType } from "../../types";
+import { ItemSlideType, Presentation as PresentationType } from "../../types";
+import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import {
   buildLocalVideoInputPresentation,
   getLocalVideoSourceErrorMessage,
   isDesktopCaptureKind,
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
+import { mediaHasSendableContent } from "../../utils/localVideoMediaLibrary";
+import {
+  isMediaDragData,
+  isSlideContainerData,
+  isSlideDragData,
+  isSlideInsertData,
+  presentationCollisionDetection,
+} from "../../utils/presentationDnd";
 import {
   acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
@@ -114,9 +136,77 @@ import {
   prepareItemForEditor,
   resolveSlidesForOutlineItem,
 } from "../../utils/outlineSlideSections";
+import MediaDragPreview from "../Media/MediaDragPreview";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
+
+/** Preserve the existing custom-item reorder unit: a named section moves as a block. */
+const reorderSlidesForDrag = (
+  slides: ItemSlideType[],
+  activeId: string,
+  overId: string,
+) => {
+  const draggedSlide = slides.find((slide) => slide.id === activeId);
+  if (!draggedSlide) return slides;
+
+  const sectionNum = getFreeSectionNumber(draggedSlide);
+  if (sectionNum == null) return slides;
+  const sectionSlides = slides.filter(
+    (slide) => getFreeSectionNumber(slide) === sectionNum,
+  );
+  const targetSlide = slides.find((slide) => slide.id === overId);
+  if (!targetSlide) return slides;
+
+  const targetIndex = slides.findIndex((slide) => slide.id === overId);
+  const targetSectionNum = getFreeSectionNumber(targetSlide);
+  if (targetSectionNum != null && targetSectionNum !== sectionNum) {
+    const targetSectionStart = slides.findIndex((slide) =>
+      getFreeSectionNumber(slide) === targetSectionNum,
+    );
+    const targetSectionEnd = slides.findIndex(
+      (slide, index) =>
+        index > targetSectionStart &&
+        getFreeSectionNumber(slide) !== targetSectionNum,
+    );
+    if (
+      targetIndex > targetSectionStart &&
+      targetIndex < targetSectionEnd
+    ) {
+      return slides;
+    }
+  }
+
+  const firstSectionIndex = slides.findIndex(
+    (slide) => getFreeSectionNumber(slide) === sectionNum,
+  );
+  const updatedSlides = [...slides];
+  updatedSlides.splice(firstSectionIndex, sectionSlides.length);
+  const updatedTargetIndex = updatedSlides.findIndex(
+    (slide) => slide.id === overId,
+  );
+  if (updatedTargetIndex < 0) return slides;
+  let insertionIndex = updatedTargetIndex + 1;
+  if (targetSectionNum != null) {
+    const updatedTargetSectionStart = updatedSlides.findIndex(
+      (slide) => getFreeSectionNumber(slide) === targetSectionNum,
+    );
+    if (updatedTargetIndex === updatedTargetSectionStart) {
+      const updatedTargetSectionEnd = updatedSlides.findIndex(
+        (slide, index) =>
+          index > updatedTargetSectionStart &&
+          getFreeSectionNumber(slide) !== targetSectionNum,
+      );
+      insertionIndex =
+        updatedTargetSectionEnd < 0
+          ? updatedSlides.length
+          : updatedTargetSectionEnd;
+    }
+  }
+  updatedSlides.splice(insertionIndex, 0, ...sectionSlides);
+  return updatedSlides;
+};
 
 type SizeConfig = {
   borderWidth: string;
@@ -143,7 +233,15 @@ const withVideoPlayback = <T extends { slide?: PresentationType["slide"] }>(
   }),
 });
 
-const ItemSlides = () => {
+export const ItemSlidesDndContext = createContext<"local" | "ancestor">(
+  "local",
+);
+
+const ItemSlidesContent = () => {
+  const { mode } = usePresentationControllerMode();
+  const isPresentMode = mode === "present";
+  const dndMode = useContext(ItemSlidesDndContext);
+  const { active, over } = useDndContext();
   const {
     arrangements,
     selectedArrangement,
@@ -155,11 +253,14 @@ const ItemSlides = () => {
     _id,
     listId,
     shouldSendTo,
-    isEditMode,
+    formattedSections = [],
+    isLyricsEditorOpen,
     backgroundTargetSlideIds: backgroundTargetSlideIdsRaw,
     backgroundTargetRangeAnchorId,
     mobileBackgroundTargetSelectMode: mobileBgSelectModeRaw,
   } = useSelector((state: RootState) => state.undoable.present.item);
+
+  const dispatch = useDispatch();
 
   const backgroundTargetSlideIds = backgroundTargetSlideIdsRaw ?? [];
   const mobileBackgroundTargetSelectMode = mobileBgSelectModeRaw ?? false;
@@ -183,6 +284,41 @@ const ItemSlides = () => {
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
 
+  const renameFreeSection = useCallback(
+    (sectionNum: number, name: string) => {
+      const nextFormattedSections = formattedSections.length
+        ? [...formattedSections]
+        : getFormattedSections(slides, 1);
+      const sectionIndex = nextFormattedSections.findIndex(
+        (section) => section.sectionNum === sectionNum,
+      );
+      const nextName = name.trim();
+      if (sectionIndex >= 0) {
+        const section = nextFormattedSections[sectionIndex];
+        nextFormattedSections[sectionIndex] = nextName
+          ? { ...section, name: nextName }
+          : (({ name: _name, ...withoutName }) => withoutName)(section);
+      } else {
+        const sourceSlide = slides.find(
+          (slide) => getFreeSectionNumber(slide) === sectionNum,
+        );
+        if (!sourceSlide) return;
+        nextFormattedSections.push({
+          sectionNum,
+          name: nextName || undefined,
+          words: "",
+          slideSpan: slides.filter(
+            (slide) => getFreeSectionNumber(slide) === sectionNum,
+          ).length,
+        });
+      }
+      dispatch(
+        updateSlides({ slides, formattedSections: nextFormattedSections }),
+      );
+    },
+    [dispatch, formattedSections, slides],
+  );
+
   const videoBackgroundMedia = useMemo(
     () => getSlideVideoBackgroundMedia(slides[selectedSlide]),
     [slides, selectedSlide],
@@ -203,6 +339,8 @@ const ItemSlides = () => {
     monitorSettings: churchMonitorSettings,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
+  const mediaList = useSelector((state: RootState) => state.media.list);
+
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const showToast = useContext(ToastContext)?.showToast;
@@ -210,6 +348,7 @@ const ItemSlides = () => {
   const canEdit =
     access === "full" ||
     (access === "music" && (type === "song" || type === "free"));
+  const canInsertMedia = dndMode === "ancestor" && type === "free" && canEdit;
   const isMusic = useMemo(() => access === "music", [access]);
   // Send-time setting: it shapes the payload before it goes out, so prepare the
   // band when any monitor display wants it and let each screen decide whether to
@@ -324,7 +463,11 @@ const ItemSlides = () => {
 
   const liveVideoSyncOutputIds = useMemo(() => {
     const selectedId = slides[selectedSlide]?.id;
-    if (!selectedId || !liveSlideIds.has(selectedId) || !videoBackgroundMediaKey) {
+    if (
+      !selectedId ||
+      !liveSlideIds.has(selectedId) ||
+      !videoBackgroundMediaKey
+    ) {
       return [];
     }
     const ids: string[] = [];
@@ -334,7 +477,8 @@ const ItemSlides = () => {
     ) => {
       for (const outputId of outputIds) {
         const slot = outputSlots[outputId];
-        if (!slot?.isTransmitting || slot.info.slide?.id !== selectedId) continue;
+        if (!slot?.isTransmitting || slot.info.slide?.id !== selectedId)
+          continue;
         if (accept && !accept(slot.info)) continue;
         const slideKey = getVideoBackgroundMediaKey(
           getSlideVideoBackgroundMedia(slot.info.slide),
@@ -456,7 +600,6 @@ const ItemSlides = () => {
 
   const debounceTime = useRef(0);
 
-  const dispatch = useDispatch();
   const location = useLocation();
   const setSlideGridSize = useCallback(
     (nextSize: number) => {
@@ -486,11 +629,15 @@ const ItemSlides = () => {
 
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
+  const [dragPreviewSlides, setDragPreviewSlides] = useState<
+    ItemSlideType[] | null
+  >(null);
 
   const hasSlides = slides.length > 0;
   /** Avoid one paint with an empty list after load: debounced state clears while loading and syncs in an effect. */
   const slidesToRender =
     hasSlides && debouncedSlides.length === 0 ? slides : debouncedSlides;
+  const renderedSlides = dragPreviewSlides ?? slidesToRender;
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -745,10 +892,10 @@ const ItemSlides = () => {
           : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
-            ...nextSlideSlide,
-            boxes:
-              nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
-          }
+              ...nextSlideSlide,
+              boxes:
+                nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+            }
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
         const slideForMonitor = {
@@ -942,9 +1089,7 @@ const ItemSlides = () => {
         docsById: neighborDocsById,
       });
       const targetIndex =
-        direction === 1
-          ? 0
-          : Math.max(0, neighborSlides.length - 1);
+        direction === 1 ? 0 : Math.max(0, neighborSlides.length - 1);
       pendingOutlineSelectRef.current = {
         listId: neighbor.listId,
         index: targetIndex,
@@ -1011,7 +1156,7 @@ const ItemSlides = () => {
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
-      if (!location.pathname.includes("item") || isEditMode || isTyping) return;
+      if (!location.pathname.includes("item") || isLyricsEditorOpen || isTyping) return;
       if (e.key === " ") {
         e.preventDefault();
         if (e.shiftKey) {
@@ -1044,7 +1189,7 @@ const ItemSlides = () => {
     activateOutlineNeighbor,
     advanceSlide,
     isCollapsedContinuous,
-    isEditMode,
+    isLyricsEditorOpen,
     location.pathname,
     previousSlide,
   ]);
@@ -1071,10 +1216,10 @@ const ItemSlides = () => {
     };
   }, [isLoading]);
 
-  const sensors = useSensors();
-
   const { setNodeRef } = useDroppable({
     id: "item-slides-list",
+    data: { kind: "slide-container" },
+    disabled: !canInsertMedia || isCollapsedContinuous,
   });
   const slidesScrollRef = useRef<HTMLElement | null>(null);
   const setSlidesContainerRef = useCallback(
@@ -1224,7 +1369,7 @@ const ItemSlides = () => {
       });
     }
 
-    if (isFree) {
+    if (isFree && !isPresentMode) {
       items.push({
         id: "add-slide",
         label: "Add",
@@ -1303,7 +1448,7 @@ const ItemSlides = () => {
       });
     }
 
-    if (hasSlides) {
+    if (!isPresentMode && hasSlides) {
       items.push({
         id: "clear-background",
         label: "Clear background",
@@ -1407,6 +1552,7 @@ const ItemSlides = () => {
     dispatch,
     hasSlides,
     isCollapsedContinuous,
+    isPresentMode,
     isSlideSubsetSelecting,
     selectedSlide,
     slides,
@@ -1415,6 +1561,10 @@ const ItemSlides = () => {
 
   const onDragStart = (event: DragStartEvent) => {
     const { active } = event;
+    if (!isSlideDragData(active.data.current)) return;
+    if (type === "free") {
+      setDragPreviewSlides(slides);
+    }
     const draggedSlide = slides.find((slide) => slide.id === active.id);
     if (draggedSlide) {
       const sectionMatch = draggedSlide.name.match(/Section (\d+)/);
@@ -1424,255 +1574,420 @@ const ItemSlides = () => {
     }
   };
 
-  const onDragEnd = (event: DragEndEvent) => {
-    setDraggedSection(null);
-    const { over, active } = event;
-    if (!over || !active) return;
-
-    const { id: overId } = over;
-    const { id: activeId } = active;
-    const updatedSlides = [...slides];
-
-    // Find the dragged slide and its section
-    const draggedSlide = slides.find((slide) => slide.id === activeId);
-    if (!draggedSlide) return;
-
-    // Extract section number from the dragged slide's name
-    const sectionMatch = draggedSlide.name.match(/Section (\d+)/);
-    if (!sectionMatch) return;
-    const sectionNum = sectionMatch[1];
-
-    // Find all slides in the same section
-    const sectionSlides = slides.filter((slide) =>
-      slide.name.includes(`Section ${sectionNum}`),
-    );
-
-    // Find the target position
-    const targetSlide = slides.find((slide) => slide.id === overId);
-    if (!targetSlide) return;
-
-    // Get the target index
-    const targetIndex = slides.findIndex((slide) => slide.id === overId);
-
-    // Check if target position is within another section
-    const targetSectionMatch = targetSlide.name.match(/Section (\d+)/);
-    if (targetSectionMatch) {
-      const targetSectionNum = targetSectionMatch[1];
-      if (targetSectionNum !== sectionNum) {
-        // Find the boundaries of the target section
-        const targetSectionStart = slides.findIndex((slide) =>
-          slide.name.includes(`Section ${targetSectionNum}`),
-        );
-        const targetSectionEnd = slides.findIndex(
-          (slide, index) =>
-            index > targetSectionStart &&
-            !slide.name.includes(`Section ${targetSectionNum}`),
-        );
-
-        // If target is within another section, adjust the target index to be before or after that section
-        if (
-          targetIndex > targetSectionStart &&
-          targetIndex < targetSectionEnd
-        ) {
-          // If we're closer to the start of the target section, place before it
-          if (
-            targetIndex - targetSectionStart <
-            targetSectionEnd - targetIndex
-          ) {
-            return; // Don't allow dropping in the middle of another section
-          } else {
-            return; // Don't allow dropping in the middle of another section
-          }
-        }
-      }
+  const onDragOver = (event: DragOverEvent) => {
+    const { active, over } = event;
+    if (
+      type !== "free" ||
+      !over ||
+      !isSlideDragData(active.data.current) ||
+      !isSlideDragData(over.data.current)
+    ) {
+      return;
     }
 
-    // Get the indices of the first and last slides in the section
-    const firstSectionIndex = slides.findIndex((slide) =>
-      slide.name.includes(`Section ${sectionNum}`),
+    setDragPreviewSlides((currentSlides) => {
+      const sourceSlides = currentSlides ?? slides;
+      const nextSlides = reorderSlidesForDrag(
+        sourceSlides,
+        String(active.id),
+        String(over.id),
+      );
+      return nextSlides === sourceSlides ? currentSlides : nextSlides;
+    });
+  };
+
+  const activeMediaData = isMediaDragData(active?.data.current)
+    ? active.data.current
+    : null;
+  const activeSlide =
+    type === "free" && isSlideDragData(active?.data.current)
+      ? renderedSlides.find((slide) => slide.id === active.id)
+      : null;
+  const getContainerInsertionIndex = () => {
+    if (!active?.rect?.current?.translated || slides.length === 0) {
+      return slides.length;
+    }
+    const draggedRect = active.rect.current.translated;
+    const pointerX = draggedRect.left + draggedRect.width / 2;
+    const pointerY = draggedRect.top + draggedRect.height / 2;
+    for (let index = 0; index < slides.length; index += 1) {
+      const slideRect = document
+        .getElementById(`item-slide-${index}`)
+        ?.getBoundingClientRect();
+      if (!slideRect) continue;
+
+      const midpointY = slideRect.top + slideRect.height / 2;
+      const midpointX = slideRect.left + slideRect.width / 2;
+      if (
+        pointerY < midpointY ||
+        (pointerY <= slideRect.bottom && pointerX < midpointX)
+      ) {
+        return index;
+      }
+    }
+    return slides.length;
+  };
+
+  const mediaInsertIndex =
+    canInsertMedia && !isCollapsedContinuous && activeMediaData
+      ? isSlideInsertData(over?.data.current)
+        ? over.data.current.index
+        : isSlideContainerData(over?.data.current)
+          ? getContainerInsertionIndex()
+          : null
+      : null;
+  const draggedMediaItems = activeMediaData
+    ? activeMediaData.mediaIds
+        .map((mediaId) => mediaList.find((media) => media.id === mediaId))
+        .filter((media): media is (typeof mediaList)[number] => Boolean(media))
+    : [];
+
+  const insertMediaSlides = (event: DragEndEvent) => {
+    const { active, over } = event;
+    const activeData = active.data.current;
+    const overData = over?.data.current;
+    if (
+      !canInsertMedia ||
+      isCollapsedContinuous ||
+      !isMediaDragData(activeData)
+    )
+      return;
+    if (!over) return;
+    const insertionIndex = isSlideInsertData(overData)
+      ? overData.index
+      : isSlideContainerData(overData)
+        ? getContainerInsertionIndex()
+        : null;
+    if (insertionIndex == null) return;
+
+    const mediaById = new Map(mediaList.map((media) => [media.id, media]));
+    const mediaItems = activeData.mediaIds
+      .map((mediaId) => mediaById.get(mediaId))
+      .filter((media): media is (typeof mediaList)[number] =>
+        Boolean(media && mediaHasSendableContent(media)),
+      );
+    if (mediaItems.length === 0) return;
+
+    const insertedSlides = mediaItems.map((media) =>
+      createSlideFromMedia(media),
     );
-
-    // Remove all slides in the section
-    updatedSlides.splice(firstSectionIndex, sectionSlides.length);
-
-    // Insert the section slides at the target position
-    updatedSlides.splice(targetIndex, 0, ...sectionSlides);
-
+    const updatedSlides = insertSlidesAt(
+      slides,
+      insertedSlides,
+      insertionIndex,
+    );
     setDebouncedSlides(updatedSlides);
     dispatch(updateSlides({ slides: updatedSlides }));
   };
 
+  const onDragEnd = (event: DragEndEvent) => {
+    setDraggedSection(null);
+    const { over, active } = event;
+    if (!over || !active) {
+      setDragPreviewSlides(null);
+      return;
+    }
+
+    const activeData = active.data.current;
+    if (isMediaDragData(activeData)) {
+      insertMediaSlides(event);
+      return;
+    }
+    if (
+      !isSlideDragData(activeData) ||
+      !isSlideDragData(over.data.current)
+    ) {
+      setDragPreviewSlides(null);
+      return;
+    }
+
+    if (!dragPreviewSlides) return;
+    const updatedSlides = dragPreviewSlides;
+    setDragPreviewSlides(null);
+    setDebouncedSlides(updatedSlides);
+    dispatch(updateSlides({ slides: updatedSlides }));
+  };
+
+  const onDragCancel = () => {
+    setDraggedSection(null);
+    setDragPreviewSlides(null);
+  };
+
+  useDndMonitor({
+    onDragStart: canEdit ? onDragStart : undefined,
+    onDragOver: canEdit ? onDragOver : undefined,
+    onDragEnd: canEdit ? onDragEnd : undefined,
+    onDragCancel: canEdit ? onDragCancel : undefined,
+  });
+
   return (
-    <ErrorBoundary>
-      <DndContext
-        sensors={sensors}
-        onDragEnd={canEdit ? onDragEnd : undefined}
-        onDragStart={canEdit ? onDragStart : undefined}
-      >
-        <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
-          <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
-            {!isCollapsedContinuous &&
-              videoBackgroundMedia &&
-              videoBackgroundMediaKey ? (
-              <div className="px-2 pt-1">
-                <VideoBackgroundControls
-                  media={videoBackgroundMedia}
-                  mediaKey={videoBackgroundMediaKey}
-                  syncOutputIds={liveVideoSyncOutputIds}
-                  sendMode={videoBackgroundSendMode}
-                  onSendModeChange={(mode) =>
-                    dispatch(updateSlideVideoBackgroundSendMode({ mode }))
-                  }
-                />
-              </div>
-            ) : null}
-            <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1">
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="tertiary"
-                  className="min-h-0 h-7 w-7 justify-center p-0"
-                  svg={ZoomOut}
-                  title="Zoom out"
-                  aria-label="Zoom out slide thumbnails"
-                  disabled={size >= slidesGridColsMax}
-                  onClick={() => setSlideGridSize(size + 1)}
-                />
-                <div className="w-36 shrink-0">
-                  <Slider
-                    className="w-full"
-                    value={[slideZoomSliderValue]}
-                    min={slidesGridColsMin}
-                    max={slidesGridColsMax}
-                    step={1}
-                    onValueChange={(v: number[]) => {
-                      const raw = v[0];
-                      if (raw == null) return;
-                      setSlideGridSize(
-                        slidesGridColsMax + slidesGridColsMin - raw,
-                      );
-                    }}
-                    aria-label="Slide thumbnail zoom"
-                  />
-                </div>
-                <Button
-                  variant="tertiary"
-                  className="min-h-0 h-7 w-7 justify-center p-0"
-                  svg={ZoomIn}
-                  title="Zoom in"
-                  aria-label="Zoom in slide thumbnails"
-                  disabled={size <= slidesGridColsMin}
-                  onClick={() => setSlideGridSize(size - 1)}
-                />
-              </div>
-              {slideActionBarItems.length > 0 ? (
-                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
-                  {isSlideSubsetSelecting ? (
-                    <div
-                      className="flex shrink-0 items-baseline gap-1 text-xs"
-                      aria-live="polite"
-                    >
-                      <span className="font-semibold tabular-nums text-cyan-400">
-                        {backgroundTargetSlideIds.length}
-                      </span>
-                      <span className="hidden text-gray-400 sm:inline">
-                        {backgroundTargetSlideIds.length === 1
-                          ? "slide selected"
-                          : "slides selected"}
-                      </span>
-                    </div>
-                  ) : null}
-                  <ActionBar
-                    items={slideActionBarItems}
-                    className="min-w-0 flex-1 justify-end"
-                    overflowMenuClassName="min-w-48"
-                  />
-                </div>
-              ) : null}
-            </div>
-          </div>
-          {isLoading && !isCollapsedContinuous ? (
-            <ItemSlidesSkeleton
-              className={slidesListClassName}
-              placeholderCount={Math.min(size * 2, 16)}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
+      <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
+        {!isPresentMode && !isCollapsedContinuous &&
+        videoBackgroundMedia &&
+        videoBackgroundMediaKey ? (
+          <div className="px-2 pt-1">
+            <VideoBackgroundControls
+              media={videoBackgroundMedia}
+              mediaKey={videoBackgroundMediaKey}
+              syncOutputIds={liveVideoSyncOutputIds}
+              sendMode={videoBackgroundSendMode}
+              onSendModeChange={(mode) =>
+                dispatch(updateSlideVideoBackgroundSendMode({ mode }))
+              }
+              showSendMode={!isPresentMode}
             />
-          ) : isCollapsedContinuous ? (
-            <div
-              ref={setSlidesContainerRef}
-              tabIndex={0}
-              id="item-slides-container"
-              className="scrollbar-variable max-h-full min-h-0 flex-1 overflow-y-auto px-2 pb-2 focus-visible:outline-none"
-            >
-              <OutlineItemSlidesScroller
-                scrollRef={slidesScrollRef}
-                cols={size}
-                size={size}
-                sizeConfig={sizeConfig}
-                isMobile={isMobile || false}
-                isStreamFormat={shouldShowStreamFormat}
-                canEdit={canEdit}
-                selectedSlide={selectedSlide}
-                liveSlideIds={liveSlideIds}
-                backgroundTargetSlideIds={backgroundTargetSlideIds}
-                draggedSection={draggedSection}
-                timers={timers}
-                selectSlide={selectSlide}
-                onSlideGridClick={onSlideGridClick}
-                onEnterBackgroundTargetSelectMode={
-                  canEdit && hasSlides
-                    ? enterBackgroundTargetSelectModeFromSlide
-                    : undefined
-                }
+          </div>
+        ) : null}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-2 py-1 max-md:content-start">
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomOut}
+              title="Zoom out"
+              aria-label="Zoom out slide thumbnails"
+              disabled={size >= slidesGridColsMax}
+              onClick={() => setSlideGridSize(size + 1)}
+            />
+            <div className="w-36 shrink-0">
+              <Slider
+                className="w-full"
+                value={[slideZoomSliderValue]}
+                min={slidesGridColsMin}
+                max={slidesGridColsMax}
+                step={1}
+                onValueChange={(v: number[]) => {
+                  const raw = v[0];
+                  if (raw == null) return;
+                  setSlideGridSize(slidesGridColsMax + slidesGridColsMin - raw);
+                }}
+                aria-label="Slide thumbnail zoom"
               />
             </div>
-          ) : hasSlides ? (
-            <ul
-              ref={setSlidesContainerRef}
-              tabIndex={0}
-              id="item-slides-container"
-              className={slidesListClassName}
-            >
-              <SortableContext
-                items={slides.map((slide) => slide.id || "")}
-                strategy={rectSortingStrategy}
-              >
-                {slidesToRender.map((slide, index) => (
-                  <ItemSlide
-                    timerInfo={timerInfo}
-                    key={slide.id}
-                    slide={slide}
-                    index={index}
-                    selectSlide={selectSlide}
-                    isSelected={index === selectedSlide}
-                    isLive={liveSlideIds.has(slide.id)}
-                    size={size}
-                    itemType={type}
-                    isMobile={isMobile || false}
-                    draggedSection={draggedSection}
-                    isStreamFormat={shouldShowStreamFormat}
-                    getBibleInfo={getBibleInfo}
-                    borderWidth={sizeConfig.borderWidth}
-                    hSize={sizeConfig.hSize}
-                    canEdit={canEdit}
-                    isBackgroundTargetSelected={backgroundTargetSlideIds.includes(
-                      slide.id,
-                    )}
-                    onSlideGridClick={onSlideGridClick}
-                    onEnterBackgroundTargetSelectMode={
-                      canEdit && hasSlides
-                        ? enterBackgroundTargetSelectModeFromSlide
-                        : undefined
-                    }
-                  />
-                ))}
-              </SortableContext>
-            </ul>
-          ) : (
-            <div className="flex w-full items-center justify-center h-6 mb-2 gap-1 shrink-0">
-              <p className="text-gray-300">No slides for selected item</p>
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomIn}
+              title="Zoom in"
+              aria-label="Zoom in slide thumbnails"
+              disabled={size <= slidesGridColsMin}
+              onClick={() => setSlideGridSize(size - 1)}
+            />
+          </div>
+          {isPresentMode && videoBackgroundMedia && videoBackgroundMediaKey ? (
+            <VideoBackgroundControls
+              media={videoBackgroundMedia}
+              mediaKey={videoBackgroundMediaKey}
+              syncOutputIds={liveVideoSyncOutputIds}
+              sendMode={videoBackgroundSendMode}
+              onSendModeChange={(mode) =>
+                dispatch(updateSlideVideoBackgroundSendMode({ mode }))
+              }
+              showSendMode={false}
+              className="min-w-0 flex-1 max-md:order-3 max-md:basis-full md:rounded-none md:border-0 md:bg-transparent md:p-0"
+            />
+          ) : null}
+          {slideActionBarItems.length > 0 ? (
+            <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
+              {isSlideSubsetSelecting ? (
+                <div
+                  className="flex shrink-0 items-baseline gap-1 text-xs"
+                  aria-live="polite"
+                >
+                  <span className="font-semibold tabular-nums text-cyan-400">
+                    {backgroundTargetSlideIds.length}
+                  </span>
+                  <span className="hidden text-gray-400 sm:inline">
+                    {backgroundTargetSlideIds.length === 1
+                      ? "slide selected"
+                      : "slides selected"}
+                  </span>
+                </div>
+              ) : null}
+              <ActionBar
+                items={slideActionBarItems}
+                className="min-w-0 flex-1 justify-end"
+                overflowMenuClassName="min-w-48"
+              />
             </div>
-          )}
+          ) : null}
         </div>
-      </DndContext>
+      </div>
+      {isLoading && !isCollapsedContinuous ? (
+        <ItemSlidesSkeleton
+          className={slidesListClassName}
+          placeholderCount={Math.min(size * 2, 16)}
+        />
+      ) : isCollapsedContinuous ? (
+        <div
+          ref={setSlidesContainerRef}
+          tabIndex={0}
+          id="item-slides-container"
+          className="scrollbar-variable max-h-full min-h-0 flex-1 overflow-y-auto px-2 pb-2 focus-visible:outline-none"
+        >
+          <OutlineItemSlidesScroller
+            scrollRef={slidesScrollRef}
+            cols={size}
+            size={size}
+            sizeConfig={sizeConfig}
+            isMobile={isMobile || false}
+            isStreamFormat={shouldShowStreamFormat}
+            canEdit={canEdit}
+            selectedSlide={selectedSlide}
+            liveSlideIds={liveSlideIds}
+            backgroundTargetSlideIds={backgroundTargetSlideIds}
+            draggedSection={draggedSection}
+            onRenameSection={renameFreeSection}
+            timers={timers}
+            selectSlide={selectSlide}
+            onSlideGridClick={onSlideGridClick}
+            onEnterBackgroundTargetSelectMode={
+              canEdit && hasSlides
+                ? enterBackgroundTargetSelectModeFromSlide
+                : undefined
+            }
+          />
+        </div>
+      ) : hasSlides ? (
+        <ul
+          ref={setSlidesContainerRef}
+          tabIndex={0}
+          id="item-slides-container"
+          className={cn(slidesListClassName, "flex-1 min-h-0 content-start")}
+        >
+          <SortableContext
+            items={renderedSlides.map((slide) => slide.id || "")}
+            strategy={rectSortingStrategy}
+          >
+            {renderedSlides.map((slide, index) => (
+              <Fragment key={slide.id}>
+                {mediaInsertIndex === index && draggedMediaItems.length > 0 ? (
+                  <li className="relative w-full list-none rounded-lg">
+                    <MediaDragPreview
+                      mediaItems={draggedMediaItems}
+                      variant="ghost"
+                      insertionIndex={mediaInsertIndex}
+                    />
+                  </li>
+                ) : null}
+                <ItemSlide
+                  timerInfo={timerInfo}
+                  slide={slide}
+                  index={index}
+                  selectSlide={selectSlide}
+                  isSelected={index === selectedSlide}
+                  isLive={liveSlideIds.has(slide.id)}
+                  size={size}
+                  itemType={type}
+                  isMobile={isMobile || false}
+                  draggedSection={draggedSection}
+                  formattedSections={formattedSections}
+                  onRenameSection={renameFreeSection}
+                  isStreamFormat={shouldShowStreamFormat}
+                  getBibleInfo={getBibleInfo}
+                  borderWidth={sizeConfig.borderWidth}
+                  hSize={sizeConfig.hSize}
+                  canEdit={canEdit}
+                  mediaInsertEnabled={canInsertMedia}
+                  isBackgroundTargetSelected={backgroundTargetSlideIds.includes(
+                    slide.id,
+                  )}
+                  onSlideGridClick={onSlideGridClick}
+                  onEnterBackgroundTargetSelectMode={
+                    canEdit && hasSlides
+                      ? enterBackgroundTargetSelectModeFromSlide
+                      : undefined
+                  }
+                />
+              </Fragment>
+            ))}
+            {mediaInsertIndex === renderedSlides.length &&
+            draggedMediaItems.length > 0 ? (
+              <li className="relative w-full list-none rounded-lg">
+                <MediaDragPreview
+                  mediaItems={draggedMediaItems}
+                  variant="ghost"
+                  insertionIndex={mediaInsertIndex}
+                />
+              </li>
+            ) : null}
+          </SortableContext>
+        </ul>
+      ) : (
+        <div
+          ref={setSlidesContainerRef}
+          tabIndex={0}
+          id="item-slides-container"
+          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-2 pb-2"
+        >
+          {mediaInsertIndex === 0 && draggedMediaItems.length > 0 ? (
+            <div className="w-full">
+              <MediaDragPreview
+                mediaItems={draggedMediaItems}
+                variant="ghost"
+                insertionIndex={0}
+              />
+            </div>
+          ) : null}
+          <p className="text-gray-300">No slides for selected item</p>
+        </div>
+      )}
+      <DragOverlay dropAnimation={null} className="pointer-events-none">
+        {activeSlide ? (
+          <div
+            className="shrink-0"
+            style={{
+              width: active?.rect?.current?.initial?.width,
+            }}
+          >
+            <ItemSlide
+              timerInfo={timerInfo}
+              slide={activeSlide}
+              index={renderedSlides.findIndex(
+                (slide) => slide.id === activeSlide.id,
+              )}
+              selectSlide={selectSlide}
+              isSelected={false}
+              isLive={liveSlideIds.has(activeSlide.id)}
+              size={size}
+              itemType={type}
+              isMobile={isMobile || false}
+              draggedSection={null}
+              formattedSections={formattedSections}
+              isStreamFormat={shouldShowStreamFormat}
+              getBibleInfo={getBibleInfo}
+              borderWidth={sizeConfig.borderWidth}
+              hSize={sizeConfig.hSize}
+              canEdit={false}
+              mediaInsertEnabled={false}
+              onSlideGridClick={() => undefined}
+              isDragOverlay
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </div>
+  );
+};
+
+const ItemSlides = () => {
+  const dndMode = useContext(ItemSlidesDndContext);
+  const sensors = useSensors();
+  const content = <ItemSlidesContent />;
+
+  return (
+    <ErrorBoundary>
+      {dndMode === "ancestor" ? (
+        content
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={presentationCollisionDetection}
+        >
+          {content}
+        </DndContext>
+      )}
     </ErrorBoundary>
   );
 };

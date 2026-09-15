@@ -13,6 +13,10 @@ import { clearOutput } from "../../store/presentationSlice";
 import Button from "../Button/Button";
 import cn from "classnames";
 import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
+import PopOver from "../PopOver/PopOver";
+
+const COMPACT_QUICK_LINK_COLUMNS = 1;
+const COMPACT_QUICK_LINK_GAP = 4;
 
 type PresentationPreviewProps = {
   name: string;
@@ -52,6 +56,12 @@ type PresentationPreviewProps = {
    * visually tied to the screen it affects rather than floating below the tile.
    */
   footer?: ReactNode;
+  /**
+   * When false, keep DisplayWindow and its file-video elements mounted, pause
+   * them at their current position, and suppress animation/local capture while
+   * a parent panel stays CSS-hidden.
+   */
+  isVisible?: boolean;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -77,6 +87,7 @@ const PresentationPreview = ({
   fillWidth = false,
   previewOverride,
   footer,
+  isVisible = true,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
@@ -88,6 +99,15 @@ const PresentationPreview = ({
   const labeledToggleMeasureRef = useRef<HTMLDivElement | null>(null);
   const [shouldShowClearLabel, setShouldShowClearLabel] = useState(true);
   const [shouldShowTransmitLabel, setShouldShowTransmitLabel] = useState(true);
+  const quickLinkRailRef = useRef<HTMLUListElement | null>(null);
+  const previewColumnRef = useRef<HTMLDivElement | null>(null);
+  const [quickLinkCapacity, setQuickLinkCapacity] = useState(
+    1,
+  );
+  const [previewColumnHeight, setPreviewColumnHeight] = useState<number | null>(
+    null,
+  );
+  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
 
   // This display only. The per-surface clears iterate every slot of a type, so
   // clearing Lobby would blank Main alongside it.
@@ -100,7 +120,87 @@ const PresentationPreview = ({
   );
 
   useEffect(() => {
-    if (hideHeader || minimalHeader) return;
+    if (hideQuickLinks || filteredQuickLinks.length === 0) return;
+
+    const updateQuickLinkCapacity = () => {
+      const rail = quickLinkRailRef.current;
+      const tiles = rail
+        ? Array.from(
+            rail.querySelectorAll<HTMLElement>("[data-quick-link-tile]"),
+          )
+        : [];
+      if (!rail || tiles.length === 0 || rail.clientHeight === 0) {
+        setQuickLinkCapacity(1);
+        return;
+      }
+      const railStyle = window.getComputedStyle(rail);
+      const verticalPadding =
+        (parseFloat(railStyle.paddingTop) || 0) +
+        (parseFloat(railStyle.paddingBottom) || 0);
+      const availableHeight = Math.max(0, rail.clientHeight - verticalPadding);
+      const tileHeight = Math.max(
+        ...tiles.map((tile) => tile.getBoundingClientRect().height),
+      );
+      if (tileHeight <= 0) {
+        setQuickLinkCapacity(1);
+        return;
+      }
+      const rows = Math.max(
+        1,
+        Math.floor(
+          (availableHeight + COMPACT_QUICK_LINK_GAP) /
+            (tileHeight + COMPACT_QUICK_LINK_GAP),
+        ),
+      );
+      setQuickLinkCapacity(rows * COMPACT_QUICK_LINK_COLUMNS);
+    };
+
+    if (typeof ResizeObserver === "undefined") {
+      updateQuickLinkCapacity();
+      return;
+    }
+
+    const observer = new ResizeObserver(updateQuickLinkCapacity);
+    if (quickLinkRailRef.current) observer.observe(quickLinkRailRef.current);
+    if (quickLinkRailRef.current) {
+      quickLinkRailRef.current
+        .querySelectorAll<HTMLElement>("[data-quick-link-tile]")
+        .forEach((tile) => observer.observe(tile));
+    }
+    updateQuickLinkCapacity();
+    return () => observer.disconnect();
+  }, [filteredQuickLinks.length, hideQuickLinks, quickLinkCapacity]);
+
+  useEffect(() => {
+    if (hideQuickLinks) return;
+
+    const updatePreviewColumnHeight = () => {
+      const height = previewColumnRef.current?.clientHeight ?? 0;
+      setPreviewColumnHeight(height > 0 ? height : null);
+    };
+
+    if (typeof ResizeObserver === "undefined") {
+      updatePreviewColumnHeight();
+      return;
+    }
+
+    const observer = new ResizeObserver(updatePreviewColumnHeight);
+    if (previewColumnRef.current) observer.observe(previewColumnRef.current);
+    updatePreviewColumnHeight();
+    return () => observer.disconnect();
+  }, [hideQuickLinks, name, previewScale]);
+
+  const hasOverflow = filteredQuickLinks.length > quickLinkCapacity;
+  const visibleQuickLinks = filteredQuickLinks.slice(
+    0,
+    hasOverflow ? Math.max(1, quickLinkCapacity - 1) : quickLinkCapacity,
+  );
+  const overflowQuickLinks = hasOverflow
+    ? filteredQuickLinks.slice(visibleQuickLinks.length)
+    : [];
+
+  useEffect(() => {
+    if (!isVisible || hideHeader || minimalHeader) return;
 
     const updateHeaderLabelVisibility = () => {
       const headerWidth = headerRef.current?.clientWidth ?? 0;
@@ -159,7 +259,7 @@ const PresentationPreview = ({
     updateHeaderLabelVisibility();
 
     return () => observer.disconnect();
-  }, [hideHeader, minimalHeader, name]);
+  }, [hideHeader, isVisible, minimalHeader, name]);
 
   const displayWindowProps = {
     boxes: info.slide?.boxes || [],
@@ -167,7 +267,7 @@ const PresentationPreview = ({
     nextBoxes: info.nextSlide?.boxes ?? [],
     prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: info.bibleInfoBox,
-    ...(fillWidth ? {} : { width: previewWidthVw }),
+    ...(fillWidth || !hideQuickLinks ? {} : { width: previewWidthVw }),
     showBorder,
     // Without this the preview resolves the built-in output's settings, so a
     // second projector would render the first one's clock, timer, and background.
@@ -191,8 +291,12 @@ const PresentationPreview = ({
     prevTimerInfo,
     time: info.time,
     prevTime: prevInfo.time,
-    shouldAnimate: true,
+    shouldAnimate: isVisible,
+    // Keep the stable video slots mounted while hidden so returning to Displays
+    // resumes the same preview position instead of reloading from the start.
     shouldPlayVideo: true,
+    suspendVideoPlayback: !isVisible,
+    videoPreloadRole: "preview",
     showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
     monitorLayoutMode:
@@ -203,6 +307,11 @@ const PresentationPreview = ({
     localVideoInput: info.localVideoInput,
     prevLocalVideoInput: prevInfo.localVideoInput,
     videoPlayback: info.videoPlayback,
+    // Same-machine booth tiles must show live local video, not still previews,
+    // so operators can trust what the audience sees.
+    canCaptureLocalVideo: isVisible,
+    directLocalVideoCapture: isVisible,
+    playLocalVideoAudio: false,
   } as const;
 
   return (
@@ -210,25 +319,26 @@ const PresentationPreview = ({
       <section className="relative overflow-hidden rounded-sm border border-white/12 bg-black/30">
         <div
           className={cn(
-            "flex gap-2",
+            "flex items-start gap-2",
             hideQuickLinks ? "flex-col w-full" : "flex-row",
           )}
         >
           <div
+            ref={previewColumnRef}
             className={cn(
-              "flex flex-col",
+              "flex flex-col self-start",
               (hideQuickLinks || fillWidth) && "w-full min-w-0",
               fillWidth && "items-stretch",
               hideQuickLinks && !fillWidth && "items-center",
               // Match DisplayWindow width so the header never exceeds the preview (w-fit used the
               // header’s intrinsic width and could overflow past the aspect-video box below).
-              !hideQuickLinks && !fillWidth && "shrink-0 min-w-0",
+              !hideQuickLinks && !fillWidth && "min-w-0 flex-1",
             )}
             style={
               fillWidth
                 ? { width: "100%" }
                 : !hideQuickLinks
-                  ? { width: `${previewWidthVw}vw`, maxWidth: "100%" }
+                  ? { maxWidth: "100%" }
                   : undefined
             }
           >
@@ -342,21 +452,68 @@ const PresentationPreview = ({
             <div
               className={cn(info.displayType === "stream" && "bg-gray-500/35")}
             >
+              {/* Keep DisplayWindow mounted while the parent tab is only
+                  CSS-hidden. Its file-video elements remain mounted but are
+                  paused by suspendVideoPlayback. */}
               {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
           </div>
           {!hideQuickLinks && filteredQuickLinks.length > 0 && (
-            <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">
-              {filteredQuickLinks.map((link) => (
+            <ul
+              ref={quickLinkRailRef}
+              data-testid={`quick-link-rail-${outputId}`}
+              className="grid min-h-0 w-[clamp(4.5rem,5vw,14rem)] shrink-0 grid-cols-1 content-start gap-1 overflow-hidden py-1 pr-1"
+              style={
+                previewColumnHeight != null
+                  ? { height: `${previewColumnHeight}px` }
+                  : undefined
+              }
+            >
+              {visibleQuickLinks.map((link) => (
                 <QuickLink
                   timers={timers}
                   displayType={info.displayType}
                   outputId={outputId}
                   isMobile={isMobile}
+                  compact
                   {...link}
                   key={link.id}
                 />
               ))}
+              {overflowQuickLinks.length > 0 && (
+                <PopOver
+                  TriggeringButton={
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      padding="p-1"
+                      className="h-full min-h-12 w-full items-center justify-center text-xs"
+                      aria-label={`Show ${overflowQuickLinks.length} more Quick Links`}
+                    >
+                      +{overflowQuickLinks.length}
+                    </Button>
+                  }
+                  open={isOverflowOpen}
+                  onOpenChange={setIsOverflowOpen}
+                  contentClassName="w-[clamp(4.5rem,7vw,14rem)] max-h-[min(70vh,32rem)] max-w-[85vw]"
+                  bodyClassName="max-h-[min(60vh,28rem)] overflow-y-auto"
+                >
+                  <ul className="grid grid-cols-1 gap-1">
+                    {overflowQuickLinks.map((link) => (
+                      <QuickLink
+                        timers={timers}
+                        displayType={info.displayType}
+                        outputId={outputId}
+                        isMobile={isMobile}
+                        compact
+                        {...link}
+                        onAction={() => setIsOverflowOpen(false)}
+                        key={link.id}
+                      />
+                    ))}
+                  </ul>
+                </PopOver>
+              )}
             </ul>
           )}
         </div>

@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useCallback, useState, type HTMLAttributes, type RefObject } from "react";
 import { VirtualMediaGrid, type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import cn from "classnames";
 import type { MediaFolder, MediaType } from "../../types";
@@ -29,6 +29,13 @@ export type MediaLibraryGridProps = {
     index: number,
     options?: { skipNextClick?: boolean },
   ) => void;
+  mediaDragEnabled?: boolean;
+  orderedSelectedMediaIds?: string[];
+  nativeFileDropHandlers?: Pick<
+    HTMLAttributes<HTMLDivElement>,
+    "onDragEnter" | "onDragOver" | "onDragLeave" | "onDrop"
+  >;
+  isFileDragOver?: boolean;
 };
 
 export default function MediaLibraryGrid({
@@ -53,9 +60,33 @@ export default function MediaLibraryGrid({
   mediaMultiSelectMode,
   onMediaTileClick,
   onEnterMediaMultiSelectMode,
+  mediaDragEnabled = false,
+  orderedSelectedMediaIds = [],
+  nativeFileDropHandlers,
+  isFileDragOver = false,
 }: MediaLibraryGridProps) {
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const setMediaListElement = useCallback(
+    (element: HTMLDivElement | null) => {
+      mediaListRef.current = element;
+      setScrollElement(element);
+    },
+    [mediaListRef],
+  );
   return (
-    <>
+    <div
+      {...nativeFileDropHandlers}
+      className={cn(
+        isPanelVariant
+          ? "relative flex h-full min-h-0 flex-1 flex-col"
+          : "contents",
+      )}
+    >
+      {isFileDragOver && isPanelVariant ? (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-b-md bg-blue-950/75 text-lg font-semibold text-blue-100">
+          Drop files to add media
+        </div>
+      ) : null}
       {isMediaLoading && isMediaExpanded && (
         <h3
           className={cn(
@@ -82,15 +113,21 @@ export default function MediaLibraryGrid({
       )}
       {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && (filteredList.length > 0 || !showAll) && (
         <div
-          ref={mediaListRef as RefObject<HTMLDivElement>}
+          ref={setMediaListElement}
           className={cn(
-            "scrollbar-variable overflow-y-auto bg-black/30 mx-2 z-10 rounded-b-md min-h-0",
-            isPanelVariant && "flex-1",
+            "scrollbar-variable relative overflow-y-auto bg-black/30 mx-2 z-10 rounded-b-md min-h-0",
+            isPanelVariant && "h-full flex-1",
           )}
         >
+          {isFileDragOver && !isPanelVariant ? (
+            <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-b-md bg-blue-950/75 text-lg font-semibold text-blue-100">
+              Drop files to add media
+            </div>
+          ) : null}
           <VirtualMediaGrid
             ref={mediaGridRef}
             scrollRef={mediaListRef}
+            scrollElement={scrollElement}
             mediaItems={filteredList}
             cols={mediaItemsPerRow}
             showFolders={!showAll}
@@ -105,6 +142,8 @@ export default function MediaLibraryGrid({
             onMediaTileClick={onMediaTileClick}
             onEnterMediaMultiSelectMode={onEnterMediaMultiSelectMode}
             showBottomName={isMediaExpanded && showNamesInPanelGrid}
+            mediaDragEnabled={mediaDragEnabled}
+            orderedSelectedMediaIds={orderedSelectedMediaIds}
           />
           {!showAll && searchTerm && filteredList.length === 0 && (
             <p className="px-4 py-1 text-sm text-gray-400">
@@ -116,7 +155,7 @@ export default function MediaLibraryGrid({
       {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && showAll && !searchTerm && filteredList.length === 0 && (
         <div
           className={cn(
-            "text-center py-8 bg-black/30 mx-2 px-2 rounded-b-md",
+            "relative text-center py-8 bg-black/30 mx-2 px-2 rounded-b-md",
             isPanelVariant && "flex-1 min-h-0",
           )}
         >
@@ -126,13 +165,13 @@ export default function MediaLibraryGrid({
       {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && showAll && searchTerm && filteredList.length === 0 && (
         <div
           className={cn(
-            "text-center py-8 bg-black/30 mx-2 px-2",
+            "relative text-center py-8 bg-black/30 mx-2 px-2",
             isPanelVariant && "flex-1 min-h-0",
           )}
         >
           <p className="text-gray-400">No media found matching &quot;{searchTerm}&quot;</p>
         </div>
       )}
-    </>
+    </div>
   );
 }

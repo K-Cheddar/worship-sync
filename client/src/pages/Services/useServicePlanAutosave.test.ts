@@ -1,15 +1,24 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import {
+  isMatchingServicePlanWrite,
   useServicePlanAutosave,
   type UseServicePlanAutosaveOptions,
 } from "./useServicePlanAutosave";
 import type { ServicePlan, ServicePlanPayload } from "../../types/servicePlan";
 
 const payloadFor = (name: string): ServicePlanPayload =>
-  ({ serviceId: "svc1", date: "2026-07-26", name, sections: [] }) as ServicePlanPayload;
+  ({
+    serviceId: "svc1",
+    date: "2026-07-26",
+    name,
+    sections: [],
+  }) as ServicePlanPayload;
 
 const planFor = (planKey: string, revision: number): ServicePlan =>
   ({ planKey, revision, sections: [] }) as unknown as ServicePlan;
+
+const conflictError = (plan: ServicePlan) =>
+  Object.assign(new Error("conflict"), { conflictPlan: plan });
 
 // The hook is generic over the document it saves (plans and templates both
 // use it), so name the plan instantiation these tests exercise.
@@ -29,6 +38,7 @@ const setup = (overrides: Partial<Options> = {}) => {
     buildPayload: () => payloadFor("A"),
     save,
     getConflictPlan: () => null,
+    isOwnWrite: (doc, payload) => isMatchingServicePlanWrite(doc, payload),
     onSaved,
     onConflict,
     ...overrides,
@@ -195,7 +205,9 @@ describe("useServicePlanAutosave", () => {
     view.rerender({
       ...options,
       resetKey: "plan-b",
-      changeVersion: 1,
+      // A newly loaded plan starts with a clean draft counter. This must not
+      // make the previous plan's captured pending version look saved.
+      changeVersion: 0,
       save: saveB,
       buildPayload: () => payloadFor("B"),
     });
@@ -267,5 +279,275 @@ describe("useServicePlanAutosave", () => {
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(5));
     expect(save.mock.calls[4][0]).toMatchObject({ name: "C" });
+  });
+
+  it("sends the fetched revision after switching onto a lower-revision plan", async () => {
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async (_payload, baseRevision) => planFor("plan-b", baseRevision + 1),
+    );
+    const { view, options } = setup({
+      resetKey: "plan-a",
+      baseRevision: 50,
+      save,
+    });
+
+    // Same mounted hook. The dated editor now reports 0 until the fetched
+    // plan's identity matches, so this first render must not copy Sunday's 50.
+    view.rerender({
+      ...options,
+      save,
+      resetKey: "plan-b",
+      baseRevision: 0,
+      changeVersion: 0,
+    });
+    // Fetched document for the new plan. Must land while the draft is still
+    // clean, matching the editor which keeps autosave disabled until sections
+    // exist.
+    view.rerender({
+      ...options,
+      save,
+      resetKey: "plan-b",
+      baseRevision: 3,
+      changeVersion: 0,
+    });
+    expect(view.result.current.getRevision()).toBe(3);
+    view.rerender({
+      ...options,
+      save,
+      resetKey: "plan-b",
+      baseRevision: 3,
+      changeVersion: 1,
+      buildPayload: () => payloadFor("B"),
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1]).toBe(3);
+  });
+
+  it("saves an edit made during an in-flight request against the returned revision", async () => {
+    let resolveFirst: (plan: ServicePlan) => void = () => {};
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, baseRevision) => {
+        if (save.mock.calls.length === 1) {
+          return new Promise<ServicePlan>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve(planFor("plan-a", baseRevision + 1));
+      },
+    );
+    const { view, options } = setup({ baseRevision: 10, save });
+
+    view.rerender({
+      ...options,
+      save,
+      changeVersion: 1,
+      buildPayload: () => payloadFor("A"),
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    view.rerender({
+      ...options,
+      save,
+      changeVersion: 2,
+      buildPayload: () => payloadFor("B"),
+    });
+    await act(async () => {
+      resolveFirst(planFor("plan-a", 11));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[0][1]).toBe(10);
+    expect(save.mock.calls[1][0]).toMatchObject({ name: "B" });
+    expect(save.mock.calls[1][1]).toBe(11);
+  });
+
+  it("keeps the expected acknowledgement revision while a failed save is retrying", async () => {
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => {
+        throw new Error("offline");
+      },
+    );
+    const { view, options } = setup({ save });
+
+    view.rerender({ ...options, save, changeVersion: 1 });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(view.result.current.state).toBe("retrying"));
+    expect(view.result.current.getInFlightExpectedRevision()).toBe(1);
+  });
+
+  it("treats a 409 of our own payload as an acknowledgement, not a conflict", async () => {
+    const payload = payloadFor("A");
+    const ownWrite = { ...planFor("plan-a", 1), name: "A", sections: [] };
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => {
+        throw conflictError(ownWrite);
+      },
+    );
+    const { view, onSaved, onConflict, options } = setup({
+      save,
+      buildPayload: () => payload,
+      getConflictPlan: (error) =>
+        error && typeof error === "object" && "conflictPlan" in error
+          ? (error as { conflictPlan: ServicePlan }).conflictPlan
+          : null,
+    });
+
+    view.rerender({
+      ...options,
+      save,
+      buildPayload: () => payload,
+      changeVersion: 1,
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(ownWrite));
+    expect(onConflict).not.toHaveBeenCalled();
+    expect(view.result.current.state).toBe("saved");
+    expect(view.result.current.getRevision()).toBe(1);
+  });
+
+  it("still surfaces a 409 whose document is another editor's write", async () => {
+    const theirWrite = {
+      ...planFor("plan-a", 1),
+      name: "Theirs",
+      sections: [],
+    };
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => {
+        throw conflictError(theirWrite);
+      },
+    );
+    const { view, onSaved, onConflict, options } = setup({
+      save,
+      getConflictPlan: (error) =>
+        error && typeof error === "object" && "conflictPlan" in error
+          ? (error as { conflictPlan: ServicePlan }).conflictPlan
+          : null,
+    });
+
+    view.rerender({ ...options, save, changeVersion: 1 });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    await waitFor(() => expect(onConflict).toHaveBeenCalledWith(theirWrite));
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(view.result.current.state).toBe("conflict");
+  });
+
+  it("does not treat a generic save failure as a conflict", async () => {
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => {
+        throw new Error("500");
+      },
+    );
+    const { view, onConflict, options } = setup({ save });
+
+    view.rerender({ ...options, save, changeVersion: 1 });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(view.result.current.state).toBe("retrying"));
+    expect(onConflict).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a lost HTTP response by loading the committed document", async () => {
+    const payload = payloadFor("A");
+    const ownWrite = { ...planFor("plan-a", 1), name: "A", sections: [] };
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => {
+        throw new Error("network");
+      },
+    );
+    const loadLatest = jest.fn(async () => ownWrite);
+    const { view, onSaved, onConflict, options } = setup({
+      save,
+      loadLatest,
+      buildPayload: () => payload,
+    });
+
+    view.rerender({
+      ...options,
+      save,
+      loadLatest,
+      buildPayload: () => payload,
+      changeVersion: 1,
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    await waitFor(() => expect(loadLatest).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(ownWrite));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(onConflict).not.toHaveBeenCalled();
+    expect(view.result.current.state).toBe("saved");
+  });
+
+  it("flushes a newer pending snapshot with the in-flight save's returned revision", async () => {
+    let resolveFirst: (plan: ServicePlan) => void = () => {};
+    const saveA = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, _baseRevision) => {
+        if (saveA.mock.calls.length === 1) {
+          return new Promise<ServicePlan>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve(planFor("plan-a", 2));
+      },
+    );
+    const saveB = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => planFor("plan-b", 1),
+    );
+    const { view, options } = setup({ save: saveA });
+
+    view.rerender({
+      ...options,
+      save: saveA,
+      changeVersion: 1,
+      buildPayload: () => payloadFor("A1"),
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(saveA).toHaveBeenCalledTimes(1));
+
+    view.rerender({
+      ...options,
+      save: saveA,
+      changeVersion: 2,
+      buildPayload: () => payloadFor("A2"),
+    });
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      changeVersion: 1,
+      save: saveB,
+      buildPayload: () => payloadFor("B"),
+    });
+
+    await act(async () => {
+      resolveFirst(planFor("plan-a", 1));
+    });
+
+    await waitFor(() => expect(saveA).toHaveBeenCalledTimes(2));
+    expect(saveA.mock.calls[1][0]).toMatchObject({ name: "A2" });
+    expect(saveA.mock.calls[1][1]).toBe(1);
+    expect(saveB).not.toHaveBeenCalled();
   });
 });

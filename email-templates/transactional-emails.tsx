@@ -593,6 +593,54 @@ type ScheduleResponsesDigestEmailProps = {
   }[];
 };
 
+type ServicePlanShareEmailProps = {
+  serviceName: string;
+  serviceDate: string;
+  message: string;
+  shareUrl: string;
+};
+
+export function ServicePlanShareEmail({
+  serviceName,
+  serviceDate,
+  message,
+  shareUrl,
+}: ServicePlanShareEmailProps) {
+  const serviceDisplay = serviceName.trim() || "Service plan";
+  const dateDisplay = serviceDate.trim() || "the scheduled date";
+  const messageLines = message.split(/\r?\n/);
+
+  return (
+    <WorshipSyncEmailLayout
+      previewText={`${serviceDisplay} service plan for ${dateDisplay}`}
+      title="Service plan"
+    >
+      <Text style={bodyText}>
+        {messageLines.map((line, index) => (
+          <React.Fragment key={`${index}-${line}`}>
+            {line}
+            {index < messageLines.length - 1 ? <br /> : null}
+          </React.Fragment>
+        ))}
+      </Text>
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={shareUrl} style={ctaButtonStyle}>
+          View Service Plan
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        If the button does not work, copy and paste this link into your
+        browser:
+      </Text>
+      <Text style={urlText}>
+        <Link href={shareUrl} style={{ color: worshipSyncEmailBrand.link }}>
+          {shareUrl}
+        </Link>
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
 /**
  * "People answered your schedule" — coalesced.
  *

@@ -9,6 +9,7 @@ import { Provider } from "react-redux";
 import ErrorBoundary from "../components/ErrorBoundary";
 import GlobalInfoProvider from "../context/globalInfo";
 import { ToastProvider } from "../context/toastContext";
+import { useDocumentPageTitle } from "../hooks/useDocumentPageTitle";
 import store from "../store/store";
 import { lazyRoute } from "../utils/lazyRoute";
 
@@ -58,8 +59,14 @@ const LeaveToOperatorApp = () => {
   return <PublicFallback />;
 };
 
+const PublicDocumentTitle = () => {
+  useDocumentPageTitle();
+  return null;
+};
+
 const PublicApp = () => (
   <BrowserRouter>
+    <PublicDocumentTitle />
     <ToastProvider>
       <ErrorBoundary>
         <Suspense fallback={<PublicFallback />}>

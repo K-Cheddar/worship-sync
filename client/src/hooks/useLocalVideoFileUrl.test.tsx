@@ -100,4 +100,57 @@ describe("useLocalVideoFileUrl", () => {
     });
     expect(mockAcquireLocalVideoFileThumbnailUrl).not.toHaveBeenCalled();
   });
+
+  it("uses the cloud-transcoded playback URL when local decoding is unavailable", () => {
+    const { result } = renderHook(() =>
+      useLocalVideoFileUrl({
+        ...reference,
+        cloudUrl: "https://stream.mux.com/playback.m3u8",
+        preferCloudPlayback: true,
+      }),
+    );
+
+    expect(result.current).toEqual({
+      isLocalVideoFile: false,
+      isOwner: true,
+      status: "ready",
+    });
+    expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
+  });
+
+  it("keeps a peeked local URL while the lease refreshes", async () => {
+    mockPeekLocalVideoFileUrl.mockReturnValue("blob:peeked-video");
+    let resolveLease: (url: string | undefined) => void = () => undefined;
+    mockAcquireLocalVideoFileUrl.mockReturnValue({
+      url: new Promise((resolve) => {
+        resolveLease = resolve;
+      }),
+      release: mockRelease,
+    });
+
+    const { result, rerender } = renderHook(() =>
+      useLocalVideoFileUrl(reference),
+    );
+
+    expect(result.current).toEqual({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "blob:peeked-video",
+    });
+
+    rerender();
+    expect(result.current.url).toBe("blob:peeked-video");
+    expect(result.current.status).toBe("ready");
+
+    resolveLease("blob:leased-video");
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        isLocalVideoFile: true,
+        isOwner: true,
+        status: "ready",
+        url: "blob:leased-video",
+      }),
+    );
+  });
 });

@@ -22,7 +22,11 @@ import {
   supportsLocalVideoRealtimeRelay,
 } from "../../utils/localVideoRealtimeRelay";
 import { subscribeLocalVideoCaptureQuality } from "../../utils/localVideoCaptureQualityRelay";
-import { subscribeBrowserDesktopShares } from "../../utils/desktopCapture";
+import {
+  subscribeBrowserDesktopShares,
+  supportsDirectElectronDesktopCapture,
+} from "../../utils/desktopCapture";
+import { applyLocalVideoCaptureProfile } from "../../utils/localVideoQuality";
 
 type LocalVideoInputViewProps = {
   input: LocalVideoInputPresentation;
@@ -34,6 +38,8 @@ type LocalVideoInputViewProps = {
   publishPreview?: boolean;
   showErrors?: boolean;
   transparentBackground?: boolean;
+  /** True once a usable capture/preview frame (or terminal status) can paint. */
+  onPaintReadyChange?: (ready: boolean) => void;
 };
 
 const getRenderedPixelSize = (element: HTMLElement) => {
@@ -101,6 +107,7 @@ const LocalVideoInputView = ({
   publishPreview = false,
   showErrors = true,
   transparentBackground = false,
+  onPaintReadyChange,
 }: LocalVideoInputViewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const realtimeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -142,8 +149,22 @@ const LocalVideoInputView = ({
   const playAudioRef = useRef(playAudio);
   normalizedVolumeRef.current = normalizedVolume;
   playAudioRef.current = playAudio;
+  // Electron can reopen a saved screen/window in this BrowserWindow. Prefer
+  // that local MediaStream over encode/decode relays used for cameras.
+  const useDirectElectronDesktopCapture =
+    isLocal && isDesktopShare && supportsDirectElectronDesktopCapture();
+  const effectiveCaptureEnabled =
+    captureEnabled ||
+    (receiveHighQuality && useDirectElectronDesktopCapture);
+  // When this window already holds (or shares) the capture, paint srcObject
+  // directly. Use the realtime relay only for remote windows or after ownership
+  // falls back to another app window.
   const canUseRealtimeRelay =
-    isLocal && receiveHighQuality && supportsLocalVideoRealtimeRelay();
+    isLocal &&
+    receiveHighQuality &&
+    !useDirectElectronDesktopCapture &&
+    (!captureEnabled || captureOwnedElsewhere) &&
+    supportsLocalVideoRealtimeRelay();
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.volume = normalizedVolume;
@@ -156,6 +177,14 @@ const LocalVideoInputView = ({
 
   useEffect(() => {
     if (!isLocal || (!receiveHighQuality && !captureOwnedElsewhere)) return;
+    // A local MediaStream in this window owns the video element; skip relays so
+    // operator previews and editors mirror live output without encode/decode.
+    if (
+      (useDirectElectronDesktopCapture || captureEnabled) &&
+      !captureOwnedElsewhere
+    ) {
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     setErrorDetail(null);
@@ -244,10 +273,12 @@ const LocalVideoInputView = ({
     };
   }, [
     canUseRealtimeRelay,
+    captureEnabled,
     captureOwnedElsewhere,
     input.sourceId,
     isLocal,
     receiveHighQuality,
+    useDirectElectronDesktopCapture,
   ]);
 
   useEffect(() => {
@@ -297,7 +328,7 @@ const LocalVideoInputView = ({
   ]);
 
   useEffect(() => {
-    if (!isLocal || !captureEnabled) return;
+    if (!isLocal || !effectiveCaptureEnabled) return;
     if (!deviceId) {
       setErrorDetail(
         isDesktopCaptureKind(input.captureKind)
@@ -312,8 +343,28 @@ const LocalVideoInputView = ({
     let frameCallbackId: number | undefined;
     let directPlaybackReady = false;
     let attachedVideo: HTMLVideoElement | null = null;
+    let attachedStream: MediaStream | undefined;
     let markDirectReady: (() => void) | undefined;
+    let targetSizeObserver: ResizeObserver | undefined;
+    let profileSyncTimer: number | undefined;
     const captureConsumerId = captureConsumerIdRef.current;
+    const DIRECT_PROFILE_DEBOUNCE_MS = 250;
+    const syncDirectCaptureProfile = () => {
+      if (!active || !attachedStream || !attachedVideo) return;
+      const target = getRenderedPixelSize(attachedVideo);
+      void applyLocalVideoCaptureProfile(
+        attachedStream,
+        target.width,
+        target.height,
+      );
+    };
+    const scheduleDirectCaptureProfileSync = () => {
+      if (profileSyncTimer !== undefined) window.clearTimeout(profileSyncTimer);
+      profileSyncTimer = window.setTimeout(() => {
+        profileSyncTimer = undefined;
+        syncDirectCaptureProfile();
+      }, DIRECT_PROFILE_DEBOUNCE_MS);
+    };
     const retryCapture = (delayMs = 0) => {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       retryTimer = window.setTimeout(() => {
@@ -368,6 +419,7 @@ const LocalVideoInputView = ({
           return;
         }
         attachedVideo = video;
+        attachedStream = stream;
         markDirectReady = () => {
           if (!active || video.srcObject !== stream) return;
           if (
@@ -433,6 +485,19 @@ const LocalVideoInputView = ({
             250,
           );
         }
+        // Match this window's rendered pixels. Electron screen shares skip the
+        // shared quality relay when each output opens its own capture. Debounce
+        // so layout thrash does not renegotiate the track every frame.
+        if (useDirectElectronDesktopCapture) {
+          syncDirectCaptureProfile();
+          if (typeof ResizeObserver !== "undefined") {
+            targetSizeObserver = new ResizeObserver(
+              scheduleDirectCaptureProfileSync,
+            );
+            targetSizeObserver.observe(video);
+          }
+          window.addEventListener("resize", scheduleDirectCaptureProfileSync);
+        }
         if (audioError && playAudio) {
           setAudioWarning(
             `${getAudioInputErrorMessage(audioError)} Video will continue without sound.`,
@@ -482,6 +547,9 @@ const LocalVideoInputView = ({
       if (playbackRecoveryTimer !== undefined) {
         window.clearInterval(playbackRecoveryTimer);
       }
+      targetSizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleDirectCaptureProfileSync);
+      if (profileSyncTimer !== undefined) window.clearTimeout(profileSyncTimer);
       const video = attachedVideo;
       if (video && markDirectReady) {
         video.removeEventListener("loadedmetadata", markDirectReady);
@@ -511,13 +579,14 @@ const LocalVideoInputView = ({
   }, [
     audioDeviceId,
     captureAttempt,
-    captureEnabled,
+    effectiveCaptureEnabled,
     deviceId,
     input.captureKind,
     input.sourceId,
     isLocal,
     playAudio,
     publishPreview,
+    useDirectElectronDesktopCapture,
   ]);
 
   // Re-sharing in this window does not change any saved binding, so watch for
@@ -533,6 +602,19 @@ const LocalVideoInputView = ({
       unsubscribe();
     };
   }, [input.sourceId, restartDetail]);
+
+  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
+  // Terminal / remote-unavailable UIs are also "ready" so a missing capture
+  // cannot block the parent transition stage forever.
+  const paintReady =
+    isShowingPicture ||
+    Boolean(errorDetail) ||
+    Boolean(restartDetail) ||
+    !isLocal;
+
+  useEffect(() => {
+    onPaintReadyChange?.(paintReady);
+  }, [onPaintReadyChange, paintReady]);
 
   if (!isLocal) {
     if (!showErrors) {
@@ -553,7 +635,6 @@ const LocalVideoInputView = ({
   }
 
   // A relayed picture from another app window outranks a local restart notice.
-  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
   const statusDetail = errorDetail ?? (isShowingPicture ? null : restartDetail);
 
   return (
@@ -592,7 +673,7 @@ const LocalVideoInputView = ({
           }}
         />
       ) : null}
-      {captureEnabled || receiveHighQuality || captureOwnedElsewhere ? (
+      {effectiveCaptureEnabled || receiveHighQuality || captureOwnedElsewhere ? (
         <>
           {canUseRealtimeRelay ? (
             <canvas

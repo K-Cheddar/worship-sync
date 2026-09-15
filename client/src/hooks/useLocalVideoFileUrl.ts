@@ -40,6 +40,7 @@ export const useLocalVideoFileUrl = (
   const storagePolicy = value?.storagePolicy;
   const audioEnabled = value?.audioEnabled;
   const cloudMediaId = value?.cloudMediaId;
+  const preferCloudPlayback = value?.preferCloudPlayback;
   const reference = useMemo(
     () =>
       normalizeLocalVideoFileReference(
@@ -55,6 +56,7 @@ export const useLocalVideoFileUrl = (
               audioEnabled,
               cloudUrl,
               cloudMediaId,
+              preferCloudPlayback,
             }
           : undefined,
       ),
@@ -68,11 +70,15 @@ export const useLocalVideoFileUrl = (
       id,
       ownerDeviceId,
       ownerLabel,
+      preferCloudPlayback,
       storagePolicy,
     ],
   );
   const isOwner = Boolean(
     reference && reference.ownerDeviceId === getOrCreateDeviceId(),
+  );
+  const useCloudPlayback = Boolean(
+    reference?.preferCloudPlayback && reference.cloudUrl,
   );
   const peekLocalUrl =
     purpose === "thumbnail"
@@ -82,19 +88,27 @@ export const useLocalVideoFileUrl = (
     reference && isOwner
       ? peekLocalUrl(reference.id, reference.contentRevision)
       : undefined;
+  const referenceCloudUrl =
+    useCloudPlayback || (!isOwner && purpose !== "thumbnail")
+      ? (reference?.cloudUrl ?? "")
+      : "";
   const referenceKey = reference
     ? JSON.stringify([
         purpose,
         reference.id,
         reference.ownerDeviceId,
         reference.contentRevision ?? "legacy",
-        isOwner || purpose === "thumbnail" ? "" : (reference.cloudUrl ?? ""),
+        referenceCloudUrl,
+        useCloudPlayback,
       ])
     : "";
   const [assetRevision, setAssetRevision] = useState(0);
   const getImmediateResolution = (): LocalVideoFileResolution => {
     if (!reference) {
       return { isLocalVideoFile: false, isOwner: false, status: "not-local" };
+    }
+    if (useCloudPlayback) {
+      return { isLocalVideoFile: false, isOwner, status: "ready" };
     }
     if (isOwner) {
       return {
@@ -138,6 +152,13 @@ export const useLocalVideoFileUrl = (
       });
       return;
     }
+    if (useCloudPlayback) {
+      setState({
+        key: referenceKey,
+        value: { isLocalVideoFile: false, isOwner, status: "ready" },
+      });
+      return;
+    }
     if (!isOwner) {
       if (purpose === "thumbnail") {
         setState({
@@ -162,18 +183,35 @@ export const useLocalVideoFileUrl = (
       return;
     }
     let active = true;
-    setState((current) =>
-      current.key === referenceKey && current.value.status === "ready"
-        ? current
-        : {
-            key: referenceKey,
-            value: {
-              isLocalVideoFile: true,
-              isOwner: true,
-              status: "loading",
-            },
-          },
-    );
+    setState((current) => {
+      const peeked =
+        purpose === "thumbnail"
+          ? peekLocalVideoFileThumbnailUrl(
+              reference.id,
+              reference.contentRevision,
+            )
+          : peekLocalVideoFileUrl(reference.id, reference.contentRevision);
+      // Keep a known-good URL while the lease refreshes so display snapshots do
+      // not briefly collapse to kind:"none" and tear down the outgoing player.
+      const retainedUrl =
+        current.key === referenceKey ? (current.value.url ?? peeked) : peeked;
+      if (
+        current.key === referenceKey &&
+        current.value.status === "ready" &&
+        current.value.url
+      ) {
+        return current;
+      }
+      return {
+        key: referenceKey,
+        value: {
+          isLocalVideoFile: true,
+          isOwner: true,
+          status: retainedUrl ? "ready" : "loading",
+          url: retainedUrl,
+        },
+      };
+    });
     const lease =
       purpose === "thumbnail"
         ? acquireLocalVideoFileThumbnailUrl(
@@ -197,7 +235,14 @@ export const useLocalVideoFileUrl = (
       active = false;
       lease.release();
     };
-  }, [assetRevision, isOwner, purpose, reference, referenceKey]);
+  }, [
+    assetRevision,
+    isOwner,
+    purpose,
+    reference,
+    referenceKey,
+    useCloudPlayback,
+  ]);
 
   return state.key === referenceKey ? state.value : getImmediateResolution();
 };

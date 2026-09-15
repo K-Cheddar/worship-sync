@@ -191,7 +191,7 @@ describe("LocalImageUploadManager", () => {
         format: "png",
         width: 1920,
         height: 1080,
-        name: "Welcome.png",
+        name: "Welcome Slide",
         publicId: "asset-1",
         type: "image",
         id: "asset-1",

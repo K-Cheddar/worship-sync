@@ -1,9 +1,22 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import ItemSlides from "./ItemSlides";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import ItemSlides, { ItemSlidesDndContext } from "./ItemSlides";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
+const mockDndContext = jest.fn();
+const mockDndMonitor = jest.fn();
+let mockDndMonitorListener: {
+  onDragStart?: (event: unknown) => void;
+  onDragOver?: (event: unknown) => void;
+  onDragEnd?: (event: unknown) => void;
+  onDragCancel?: () => void;
+} | null = null;
+let mockDndState: { active: unknown; over: unknown } = {
+  active: null,
+  over: null,
+};
 let mockState: any;
 
 const mockEnsureSlidesHaveMonitorBandFormatting = jest.fn((slides: any[]) =>
@@ -111,12 +124,23 @@ jest.mock("react-router-dom", () => ({
 }));
 
 jest.mock("@dnd-kit/core", () => ({
-  DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DndContext: ({ children, ...props }: { children: React.ReactNode }) => {
+    mockDndContext(props);
+    return <>{children}</>;
+  },
+  DragOverlay: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useDndMonitor: (listener: typeof mockDndMonitorListener) => {
+    mockDndMonitor(listener);
+    mockDndMonitorListener = listener;
+  },
+  useDndContext: () => mockDndState,
   useDroppable: () => ({ setNodeRef: jest.fn() }),
 }));
 
 jest.mock("@dnd-kit/sortable", () => ({
-  SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SortableContext: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
   rectSortingStrategy: {},
 }));
 
@@ -158,6 +182,11 @@ const baseSlides = [
   },
 ];
 
+const mediaItems = [
+  { id: "media-1", name: "One", type: "image", background: "one.jpg" },
+  { id: "media-2", name: "Two", type: "image", background: "two.jpg" },
+] as any[];
+
 const mockGlobalInfoValue = {
   access: "full",
 } as unknown as React.ContextType<typeof GlobalInfoContext>;
@@ -169,6 +198,8 @@ const mockControllerInfoValue = {
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDndMonitorListener = null;
+    mockDndState = { active: null, over: null };
     mockNeighborDocs.clear();
     Object.defineProperty(window, "requestAnimationFrame", {
       writable: true,
@@ -196,7 +227,7 @@ describe("ItemSlides", () => {
               projector: false,
               stream: false,
             },
-            isEditMode: false,
+            isLyricsEditorOpen: false,
           },
           itemList: {
             selectedItemListId: "list-1",
@@ -244,7 +275,12 @@ describe("ItemSlides", () => {
           nextSlide: null,
           displayType: "monitor",
         },
-        prevStreamInfo: { type: "", name: "", slide: null, displayType: "stream" },
+        prevStreamInfo: {
+          type: "",
+          name: "",
+          slide: null,
+          displayType: "stream",
+        },
         projectorInfo: {
           type: "",
           name: "",
@@ -268,6 +304,9 @@ describe("ItemSlides", () => {
       timers: {
         timers: [],
       },
+      media: {
+        list: mediaItems,
+      },
       allDocs: {
         allSongDocs: [],
         allFreeFormDocs: [],
@@ -275,6 +314,464 @@ describe("ItemSlides", () => {
         allBibleDocs: [],
       },
     };
+  });
+
+  const renderAncestorItemSlides = (access = "full") => {
+    return render(
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlidesDndContext.Provider value="ancestor">
+            <ItemSlides />
+          </ItemSlidesDndContext.Provider>
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+  };
+
+  const dropMediaAt = async (
+    index: number,
+    mediaIds: string[],
+    target: "slide-insert" | "slide-container" | null = "slide-insert",
+  ) => {
+    mockDispatch.mockClear();
+    renderAncestorItemSlides();
+    act(() => {
+      mockDndMonitorListener?.onDragEnd?.({
+        active: {
+          id: `media-${mediaIds[0]}`,
+          data: { current: { kind: "media", mediaIds } },
+        },
+        over: target
+          ? {
+              id:
+                target === "slide-insert"
+                  ? `slide-insert-${index}`
+                  : "item-slides-list",
+              data: {
+                current:
+                  target === "slide-insert"
+                    ? { kind: "slide-insert", index }
+                    : { kind: "slide-container" },
+              },
+            }
+          : null,
+      });
+    });
+    const updateThunk = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => typeof action === "function");
+    if (typeof updateThunk !== "function") return undefined;
+    await act(async () => {
+      await updateThunk(mockDispatch, () => mockState, undefined);
+    });
+    return mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action?.type === "item/_updateSlides");
+  };
+
+  it("uses its local DndContext when no ancestor owns it", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(mockDndContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sensors: [],
+        collisionDetection: expect.any(Function),
+      }),
+    );
+  });
+
+  it("uses an ancestor DndContext for the main controller", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlidesDndContext.Provider value="ancestor">
+            <ItemSlides />
+          </ItemSlidesDndContext.Provider>
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(mockDndContext).not.toHaveBeenCalled();
+    expect(mockDndMonitor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onDragStart: expect.any(Function),
+        onDragEnd: expect.any(Function),
+      }),
+    );
+  });
+
+  it("uses the same ancestor DndContext for an auxiliary controller", () => {
+    renderAncestorItemSlides();
+
+    expect(mockDndContext).not.toHaveBeenCalled();
+    expect(mockDndMonitor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onDragStart: expect.any(Function),
+        onDragEnd: expect.any(Function),
+      }),
+    );
+  });
+
+  it.each(["main", "auxiliary"])(
+    "%s controller inserts media into an editable free item",
+    async () => {
+      const updateAction = await dropMediaAt(1, ["media-1"]);
+
+      expect(updateAction.payload[1].boxes[0].mediaInfo.id).toBe("media-1");
+    },
+  );
+
+  it("renders one provisional ghost at the active media insertion index", () => {
+    mockDndState = {
+      active: {
+        data: { current: { kind: "media", mediaIds: ["media-2", "media-1"] } },
+      },
+      over: {
+        data: { current: { kind: "slide-insert", index: 1 } },
+      },
+    };
+
+    renderAncestorItemSlides();
+
+    expect(screen.getByTestId("media-drag-ghost")).toBeInTheDocument();
+    expect(screen.getByText("+2")).toBeInTheDocument();
+  });
+
+  it.each([0, baseSlides.length])(
+    "renders the ghost at insertion index %s",
+    (index) => {
+      mockDndState = {
+        active: {
+          data: { current: { kind: "media", mediaIds: ["media-1"] } },
+        },
+        over: {
+          data: { current: { kind: "slide-insert", index } },
+        },
+      };
+
+      renderAncestorItemSlides();
+
+      expect(screen.getByTestId("media-drag-ghost")).toHaveAttribute(
+        "data-insertion-index",
+        String(index),
+      );
+    },
+  );
+
+  it("keeps the existing section reorder behavior", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    act(() =>
+      mockDndMonitorListener?.onDragStart?.({
+        active: {
+          id: "slide-2",
+          data: { current: { kind: "slide", slideId: "slide-2" } },
+        },
+      }),
+    );
+    act(() => {
+      mockDndMonitorListener?.onDragEnd?.({
+        active: {
+          id: "slide-2",
+          data: { current: { kind: "slide", slideId: "slide-2" } },
+        },
+        over: {
+          id: "slide-1",
+          data: { current: { kind: "slide", slideId: "slide-1" } },
+        },
+      });
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("previews a free slide reorder before drop and commits that exact order", () => {
+    mockState.undoable.present.item.slides = Array.from(
+      { length: 5 },
+      (_, index) => ({
+        ...baseSlides[0],
+        id: `slide-${index + 1}`,
+        name: `Section ${index + 1}`,
+      }),
+    );
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "slide-2",
+        data: { current: { kind: "slide", slideId: "slide-2" } },
+      },
+      over: {
+        id: "slide-5",
+        data: { current: { kind: "slide", slideId: "slide-5" } },
+      },
+    };
+
+    act(() => {
+      mockDndMonitorListener?.onDragStart?.(dragEvent);
+      mockDndMonitorListener?.onDragOver?.(dragEvent);
+    });
+
+    expect(
+      screen.getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(expect.arrayContaining(["Section 1", "Section 2", "Section 5"]));
+    const slideButtons = screen
+      .getAllByRole("button")
+      .filter((button) => button.textContent?.startsWith("Section"));
+    expect(slideButtons.map((button) => button.textContent)).toEqual([
+      "Section 1",
+      "Section 3",
+      "Section 4",
+      "Section 5",
+      "Section 2",
+    ]);
+
+    mockDispatch.mockClear();
+    act(() => mockDndMonitorListener?.onDragEnd?.(dragEvent));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.any(Function));
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual([
+      "Section 1",
+      "Section 3",
+      "Section 4",
+      "Section 5",
+      "Section 2",
+    ]);
+  });
+
+  it("reorders a multi-slide section relative to the target after removing it", () => {
+    mockState.undoable.present.item.slides = [
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-1-slide-${index + 1}`,
+        name: `Section 1${index ? "A" : ""}`,
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-2-slide-${index + 1}`,
+        name: `Section 2${index ? "A" : ""}`,
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        ...baseSlides[0],
+        id: `section-3-slide-${index + 1}`,
+        name: `Section 3${index ? "A" : ""}`,
+      })),
+    ];
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "section-1-slide-1",
+        data: { current: { kind: "slide", slideId: "section-1-slide-1" } },
+      },
+      over: {
+        id: "section-3-slide-1",
+        data: { current: { kind: "slide", slideId: "section-3-slide-1" } },
+      },
+    };
+
+    act(() => mockDndMonitorListener?.onDragOver?.(dragEvent));
+
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual([
+      "Section 2",
+      "Section 2A",
+      "Section 3",
+      "Section 3A",
+      "Section 1",
+      "Section 1A",
+    ]);
+  });
+
+  it("matches section numbers exactly when reordering custom sections", () => {
+    mockState.undoable.present.item.slides = [1, 2, 10].map((sectionNum) => ({
+      ...baseSlides[0],
+      id: `section-${sectionNum}`,
+      name: `Section ${sectionNum}`,
+    }));
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "section-1",
+        data: { current: { kind: "slide", slideId: "section-1" } },
+      },
+      over: {
+        id: "section-2",
+        data: { current: { kind: "slide", slideId: "section-2" } },
+      },
+    };
+
+    act(() => mockDndMonitorListener?.onDragOver?.(dragEvent));
+
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual(["Section 2", "Section 1", "Section 10"]);
+  });
+
+  it("discards a free slide preview on drag cancel", () => {
+    mockState.undoable.present.item.slides = Array.from(
+      { length: 5 },
+      (_, index) => ({
+        ...baseSlides[0],
+        id: `slide-${index + 1}`,
+        name: `Section ${index + 1}`,
+      }),
+    );
+    renderAncestorItemSlides();
+    const dragEvent = {
+      active: {
+        id: "slide-2",
+        data: { current: { kind: "slide", slideId: "slide-2" } },
+      },
+      over: {
+        id: "slide-5",
+        data: { current: { kind: "slide", slideId: "slide-5" } },
+      },
+    };
+    act(() => {
+      mockDndMonitorListener?.onDragStart?.(dragEvent);
+      mockDndMonitorListener?.onDragOver?.(dragEvent);
+    });
+    mockDispatch.mockClear();
+    act(() => mockDndMonitorListener?.onDragCancel?.());
+
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.any(Function));
+    expect(
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.textContent?.startsWith("Section"))
+        .map((button) => button.textContent),
+    ).toEqual([
+      "Section 1",
+      "Section 2",
+      "Section 3",
+      "Section 4",
+      "Section 5",
+    ]);
+  });
+
+  it.each([
+    ["before the first slide", 0, ["media-1", "slide-1", "slide-2"]],
+    ["between slides", 1, ["slide-1", "media-1", "slide-2"]],
+    ["after the last slide", 2, ["slide-1", "slide-2", "media-1"]],
+  ])("inserts one media slide %s", async (_label, index, expectedIds) => {
+    const updateAction = await dropMediaAt(index as number, ["media-1"]);
+
+    expect(
+      updateAction.payload.map(
+        (slide: any) => slide.boxes[0].mediaInfo?.id ?? slide.id,
+      ),
+    ).toEqual(expectedIds);
+  });
+
+  it("appends media dropped in the empty area after the last slide", async () => {
+    const updateAction = await dropMediaAt(
+      baseSlides.length,
+      ["media-1"],
+      "slide-container",
+    );
+
+    expect(updateAction.payload.at(-1).boxes[0].mediaInfo.id).toBe("media-1");
+  });
+
+  it("does not insert media dropped outside ItemSlides", async () => {
+    const updateAction = await dropMediaAt(0, ["media-1"], null);
+
+    expect(updateAction).toBeUndefined();
+  });
+
+  it("shows the ghost at the end of the grid for a valid empty-area drop", () => {
+    mockDndState = {
+      active: {
+        data: { current: { kind: "media", mediaIds: ["media-1"] } },
+      },
+      over: {
+        data: { current: { kind: "slide-container" } },
+      },
+    };
+
+    renderAncestorItemSlides();
+
+    expect(screen.getByTestId("media-drag-ghost")).toHaveAttribute(
+      "data-insertion-index",
+      String(baseSlides.length),
+    );
+  });
+
+  it("inserts selected media in the existing Add N slides order", async () => {
+    const updateAction = await dropMediaAt(1, ["media-2", "media-1"]);
+
+    expect(
+      updateAction.payload
+        .map((slide: any) => slide.boxes[0].mediaInfo?.id)
+        .filter(Boolean),
+    ).toEqual(["media-2", "media-1"]);
+  });
+
+  it("does not insert media into a song item", async () => {
+    mockState.undoable.present.item.type = "song";
+    const updateAction = await dropMediaAt(1, ["media-1"]);
+
+    expect(updateAction).toBeUndefined();
+  });
+
+  it("does not insert media into a read-only free item", async () => {
+    mockDispatch.mockClear();
+    renderAncestorItemSlides("view");
+    act(() => {
+      mockDndMonitorListener?.onDragEnd?.({
+        active: {
+          id: "media-1",
+          data: { current: { kind: "media", mediaIds: ["media-1"] } },
+        },
+        over: {
+          id: "slide-insert-1",
+          data: { current: { kind: "slide-insert", index: 1 } },
+        },
+      });
+    });
+
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("does not run media insertion for a slide drag", async () => {
+    mockDispatch.mockClear();
+    renderAncestorItemSlides();
+    act(() => {
+      mockDndMonitorListener?.onDragEnd?.({
+        active: {
+          id: "slide-2",
+          data: { current: { kind: "slide", slideId: "slide-2" } },
+        },
+        over: {
+          id: "slide-insert-1",
+          data: { current: { kind: "slide-insert", index: 1 } },
+        },
+      });
+    });
+
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.any(Function));
   });
 
   it("sends monitor-band next boxes for free items when next-slide view is enabled", () => {
@@ -433,12 +930,36 @@ describe("ItemSlides", () => {
 
     expect(screen.getByTestId("outline-scroller")).toBeInTheDocument();
     expect(screen.getByLabelText("Slide thumbnail zoom")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Clear background" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides clear background in Present mode", () => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <PresentationControllerModeProvider>
+            <ItemSlides />
+          </PresentationControllerModeProvider>
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Clear background" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 
   it("shows clear background and delete in the main action bar without subset selection", () => {
@@ -456,7 +977,9 @@ describe("ItemSlides", () => {
       screen.getByRole("button", { name: "Clear background" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Done" }),
+    ).not.toBeInTheDocument();
   });
 
   it("clears the focused slide background without entering subset selection", () => {
@@ -495,9 +1018,7 @@ describe("ItemSlides", () => {
       .filter((label): label is string =>
         Boolean(
           label &&
-          ["Done", "Add", "Copy", "Clear background", "Delete"].includes(
-            label,
-          ),
+          ["Done", "Add", "Copy", "Clear background", "Delete"].includes(label),
         ),
       );
     expect(actionButtons[0]).toBe("Done");
@@ -523,9 +1044,15 @@ describe("ItemSlides", () => {
       </GlobalInfoContext.Provider>,
     );
 
-    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Clear background" }),
     ).toBeInTheDocument();

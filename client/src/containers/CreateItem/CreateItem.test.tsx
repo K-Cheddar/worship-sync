@@ -24,6 +24,7 @@ import { presentationSlice } from "../../store/presentationSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { ActiveControllerProvider } from "../../context/activeController";
 import {
   createMockControllerContext,
   createMockGlobalContext,
@@ -53,6 +54,8 @@ jest.mock("../../api/lrclib", () => ({
 }));
 
 jest.mock("../../utils/generateRandomId");
+
+const AUX_CONTROLLER_ID = "ctrl_lobby";
 
 const mockedCreateNewSong = createNewSong as jest.MockedFunction<
   typeof createNewSong
@@ -162,9 +165,29 @@ const createTestStore = ({
 const renderCreateItem = ({
   store = createTestStore(),
   initialEntry = "/controller/create",
+  controllerProfileId,
+}: {
+  store?: ReturnType<typeof createTestStore>;
+  initialEntry?: string;
+  controllerProfileId?: string;
 } = {}) => {
   const controllerContext = createMockControllerContext();
   const globalContext = createMockGlobalContext();
+
+  const routes = (
+    <Routes>
+      <Route path="/controller/create" element={<CreateItem />} />
+      <Route path="/controller/bible" element={<BibleRouteProbe />} />
+      <Route
+        path="/controller/item/:itemId/:listId"
+        element={<ItemRouteProbe />}
+      />
+      <Route
+        path="/aux-controller/:profileId/create"
+        element={<CreateItem />}
+      />
+    </Routes>
+  );
 
   return {
     store,
@@ -173,14 +196,13 @@ const renderCreateItem = ({
         <ControllerInfoContext.Provider value={controllerContext as any}>
           <GlobalInfoContext.Provider value={globalContext as any}>
             <MemoryRouter initialEntries={[initialEntry]}>
-              <Routes>
-                <Route path="/controller/create" element={<CreateItem />} />
-                <Route path="/controller/bible" element={<BibleRouteProbe />} />
-                <Route
-                  path="/controller/item/:itemId/:listId"
-                  element={<ItemRouteProbe />}
-                />
-              </Routes>
+              {controllerProfileId ? (
+                <ActiveControllerProvider profileId={controllerProfileId}>
+                  {routes}
+                </ActiveControllerProvider>
+              ) : (
+                routes
+              )}
             </MemoryRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
@@ -197,6 +219,114 @@ describe("CreateItem", () => {
     mockedResolveLrclibImport.mockReset();
     let n = 0;
     mockedGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
+  });
+
+  it("keeps song first and selected on the presentation controller", () => {
+    renderCreateItem();
+
+    const typeRadios = screen.getAllByRole("radio");
+    expect(typeRadios[0]).toHaveAccessibleName(/Song/);
+    expect(typeRadios[2]).toHaveAccessibleName(/Custom Item/);
+    expect(screen.getByLabelText("Song:")).toBeChecked();
+  });
+
+  it("defaults to custom first on aux controllers", async () => {
+    const store = createTestStore();
+    renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Custom Item:")).toBeChecked();
+    });
+    const typeRadios = screen.getAllByRole("radio");
+    expect(typeRadios[0]).toHaveAccessibleName(/Custom Item/);
+    expect(typeRadios[1]).toHaveAccessibleName(/Song/);
+    expect(store.getState().createItem.type).toBe("free");
+  });
+
+  it("does not overwrite an in-progress draft when opened on aux", () => {
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "song",
+        name: "Already drafting",
+        text: "Verse",
+      },
+    });
+
+    renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    expect(screen.getByLabelText("Song:")).toBeChecked();
+    expect(screen.getByLabelText("Song name:")).toHaveValue("Already drafting");
+    expect(store.getState().createItem.type).toBe("song");
+  });
+
+  it("lets the operator switch away from the aux custom default", async () => {
+    const store = createTestStore();
+    renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Custom Item:")).toBeChecked();
+    });
+
+    fireEvent.click(screen.getByLabelText("Song:"));
+
+    expect(screen.getByLabelText("Song:")).toBeChecked();
+    expect(store.getState().createItem.type).toBe("song");
+    expect(store.getState().createItem.hasUserSelectedType).toBe(true);
+  });
+
+  it("keeps an explicit blank song choice on aux after remount", async () => {
+    const store = createTestStore();
+    const view = renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Custom Item:")).toBeChecked();
+    });
+
+    fireEvent.click(screen.getByLabelText("Song:"));
+    view.unmount();
+
+    renderCreateItem({
+      store,
+      initialEntry: `/aux-controller/${AUX_CONTROLLER_ID}/create`,
+      controllerProfileId: AUX_CONTROLLER_ID,
+    });
+
+    expect(screen.getByLabelText("Song:")).toBeChecked();
+    expect(store.getState().createItem.type).toBe("song");
+  });
+
+  it("adopts the presentation default when a blank aux draft opens on main", async () => {
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: false,
+      },
+    });
+
+    renderCreateItem({ store });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Song:")).toBeChecked();
+    });
+    expect(store.getState().createItem.type).toBe("song");
   });
 
   it("persists the song draft when leaving and returning", () => {
@@ -280,6 +410,7 @@ describe("CreateItem", () => {
       ...initialCreateItemState,
       name: "Grace",
       type: "song",
+      hasUserSelectedType: true,
     });
   });
 

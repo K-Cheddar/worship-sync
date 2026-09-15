@@ -69,8 +69,14 @@ type TransmitHandlerProps = {
   variant?: "default" | "overlayStreamFocus";
   showStreamOverlayOnlyToggle?: boolean;
   showClearStreamOverlaysButton?: boolean;
-  /** When set, each screen shows at most this many quick links (e.g. 4 on main controller). */
+  /** Legacy layout hint retained for caller compatibility; the compact rail owns capacity now. */
   maxQuickLinks?: number;
+  /**
+   * When false, presentation tiles stay mounted, pause file-video playback,
+   * and skip animation/capture work. Used by Current Service while Displays is
+   * CSS-hidden.
+   */
+  isPreviewActive?: boolean;
 };
 
 const TransmitHandler = ({
@@ -82,7 +88,7 @@ const TransmitHandler = ({
   variant = "default",
   showStreamOverlayOnlyToggle = false,
   showClearStreamOverlaysButton = false,
-  maxQuickLinks,
+  isPreviewActive = true,
 }: TransmitHandlerProps) => {
   // Outputs this surface shows: the displays the active controller owns, then
   // narrowed to the render profiles the caller asked for. `visibleScreens` stays
@@ -361,11 +367,10 @@ const TransmitHandler = ({
       map[output.id] = getQuickLinksForOutput(
         allQuickLinks,
         output,
-        maxQuickLinks,
       );
     }
     return map;
-  }, [allQuickLinks, maxQuickLinks, visibleOutputs]);
+  }, [allQuickLinks, visibleOutputs]);
 
   const overlayStreamQuickLinksBelowPreview = useMemo(() => {
     if (!primaryStreamOutput) return [];
@@ -530,6 +535,7 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
                     {board}
@@ -549,6 +555,7 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
                     {board}
@@ -569,6 +576,7 @@ const TransmitHandler = ({
                     previewScale={previewScale}
                     fillWidth={fillWidth}
                     readOnly={readOnly}
+                    isVisible={isPreviewActive}
                     footer={displayFooter}
                   />
                   {/* Belongs to the primary stream only — it would otherwise

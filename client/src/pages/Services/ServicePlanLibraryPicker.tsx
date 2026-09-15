@@ -63,6 +63,7 @@ const ServicePlanLibraryPicker = ({
           ...initialCreateItemState,
           name: seededName,
           type: "song",
+          hasUserSelectedType: true,
           text: initialLyrics,
         }),
       );
@@ -90,6 +91,7 @@ const ServicePlanLibraryPicker = ({
         ...initialCreateItemState,
         name: songQuery.trim(),
         type: "song",
+        hasUserSelectedType: true,
       }),
     );
     setShowCreateSong(true);

@@ -16,6 +16,7 @@ type StreamPresentationPreviewProps = {
   previewScale?: number;
   fillWidth?: boolean;
   readOnly?: boolean;
+  isVisible?: boolean;
   toggleIsTransmitting: () => void;
   /** Output this tile shows; defaults to the built-in surface. */
   outputId?: string;
@@ -34,6 +35,7 @@ const StreamPresentationPreview = memo(
     previewScale,
     fillWidth,
     readOnly = false,
+    isVisible = true,
     toggleIsTransmitting,
     variant,
     showFocusedStreamControls,
@@ -84,6 +86,7 @@ const StreamPresentationPreview = memo(
         previewScale={previewScale}
         fillWidth={fillWidth}
         footer={footer}
+        isVisible={isVisible}
       />
     );
   },

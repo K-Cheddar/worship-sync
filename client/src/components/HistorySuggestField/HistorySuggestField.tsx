@@ -344,7 +344,7 @@ const HistorySuggestField = ({
               role="option"
               aria-selected={index === activeSuggestionIndex}
               className={cn(
-                "px-2 py-1 cursor-pointer hover:bg-gray-700",
+                "cursor-pointer px-2 py-1.5 hover:bg-gray-700",
                 index === activeSuggestionIndex && "bg-gray-700"
               )}
               onMouseDown={(e) => {
@@ -352,7 +352,14 @@ const HistorySuggestField = ({
                 applySuggestion(s);
               }}
             >
-              <div className="flex items-center justify-between gap-2">
+              {/*
+                Keep every option the same height whether or not a remove control
+                is shown (roster names are non-removable; free-text history is).
+              */}
+              <div
+                data-testid="history-suggestion-row"
+                className="flex min-h-8 items-center justify-between gap-2"
+              >
                 <span className="text-white">{s}</span>
                 {onRemoveHistoryValue &&
                   (!isHistoryValueRemovable || isHistoryValueRemovable(s)) && (
@@ -360,7 +367,8 @@ const HistorySuggestField = ({
                       type="button"
                       variant="tertiary"
                       svg={X}
-                      className="text-xs text-red-400 hover:text-red-200 min-w-0"
+                      iconSize="sm"
+                      className="min-w-0 text-xs text-red-400 hover:text-red-200"
                       padding="p-0"
                       aria-label={`Remove "${s}" from history`}
                       onMouseDown={(e) => {

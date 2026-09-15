@@ -16,6 +16,7 @@ type ProjectorPresentationPreviewProps = {
   previewScale?: number;
   fillWidth?: boolean;
   readOnly?: boolean;
+  isVisible?: boolean;
   toggleIsTransmitting: () => void;
   /** Output this tile shows; defaults to the built-in surface. */
   outputId?: string;
@@ -32,6 +33,7 @@ const ProjectorPresentationPreview = memo(
     previewScale,
     fillWidth,
     readOnly = false,
+    isVisible = true,
     toggleIsTransmitting,
     outputId = "projector",
     name = "Projector",
@@ -73,6 +75,7 @@ const ProjectorPresentationPreview = memo(
         previewScale={previewScale}
         fillWidth={fillWidth}
         footer={footer}
+        isVisible={isVisible}
       />
     );
   },

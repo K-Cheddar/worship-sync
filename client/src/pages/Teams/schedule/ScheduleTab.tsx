@@ -171,6 +171,7 @@ import {
   buildScheduleColumns,
   computeOccurrenceFill,
   getRequiredCount,
+  isOccurrenceStaffingSlot,
   makeSlotKey,
   resolveOccurrenceRequirements,
   type OccurrenceFill,
@@ -1284,6 +1285,8 @@ const ScheduleTab = ({
       assignmentsRow: selectedSchedule?.assignments?.[detailOccurrence.occurrenceId],
       members: scheduleDisplayMembers,
       duplicateFirstNames: duplicateScheduleFirstNames,
+      additionalSlotKeys:
+        selectedSchedule?.additionalPositionSlots?.[detailOccurrence.occurrenceId],
     });
   }, [
     scheduleDisplayMembers,
@@ -1291,6 +1294,7 @@ const ScheduleTab = ({
     duplicateScheduleFirstNames,
     requirementsByOccurrence,
     scheduleColumns,
+    selectedSchedule?.additionalPositionSlots,
     selectedSchedule?.assignments,
   ]);
   const detailMessage = useMemo(
@@ -2668,6 +2672,7 @@ const ScheduleTab = ({
       })),
       requiredCountFor: (occurrenceId, positionId) =>
         getRequiredCount(requirementsByOccurrence.get(occurrenceId), positionId),
+      additionalPositionSlots: selectedSchedule.additionalPositionSlots,
       assignments: selectedSchedule.assignments,
       members: scheduleDisplayMembers,
       duplicateFirstNames: duplicateScheduleFirstNames,
@@ -3472,7 +3477,8 @@ const ScheduleTab = ({
   );
 
   // Filled/required per occurrence, shared by every layout's fill badge so the
-  // board and both grids read from one computation.
+  // board and both grids read from one computation. Includes occurrence-added
+  // additionalPositionSlots in the staffing target for that date only.
   const fillByOccurrence = useMemo(() => {
     const map = new Map<string, OccurrenceFill>();
     scheduleOccurrences.forEach((occurrence) => {
@@ -3483,6 +3489,7 @@ const ScheduleTab = ({
           requirementsByOccurrence.get(occurrence.occurrenceId),
           selectedSchedule?.assignments?.[occurrence.occurrenceId],
           selectedSchedule?.responses?.[occurrence.occurrenceId],
+          selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId],
         ),
       );
     });
@@ -3492,6 +3499,7 @@ const ScheduleTab = ({
     requirementsByOccurrence,
     scheduleOccurrences,
     selectedSchedule?.assignments,
+    selectedSchedule?.additionalPositionSlots,
     // Without this the badge would not move when an accept or decline arrives
     // over SSE — the count would only catch up on a full reload.
     selectedSchedule?.responses,
@@ -3513,15 +3521,11 @@ const ScheduleTab = ({
     }
     scheduleOccurrences.forEach((occurrence) => {
       const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
-      const additionalSlots = new Set(
-        selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId] || [],
-      );
+      const additionalSlots =
+        selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId] || [];
       const holdersByMicrophone = new Map<string, ScheduleMicrophoneHolder[]>();
       scheduleColumns.forEach((column) => {
-        const isSlotEnabled =
-          column.slot < getRequiredCount(requirements, column.positionId) ||
-          additionalSlots.has(column.columnKey);
-        if (!isSlotEnabled) return;
+        if (!isOccurrenceStaffingSlot(column, requirements, additionalSlots)) return;
         const memberId = getCellPrimaryMemberId(
           selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey],
         );
@@ -3942,12 +3946,16 @@ const ScheduleTab = ({
         activeSlot?.columnKey === column.columnKey;
       const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
       const requiredCount = getRequiredCount(requirements, column.positionId);
+      const additionalSlotKeys =
+        selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId];
       const isAdditionalPosition = Boolean(
-        selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId]?.includes(
-          column.columnKey,
-        ),
+        additionalSlotKeys?.includes(column.columnKey),
       );
-      const isSlotEnabled = column.slot < requiredCount || isAdditionalPosition;
+      const isSlotEnabled = isOccurrenceStaffingSlot(
+        column,
+        requirements,
+        additionalSlotKeys,
+      );
 
       return {
         occurrenceId: occurrence.occurrenceId,

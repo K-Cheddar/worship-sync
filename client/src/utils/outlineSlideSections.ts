@@ -4,6 +4,7 @@ import type {
   ItemSlideType,
   ItemState,
   ServiceItem,
+  FormattedSection,
 } from "../types";
 import { getFormattedSections } from "./overflow";
 
@@ -30,6 +31,7 @@ export type OutlineSlideSection = {
   rev?: string;
   slides: ItemSlideType[];
   isActive: boolean;
+  formattedSections?: FormattedSection[];
 };
 
 export type OutlineVirtualRow =
@@ -62,6 +64,7 @@ type ActiveItemSlideSource = {
   slides?: ItemSlideType[];
   arrangements?: Arrangment[];
   selectedArrangement?: number;
+  formattedSections?: FormattedSection[];
 };
 
 /**
@@ -170,6 +173,9 @@ export const buildOutlineSlideSections = (
       rev: isActive ? undefined : doc?._rev,
       slides: resolveSlidesForOutlineItem(item, options),
       isActive,
+      formattedSections:
+        (isActive ? options.activeItem.formattedSections : doc?.formattedSections) ??
+        [],
     };
   });
 
@@ -323,6 +329,59 @@ export const resolveOutlineScrollTopFromAnchor = (
   }
   if (rowIndex < 0) return null;
   return getRowStart(rowIndex) + anchor.localOffset;
+};
+
+/**
+ * Zoom rebuilds row packing and tile height, so restore from a frozen identity
+ * rather than a live scrollTop that the browser may have clamped.
+ *
+ * Prefer the selected slide when it is on screen. Otherwise keep the first
+ * visible row so browsing ahead is not yanked back to the live item.
+ */
+export type OutlineZoomFocalPoint =
+  | {
+      kind: "selected";
+      listId: string;
+      slideIndex: number;
+    }
+  | {
+      kind: "viewport";
+      anchor: OutlineScrollAnchor;
+    };
+
+export const captureOutlineZoomFocalPoint = (
+  rows: OutlineVirtualRow[],
+  getRowStart: (index: number) => number,
+  getRowHeight: (index: number) => number,
+  scrollTop: number,
+  viewportHeight: number,
+  selectedListId: string | undefined,
+  selectedSlide: number,
+): OutlineZoomFocalPoint | null => {
+  if (rows.length === 0) return null;
+
+  if (selectedListId && selectedSlide >= 0 && viewportHeight > 0) {
+    const rowIndex = findOutlineRowIndexForItem(
+      rows,
+      selectedListId,
+      selectedSlide,
+    );
+    if (rowIndex >= 0) {
+      const start = getRowStart(rowIndex);
+      const end = start + getRowHeight(rowIndex);
+      if (start < scrollTop + viewportHeight && end > scrollTop) {
+        return {
+          kind: "selected",
+          listId: selectedListId,
+          slideIndex: selectedSlide,
+        };
+      }
+    }
+  }
+
+  const anchor = captureOutlineScrollAnchor(rows, getRowStart, scrollTop);
+  if (!anchor) return null;
+  return { kind: "viewport", anchor: { ...anchor, localOffset: 0 } };
 };
 
 /**

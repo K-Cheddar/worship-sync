@@ -1,9 +1,10 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
 let mockPathname = "/controller/item/item-id/list-id";
@@ -12,7 +13,7 @@ let mockState: {
   undoable: {
     present: {
       item: {
-        isEditMode: boolean;
+        isLyricsEditorOpen: boolean;
         type: string;
       };
       preferences: ReturnType<typeof preferencesSlice.getInitialState>;
@@ -99,7 +100,9 @@ jest.mock("./ToolbarElements/Undo", () => ({
 
 jest.mock("./ToolbarElements/UserSection", () => ({
   __esModule: true,
-  default: () => <div>User</div>,
+  default: ({ variant }: { variant?: string }) => (
+    <div data-testid={variant === "compact" ? "compact-user" : "full-user"}>User</div>
+  ),
 }));
 
 jest.mock("./ToolbarElements/FormattedTextEditor", () => ({
@@ -147,17 +150,19 @@ const renderToolbar = ({
   itemType,
   lastControllerConfigurationRoute,
   variant,
+  workspaceMode,
 }: {
   access: "full" | "music" | "view";
   itemType: string;
   lastControllerConfigurationRoute?: string;
   variant?: "default" | "aux";
+  workspaceMode?: "present" | "edit";
 }) => {
   mockState = {
     undoable: {
       present: {
         item: {
-          isEditMode: false,
+          isLyricsEditorOpen: false,
           type: itemType,
         },
         preferences: {
@@ -170,10 +175,13 @@ const renderToolbar = ({
     },
   };
 
+  const toolbar = <Toolbar className="toolbar" variant={variant} />;
   return render(
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        <Toolbar className="toolbar" variant={variant} />
+        {workspaceMode ? (
+          <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
+        ) : toolbar}
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
@@ -195,7 +203,7 @@ const renderToolbarOverlay = ({
     undoable: {
       present: {
         item: {
-          isEditMode: false,
+          isLyricsEditorOpen: false,
           type: "song",
         },
         preferences: {
@@ -218,8 +226,47 @@ const renderToolbarOverlay = ({
 describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear();
     mockPathname = "/controller/item/item-id/list-id";
     mockControllerBasePath = "/controller";
+  });
+
+  it("hides undo and secondary toolbar rows in Present mode", () => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "present" });
+
+    const primaryRow = screen.getByTestId("toolbar-primary-row");
+    expect(within(primaryRow).getByText("Menu")).toBeInTheDocument();
+    expect(within(primaryRow).getByRole("button", { name: "Present" })).toBeInTheDocument();
+    expect(screen.queryByText("Undo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("compact-user")).toBeInTheDocument();
+  });
+
+  it("keeps undo and full toolbar content in Edit mode", () => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "present" });
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+
+    const primaryRow = screen.getByTestId("toolbar-primary-row");
+    expect(within(primaryRow).getByText("Menu")).toBeInTheDocument();
+    expect(within(primaryRow).getByText("Undo")).toBeInTheDocument();
+    expect(within(primaryRow).getByRole("link", { name: "Configurations" })).toBeInTheDocument();
+    const leftColumn = screen.getByTestId("toolbar-left-column");
+    expect(within(leftColumn).getByText("Slide Tools Panel")).toBeInTheDocument();
+    expect(screen.getByTestId("toolbar-user-section")).toContainElement(screen.getByTestId("full-user"));
+    expect(screen.getByTestId("full-user")).toBeInTheDocument();
+  });
+
+  it("does not change presentation state when switching workspace modes", () => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "present" });
+    const presentationItem = { ...mockState.undoable.present.item };
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+
+    expect(mockState.undoable.present.item).toEqual(presentationItem);
   });
 
   it("hides slide and box tools for music access on non-song items", () => {
@@ -334,6 +381,31 @@ describe("Toolbar", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("supports Present and Edit modes on an auxiliary controller", () => {
+    mockControllerBasePath = "/aux-controller/ctrl_lobby";
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      variant: "aux",
+      workspaceMode: "present",
+    });
+
+    expect(screen.getByRole("button", { name: "Present" })).toBeInTheDocument();
+    expect(screen.getByTestId("toolbar-primary-row")).toBeInTheDocument();
+    expect(screen.getByTestId("toolbar-user-section")).toBeInTheDocument();
+    expect(screen.queryByText("Undo")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("compact-user")).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+
+    expect(screen.getByText("Undo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
+    expect(screen.getByTestId("full-user")).toBeInTheDocument();
+  });
+
   it("renders Configurations as a button for view access", () => {
     renderToolbar({ access: "view", itemType: "song" });
 
@@ -362,7 +434,7 @@ describe("Toolbar", () => {
       undoable: {
         present: {
           item: {
-            isEditMode: false,
+            isLyricsEditorOpen: false,
             type: "timer",
           },
           preferences: preferencesSlice.getInitialState(),

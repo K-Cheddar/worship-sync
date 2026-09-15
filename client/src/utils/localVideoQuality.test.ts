@@ -1,4 +1,5 @@
 import {
+  applyLocalVideoCaptureProfile,
   getLocalVideoRealtimeBitrate,
   resolveLocalVideoCaptureProfile,
 } from "./localVideoQuality";
@@ -43,5 +44,46 @@ describe("localVideoQuality", () => {
     expect(fullHd).toBe(11_250_000);
     expect(quadHd).toBe(20_000_000);
     expect(quadHd30).toBe(10_000_000);
+  });
+
+  it("applies the smallest covering profile to a live capture track", async () => {
+    const applyConstraints = jest.fn().mockResolvedValue(undefined);
+    const stream = {
+      getVideoTracks: () => [{ applyConstraints }],
+    } as unknown as MediaStream;
+
+    await applyLocalVideoCaptureProfile(stream, 2_560, 1_440);
+
+    expect(applyConstraints).toHaveBeenCalledWith({
+      width: { ideal: 2_560 },
+      height: { ideal: 1_440 },
+      frameRate: { ideal: 60 },
+    });
+  });
+
+  it("skips renegotiation when the track is already on that profile", async () => {
+    const applyConstraints = jest.fn().mockResolvedValue(undefined);
+    const videoTrack = { applyConstraints };
+    const stream = {
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream;
+
+    await applyLocalVideoCaptureProfile(stream, 1_920, 1_080);
+    await applyLocalVideoCaptureProfile(stream, 1_800, 1_000);
+
+    expect(applyConstraints).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores capture modes that reject live renegotiation", async () => {
+    const applyConstraints = jest
+      .fn()
+      .mockRejectedValue(new Error("unsupported"));
+    const stream = {
+      getVideoTracks: () => [{ applyConstraints }],
+    } as unknown as MediaStream;
+
+    await expect(
+      applyLocalVideoCaptureProfile(stream, 1_920, 1_080),
+    ).resolves.toBeUndefined();
   });
 });

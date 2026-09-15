@@ -68,7 +68,7 @@ describe("localImageAssets", () => {
     expect(getRememberedLocalImagePolicy("device-b")).toBe("local-and-cloud");
   });
 
-  it("accepts supported raster images and rejects unsupported or large files", () => {
+  it("accepts recognized image formats and rejects large files", () => {
     expect(
       validateLocalImageFile(
         new File(["image"], "welcome.png", { type: "image/png" }),
@@ -78,7 +78,7 @@ describe("localImageAssets", () => {
       validateLocalImageFile(
         new File(["<svg />"], "logo.svg", { type: "image/svg+xml" }),
       ),
-    ).toBe("Choose a PNG, JPEG, WebP, or GIF image.");
+    ).toBeNull();
     const large = new File(
       [new Uint8Array(25 * 1024 * 1024 + 1)],
       "large.jpg",

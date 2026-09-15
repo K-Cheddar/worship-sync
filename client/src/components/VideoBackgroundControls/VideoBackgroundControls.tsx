@@ -16,6 +16,7 @@ import {
 import { useDispatch, useSelector } from "../../hooks";
 import { updateVideoPlayback } from "../../store/presentationSlice";
 import { RootState } from "../../store/store";
+import { cn } from "../../utils/cnHelper";
 
 type VideoBackgroundControlsProps = {
   media: MediaType;
@@ -25,6 +26,8 @@ type VideoBackgroundControlsProps = {
   /** Send mode of the slide these controls belong to. */
   sendMode: VideoBackgroundSendMode;
   onSendModeChange: (mode: VideoBackgroundSendMode) => void;
+  showSendMode?: boolean;
+  className?: string;
 };
 
 // "Start over" rather than "Restart": the transport row now has a Restart
@@ -41,6 +44,8 @@ const VideoBackgroundControls = ({
   syncOutputIds = [],
   sendMode,
   onSendModeChange,
+  showSendMode = true,
+  className,
 }: VideoBackgroundControlsProps) => {
   const dispatch = useDispatch();
   const snapshot = useSyncExternalStore(
@@ -130,7 +135,10 @@ const VideoBackgroundControls = ({
 
   return (
     <div
-      className="flex flex-col gap-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1.5"
+      className={cn(
+        "flex flex-col gap-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1.5",
+        className,
+      )}
       data-testid="video-background-controls"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -182,13 +190,13 @@ const VideoBackgroundControls = ({
             pushTransport(value, isPaused, true);
             setIsScrubbing(false);
           }}
-          className="flex-1"
+          className="min-w-0 flex-1"
         />
         <span className="w-[4.5rem] shrink-0 text-center text-xs tabular-nums text-gray-400">
           {formatVideoClock(duration)}
         </span>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
+      {showSendMode ? <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
           On send
         </span>
@@ -202,7 +210,7 @@ const VideoBackgroundControls = ({
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-gray-400">
           {sendModeHint}
         </p>
-      </div>
+      </div> : null}
     </div>
   );
 };

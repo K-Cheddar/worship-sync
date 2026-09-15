@@ -6,10 +6,18 @@ import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
+import type { FormattedSection } from "../../types";
+import { getFreeSectionDisplayName, getFreeSectionNumber } from "../../utils/freeSectionNames";
+import Button from "../../components/Button/Button";
+import Input from "../../components/Input/Input";
+import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
 import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
+import { useDroppable } from "@dnd-kit/core";
+import { type SlideDragData, type SlideInsertData } from "../../utils/presentationDnd";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -43,6 +51,43 @@ type ItemSlideProps = {
   ) => void;
   /** Override the default `item-slide-${index}` DOM id for multi-item rails. */
   slideDomId?: string;
+  /** Enables zero-footprint media insertion zones for the auxiliary controller. */
+  mediaInsertEnabled?: boolean;
+  formattedSections?: FormattedSection[];
+  onRenameSection?: (sectionNum: number, name: string) => void;
+  isDragOverlay?: boolean;
+};
+
+const MediaSlideInsertTarget = ({
+  index,
+  position,
+  enabled,
+}: {
+  index: number;
+  position: "top" | "bottom";
+  enabled: boolean;
+}) => {
+  const { setNodeRef } = useDroppable({
+    // Top and bottom targets can share an insertion index, but dnd-kit still
+    // requires every registered droppable to have its own ID.
+    id: `slide-insert-${index}-${position}`,
+    data: { kind: "slide-insert", index } satisfies SlideInsertData,
+    // Keep targets registered before activation so dnd-kit measures them at
+    // drag start. Collision detection filters them out for slide drags.
+    disabled: !enabled,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      aria-hidden="true"
+      data-testid="media-slide-insert-target"
+      className={cn(
+        "pointer-events-none absolute inset-x-0 z-20 h-1/2",
+        position === "top" ? "top-0" : "bottom-0",
+      )}
+    >
+    </div>
+  );
 };
 
 const ItemSlide = ({
@@ -65,6 +110,10 @@ const ItemSlide = ({
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
   slideDomId,
+  mediaInsertEnabled = false,
+  formattedSections = [],
+  onRenameSection,
+  isDragOverlay = false,
 }: ItemSlideProps) => {
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
@@ -84,7 +133,11 @@ const ItemSlide = ({
     isDragging,
   } = useSortable({
     id: slide.id || "",
-    disabled: !canEdit,
+    disabled: isDragOverlay || !canEdit,
+    data: {
+      kind: "slide",
+      slideId: slide.id || "",
+    } satisfies SlideDragData,
   });
 
   const style = {
@@ -93,6 +146,65 @@ const ItemSlide = ({
   };
 
   const isFree = itemType === "free";
+  const freeSectionNumber = isFree ? getFreeSectionNumber(slide) : null;
+  const displayName =
+    isFree ? getFreeSectionDisplayName(slide, formattedSections) : slide.name;
+  const customSectionName = formattedSections.find(
+    (section) => section.sectionNum === freeSectionNumber,
+  )?.name;
+  const [isEditingName, setIsEditingName] = useState(false);
+  const nameHeaderRef = useRef<HTMLHeadingElement>(null);
+  const [renamePosition, setRenamePosition] = useState({ x: 0, y: 0 });
+  const [nameDraft, setNameDraft] = useState(
+    customSectionName?.trim() ||
+      (freeSectionNumber == null ? displayName : `Section ${freeSectionNumber}`),
+  );
+
+  useEffect(() => {
+    if (!isEditingName) {
+      setNameDraft(
+        customSectionName?.trim() ||
+          (freeSectionNumber == null
+            ? displayName
+            : `Section ${freeSectionNumber}`),
+      );
+    }
+  }, [customSectionName, displayName, freeSectionNumber, isEditingName]);
+
+  const saveSectionName = () => {
+    if (freeSectionNumber == null || !onRenameSection) return;
+    onRenameSection(freeSectionNumber, nameDraft.trim());
+    setIsEditingName(false);
+  };
+
+  const cancelSectionName = () => {
+    setNameDraft(
+      customSectionName?.trim() ||
+        (freeSectionNumber == null ? displayName : `Section ${freeSectionNumber}`),
+    );
+    setIsEditingName(false);
+  };
+
+  const openSectionNameEditor = () => {
+    const headerRect = nameHeaderRef.current?.getBoundingClientRect();
+    if (headerRect) {
+      const windowWidth = 320;
+      const windowHeight = 220;
+      const gap = 4;
+      const fitsBelow =
+        headerRect.bottom + gap + windowHeight <= window.innerHeight;
+      setRenamePosition({
+        x: Math.min(
+          Math.max(headerRect.left, 0),
+          Math.max(window.innerWidth - windowWidth, 0),
+        ),
+        y: fitsBelow
+          ? headerRect.bottom + gap
+          : Math.max(headerRect.top - windowHeight - gap, 0),
+      });
+    }
+    setIsEditingName(true);
+  };
 
   const showBackgroundTargetSelectionChrome =
     canEdit &&
@@ -164,7 +276,9 @@ const ItemSlide = ({
       {...(isFree && canEdit ? listeners : {})}
       key={slide.id}
       className={cn(
-        "cursor-pointer select-none w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        "relative cursor-pointer select-none w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        isDragging && !isDragOverlay && "opacity-30",
+        isDragOverlay && "pointer-events-none shadow-2xl scale-[1.02]",
         !isDragging &&
         "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
         (isSelected || isBackgroundTargetSelected) && "border-cyan-500",
@@ -173,6 +287,16 @@ const ItemSlide = ({
       )}
       id={slideDomId ?? `item-slide-${index}`}
     >
+      <MediaSlideInsertTarget
+        index={index}
+        position="top"
+        enabled={mediaInsertEnabled}
+      />
+      <MediaSlideInsertTarget
+        index={index + 1}
+        position="bottom"
+        enabled={mediaInsertEnabled}
+      />
       <div
         className="relative"
         onContextMenu={handleSlideContextMenu}
@@ -238,13 +362,15 @@ const ItemSlide = ({
           </span>
         ) : null}
         <h4
+          ref={nameHeaderRef}
           className={cn(
-            "rounded-t-md truncate px-2 text-center flex w-full",
+            "rounded-t-md px-2 text-center flex w-full items-center gap-1",
             hSize,
             itemSectionBgColorMap.get(slide.type)
           )}
         >
-          {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
+          <span className="min-w-0 flex-1 truncate">
+            {displayName?.split(/\u200B(.*?)\u200B/).map((part, index) => {
             // Even indices are regular text, odd indices are special parts
             if (index % 2 === 1) {
               return (
@@ -261,7 +387,23 @@ const ItemSlide = ({
               );
             }
             return null;
-          })}
+            })}
+          </span>
+          {isFree && canEdit && onRenameSection ? (
+            <button
+              type="button"
+              aria-label="Rename section"
+              title="Rename section"
+              className="ml-1 shrink-0 rounded p-0.5 opacity-70 hover:bg-white/15 hover:opacity-100 focus-visible:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                openSectionNameEditor();
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <Pencil className="h-3 w-3" aria-hidden />
+            </button>
+          ) : null}
         </h4>
         <DisplayWindow
           showBorder
@@ -300,6 +442,55 @@ const ItemSlide = ({
           />
         ) : null}
       </div>
+      {isFree && isEditingName && onRenameSection ? (
+        <div
+          data-no-dnd
+          data-testid="section-rename-window"
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onTouchStart={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <FloatingWindow
+            title="Edit section name"
+            onClose={cancelSectionName}
+            defaultWidth={320}
+            defaultHeight={220}
+            defaultPosition={renamePosition}
+            autoHeight
+          >
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveSectionName();
+              }}
+            >
+              <Input
+                label="Section name"
+                value={nameDraft}
+                onChange={(value) => setNameDraft(String(value))}
+                placeholder="Name"
+                inputTextSize="text-sm"
+                inputWidth="w-full"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="tertiary" onClick={cancelSectionName}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="cta"
+                  onClick={saveSectionName}
+                >
+                  Save
+                </Button>
+              </div>
+            </form>
+          </FloatingWindow>
+        </div>
+      ) : null}
     </li>
   );
 };

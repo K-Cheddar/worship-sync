@@ -48,7 +48,7 @@ const ControllerPageShell = ({
       />
       <Toolbar
         variant={toolbarVariant}
-        className="flex min-h-fit shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
+        className="flex shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
       />
       <div id="controller-main" className={mainClassName} ref={layoutRef}>
         {children}

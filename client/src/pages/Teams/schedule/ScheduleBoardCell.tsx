@@ -167,7 +167,7 @@ const ScheduleBoardCell = memo(({
           isActiveSlot && "bg-cyan-400/10 ring-1 ring-cyan-400/40",
           justFilled && "bg-cyan-400/15",
           canEdit && !isMemberHighlighted && !isActiveSlot && !justFilled && "hover:bg-gray-900/50",
-          !canEdit && "cursor-default",
+          canEdit ? "cursor-pointer" : "cursor-default",
         )}
         onClick={handleActivate}
       >

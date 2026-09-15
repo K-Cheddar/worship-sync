@@ -206,6 +206,7 @@ export const getNewSlidesOffsetForSectionPreview = ({
 export const getFormattedSections = (
   slides: ItemSlideType[],
   selectedBox: number,
+  existingSections: FormattedSection[] = [],
 ): FormattedSection[] => {
   const sectionsMap = new Map<number, { words: string; slideSpan: number }>();
 
@@ -233,12 +234,18 @@ export const getFormattedSections = (
   });
 
   return Array.from(sectionsMap.entries())
-    .map(([sectionNum, { words, slideSpan }]) => ({
-      sectionNum,
-      words,
-      slideSpan,
-      id: generateRandomId(),
-    }))
+    .map(([sectionNum, { words, slideSpan }]) => {
+      const name = existingSections.find(
+        (section) => section.sectionNum === sectionNum,
+      )?.name;
+      return {
+        sectionNum,
+        ...(name ? { name } : {}),
+        words,
+        slideSpan,
+        id: generateRandomId(),
+      };
+    })
     .sort((a, b) => a.sectionNum - b.sectionNum);
 };
 
@@ -274,7 +281,8 @@ export const formatFree = (item: ItemState) => {
 
   // Get formattedSections - should always exist after migration
   const formattedSections =
-    item.formattedSections || getFormattedSections(slides, selectedBox);
+    item.formattedSections ||
+    getFormattedSections(slides, selectedBox, item.formattedSections || []);
   const currentSection = formattedSections.find(
     (s) => s.sectionNum === currentSectionNum,
   );

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Persisted Mutation Safety"
+  short_description: "Protect concurrent data changes"
+  default_prompt: "Use $persisted-mutation-safety to implement this async data mutation safely."

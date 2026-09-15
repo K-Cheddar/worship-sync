@@ -48,57 +48,27 @@ const MirrorDisplayTile = ({
     [outputs, sourceOutputIds],
   );
 
-  const followingName = useMemo(
-    () => outputs.find((output) => output.id === followingId)?.name,
-    [outputs, followingId],
-  );
-
   if (sources.length === 0) return null;
 
-  const stop = () =>
-    dispatch(setOutputFollowing({ outputId, followingOutputId: "" }));
-
-  if (followingId) {
-    return (
-      <div
-        className={cn(
-          "flex items-center justify-between gap-3 rounded-md border-2 border-cyan-400 bg-cyan-950/40 px-3 py-2",
-          className,
-        )}
-      >
-        <p className="min-w-0 truncate text-sm font-semibold text-cyan-200">
-          Mirroring {followingName ?? followingId}
-        </p>
-        <Button
-          svg={Link2Off}
-          variant="secondary"
-          className="shrink-0 text-sm"
-          onClick={stop}
-        >
-          Stop mirroring
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className={cn("flex flex-wrap items-center gap-2", className)}>
+    <div className={cn("flex min-h-10 w-full items-center gap-2", className)}>
       {sources.map((source) => (
         <Button
           key={source.id}
-          svg={Link2}
-          variant="tertiary"
-          className="text-sm"
+          svg={followingId === source.id ? Link2Off : Link2}
+          variant={followingId === source.id ? "secondary" : "tertiary"}
+          className="min-w-0 flex-1 justify-center text-sm"
+          aria-pressed={followingId === source.id}
           onClick={() =>
             dispatch(
               setOutputFollowing({
                 outputId,
-                followingOutputId: source.id,
+                followingOutputId: followingId === source.id ? "" : source.id,
               }),
             )
           }
         >
-          Mirror {source.name}
+          {followingId === source.id ? "Stop mirroring" : `Mirror ${source.name}`}
         </Button>
       ))}
     </div>

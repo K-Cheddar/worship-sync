@@ -3,6 +3,8 @@ import { Undo2, Redo2 } from "lucide-react";
 import { ActionCreators } from "redux-undo";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useEffect } from "react";
+import cn from "classnames";
+import { toolbarTabClassName } from "./ToolbarButton";
 
 export const UndoButton = ({
   color,
@@ -22,7 +24,8 @@ export const UndoButton = ({
       disabled={!past.length}
       variant={variant || "tertiary"}
       onClick={() => dispatch(ActionCreators.undo())}
-      className={className}
+      className={cn(toolbarTabClassName(false, false), "p-1", className)}
+      aria-label="Undo"
     />
   );
 };
@@ -45,21 +48,22 @@ export const RedoButton = ({
       disabled={!future.length}
       variant={variant || "tertiary"}
       onClick={() => dispatch(ActionCreators.redo())}
-      className={className}
+      className={cn(toolbarTabClassName(false, false), "p-1", className)}
+      aria-label="Redo"
     />
   );
 };
 
 const Undo = () => {
   const dispatch = useDispatch();
-  const isEditMode = useSelector((state) => state.undoable.present.item.isEditMode);
+  const isLyricsEditorOpen = useSelector((state) => state.undoable.present.item.isLyricsEditorOpen);
 
   useEffect(() => {
     const handleKeyPress = (event: KeyboardEvent) => {
       if (
         (event.target as HTMLElement)?.getAttribute("data-ignore-undo") ===
           "true" ||
-        isEditMode
+        isLyricsEditorOpen
       )
         return;
       if (
@@ -84,10 +88,10 @@ const Undo = () => {
     return () => {
       document.removeEventListener("keydown", handleKeyPress);
     };
-  }, [dispatch, isEditMode]);
+  }, [dispatch, isLyricsEditorOpen]);
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-0">
       <UndoButton />
       <RedoButton />
     </div>

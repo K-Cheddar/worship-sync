@@ -88,6 +88,11 @@ import {
 } from "../../store/servicePlanningImportSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useToast } from "../../context/toastContext";
+import {
+  useActiveControllerId,
+  useActiveControllerProfile,
+} from "../../context/activeController";
+import { ActionCreators } from "redux-undo";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -96,6 +101,8 @@ import { useToast } from "../../context/toastContext";
 export const useControllerPageLifecycle = () => {
   const dispatch = useDispatch();
   const store = useStore();
+  const activeControllerId = useActiveControllerId();
+  const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
@@ -115,15 +122,40 @@ export const useControllerPageLifecycle = () => {
       state.allItems.isInitialized &&
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
-      state.undoable.present.overlays.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
       isMediaLoadSettled(state.media) &&
-      (state.undoable.present.overlayTemplates as { isInitialized: boolean })
-        .isInitialized,
+      (activeControllerProfile.type === "aux-presentation" ||
+        state.undoable.present.overlays.isInitialized) &&
+      (activeControllerProfile.type === "aux-presentation" ||
+        (state.undoable.present.overlayTemplates as { isInitialized: boolean })
+          .isInitialized),
     ),
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
+
+  // A profile change is a new editing session even when React keeps this hook
+  // mounted. Re-arm readiness without reloading already hydrated slices; the
+  // readiness effect below will dispatch page-ready on the next render.
+  useEffect(() => {
+    hasDispatchedControllerPageReady.current = false;
+    dispatch({ type: "RESET_INITIALIZATION" });
+    dispatch(ActionCreators.clearHistory());
+  }, [activeControllerId, dispatch]);
+
+  const teardownRefs = useRef({
+    refreshPresentationListeners,
+    setIsMobile,
+    setIsPhone,
+  });
+
+  useEffect(() => {
+    teardownRefs.current = {
+      refreshPresentationListeners,
+      setIsMobile,
+      setIsPhone,
+    };
+  }, [refreshPresentationListeners, setIsMobile, setIsPhone]);
 
   const updateAllItemsAndListFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -245,6 +277,12 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     return () => {
+      const {
+        refreshPresentationListeners,
+        setIsMobile,
+        setIsPhone,
+      } = teardownRefs.current;
+
       // Button (and others) read sticky isMobile from context; leaving it true
       // after leaving the controller makes Account/settings icons jump to xl
       // until a full refresh resets the provider.
@@ -263,7 +301,7 @@ export const useControllerPageLifecycle = () => {
       dispatch({ type: "RESET_INITIALIZATION" });
       refreshPresentationListeners?.();
     };
-  }, [dispatch, refreshPresentationListeners, setIsMobile, setIsPhone]);
+  }, [dispatch]);
 
   // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
   // Falls back to a one-time DB load for guest / offline sessions.
@@ -454,10 +492,13 @@ export const useControllerPageLifecycle = () => {
   }, [db, dispatch]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const getItemList = async () => {
       if (!db || !cloud) return;
       // No selected outline (empty registry): leave empty state, never keep skeletons.
       if (!selectedList?._id) {
+        if (cancelled) return;
         dispatch(initiateItemList([]));
         dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
@@ -469,6 +510,7 @@ export const useControllerPageLifecycle = () => {
         const response: DBItemListDetails | undefined = await db.get(
           selectedList._id,
         );
+        if (cancelled) return;
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
         dispatch(
@@ -483,17 +525,26 @@ export const useControllerPageLifecycle = () => {
         );
         dispatch(initiateItemList(formatItemList(itemList, cloud)));
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
+        if (cancelled) return;
         dispatch(initiateOverlayList(formattedOverlays));
         const overlayHistory = await getAllOverlayHistory(db);
+        if (cancelled) return;
         dispatch(mergeOverlayHistoryFromDb(overlayHistory));
       } catch (e) {
+        if (cancelled) return;
         console.error(e);
         dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
       }
-      dispatch(setItemListIsLoading(false));
+      if (!cancelled) {
+        dispatch(setItemListIsLoading(false));
+      }
     };
-    getItemList();
+    void getItemList();
+
+    return () => {
+      cancelled = true;
+    };
   }, [dispatch, db, selectedList, cloud]);
 
   useEffect(() => {

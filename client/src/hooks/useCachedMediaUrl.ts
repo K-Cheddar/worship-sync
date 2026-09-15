@@ -56,10 +56,10 @@ export const useCachedMediaUrl = (
 
 /**
  * Like useCachedMediaUrl, but returns undefined until cache resolution completes.
- * Use for videos where loading the wrong (remote) URL before the cache check
- * finishes is undesirable. Uses the Redux cache map for instant resolution when available.
+ * Use for media that must not swap from a remote URL to its cached URL after
+ * rendering starts. Uses the Redux cache map for instant resolution when available.
  */
-export const useCachedVideoUrl = (
+export const useResolvedCachedMediaUrl = (
   url: string | undefined,
 ): string | undefined => {
   const safeUrl = isLocalMediaReferenceUrl(url) ? undefined : url;
@@ -96,3 +96,5 @@ export const useCachedVideoUrl = (
   if (state.forUrl !== safeUrl) return undefined;
   return state.resolved;
 };
+
+export const useCachedVideoUrl = useResolvedCachedMediaUrl;

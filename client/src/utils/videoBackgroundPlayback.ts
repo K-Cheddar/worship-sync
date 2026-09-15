@@ -75,10 +75,10 @@ export const getVideoBackgroundMediaKey = (
   media?: MediaType,
 ): string | undefined => {
   if (!isFileVideoBackground(media) || !media) return undefined;
-  if (media.localVideoFile) {
+  if (media.localVideoFile && !media.localVideoFile.preferCloudPlayback) {
     return `local-video:${media.localVideoFile.id}:${media.localVideoFile.contentRevision ?? "legacy"}`;
   }
-  return `remote:${media.id || media.publicId || media.background}`;
+  return `remote:${media.muxPlaybackId || media.id || media.publicId || media.background}`;
 };
 
 /**
@@ -119,11 +119,77 @@ export const resolveVideoPlaybackPosition = (
 };
 
 /**
- * How far a surface may drift from the cue clock before it re-seeks. Large
- * enough to ignore decode jitter, small enough that no one in the room can
- * see two screens disagree.
+ * How far a surface may drift from the cue clock before it needs correction.
+ * Large enough to ignore decode jitter, small enough that no one in the room
+ * can see two screens disagree.
  */
 export const VIDEO_CUE_DRIFT_TOLERANCE_SECONDS = 0.35;
+
+/** A persistent error this large is faster and safer to correct with one seek. */
+export const VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS = 1.5;
+
+/** Keep audio/video correction subtle while allowing a stalled player to catch up. */
+export const VIDEO_CUE_PLAYBACK_RATE_MIN = 0.98;
+export const VIDEO_CUE_PLAYBACK_RATE_MAX = 1.02;
+/** Do not leave a surface rate-correcting indefinitely; seek once instead. */
+export const VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS = 10_000;
+const VIDEO_CUE_PLAYBACK_RATE_GAIN = 0.02;
+
+export type VideoCueCorrection =
+  | "none"
+  | "speed up"
+  | "slow down"
+  | "return to 1x"
+  | "hard seek";
+
+export type VideoCueCorrectionDecision = {
+  correction: VideoCueCorrection;
+  playbackRate: number;
+  shouldSeek: boolean;
+};
+
+/**
+ * Selects the least disruptive way to bring an active player back to the cue
+ * clock. Invalid drift is treated as a hard error so a bad playhead cannot
+ * leave the output running indefinitely at an unknown position.
+ */
+export const resolveVideoCueCorrection = (
+  drift: number,
+  currentPlaybackRate: number,
+): VideoCueCorrectionDecision => {
+  if (
+    !Number.isFinite(drift) ||
+    Math.abs(drift) >= VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS
+  ) {
+    return {
+      correction: "hard seek",
+      playbackRate: 1,
+      shouldSeek: true,
+    };
+  }
+
+  if (Math.abs(drift) <= VIDEO_CUE_DRIFT_TOLERANCE_SECONDS) {
+    return {
+      correction: currentPlaybackRate === 1 ? "none" : "return to 1x",
+      playbackRate: 1,
+      shouldSeek: false,
+    };
+  }
+
+  const playbackRate = Math.min(
+    VIDEO_CUE_PLAYBACK_RATE_MAX,
+    Math.max(
+      VIDEO_CUE_PLAYBACK_RATE_MIN,
+      1 + drift * VIDEO_CUE_PLAYBACK_RATE_GAIN,
+    ),
+  );
+
+  return {
+    correction: drift > 0 ? "speed up" : "slow down",
+    playbackRate,
+    shouldSeek: false,
+  };
+};
 
 /**
  * Signed seconds a surface sitting at `actualSeconds` is *behind* the cue

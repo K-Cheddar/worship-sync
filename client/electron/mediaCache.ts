@@ -93,7 +93,7 @@ export class MediaCacheManager {
       const urlObj = new URL(url);
       const pathname = urlObj.pathname;
       const ext = pathname.match(
-        /\.(mp4|webm|mov|avi|mkv|jpg|jpeg|png|gif|webp|svg|avif)$/i
+        /\.(3g2|3gp|avi|flv|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|mts|ogv|ts|webm|wmv|jpg|jpeg|png|gif|webp|svg|avif)$/i
       )?.[1];
       if (ext) {
         return `${this.hashString(url)}.${ext}`;

@@ -21,6 +21,7 @@ describe("electron preload API contract", () => {
       "downloadMedia",
       "getMediaCacheMap",
       "importLocalAsset",
+      "importLocalAssetBytes",
       "getLocalAsset",
       "deleteLocalAsset",
       "getDesktopCaptureSources",

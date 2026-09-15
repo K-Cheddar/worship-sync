@@ -19,6 +19,8 @@ import {
   supportsLocalVideoRealtimeRelay,
 } from "../../../utils/localVideoRealtimeRelay";
 import { subscribeLocalVideoCaptureQuality } from "../../../utils/localVideoCaptureQualityRelay";
+import { supportsDirectElectronDesktopCapture } from "../../../utils/desktopCapture";
+import { applyLocalVideoCaptureProfile } from "../../../utils/localVideoQuality";
 
 jest.mock("../../../utils/authStorage", () => ({
   getOrCreateDeviceId: jest.fn(() => "local-device"),
@@ -64,6 +66,13 @@ jest.mock("../../../utils/localVideoCaptureQualityRelay", () => ({
     updateTargetSize: jest.fn(),
   })),
 }));
+jest.mock("../../../utils/desktopCapture", () => ({
+  subscribeBrowserDesktopShares: jest.fn(() => jest.fn()),
+  supportsDirectElectronDesktopCapture: jest.fn(() => false),
+}));
+jest.mock("../../../utils/localVideoQuality", () => ({
+  applyLocalVideoCaptureProfile: jest.fn(() => Promise.resolve()),
+}));
 
 const mockGetOrCreateDeviceId = jest.mocked(getOrCreateDeviceId);
 const mockResolveBinding = jest.mocked(resolveLocalVideoInputBinding);
@@ -75,6 +84,12 @@ const mockSupportsRealtime = jest.mocked(supportsLocalVideoRealtimeRelay);
 const mockSubscribeRealtime = jest.mocked(subscribeLocalVideoRealtime);
 const mockSubscribeCaptureQuality = jest.mocked(
   subscribeLocalVideoCaptureQuality,
+);
+const mockSupportsDirectElectronDesktop = jest.mocked(
+  supportsDirectElectronDesktopCapture,
+);
+const mockApplyLocalVideoCaptureProfile = jest.mocked(
+  applyLocalVideoCaptureProfile,
 );
 const stop = jest.fn();
 let endedHandler: (() => void) | undefined;
@@ -111,6 +126,8 @@ describe("LocalVideoInputView", () => {
     mockAcquireWarmCapture.mockResolvedValue({ stream });
     mockReleaseWarmCapture.mockResolvedValue();
     mockSupportsRealtime.mockReturnValue(false);
+    mockSupportsDirectElectronDesktop.mockReturnValue(false);
+    mockApplyLocalVideoCaptureProfile.mockResolvedValue(undefined);
     Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
       configurable: true,
       writable: true,
@@ -272,6 +289,110 @@ describe("LocalVideoInputView", () => {
     );
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
     expect(video.muted).toBe(false);
+  });
+
+  it("opens an Electron screen share directly on audience outputs", async () => {
+    mockSupportsDirectElectronDesktop.mockReturnValue(true);
+    mockSupportsRealtime.mockReturnValue(true);
+    mockResolveBinding.mockReturnValue({
+      sourceId: "source-1",
+      deviceId: "screen:0:0",
+      deviceLabel: "Lyrics screen",
+      captureKind: "screen",
+      displaySourceName: "Lyrics screen",
+    });
+    const play = jest
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+
+    render(
+      <LocalVideoInputView
+        input={{
+          ...input,
+          captureKind: "screen",
+          deviceLabel: "Lyrics screen",
+        }}
+        captureEnabled={false}
+        receiveHighQuality
+        playAudio
+      />,
+    );
+
+    const video = screen.getByLabelText("Lyrics screen") as HTMLVideoElement;
+    await waitFor(() => expect(video.srcObject).toBe(stream));
+    expect(mockAcquireWarmCapture).toHaveBeenCalledWith(
+      "source-1",
+      expect.objectContaining({ captureKind: "screen" }),
+      false,
+      expect.any(String),
+    );
+    expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+    expect(mockSubscribeMedia).not.toHaveBeenCalled();
+    expect(mockApplyLocalVideoCaptureProfile).toHaveBeenCalledWith(
+      stream,
+      expect.any(Number),
+      expect.any(Number),
+    );
+    expect(video.muted).toBe(false);
+    play.mockRestore();
+  });
+
+  it("keeps cameras on the realtime relay when Electron screen direct-capture is available", () => {
+    mockSupportsDirectElectronDesktop.mockReturnValue(true);
+    mockSupportsRealtime.mockReturnValue(true);
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled={false}
+        receiveHighQuality
+      />,
+    );
+
+    expect(mockSubscribeRealtime).toHaveBeenCalled();
+    expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
+  });
+
+  it("prefers a direct capture attach over the realtime relay in the owning window", async () => {
+    mockSupportsRealtime.mockReturnValue(true);
+    const play = jest
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled
+        receiveHighQuality
+        publishPreview
+      />,
+    );
+
+    const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
+    await waitFor(() => expect(video.srcObject).toBe(stream));
+    expect(mockAcquireWarmCapture).toHaveBeenCalled();
+    expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+    expect(mockSubscribeMedia).not.toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it("falls back to the realtime relay when another window owns the camera", async () => {
+    mockSupportsRealtime.mockReturnValue(true);
+    const { LocalVideoCaptureOwnedError } = jest.requireActual(
+      "../../../utils/localVideoCapturePool",
+    ) as typeof import("../../../utils/localVideoCapturePool");
+    mockAcquireWarmCapture.mockRejectedValue(new LocalVideoCaptureOwnedError());
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled
+        receiveHighQuality
+      />,
+    );
+
+    await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalled());
+    expect(mockSubscribeMedia).not.toHaveBeenCalled();
   });
 
   it("uses Electron's realtime relay instead of the buffered relay", () => {

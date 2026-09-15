@@ -15,6 +15,7 @@ import {
 import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { IMAGE_CONTENT_TYPE_EXTENSIONS } from "../src/utils/mediaFileTypes";
 
 export type LocalAssetKind = "image" | "video" | "audio" | "pdf";
 
@@ -28,6 +29,8 @@ export type LocalAssetImport = {
   width?: number;
   height?: number;
 };
+
+export type LocalAssetMetadata = Omit<LocalAssetImport, "sourcePath">;
 
 export type LocalAssetDescriptor = {
   assetId: string;
@@ -52,13 +55,20 @@ type LocalAssetIndex = {
 const ASSET_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
 const CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
-  "image/gif": ".gif",
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
+  ...IMAGE_CONTENT_TYPE_EXTENSIONS,
+  "video/3gpp": ".3gp",
+  "video/3gpp2": ".3g2",
+  "video/mpeg": ".mpeg",
+  "video/mp2t": ".ts",
   "video/mp4": ".mp4",
+  "video/ogg": ".ogv",
   "video/quicktime": ".mov",
   "video/webm": ".webm",
+  "video/x-flv": ".flv",
+  "video/x-m4v": ".m4v",
+  "video/x-matroska": ".mkv",
+  "video/x-ms-wmv": ".wmv",
+  "video/x-msvideo": ".avi",
   "audio/mpeg": ".mp3",
   "audio/mp4": ".m4a",
   "audio/ogg": ".ogg",
@@ -66,13 +76,25 @@ const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
   "application/pdf": ".pdf",
 };
 const CONTENT_TYPE_KINDS: Readonly<Record<string, LocalAssetKind>> = {
-  "image/gif": "image",
-  "image/jpeg": "image",
-  "image/png": "image",
-  "image/webp": "image",
+  ...Object.fromEntries(
+    Object.keys(IMAGE_CONTENT_TYPE_EXTENSIONS).map((contentType) => [
+      contentType,
+      "image",
+    ]),
+  ),
+  "video/3gpp": "video",
+  "video/3gpp2": "video",
+  "video/mpeg": "video",
+  "video/mp2t": "video",
   "video/mp4": "video",
+  "video/ogg": "video",
   "video/quicktime": "video",
   "video/webm": "video",
+  "video/x-flv": "video",
+  "video/x-m4v": "video",
+  "video/x-matroska": "video",
+  "video/x-ms-wmv": "video",
+  "video/x-msvideo": "video",
   "audio/mpeg": "audio",
   "audio/mp4": "audio",
   "audio/ogg": "audio",
@@ -337,6 +359,46 @@ export class LocalAssetStore {
         await sourceHandle.close().catch(() => undefined);
       }
     });
+  }
+
+  /** Import bytes that do not have a native renderer file path, such as a downloaded conversion. */
+  async importBytes(
+    input: LocalAssetMetadata,
+    data: Uint8Array,
+  ): Promise<LocalAssetDescriptor> {
+    await this.ready;
+    const extension = this.validateImport({
+      ...input,
+      sourcePath: "byte-import",
+    });
+    if (data.byteLength <= 0) {
+      throw new Error("Choose a local file that is not empty.");
+    }
+    if (data.byteLength > MAX_LOCAL_ASSET_BYTES_BY_KIND[input.kind]) {
+      throw new Error(`This ${input.kind} file is too large to keep offline.`);
+    }
+    const fileSystem = await statfs(this.assetDirectory);
+    const availableBytes =
+      Number(fileSystem.bavail) * Number(fileSystem.bsize);
+    if (
+      Number.isFinite(availableBytes) &&
+      availableBytes < data.byteLength + MINIMUM_FREE_BYTES_AFTER_IMPORT
+    ) {
+      throw new Error(
+        "This device does not have enough free space to keep that file offline.",
+      );
+    }
+
+    const temporaryPath = join(
+      this.assetDirectory,
+      `.byte-import-${randomUUID()}${extension}`,
+    );
+    try {
+      await writeFile(temporaryPath, data, { flag: "wx", mode: 0o600 });
+      return await this.importFile({ ...input, sourcePath: temporaryPath });
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
   }
 
   async get(assetId: string): Promise<LocalAssetDescriptor | undefined> {

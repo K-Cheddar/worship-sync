@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box } from "../../../types";
 import { setServerTimeOffset } from "../../../utils/serverTime";
@@ -7,6 +7,12 @@ import { setServerTimeOffset } from "../../../utils/serverTime";
 const mockUseSelector = jest.fn();
 const mockUseCachedVideoUrl = jest.fn((url?: string) => url);
 let mockLocalVideoViewInstanceCounter = 0;
+let mockDisplayTransitionComplete: (() => void) | undefined;
+const mockDisplayTransitionTimeline = {
+  addLabel: jest.fn(),
+  fromTo: jest.fn(),
+  kill: jest.fn(),
+};
 type KeepAliveMode = "max" | "replace";
 type KeepAliveStart = (
   overlayKey: string | null,
@@ -65,6 +71,17 @@ type MonitorViewMockProps = {
   currentMediaLayer?: ReactNode;
 };
 
+jest.mock("gsap", () => ({
+  __esModule: true,
+  default: {
+    set: jest.fn(),
+    timeline: jest.fn((options?: { onComplete?: () => void }) => {
+      mockDisplayTransitionComplete = options?.onComplete;
+      return mockDisplayTransitionTimeline;
+    }),
+  },
+}));
+
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     mockUseSelector(selector),
@@ -76,32 +93,33 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
 
 jest.mock("../DisplayBox", () => ({
   __esModule: true,
-  default: ({
+  default: function MockDisplayBox({
     box,
     prevBox,
     isPrev,
     isWindowVideoLoaded,
-    isPrevWindowVideoLoaded,
+    onPaintReadyChange,
   }: {
     box: Box;
     prevBox?: Box;
     isPrev?: boolean;
     isWindowVideoLoaded?: boolean;
-    isPrevWindowVideoLoaded?: boolean;
-  }) => (
-    <div
-      data-testid={isPrev ? "display-box-prev" : "display-box"}
-      data-box-id={box.id}
-      data-words={box.words || ""}
-      data-prev-words={prevBox?.words ?? ""}
-      data-has-prev-box={prevBox ? "true" : "false"}
-      data-video-loaded={
-        (isPrev ? isPrevWindowVideoLoaded : isWindowVideoLoaded)
-          ? "true"
-          : "false"
-      }
-    />
-  ),
+    onPaintReadyChange?: (ready: boolean) => void;
+  }) {
+    useEffect(() => {
+      onPaintReadyChange?.(true);
+    }, [onPaintReadyChange]);
+    return (
+      <div
+        data-testid={isPrev ? "display-box-prev" : "display-box"}
+        data-box-id={box.id}
+        data-words={box.words || ""}
+        data-prev-words={prevBox?.words ?? ""}
+        data-has-prev-box={prevBox ? "true" : "false"}
+        data-video-loaded={isWindowVideoLoaded ? "true" : "false"}
+      />
+    );
+  },
 }));
 jest.mock("../DisplayStreamText", () => ({
   __esModule: true,
@@ -125,6 +143,7 @@ jest.mock("../LocalVideoInputView", () => ({
     showErrors,
     transparentBackground,
     volume,
+    onPaintReadyChange,
   }: {
     input: { deviceLabel: string };
     playAudio?: boolean;
@@ -133,10 +152,15 @@ jest.mock("../LocalVideoInputView", () => ({
     showErrors?: boolean;
     transparentBackground?: boolean;
     volume?: number;
+    onPaintReadyChange?: (ready: boolean) => void;
   }) {
-    const { useRef } = jest.requireActual<typeof import("react")>("react");
+    const { useEffect, useRef } =
+      jest.requireActual<typeof import("react")>("react");
     const instanceId = useRef<number | undefined>(undefined);
     instanceId.current ??= ++mockLocalVideoViewInstanceCounter;
+    useEffect(() => {
+      onPaintReadyChange?.(true);
+    }, [onPaintReadyChange]);
     return (
       <div
         data-testid="local-video-input-view"
@@ -559,6 +583,7 @@ const baseBox: Box = {
 describe("DisplayWindow core paths", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDisplayTransitionComplete = undefined;
     mockLocalVideoViewInstanceCounter = 0;
     setServerTimeOffset(0);
     mockUseCachedVideoUrl.mockImplementation((url?: string) => url);
@@ -608,7 +633,11 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-box-id",
+      baseBox.id,
+    );
   });
 
   it("fades in live content on first show without replaying stale prev", () => {
@@ -626,8 +655,6 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("keeps the prev layer available when the same slide is transmitted again", () => {
-    jest.useFakeTimers();
-
     const { rerender } = render(
       <DisplayWindow
         displayType="projector"
@@ -643,48 +670,81 @@ describe("DisplayWindow core paths", () => {
         displayType="projector"
         shouldAnimate
         time={2000}
-        boxes={[baseBox]}
+        boxes={[{ ...baseBox, words: "Updated hello" }]}
         prevBoxes={[baseBox]}
       />,
     );
 
+    // Different text with no real background still crossfades through a prev lane.
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
-    expect(screen.getByTestId("display-box")).toHaveAttribute(
-      "data-has-prev-box",
-      "true",
-    );
-    expect(screen.getByTestId("display-box")).toHaveAttribute(
-      "data-prev-words",
-      baseBox.words,
-    );
 
-    act(() => {
-      jest.advanceTimersByTime(500);
-    });
+    act(() => mockDisplayTransitionComplete?.());
 
     expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
 
-    // Same visual content again — without transmit time in the transition key,
-    // the prev layer would stay suppressed and matching text would fade from 0.
+    // A later transmit of identical visual content updates in place — no
+    // duplicate lane and no fade of the background into itself.
     rerender(
       <DisplayWindow
         displayType="projector"
         shouldAnimate
         time={3000}
-        boxes={[baseBox]}
-        prevBoxes={[baseBox]}
+        boxes={[{ ...baseBox, words: "Updated hello" }]}
+        prevBoxes={[{ ...baseBox, words: "Updated hello" }]}
       />,
     );
 
-    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
     expect(screen.getByTestId("display-box")).toHaveAttribute(
-      "data-has-prev-box",
-      "true",
+      "data-words",
+      "Updated hello",
     );
-    expect(screen.getByTestId("display-box")).toHaveAttribute(
-      "data-prev-words",
-      baseBox.words,
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
     );
+  });
+
+  it("recognizes local asset changes as visual transitions", () => {
+    const localBox = (assetId: string): Box => ({
+      ...baseBox,
+      background: "local-image://asset",
+      mediaInfo: {
+        id: assetId,
+        type: "image",
+        background: "local-image://asset",
+        localImage: {
+          id: assetId,
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+          fileName: `${assetId}.png`,
+          contentType: "image/png",
+          storagePolicy: "local-only",
+        },
+      },
+    });
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        time={1000}
+        boxes={[localBox("asset-1")]}
+      />,
+    );
+    const outgoingBox = screen.getByTestId("display-box");
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        time={2000}
+        boxes={[localBox("asset-2")]}
+        prevBoxes={[localBox("asset-1")]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-prev")).toBe(outgoingBox);
   });
 
   describe("projector clock and timer", () => {
@@ -891,12 +951,11 @@ describe("DisplayWindow core paths", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("unmounts the previous display layer after the display transition window", () => {
-    jest.useFakeTimers();
-
+  it("unmounts the outgoing display lane only after its timeline completes", () => {
     const { rerender } = render(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[baseBox]}
         prevBoxes={[]}
       />,
@@ -907,6 +966,7 @@ describe("DisplayWindow core paths", () => {
     rerender(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[{ ...baseBox, id: "next-box" }]}
         prevBoxes={[baseBox]}
       />,
@@ -914,23 +974,18 @@ describe("DisplayWindow core paths", () => {
 
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
-    act(() => {
-      jest.advanceTimersByTime(499);
-    });
-
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
-    act(() => {
-      jest.advanceTimersByTime(1);
-    });
+    act(() => mockDisplayTransitionComplete?.());
 
     expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
   });
 
-  it("renders the previous display layer when reused box ids have changed visual content", () => {
+  it("renders an outgoing lane when reused box ids have changed visual content", () => {
     const { rerender } = render(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[
           { ...baseBox, id: "same-box", words: "Previous lyrics" },
         ]}
@@ -941,6 +996,7 @@ describe("DisplayWindow core paths", () => {
     rerender(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[{ ...baseBox, id: "same-box", words: "Current lyrics" }]}
         prevBoxes={[{ ...baseBox, id: "same-box", words: "Previous lyrics" }]}
       />,
@@ -949,10 +1005,11 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
   });
 
-  it("remounts the current display box when reused box ids receive changed visual content", () => {
+  it("preserves the outgoing display box when reused ids receive changed visual content", () => {
     const { rerender } = render(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[{ ...baseBox, id: "same-box", words: "Before" }]}
         prevBoxes={[]}
       />,
@@ -963,6 +1020,7 @@ describe("DisplayWindow core paths", () => {
     rerender(
       <DisplayWindow
         displayType="projector"
+        shouldAnimate
         boxes={[{ ...baseBox, id: "same-box", words: "After" }]}
         prevBoxes={[{ ...baseBox, id: "same-box", words: "Before" }]}
       />,
@@ -973,6 +1031,7 @@ describe("DisplayWindow core paths", () => {
       "data-words",
       "After",
     );
+    expect(screen.getByTestId("display-box-prev")).toBe(firstCurrentBox);
     expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
       "data-words",
       "Before",
@@ -2174,7 +2233,6 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("keeps the outgoing local video lane for the slide crossfade", () => {
-    jest.useFakeTimers();
     const { rerender } = render(
       <DisplayWindow
         displayType="projector"
@@ -2187,6 +2245,10 @@ describe("DisplayWindow core paths", () => {
         }}
       />,
     );
+
+    expect(screen.getByTestId("current-lane-local-video")).toBeInTheDocument();
+    const playingView = screen.getByTestId("local-video-input-view");
+    const instanceId = playingView.getAttribute("data-instance-id");
 
     rerender(
       <DisplayWindow
@@ -2202,25 +2264,23 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(
-      screen.getByTestId("previous-local-video-layer"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("previous-lane-local-video")).toBeInTheDocument();
     expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
-      "data-capture-enabled",
-      "false",
+      "data-instance-id",
+      instanceId,
     );
     expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
       "data-play-audio",
       "false",
     );
-    act(() => jest.advanceTimersByTime(500));
-    expect(
-      screen.queryByTestId("previous-local-video-layer"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
   });
 
   it("moves the playing video view into the outgoing lane without remounting", () => {
-    jest.useFakeTimers();
     const localVideoInput = {
       sourceId: "source-playing",
       deviceLabel: "Playing USB Capture",
@@ -2236,12 +2296,9 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    act(() => jest.advanceTimersByTime(20));
     const playingView = screen.getByTestId("local-video-input-view");
     const instanceId = playingView.getAttribute("data-instance-id");
-    expect(screen.getByTestId("current-local-video-layer")).toHaveStyle({
-      opacity: "1",
-    });
+    expect(screen.getByTestId("current-lane-local-video")).toBeInTheDocument();
 
     view.rerender(
       <DisplayWindow
@@ -2257,18 +2314,11 @@ describe("DisplayWindow core paths", () => {
       "data-instance-id",
       instanceId,
     );
-    expect(screen.getByTestId("previous-local-video-layer")).toHaveStyle({
-      opacity: "1",
-    });
+    expect(screen.getByTestId("previous-lane-local-video")).toBeInTheDocument();
     expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
       "data-play-audio",
       "false",
     );
-
-    act(() => jest.advanceTimersByTime(20));
-    expect(screen.getByTestId("previous-local-video-layer")).toHaveStyle({
-      opacity: "0",
-    });
   });
 
   it("keeps outgoing slide boxes while local video fades in", () => {
@@ -2294,7 +2344,7 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("current-local-video-layer")).toBeInTheDocument();
+    expect(screen.getByTestId("current-lane-local-video")).toBeInTheDocument();
     expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
       "data-box-id",
       "outgoing-slide",
@@ -2316,6 +2366,7 @@ describe("DisplayWindow core paths", () => {
       <DisplayWindow
         displayType="projector"
         boxes={[{ ...baseBox, id: "prev" }]}
+        shouldAnimate
         shouldPlayVideo
       />,
     );
@@ -2325,6 +2376,7 @@ describe("DisplayWindow core paths", () => {
         displayType="projector"
         boxes={[videoBox]}
         prevBoxes={[{ ...baseBox, id: "prev" }]}
+        shouldAnimate
         shouldPlayVideo
       />,
     );
@@ -2427,17 +2479,16 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(
-      await screen.findByTestId("previous-video-background-layer"),
+      await screen.findByTestId("previous-lane-file-video"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByTestId("previous-video-background-layer"),
-    ).toHaveAttribute("data-visible", "true");
-    expect(
-      screen.getByTestId("previous-video-background-layer"),
-    ).toHaveAttribute("data-release-crossfade", "false");
-    expect(
-      screen.getByTestId("previous-video-background-layer"),
-    ).toHaveAttribute("data-lane-key", "a");
+    expect(screen.getByTestId("previous-lane-file-video")).toHaveAttribute(
+      "data-paint-ready",
+      "true",
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
 
     const players = await screen.findAllByTestId("window-hls-player");
     expect(players.length).toBeGreaterThanOrEqual(2);
@@ -2463,18 +2514,152 @@ describe("DisplayWindow core paths", () => {
       incoming?.click();
     });
 
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(screen.getByTestId("previous-lane-file-video")).toBeInTheDocument();
+    expect(screen.getByTestId("current-lane-file-video")).toHaveAttribute(
+      "data-paint-ready",
+      "true",
+    );
+    // Outgoing keeps the same player element through the fade.
+    expect(outgoing).toBeInTheDocument();
+  });
+
+  it("crossfades live file video to an image without substituting a poster", async () => {
+    const videoBox: Box = {
+      ...baseBox,
+      id: "video-out",
+      words: "",
+      mediaInfo: {
+        id: "video-out",
+        type: "video",
+        background: "https://cdn.example.com/live.mp4",
+        placeholderImage: "https://cdn.example.com/poster.jpg",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+    const imageBox: Box = {
+      ...baseBox,
+      id: "image-in",
+      words: "",
+      background: "https://cdn.example.com/next.jpg",
+    };
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoBox]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    const livePlayer = await screen.findByTestId("window-hls-player");
+    act(() => {
+      livePlayer.click();
+    });
+    expect(screen.getByTestId("current-lane-file-video")).toHaveAttribute(
+      "data-paint-ready",
+      "true",
+    );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[imageBox]}
+        prevBoxes={[videoBox]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    // Real outgoing <video> remains mounted — not replaced by the poster still.
+    expect(screen.getByTestId("previous-lane-file-video")).toBeInTheDocument();
+    expect(screen.getByTestId("window-hls-player")).toHaveAttribute(
+      "data-original-src",
+      "https://cdn.example.com/live.mp4",
+    );
+    expect(screen.getByTestId("window-hls-player")).toHaveAttribute(
+      "data-muted",
+      "true",
+    );
     expect(
-      screen.getByTestId("previous-video-background-layer"),
-    ).toHaveAttribute("data-release-crossfade", "true");
+      screen.queryByTestId("previous-video-background-layer"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+
+    act(() => mockDisplayTransitionComplete?.());
+
     expect(
-      screen.getByTestId("current-video-background-layer"),
-    ).toHaveAttribute("data-visible", "true");
-    // Outgoing keeps slot "a" so the same element continues playing.
-    expect(
-      screen.getByTestId("previous-video-background-layer"),
-    ).toHaveAttribute("data-lane-key", "a");
-    expect(
-      screen.getByTestId("current-video-background-layer"),
-    ).toHaveAttribute("data-lane-key", "b");
+      screen.queryByTestId("previous-lane-file-video"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("window-hls-player")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+  });
+
+  it("keeps the exact file-video player across lyric-only slides with the same media", async () => {
+    const sharedMedia = {
+      id: "shared-video",
+      type: "video" as const,
+      background: "https://cdn.example.com/shared.mp4",
+      placeholderImage: "https://cdn.example.com/shared.jpg",
+    };
+    const verse1: Box = {
+      ...baseBox,
+      id: "shared-box",
+      words: "Verse 1",
+      mediaInfo: sharedMedia as NonNullable<Box["mediaInfo"]>,
+    };
+    const verse2: Box = {
+      ...verse1,
+      words: "Verse 2",
+    };
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[verse1]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    const player = await screen.findByTestId("window-hls-player");
+    act(() => {
+      player.click();
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[verse2]}
+        prevBoxes={[verse1]}
+        shouldPlayVideo
+        shouldAnimate
+      />,
+    );
+
+    expect(screen.getByTestId("window-hls-player")).toBe(player);
+    expect(screen.getAllByTestId("window-hls-player")).toHaveLength(1);
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-mode",
+      "content",
+    );
+    expect(mockDisplayTransitionTimeline.fromTo).toHaveBeenCalled();
+    expect(screen.getByTestId("display-box-transition-content-a")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-content-b")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
+      "data-words",
+      "Verse 1",
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-words",
+      "Verse 2",
+    );
   });
 });

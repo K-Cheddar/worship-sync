@@ -12,8 +12,12 @@ import {
  * handed back to the capture pool instead of being torn down.
  */
 
-/** Screen content is mostly static; 30 fps keeps the live machine responsive. */
-export const DESKTOP_CAPTURE_FRAME_RATE = 30;
+/**
+ * Prefer 60 fps for motion (Canva Present, video windows). Cap at 1080p so
+ * projector + monitor + stream can each reopen the same share without paying
+ * for multiple 4K captures. Direct attach, not resolution, is the latency win.
+ */
+export const DESKTOP_CAPTURE_FRAME_RATE = 60;
 const DESKTOP_CAPTURE_MAX_WIDTH = 1_920;
 const DESKTOP_CAPTURE_MAX_HEIGHT = 1_080;
 
@@ -63,6 +67,14 @@ const getDesktopSourceApi = () =>
 /** Electron lists sources in-app; browsers use their own picker instead. */
 export const supportsDesktopSourceList = () =>
   typeof getDesktopSourceApi() === "function";
+
+/**
+ * Electron can reopen a saved screen/window id in every BrowserWindow. That
+ * path attaches a local MediaStream (near-native latency) instead of waiting
+ * on the cross-window encode/decode relay used for cameras and browser shares.
+ */
+export const supportsDirectElectronDesktopCapture = () =>
+  supportsDesktopSourceList();
 
 export const supportsDesktopCapture = () =>
   supportsDesktopSourceList() ||
@@ -125,19 +137,17 @@ export const keepBrowserDesktopShare = (
   dropWarmBrowserShare(sourceId);
   warmBrowserShares.set(sourceId, stream);
   shareListeners.forEach((listener) => listener(sourceId));
-  stream
-    .getVideoTracks()
-    .forEach((track) =>
-      track.addEventListener?.(
-        "ended",
-        () => {
-          if (warmBrowserShares.get(sourceId) === stream) {
-            warmBrowserShares.delete(sourceId);
-          }
-        },
-        { once: true },
-      ),
-    );
+  stream.getVideoTracks().forEach((track) =>
+    track.addEventListener?.(
+      "ended",
+      () => {
+        if (warmBrowserShares.get(sourceId) === stream) {
+          warmBrowserShares.delete(sourceId);
+        }
+      },
+      { once: true },
+    ),
+  );
 };
 
 export const hasBrowserDesktopShare = (sourceId: string) => {
@@ -155,8 +165,9 @@ export const stopAllBrowserDesktopShares = () =>
   [...warmBrowserShares.keys()].forEach(dropWarmBrowserShare);
 
 const detectCaptureKind = (stream: MediaStream): "screen" | "window" => {
-  const surface = stream.getVideoTracks()[0]?.getSettings?.()
-    .displaySurface as string | undefined;
+  const surface = stream.getVideoTracks()[0]?.getSettings?.().displaySurface as
+    | string
+    | undefined;
   return surface === "window" ? "window" : "screen";
 };
 
@@ -220,13 +231,12 @@ const resolveElectronSourceId = async (binding: LocalVideoInputBinding) => {
   return renamed.id;
 };
 
-const buildElectronConstraints = (
-  sourceId: string,
-  withSystemAudio: boolean,
-) =>
+const buildElectronConstraints = (sourceId: string, withSystemAudio: boolean) =>
   ({
     audio: withSystemAudio
-      ? ({ mandatory: { chromeMediaSource: "desktop" } } as LegacyDesktopConstraints)
+      ? ({
+          mandatory: { chromeMediaSource: "desktop" },
+        } as LegacyDesktopConstraints)
       : false,
     video: {
       mandatory: {

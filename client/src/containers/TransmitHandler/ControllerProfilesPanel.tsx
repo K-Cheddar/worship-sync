@@ -123,9 +123,9 @@ const ControllerProfilesPanel = () => {
   const auxProfiles = profiles.filter((p) => p.type === "aux-presentation");
   /**
    * Built-ins are configured here like any other controller, but they are
-   * product surfaces with fixed routes: they can be named and given displays,
-   * never removed or switched off. Retiring the presentation controller would
-   * strand every operator in the church.
+   * product surfaces with fixed routes: they can be named, given displays, and
+   * switched off (hidden from home, drive nothing), never removed. Retiring
+   * them from the registry would strand routes that already exist.
    */
   const isFixedSurface = (profile: ControllerProfile) =>
     isBuiltInControllerId(profile.id);

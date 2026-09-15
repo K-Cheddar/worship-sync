@@ -82,7 +82,8 @@ export const useTeamsLiveSync = (
   useEffect(() => {
     if (!churchId) return;
     // EventSource is absent in some runtimes (jsdom/tests, older webviews). The
-    // page still works via background polling, so just skip the live channel.
+    // hook provides no polling fallback; consumers that need recovery must
+    // provide their own REST refresh path.
     if (typeof EventSource === "undefined") return;
 
     const source = new EventSource(

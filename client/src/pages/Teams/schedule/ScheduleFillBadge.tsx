@@ -2,10 +2,11 @@ import { cn } from "@/utils/cnHelper";
 
 /**
  * Compact "filled/required" indicator shown on every schedule layout's service
- * header. Amber until every required slot has a primary member, then green.
- * Renders nothing when the occurrence requires no positions. Pass `showLabel` to
- * spell out what the numbers mean (used where there is room, like the board's
- * team line); the grids use the bare count.
+ * header. Amber until every staffing slot (baseline requirements plus any
+ * occurrence-added positions) has a primary member, then green. Renders nothing
+ * when the occurrence requires no positions. Pass `showLabel` to spell out what
+ * the numbers mean (used where there is room, like the board's team line); the
+ * grids use the bare count.
  */
 const ScheduleFillBadge = ({
   filled,

@@ -485,6 +485,26 @@ Let Your fire fall`;
       expect(textBox?.words?.trim()).toBe("");
     });
 
+    it("defaults new media slides to keeping their aspect ratio", async () => {
+      const item = await createNewFreeForm({
+        name: "Welcome image",
+        text: "",
+        list: [],
+        db: undefined,
+        background: "https://example.test/welcome.jpg",
+        mediaInfo: {
+          id: "image-1",
+          name: "Welcome image",
+          background: "https://example.test/welcome.jpg",
+          type: "image",
+        } as any,
+        brightness: 100,
+        emptyBodyText: true,
+      });
+
+      expect(item.slides[0].boxes[0].shouldKeepAspectRatio).toBe(true);
+    });
+
     it("names the slide from a live video input label", async () => {
       const list: ServiceItem[] = [];
       const item = await createNewFreeForm({
@@ -505,6 +525,7 @@ Let Your fire fall`;
       expect(item.slides[0].name).toBe("Booth camera");
       expect(item.slides[0].mediaSource?.sourceId).toBe("local_video_1");
       expect(item.background).toBe("");
+      expect(item.slides[0].boxes[0].shouldKeepAspectRatio).toBe(true);
     });
 
     it("keeps mediaSource when the live input label looks like a section name", async () => {

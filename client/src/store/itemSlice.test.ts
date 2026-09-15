@@ -201,10 +201,10 @@ describe("itemSlice", () => {
       expect(store.getState().item.selectedSlide).toBe(3);
     });
 
-    it("setIsEditMode updates isEditMode", () => {
+    it("setIsLyricsEditorOpen updates isLyricsEditorOpen", () => {
       const store = createStore();
-      store.dispatch(itemSlice.actions.setIsEditMode(true));
-      expect(store.getState().item.isEditMode).toBe(true);
+      store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
+      expect(store.getState().item.isLyricsEditorOpen).toBe(true);
     });
 
     it("setItemIsLoading and setSectionLoading update flags", () => {

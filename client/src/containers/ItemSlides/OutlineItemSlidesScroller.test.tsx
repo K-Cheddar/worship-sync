@@ -4,6 +4,7 @@ import OutlineItemSlidesScroller from "./OutlineItemSlidesScroller";
 import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { keepElementInView } from "../../utils/generalUtils";
+import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import type { DBItem, ItemSlideType, ServiceItem } from "../../types";
 
 const mockDispatch = jest.fn();
@@ -120,20 +121,27 @@ const sizeConfig = {
   borderWidth: "2px",
 };
 
-const renderScroller = (selectedSlide = 0) => {
+const renderScroller = (selectedSlide = 0, cols = 2) => {
   const scrollRef = { current: null as HTMLElement | null };
+  const setScrollNode = (node: HTMLElement | null) => {
+    scrollRef.current = node;
+    if (node) {
+      Object.defineProperty(node, "clientHeight", {
+        configurable: true,
+        value: 80,
+      });
+    }
+  };
   const ui = (
     <div
-      ref={(node) => {
-        scrollRef.current = node;
-      }}
+      ref={setScrollNode}
       data-testid="scroll-root"
       style={{ height: 80, overflow: "auto" }}
     >
       <OutlineItemSlidesScroller
         scrollRef={scrollRef}
-        cols={2}
-        size={2}
+        cols={cols}
+        size={cols}
         sizeConfig={sizeConfig}
         isMobile={false}
         isStreamFormat={false}
@@ -155,21 +163,44 @@ const renderScroller = (selectedSlide = 0) => {
     rerenderWithSlide: (nextSlide: number) =>
       view.rerender(
         <div
-          ref={(node) => {
-            scrollRef.current = node;
-          }}
+          ref={setScrollNode}
           data-testid="scroll-root"
           style={{ height: 80, overflow: "auto" }}
         >
           <OutlineItemSlidesScroller
             scrollRef={scrollRef}
-            cols={2}
-            size={2}
+            cols={cols}
+            size={cols}
             sizeConfig={sizeConfig}
             isMobile={false}
             isStreamFormat={false}
             canEdit
             selectedSlide={nextSlide}
+            liveSlideIds={new Set()}
+            backgroundTargetSlideIds={[]}
+            draggedSection={null}
+            timers={[]}
+            selectSlide={mockSelectSlide}
+            onSlideGridClick={mockOnSlideGridClick}
+          />
+        </div>,
+      ),
+    rerenderWithCols: (nextCols: number) =>
+      view.rerender(
+        <div
+          ref={setScrollNode}
+          data-testid="scroll-root"
+          style={{ height: 80, overflow: "auto" }}
+        >
+          <OutlineItemSlidesScroller
+            scrollRef={scrollRef}
+            cols={nextCols}
+            size={nextCols}
+            sizeConfig={sizeConfig}
+            isMobile={false}
+            isStreamFormat={false}
+            canEdit
+            selectedSlide={selectedSlide}
             liveSlideIds={new Set()}
             backgroundTargetSlideIds={[]}
             draggedSection={null}
@@ -327,6 +358,69 @@ describe("OutlineItemSlidesScroller", () => {
     rerenderWithSlide(2);
 
     // Mounted tiles use keepElementInView only (no competing smooth scrollToIndex).
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(keepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-l-1-2" }),
+        shouldScrollToCenter: true,
+      }),
+    );
+  });
+
+  it("keeps the selected slide in view when zooming while it is on screen", () => {
+    const { rerenderWithCols } = renderScroller(0);
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    rerenderWithCols(1);
+
+    expect(mockScrollToIndex).toHaveBeenCalledWith(1, {
+      align: "center",
+      behavior: "auto",
+    });
+    expect(keepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("keeps the visible row when zooming while the selected slide is off screen", () => {
+    const { rerenderWithCols } = renderScroller(0);
+    const root = screen.getByTestId("scroll-root");
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+    mockDispatch.mockClear();
+
+    root.scrollTop = 160;
+    rerenderWithCols(1);
+
+    // cols=1: l-1 label + 4 tiles, then l-2 label (5) + tiles (6)
+    expect(root.scrollTop).toBe(240);
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockScrollToIndex).not.toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ align: "center" }),
+    );
+  });
+
+  it("scrolls back to the selected slide when the current outline item is re-clicked", () => {
+    const { rerenderWithSlide } = renderScroller(0);
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    rerenderWithSlide(2);
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    act(() => {
+      requestOutlineSelectionScroll();
+    });
+
     expect(mockScrollToIndex).not.toHaveBeenCalled();
     expect(keepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({

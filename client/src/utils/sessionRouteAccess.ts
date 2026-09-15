@@ -109,6 +109,7 @@ const WORKSTATION_ALLOWED_EXACT = new Set([
 
 /** Live service plan workspace — Teams viewers (human or booth workstation). */
 const CURRENT_SERVICE_PATH = "/current-service";
+const CURRENT_SERVICE_VIEW_PATH = "/current-service/view";
 
 /**
  * Display-linked sessions: allowed output URLs after pairing.
@@ -162,6 +163,10 @@ const hasTeamsViewAccess = (context: RouteSessionContext) =>
   context.permissions?.services === "edit" ||
   Object.keys(context.permissions?.teamScopes || {}).length > 0;
 
+const hasServicePlansViewAccess = (context: RouteSessionContext) =>
+  hasTeamsViewAccess(context) ||
+  context.permissions?.services === "view";
+
 export const isRouteAllowedForSession = (
   pathname: string,
   context: RouteSessionContext,
@@ -192,8 +197,10 @@ export const isRouteAllowedForSession = (
         HUMAN_ALLOWED_PREFIXES,
       ) &&
       !(
-        hasTeamsViewAccess(context) &&
-        (pathname === CURRENT_SERVICE_PATH ||
+        (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) ||
+        (pathname === CURRENT_SERVICE_VIEW_PATH &&
+          hasServicePlansViewAccess(context)) ||
+        (hasTeamsViewAccess(context) &&
           matchesAllowedRoute(pathname, new Set(), TEAMS_ALLOWED_PREFIXES))
       )
     ) {
@@ -209,6 +216,12 @@ export const isRouteAllowedForSession = (
   }
 
   if (context.sessionKind === "workstation") {
+    if (
+      pathname === CURRENT_SERVICE_VIEW_PATH &&
+      hasServicePlansViewAccess(context)
+    ) {
+      return true;
+    }
     if (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) {
       // Booth workstations only — default pairing has services:view / teams:none.
       return !(

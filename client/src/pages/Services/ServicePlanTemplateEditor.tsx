@@ -63,7 +63,10 @@ import {
 } from "./servicePlanNoteOptions";
 import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 import { isActive } from "../Teams/teamsUtils";
-import { useServicePlanAutosave } from "./useServicePlanAutosave";
+import {
+  isMatchingServicePlanWrite,
+  useServicePlanAutosave,
+} from "./useServicePlanAutosave";
 import {
   useServicePlanDraftHistory,
   type ServicePlanDraftSnapshot,
@@ -343,6 +346,7 @@ const ServicePlanTemplateEditor = ({
     buildPayload: buildAutosavePayload,
     save: saveAutosavePayload,
     getConflictPlan: getConflictTemplate,
+    isOwnWrite: isMatchingServicePlanWrite,
     onSaved: (savedTemplate) => {
       templateIdRef.current = savedTemplate.templateId;
       setSavedTemplateId(savedTemplate.templateId);

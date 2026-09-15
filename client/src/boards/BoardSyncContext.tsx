@@ -11,8 +11,11 @@ import PouchDB from "pouchdb-browser";
 import { BOARD_REMOTE_DB_NAME } from "./boardUtils";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getApiBasePath } from "../utils/environment";
-import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
-import { BoardConnectionStatus } from "./useBoardData";
+import {
+  MAX_INITIAL_SESSION_RETRIES,
+  MAX_REPLICATION_AUTH_RETRIES,
+} from "../constants";
+import type { BoardConnectionStatus } from "./useBoardData";
 import { createBoardRequestHeaders } from "./api";
 import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "../utils/authUserMessages";
 
@@ -49,7 +52,7 @@ export const isBoardAuthError = (error: unknown): boolean => {
   }
   if (error && typeof error === "object") {
     const e = error as { status?: number; name?: string };
-    return e.status === 401 || e.name === "unauthorized";
+    return e.status === 401 || e.status === 403 || e.name === "unauthorized";
   }
   return false;
 };
@@ -64,10 +67,19 @@ type BoardSyncConnectionStatus = {
   retryCount: number;
 };
 
+export type BoardSyncChange = {
+  id?: string;
+  deleted?: boolean;
+  doc?: unknown;
+};
+
+export type BoardSyncChangeListener = (change: BoardSyncChange) => void;
+
 type BoardSyncContextType = {
   db: PouchDB.Database | undefined;
   status: BoardSyncStatus;
   connectionStatus: BoardSyncConnectionStatus;
+  subscribeToChanges: (listener: BoardSyncChangeListener) => () => void;
   pullFromRemote: () => void;
   retryNow: () => void;
 };
@@ -89,8 +101,10 @@ const getBoardSession = async () => {
       },
     );
     if (!bootstrapResponse.ok) {
-      if (bootstrapResponse.status === 401) {
-        throw new Error(AUTH_SIGN_IN_AGAIN_MESSAGE);
+      if (bootstrapResponse.status === 401 || bootstrapResponse.status === 403) {
+        const authError = new Error(AUTH_SIGN_IN_AGAIN_MESSAGE);
+        Object.assign(authError, { status: bootstrapResponse.status });
+        throw authError;
       }
       throw new Error("Could not prepare discussion boards.");
     }
@@ -98,6 +112,14 @@ const getBoardSession = async () => {
       credentials: "include",
       signal: controller.signal,
     });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        const authError = new Error(AUTH_SIGN_IN_AGAIN_MESSAGE);
+        Object.assign(authError, { status: response.status });
+        throw authError;
+      }
+      throw new Error("Could not connect. Check your connection and try again.");
+    }
     const data = await response.json();
     if (!data.success) {
       throw new Error("Could not connect. Check your connection and sign-in.");
@@ -130,6 +152,7 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
   const localDbRef = useRef<PouchDB.Database | null>(null);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
+  const changeListenersRef = useRef(new Set<BoardSyncChangeListener>());
 
   const clearRetryTimeout = useCallback(() => {
     if (retryTimeoutRef.current) {
@@ -170,6 +193,32 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
     setRetryNonce((current) => current + 1);
   }, [clearRetryTimeout]);
 
+  const subscribeToChanges = useCallback(
+    (listener: BoardSyncChangeListener) => {
+      changeListenersRef.current.add(listener);
+      return () => {
+        changeListenersRef.current.delete(listener);
+      };
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!db) return;
+
+    const changes = db
+      .changes({ since: "now", live: true, include_docs: true })
+      .on("change", (change) => {
+        changeListenersRef.current.forEach((listener) => {
+          listener(change as BoardSyncChange);
+        });
+      });
+
+    return () => {
+      changes.cancel();
+    };
+  }, [db]);
+
   useEffect(() => {
     // Still loading the church context — genuinely mid-connect.
     if (!database) {
@@ -187,6 +236,8 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     let cancelled = false;
+    let runtimeAuthRecovery: Promise<void> | null = null;
+    let runtimeAuthRetryCount = 0;
 
     const scheduleRetry = (nextRetryCount: number) => {
       if (cancelled) return;
@@ -210,6 +261,113 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
         void setup();
       }, getRetryDelay(nextRetryCount));
     };
+
+    const recoverLiveSyncAuth = (
+      error: unknown,
+      localDb: PouchDB.Database,
+      remoteDb: PouchDB.Database,
+      failedSync: PouchDB.Replication.Sync<{}>,
+    ) => {
+      if (!isBoardAuthError(error) || runtimeAuthRecovery) return;
+
+      const nextRetryCount = runtimeAuthRetryCount + 1;
+      runtimeAuthRetryCount = nextRetryCount;
+      setConnectionStatus({
+        status: "retrying",
+        retryCount: nextRetryCount,
+      });
+
+      runtimeAuthRecovery = (async () => {
+        try {
+          // /api/getDbSession renews the browser's CouchDB session cookie while
+          // the app session is still valid. Recreate the live handle afterward;
+          // PouchDB's failed handle will not reliably pick up the new cookie.
+          await getBoardSession();
+
+          if (
+            cancelled ||
+            localDbRef.current !== localDb ||
+            remoteDbRef.current !== remoteDb ||
+            syncRef.current !== failedSync
+          ) {
+            return;
+          }
+
+          runtimeAuthRetryCount = 0;
+          startLiveSync(localDb, remoteDb);
+          setConnectionStatus({ status: "connected", retryCount: 0 });
+        } catch (recoveryError) {
+          if (cancelled) return;
+
+          if (isBoardAuthError(recoveryError)) {
+            setDb(undefined);
+            await closeConnections();
+            setConnectionStatus({ status: "paused", retryCount: 0 });
+            return;
+          }
+
+          if (nextRetryCount >= MAX_REPLICATION_AUTH_RETRIES) {
+            setConnectionStatus({
+              status: "failed",
+              retryCount: nextRetryCount,
+            });
+            return;
+          }
+
+          scheduleRetry(nextRetryCount);
+        } finally {
+          runtimeAuthRecovery = null;
+        }
+      })();
+    };
+
+    function startLiveSync(
+      localDb: PouchDB.Database,
+      remoteDb: PouchDB.Database,
+    ) {
+      syncRef.current?.cancel();
+      const liveSync = localDb.sync(remoteDb, {
+        live: true,
+        retry: true,
+        batch_size: 40,
+        batches_limit: 5,
+        selector: { database },
+      });
+      syncRef.current = liveSync;
+      liveSync
+        .on("paused", () => {
+          if (syncRef.current === liveSync) {
+            setConnectionStatus({ status: "connected", retryCount: 0 });
+          }
+        })
+        .on("active", () => {
+          if (syncRef.current === liveSync) {
+            setConnectionStatus({ status: "connected", retryCount: 0 });
+          }
+        })
+        .on("denied", (error: unknown) => {
+          if (syncRef.current !== liveSync) return;
+          if (isBoardAuthError(error)) {
+            recoverLiveSyncAuth(error, localDb, remoteDb, liveSync);
+            return;
+          }
+          setConnectionStatus({
+            status: "failed",
+            retryCount: retryCountRef.current,
+          });
+        })
+        .on("error", (error: unknown) => {
+          if (syncRef.current !== liveSync) return;
+          if (isBoardAuthError(error)) {
+            recoverLiveSyncAuth(error, localDb, remoteDb, liveSync);
+            return;
+          }
+          setConnectionStatus({
+            status: "retrying",
+            retryCount: Math.max(retryCountRef.current, 1),
+          });
+        });
+    }
 
     const setup = async () => {
       clearRetryTimeout();
@@ -253,33 +411,7 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (cancelled) return;
 
-        syncRef.current?.cancel();
-        syncRef.current = localDb
-          .sync(remoteDb, {
-            live: true,
-            retry: true,
-            batch_size: 40,
-            batches_limit: 5,
-            selector: { database },
-          })
-          .on("paused", () =>
-            setConnectionStatus({ status: "connected", retryCount: 0 }),
-          )
-          .on("active", () =>
-            setConnectionStatus({ status: "connected", retryCount: 0 }),
-          )
-          .on("denied", () =>
-            setConnectionStatus({
-              status: "failed",
-              retryCount: retryCountRef.current,
-            }),
-          )
-          .on("error", () =>
-            setConnectionStatus({
-              status: "retrying",
-              retryCount: Math.max(retryCountRef.current, 1),
-            }),
-          );
+        startLiveSync(localDb, remoteDb);
 
         setDb(localDb);
         retryCountRef.current = 0;
@@ -325,10 +457,11 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
       db,
       status: connectionStatus.status,
       connectionStatus,
+      subscribeToChanges,
       pullFromRemote,
       retryNow,
     }),
-    [db, connectionStatus, pullFromRemote, retryNow],
+    [db, connectionStatus, pullFromRemote, retryNow, subscribeToChanges],
   );
 
   return (

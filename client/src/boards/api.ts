@@ -11,6 +11,7 @@ import {
   RestreamSession,
 } from "../types";
 import { getHumanApiToken, getWorkstationToken } from "../utils/authStorage";
+import { debugBoardSync } from "./boardSyncDebug";
 
 type JsonRequestInit = Omit<RequestInit, "body"> & {
   body?: Record<string, unknown> | string;
@@ -265,14 +266,41 @@ const updateBoardPostFlag = (
   postId: string,
   field: "hidden" | "highlighted",
   value?: boolean,
-) =>
-  fetchJson<{ post: DBBoardPost }>(
+) => {
+  const startedAt = Date.now();
+  if (field === "highlighted") {
+    debugBoardSync("highlight-request-initiated", { postId, value });
+  }
+
+  return fetchJson<{ post: DBBoardPost }>(
     `api/boards/admin/posts/${encodeURIComponent(postId)}/${field}`,
     {
       method: "POST",
       body: value === undefined ? {} : { value },
     },
+  ).then(
+    (response) => {
+      if (field === "highlighted") {
+        debugBoardSync("highlight-request-response", {
+          postId,
+          value,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
+      return response;
+    },
+    (error: unknown) => {
+      if (field === "highlighted") {
+        debugBoardSync("highlight-request-failed", {
+          postId,
+          value,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
+      throw error;
+    },
   );
+};
 
 export const updateBoardPostHidden = (postId: string, value?: boolean) =>
   updateBoardPostFlag(postId, "hidden", value);
@@ -339,6 +367,15 @@ export const updateRestreamMessageHighlighted = (
 export const resetRestreamSession = (churchId: string) =>
   fetchJson<RestreamSessionStatusResponse>(
     `api/churches/${encodeURIComponent(churchId)}/restream/session/reset`,
+    {
+      method: "POST",
+      body: {},
+    },
+  );
+
+export const keepCurrentRestreamSession = (churchId: string) =>
+  fetchJson<RestreamSessionStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/session/keep-current`,
     {
       method: "POST",
       body: {},

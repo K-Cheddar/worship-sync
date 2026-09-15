@@ -179,6 +179,43 @@ describe("DisplayOutputsPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("requires confirmation before removing a custom output", async () => {
+    const user = userEvent.setup();
+    const store = createStore();
+    store.dispatch(
+      setDisplayOutputsFromRemote({
+        ...REGISTRY,
+        out_lobby: {
+          id: "out_lobby",
+          type: "projector",
+          name: "Lobby",
+          order: 4,
+        },
+      }),
+    );
+    renderPanel(store);
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove Lobby" }),
+    );
+
+    expect(
+      store.getState().displayOutputs.list.some((output) => output.id === "out_lobby"),
+    ).toBe(true);
+    const dialog = screen.getByRole("dialog", { name: "Remove display" });
+    expect(dialog).toHaveTextContent('"Lobby"');
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove display" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        store.getState().displayOutputs.list.some((output) => output.id === "out_lobby"),
+      ).toBe(false),
+    );
+  });
+
   it("tells the operator what to do when the registry cannot be saved", async () => {
     writeDisplayOutputs.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -257,6 +294,12 @@ describe("DisplayOutputsPanel", () => {
 
     fireEvent.click(
       within(lobbyRow).getByRole("button", { name: "Remove Lobby" }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Remove display" })).getByRole(
+        "button",
+        { name: "Remove display" },
+      ),
     );
     expect(writeDisplayOutputs).toHaveBeenCalledTimes(1);
 

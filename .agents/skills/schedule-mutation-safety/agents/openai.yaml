@@ -1,0 +1,4 @@
+interface:
+  display_name: "Schedule Mutation Safety"
+  short_description: "Protect concurrent schedule edits"
+  default_prompt: "Use $schedule-mutation-safety to implement a schedule mutation safely."

@@ -2,11 +2,14 @@ const APP_TITLE = "WorshipSync";
 
 const title = (pageName: string): string => `${pageName} | ${APP_TITLE}`;
 
-/** Returns the browser title for a hash-router pathname. */
+/** Returns the browser title for a router pathname (HashRouter or PublicApp). */
 export const getPageTitle = (pathname: string): string => {
   if (pathname === "/" || pathname === "/home") return title("Home");
   if (pathname.startsWith("/controller")) return title("Controller");
   if (pathname.startsWith("/aux-controller")) return title("Controller");
+  if (pathname === "/current-service/view") {
+    return title("Current Service Viewer");
+  }
   if (pathname === "/current-service") return title("Current Service");
   if (pathname === "/overlay-controller") return title("Overlay Controller");
   if (pathname === "/support") return title("Support");
@@ -22,7 +25,6 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname === "/canva/connect-complete") return title("Canva Connection");
   if (pathname === "/planning-center/connect-complete")
     return title("Planning Center Connection");
-  if (pathname === "/invite") return title("Accept Invitation");
   if (pathname === "/auth/reset") return title("Password Reset");
   if (pathname === "/recovery/confirm") return title("Account Recovery");
   if (pathname === "/workstation/pair" || pathname === "/display/pair") {
@@ -59,16 +61,17 @@ export const getPageTitle = (pathname: string): string => {
       return title("Service Setup");
     return title("Teams & Services");
   }
-  if (pathname.startsWith("/teams/intake")) return title("Team Intake");
-  if (pathname.startsWith("/teams/schedule")) return title("Team Schedule");
-  if (pathname.startsWith("/schedule-response"))
-    return title("Schedule Response");
-  if (pathname.startsWith("/services/")) return title("Shared Service");
+  // Public share paths — keep labels aligned with server/publicShareMeta.js
+  if (pathname === "/invite") return title("You're invited");
+  if (pathname.startsWith("/teams/intake")) return title("Team signup");
+  if (pathname.startsWith("/teams/schedule")) return title("Team schedule");
+  if (pathname.startsWith("/schedule-response")) return title("Can you serve?");
+  if (pathname.startsWith("/services/")) return title("Service plan");
   if (pathname === "/boards/controller") return title("Board Controller");
   if (pathname === "/boards/display") return title("Board Display");
   if (pathname.startsWith("/boards/present/"))
-    return title("Board Presentation");
-  if (pathname.startsWith("/boards/")) return title("Board");
+    return title("Board presentation");
+  if (pathname.startsWith("/boards/")) return title("Discussion board");
   if (pathname === "/projector") return title("Projector");
   if (pathname === "/projector-full") return title("Projector Full");
   if (pathname === "/monitor") return title("Monitor");

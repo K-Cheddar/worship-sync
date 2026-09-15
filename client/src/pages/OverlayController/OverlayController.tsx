@@ -7,7 +7,7 @@ import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
-import { setIsEditMode } from "../../store/itemSlice";
+import { setIsLyricsEditorOpen } from "../../store/itemSlice";
 import { setOverlayControllerPanel } from "../../store/preferencesSlice";
 import { useControllerPageLifecycle } from "../Controller/useControllerPageLifecycle";
 import cn from "classnames";
@@ -23,8 +23,9 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { OVERLAY_CONTROLLER_ID } from "../../utils/controllerProfiles";
+import BoardSyncProvider from "../../boards/BoardSyncContext";
 
-const OverlayController = () => {
+const OverlayControllerContent = () => {
   const dispatch = useDispatch();
   const { layoutRef } = useControllerPageLifecycle();
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
@@ -50,7 +51,7 @@ const OverlayController = () => {
     overlayControllerPanel === "boardPosts" ||
     overlayControllerPanel === "overlaysAndPosts";
   useEffect(() => {
-    dispatch(setIsEditMode(false));
+    dispatch(setIsLyricsEditorOpen(false));
   }, [dispatch]);
 
   useEffect(() => {
@@ -224,5 +225,11 @@ const OverlayController = () => {
     </ActiveControllerProvider>
   );
 };
+
+const OverlayController = () => (
+  <BoardSyncProvider>
+    <OverlayControllerContent />
+  </BoardSyncProvider>
+);
 
 export default OverlayController;

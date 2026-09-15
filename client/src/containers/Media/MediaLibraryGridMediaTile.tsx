@@ -1,17 +1,13 @@
 import { useEffect, useRef, type MouseEvent } from "react";
-import { Film, MonitorUp, Video } from "lucide-react";
 import Button from "../../components/Button/Button";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
-import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
 import MediaTypeBadge from "./MediaTypeBadge";
 import cn from "classnames";
 import type { MediaType } from "../../types";
-import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-import {
-  getMediaLibraryOriginBadgeLabel,
-  isMediaLibraryDesktopShare,
-} from "./mediaLibraryOrigin";
+import { getMediaLibraryOriginBadgeLabel } from "./mediaLibraryOrigin";
+import { useDraggable } from "@dnd-kit/core";
+import type { MediaDragData } from "../../utils/presentationDnd";
+import MediaLibraryMediaVisual from "./MediaLibraryMediaVisual";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -37,6 +33,8 @@ export type MediaLibraryGridMediaTileProps = {
   showBottomName?: boolean;
   bottomNameClassName?: string;
   imageContainerClassName?: string;
+  mediaDragEnabled?: boolean;
+  orderedSelectedMediaIds?: string[];
 };
 
 export default function MediaLibraryGridMediaTile({
@@ -50,20 +48,28 @@ export default function MediaLibraryGridMediaTile({
   showBottomName = false,
   bottomNameClassName = "text-sm text-gray-300",
   imageContainerClassName,
+  mediaDragEnabled = false,
+  orderedSelectedMediaIds = [],
 }: MediaLibraryGridMediaTileProps) {
-  const { id, thumbnail, name, type } = mediaItem;
-  const localImage = useLocalImageUrl(mediaItem.localImage, "thumbnail");
-  const localVideo = useLocalVideoFileUrl(mediaItem.localVideoFile, "thumbnail");
-  let resolvedThumbnail = thumbnail;
-  if (localImage.isLocalImage) {
-    resolvedThumbnail = localImage.url;
-  } else if (localVideo.isLocalVideoFile) {
-    resolvedThumbnail = localVideo.url;
-  }
+  const { id, name, type } = mediaItem;
   const shownName = name.includes("/")
     ? name.split("/").slice(1).join("/")
     : name;
   const originBadgeLabel = getMediaLibraryOriginBadgeLabel(mediaItem);
+
+  const dragMediaIds =
+    isMultiSelected && orderedSelectedMediaIds.length > 0
+      ? orderedSelectedMediaIds
+      : [id];
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `media-${id}`,
+      disabled: !mediaDragEnabled,
+      data: {
+        kind: "media",
+        mediaIds: dragMediaIds,
+      } satisfies MediaDragData,
+    });
 
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -82,13 +88,22 @@ export default function MediaLibraryGridMediaTile({
 
   return (
     <div
+      ref={setNodeRef}
+      {...(mediaDragEnabled ? attributes : {})}
+      {...(mediaDragEnabled ? listeners : {})}
+      style={
+        transform
+          ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+          : undefined
+      }
       className={cn(
         "flex h-auto w-full flex-col items-center justify-center overflow-hidden rounded-md border-2",
         isMultiSelected
           ? "border-cyan-400 bg-cyan-400/10"
           : isSelected
             ? "border-cyan-400"
-            : "border-gray-500 hover:border-gray-300",
+          : "border-gray-500 hover:border-gray-300",
+        isDragging && "opacity-50",
       )}
       onContextMenuCapture={(e) => {
         e.preventDefault();
@@ -149,36 +164,12 @@ export default function MediaLibraryGridMediaTile({
             isSelected={isMultiSelected}
             frameClassName="absolute left-1.5 top-1.5 z-10 size-5"
           />
-          {resolvedThumbnail ? (
-            <CachedMediaImage
-              className="max-w-full max-h-full"
-              alt={id}
-              src={resolvedThumbnail}
-              loading="lazy"
-            />
-          ) : mediaItem.localVideoInput ? (
-            <div className="flex max-w-full flex-col items-center justify-center gap-1 px-2">
-              {isMediaLibraryDesktopShare(mediaItem) ? (
-                <MonitorUp
-                  className="size-8 shrink-0 text-neutral-400"
-                  aria-hidden
-                />
-              ) : (
-                <Video
-                  className="size-8 shrink-0 text-neutral-400"
-                  aria-hidden
-                />
-              )}
-              <span
-                className="max-w-full truncate text-center text-[10px] font-medium text-neutral-300"
-                title={shownName || mediaItem.localVideoInput.label}
-              >
-                {shownName || mediaItem.localVideoInput.label}
-              </span>
-            </div>
-          ) : mediaItem.localVideoFile ? (
-            <Film className="size-8 text-neutral-400" aria-hidden />
-          ) : null}
+          <MediaLibraryMediaVisual
+            mediaItem={mediaItem}
+            imageClassName="max-w-full max-h-full"
+            imageAlt={id}
+            imageLoading="lazy"
+          />
           <MediaTypeBadge type={type} />
           {originBadgeLabel ? (
             <span className="absolute right-1.5 top-1.5 rounded bg-cyan-950/90 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100 ring-1 ring-cyan-500/60">

@@ -49,7 +49,11 @@ Before enabling the new auth flow in production:
 - Set `AUTH_ALLOWED_ORIGINS` to the exact browser origins allowed to use cookie auth
 - **API availability**: Sign-in, session bootstrap, and Firebase custom tokens require a reachable API. If the server is down or misconfigured, clients cannot authenticate or load shared realtime data. This is expected; there is no fully offline authenticated mode.
 - Set `RESEND_API_KEY`
-- Set `RESEND_FROM_EMAIL`
+- Set `RESEND_FROM_EMAIL` for authentication and account-security emails
+- Set `RESEND_NOTIFICATION_FROM_EMAIL` and optionally
+  `RESEND_NOTIFICATION_FROM_NAME` for operational notifications
+- `RESEND_SERVICE_PLAN_FROM_EMAIL` and `RESEND_SERVICE_PLAN_FROM_NAME` remain
+  supported as a legacy Service Plan-specific notification override.
 - Set `RESEND_WEBHOOK_SECRET`
 - Configure the Resend webhook endpoint at `/api/webhooks/resend`
 - Verify the Firebase Admin credentials used by the server

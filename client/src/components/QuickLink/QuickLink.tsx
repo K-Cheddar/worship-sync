@@ -16,12 +16,16 @@ import Button from "../Button/Button";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 import { mergeStoredPresentationWithLiveOverlay } from "../../utils/quickLinkOverlayPresentation";
+import cn from "classnames";
 
 type QuickLinkProps = QuickLinkType & {
   /** Display this link acts on; the tile that renders it supplies this. */
   outputId?: string;
   timers: TimerInfo[];
   isMobile?: boolean;
+  /** Called after the link keeps its existing dispatch behavior. */
+  onAction?: () => void;
+  compact?: boolean;
 };
 
 const QuickLink = ({
@@ -31,6 +35,8 @@ const QuickLink = ({
   outputId,
   action,
   timers,
+  onAction,
+  compact = false,
 }: QuickLinkProps) => {
   const dispatch = useDispatch();
   const overlaysList = useSelector(
@@ -116,12 +122,19 @@ const QuickLink = ({
         }
       }
     }
+    onAction?.();
   };
 
   if (!presentationInfo && !action) return null;
 
   return (
-    <li className="flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit">
+    <li
+      data-quick-link-tile={compact ? "true" : undefined}
+      className={cn(
+        "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit",
+        compact && "border border-gray-500",
+      )}
+    >
       <Button
         onClick={handleClick}
         variant="none"
@@ -146,8 +159,11 @@ const QuickLink = ({
           />
         )}
         <p
-          className="text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10"
-          style={{ fontSize: "clamp(0.5rem, 0.6vw, 0.7rem)" }}
+          className={cn(
+            "text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10",
+            compact && "px-0.5 leading-tight",
+          )}
+          style={{ fontSize: compact ? "clamp(0.45rem, 0.55vw, 0.65rem)" : "clamp(0.5rem, 0.6vw, 0.7rem)" }}
         >
           {label}
         </p>

@@ -30,6 +30,7 @@ import {
 } from "../../store/servicePlanningImportSlice";
 import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
+import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import {
   isServicePlanUpdatedEvent,
   useTeamsLiveSync,
@@ -89,6 +90,20 @@ export const useCurrentServicePlanSource = () => {
   const planRef = useRef<ServicePlan | null>(null);
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
+  const reconciliationInFlightRef = useRef<{
+    churchId: string;
+    planKey: string | null;
+    generation: number;
+    refreshPlanList: boolean;
+    preserveOnFailure: boolean;
+    promise: Promise<void>;
+  } | null>(null);
+  const planListRequestIdRef = useRef(0);
+  const planListActiveRequestIdRef = useRef<number | null>(null);
+  const churchIdRef = useRef<string | null>(churchId ?? null);
+  const isEnabledRef = useRef(false);
+  const isMountedRef = useRef(false);
+  const hasReceivedLiveConnectionRef = useRef(false);
   const manualSelectionRef = useRef(false);
   // A URL preview already present when this hook mounts belongs to an earlier
   // Controller visit and must not suppress the linked/current saved plan. The
@@ -116,6 +131,17 @@ export const useCurrentServicePlanSource = () => {
       loginState !== "guest" &&
       isServicePlanningEnabled,
   );
+  churchIdRef.current = churchId ?? null;
+  isEnabledRef.current = isEnabled;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      generationRef.current += 1;
+      reconciliationInFlightRef.current = null;
+    };
+  }, []);
 
   const clearUnavailablePlan = useCallback(
     (planKey: string, allowAutomaticFallback = false) => {
@@ -139,23 +165,38 @@ export const useCurrentServicePlanSource = () => {
 
   const refreshPlans = useCallback(async () => {
     if (!isEnabled || !churchId) return;
+    const requestId = ++planListRequestIdRef.current;
+    planListActiveRequestIdRef.current = requestId;
+    const churchIdAtStart = churchId;
+    const isCurrentListRequest = () =>
+      requestId === planListRequestIdRef.current &&
+      churchIdRef.current === churchIdAtStart &&
+      isEnabledRef.current &&
+      isMountedRef.current;
     setIsLoadingPlans(true);
     setPlansError(null);
     try {
-      const result = await listServicePlans(churchId);
+      const result = await listServicePlans(churchIdAtStart);
+      if (!isCurrentListRequest()) return;
       setSavedPlans(sortControllerServicePlans(result.servicePlans));
       setPlansLoaded(true);
     } catch {
+      if (!isCurrentListRequest()) return;
       setPlansError("Could not load saved plans. Try again.");
       setPlansLoaded(true);
     } finally {
-      setIsLoadingPlans(false);
+      if (planListActiveRequestIdRef.current === requestId) {
+        planListActiveRequestIdRef.current = null;
+        if (isCurrentListRequest()) setIsLoadingPlans(false);
+      }
     }
   }, [churchId, isEnabled]);
 
   useEffect(() => {
     if (!isEnabled) {
       generationRef.current += 1;
+      planListRequestIdRef.current += 1;
+      planListActiveRequestIdRef.current = null;
       manualSelectionRef.current = false;
       planRef.current = null;
       selectedPlanKeyRef.current = null;
@@ -271,6 +312,164 @@ export const useCurrentServicePlanSource = () => {
     [dispatch],
   );
 
+  type ReconciliationOptions = {
+    refreshPlanList?: boolean;
+    preserveOnFailure?: boolean;
+  };
+
+  /**
+   * Reconciles one selected plan from authoritative REST data. The request is
+   * keyed by church, plan, and failure policy so resume/reconnect signals for
+   * the same state share one request while an explicit plan switch can start
+   * its own request and invalidate the older result through generationRef.
+   */
+  const reconcileSelectedPlan = useCallback(
+    async ({
+      refreshPlanList = false,
+      preserveOnFailure = false,
+    }: ReconciliationOptions = {}) => {
+      const churchIdAtStart = churchId;
+      if (!isEnabled || !churchIdAtStart) return;
+      const planKeyAtStart = selectedPlanKeyRef.current;
+      const existing = reconciliationInFlightRef.current;
+      if (
+        existing &&
+        existing.churchId === churchIdAtStart &&
+        existing.planKey === planKeyAtStart &&
+        existing.generation === generationRef.current &&
+        (existing.refreshPlanList || !refreshPlanList) &&
+        existing.preserveOnFailure === preserveOnFailure
+      ) {
+        return existing.promise;
+      }
+
+      const generation = ++generationRef.current;
+      if (planKeyAtStart) setIsLoading(true);
+      const planListRequestId = refreshPlanList
+        ? ++planListRequestIdRef.current
+        : null;
+      if (planListRequestId !== null) {
+        planListActiveRequestIdRef.current = planListRequestId;
+        setIsLoadingPlans(true);
+      }
+
+      const isCurrentRequest = () =>
+        generation === generationRef.current &&
+        selectedPlanKeyRef.current === planKeyAtStart &&
+        churchIdRef.current === churchIdAtStart &&
+        isEnabledRef.current &&
+        isMountedRef.current;
+
+      const planListPromise = refreshPlanList
+        ? listServicePlans(churchIdAtStart)
+        : Promise.resolve(null);
+      const planPromise = planKeyAtStart
+        ? getServicePlan(churchIdAtStart, planKeyAtStart)
+        : Promise.resolve(null);
+      const assignmentsPromise = planKeyAtStart
+        ? getServicePlanAssignments(churchIdAtStart, planKeyAtStart)
+            .then((result) => ({ ok: true as const, result }))
+            .catch((error: unknown) => ({ ok: false as const, error }))
+        : Promise.resolve(null);
+
+      let request!: Promise<void>;
+      request = (async () => {
+        try {
+          const [planListResult, planResult, assignmentsResult] =
+            await Promise.all([
+              planListPromise,
+              planPromise,
+              assignmentsPromise,
+            ]);
+          if (!isCurrentRequest()) return;
+
+          const hasCurrentPlanList =
+            planListResult !== null &&
+            planListRequestId === planListRequestIdRef.current;
+          if (!planKeyAtStart || !planResult) {
+            if (hasCurrentPlanList) {
+              setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
+              setPlansLoaded(true);
+              setPlansError(null);
+            }
+            return;
+          }
+          if (!assignmentsResult?.ok && preserveOnFailure) {
+            console.error(
+              "Could not reconcile the selected service plan assignments:",
+              assignmentsResult?.error,
+            );
+            return;
+          }
+
+          if (hasCurrentPlanList) {
+            setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
+            setPlansLoaded(true);
+            setPlansError(null);
+          }
+
+          const plan = planResult.servicePlan;
+          if (
+            hasCurrentPlanList &&
+            !planListResult.servicePlans.some(
+              (candidate) => candidate.planKey === planKeyAtStart,
+            )
+          ) {
+            clearUnavailablePlan(planKeyAtStart);
+            return;
+          }
+          if (!plan) {
+            clearUnavailablePlan(planKeyAtStart);
+            return;
+          }
+
+          planRef.current = plan;
+          void persistManualPlanBindingRef.current(plan);
+          await applyPlan(
+            plan,
+            assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
+            isCurrentRequest,
+          );
+        } catch (error) {
+          // Background recovery must not replace a usable preview with an
+          // empty state. The next reconnect or explicit refresh can retry.
+          console.error("Could not reconcile the selected service plan:", error);
+        } finally {
+          if (
+            planKeyAtStart &&
+            generation === generationRef.current &&
+            selectedPlanKeyRef.current === planKeyAtStart &&
+            isMountedRef.current
+          ) {
+            setIsLoading(false);
+          }
+        }
+      })().finally(() => {
+        if (reconciliationInFlightRef.current?.promise === request) {
+          reconciliationInFlightRef.current = null;
+        }
+        if (
+          planListRequestId !== null &&
+          planListActiveRequestIdRef.current === planListRequestId
+        ) {
+          planListActiveRequestIdRef.current = null;
+          if (isMountedRef.current) setIsLoadingPlans(false);
+        }
+      });
+
+      reconciliationInFlightRef.current = {
+        churchId: churchIdAtStart,
+        planKey: planKeyAtStart,
+        generation,
+        refreshPlanList,
+        preserveOnFailure,
+        promise: request,
+      };
+      return request;
+    },
+    [applyPlan, churchId, clearUnavailablePlan, isEnabled],
+  );
+
   /**
    * Remembers a deliberate operator pick (dropdown selection or
    * `pinSelectedPlan`) against this outline immediately, rather than only
@@ -328,52 +527,13 @@ export const useCurrentServicePlanSource = () => {
       }
       return;
     }
-    generationRef.current += 1;
-    const generation = generationRef.current;
-    let cancelled = false;
-    setIsLoading(true);
-
-    const load = async () => {
-      try {
-        const [planResult, assignmentsResult] = await Promise.all([
-          getServicePlan(churchId, selectedPlanKey),
-          getServicePlanAssignments(churchId, selectedPlanKey).catch(() => ({
-            success: false,
-            assignments: [],
-          })),
-        ]);
-        if (cancelled || generation !== generationRef.current) return;
-
-        const plan = planResult.servicePlan;
-        planRef.current = plan;
-        if (!plan) {
-          clearUnavailablePlan(selectedPlanKey);
-          return;
-        }
-        void persistManualPlanBindingRef.current(plan);
-        await applyPlan(
-          plan,
-          assignmentsResult.assignments,
-          () =>
-            !cancelled &&
-            generation === generationRef.current &&
-            selectedPlanKeyRef.current === selectedPlanKey,
-        );
-      } catch (error) {
-        console.error("Could not load the selected service plan:", error);
-      } finally {
-        if (!cancelled && generation === generationRef.current) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
+    void reconcileSelectedPlan({
+      // The summary list was just loaded by refreshPlans. Reconnect paths use
+      // true so the selected key is checked against a fresh authoritative list.
+      refreshPlanList: false,
+      preserveOnFailure: false,
+    });
   }, [
-    applyPlan,
     churchId,
     clearUnavailablePlan,
     dispatch,
@@ -383,6 +543,7 @@ export const useCurrentServicePlanSource = () => {
     plansLoaded,
     selectedOutlineId,
     selectedPlanKey,
+    reconcileSelectedPlan,
   ]);
 
   const selectPlan = useCallback(
@@ -417,9 +578,26 @@ export const useCurrentServicePlanSource = () => {
   const handleLiveEvent = useCallback(
     (event: TeamsStreamEvent) => {
       if (!isEnabled) return;
+      if (event.type === "connected") {
+        if (hasReceivedLiveConnectionRef.current) {
+          void reconcileSelectedPlan({
+            refreshPlanList: true,
+            preserveOnFailure: true,
+          });
+        } else {
+          hasReceivedLiveConnectionRef.current = true;
+        }
+        return;
+      }
       if (event.type === "service-plan-removed") {
         const removedKey = (event as { planKey?: unknown }).planKey;
         if (typeof removedKey !== "string") return;
+        // A plan-list response that started before this SSE event must not
+        // restore the removed plan when it completes, but an unrelated plan
+        // event must not discard the selected plan's in-flight reconciliation.
+        planListRequestIdRef.current += 1;
+        planListActiveRequestIdRef.current = null;
+        setIsLoadingPlans(false);
         if (removedKey === selectedPlanKeyRef.current) {
           clearUnavailablePlan(removedKey, true);
         } else {
@@ -433,17 +611,35 @@ export const useCurrentServicePlanSource = () => {
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
         if (!churchId || !planRef.current) return;
         const plan = planRef.current;
+        const generation = ++generationRef.current;
         void getServicePlanAssignments(churchId, plan.planKey)
           .then((result) => {
-            if (planRef.current === plan) {
-              return applyPlan(plan, result.assignments);
-            }
+            return applyPlan(
+              plan,
+              result.assignments,
+              () =>
+                generation === generationRef.current &&
+                planRef.current === plan &&
+                selectedPlanKeyRef.current === plan.planKey,
+            );
           })
           .catch(() => undefined);
         return;
       }
 
       if (!isServicePlanUpdatedEvent(event)) return;
+      const isSelectedPlan =
+        event.servicePlan.planKey === selectedPlanKeyRef.current;
+      // Keep a stale plan-list response from undoing this direct SSE update.
+      planListRequestIdRef.current += 1;
+      planListActiveRequestIdRef.current = null;
+      setIsLoadingPlans(false);
+      // Only a selected-plan event supersedes the selected plan's detail and
+      // assignment request. Unrelated plan events update the summary list
+      // without stranding the selected preview in a loading state.
+      const generation = isSelectedPlan
+        ? ++generationRef.current
+        : generationRef.current;
       setSavedPlans((current) => {
         const summary = servicePlanToSummary(event.servicePlan);
         const withoutUpdated = current.filter(
@@ -451,8 +647,7 @@ export const useCurrentServicePlanSource = () => {
         );
         return sortControllerServicePlans([...withoutUpdated, summary]);
       });
-      if (event.servicePlan.planKey !== selectedPlanKeyRef.current) return;
-      const generation = ++generationRef.current;
+      if (!isSelectedPlan) return;
       planRef.current = event.servicePlan;
       void getServicePlanAssignments(churchId, event.servicePlan.planKey)
         .then((result) =>
@@ -487,66 +682,30 @@ export const useCurrentServicePlanSource = () => {
       churchId,
       clearUnavailablePlan,
       isEnabled,
+      reconcileSelectedPlan,
     ],
   );
 
+  useEffect(() => {
+    hasReceivedLiveConnectionRef.current = false;
+  }, [isEnabled, canViewTeams, churchId]);
+
+  const liveChurchId = isEnabled && canViewTeams ? churchId : null;
   useTeamsLiveSync(
-    isEnabled && canViewTeams ? churchId : null,
+    liveChurchId,
     handleLiveEvent,
   );
 
-  const refresh = useCallback(async () => {
-    const planKey = selectedPlanKeyRef.current;
-    if (!isEnabled || !planKey || !churchId) return;
-    const generation = ++generationRef.current;
-    setIsLoading(true);
-    try {
-      const result = await getServicePlan(churchId, planKey);
-      if (
-        generation !== generationRef.current ||
-        selectedPlanKeyRef.current !== planKey
-      ) {
-        return;
-      }
-      const plan = result.servicePlan;
-      if (!plan) {
-        clearUnavailablePlan(planKey);
-        return;
-      }
-      planRef.current = plan;
-      const assignmentsResult = await getServicePlanAssignments(churchId, planKey).catch(
-        () => ({ success: false, assignments: [] }),
-      );
-      await applyPlan(
-        plan,
-        assignmentsResult.assignments,
-        () =>
-          generation === generationRef.current &&
-          selectedPlanKeyRef.current === planKey,
-      );
-    } finally {
-      if (
-        generation === generationRef.current &&
-        selectedPlanKeyRef.current === planKey
-      ) {
-        setIsLoading(false);
-      }
-    }
-  }, [
-    applyPlan,
-    churchId,
-    clearUnavailablePlan,
-    isEnabled,
-  ]);
+  const refresh = useCallback(
+    () =>
+      reconcileSelectedPlan({
+        refreshPlanList: true,
+        preserveOnFailure: true,
+      }),
+    [reconcileSelectedPlan],
+  );
 
-  useEffect(() => {
-    if (!isEnabled || !selectedPlanKey) return;
-    const refetch = () => {
-      void refresh().catch(() => undefined);
-    };
-    window.addEventListener("focus", refetch);
-    return () => window.removeEventListener("focus", refetch);
-  }, [isEnabled, refresh, selectedPlanKey]);
+  useSyncOnReconnect(refresh);
 
   return {
     savedPlans,

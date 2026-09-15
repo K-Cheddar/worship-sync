@@ -64,7 +64,7 @@ The `ENVIRONMENT_NAME` value is substituted verbatim as a subdomain segment.
 
 ## Attribution Headers
 
-All requests must include attribution headers per the [usage tracking guidelines](../../../references/usage-tracking.md):
+All requests must include these attribution headers:
 
 | Header | Value |
 |---|---|

@@ -15,7 +15,7 @@ import {
 import {
   applyPendingRemoteItem,
   discardPendingRemoteItem,
-  setIsEditMode,
+  setIsLyricsEditorOpen,
   setSongMetadata,
   updateArrangements,
 } from "../../store/itemSlice";
@@ -122,7 +122,7 @@ const LyricsEditorPanel = ({
     pendingRemoteItem,
     songMetadata,
   } = item;
-  const isEditMode = isLibraryEditor ? true : controllerItem.isEditMode;
+  const isLyricsEditorOpen = isLibraryEditor ? true : controllerItem.isLyricsEditorOpen;
   const initialLocalArrangementsRef = useRef<Arrangment[] | null>(null);
   if (initialLocalArrangementsRef.current === null) {
     initialLocalArrangementsRef.current = ensureArrangementIds([...arrangements]);
@@ -178,7 +178,7 @@ const LyricsEditorPanel = ({
   const pendingRemoteItemRef = useRef(pendingRemoteItem);
   const remoteUpdateToastIdRef = useRef<string | null>(null);
   const syncedItemIdRef = useRef(item._id);
-  const wasEditModeRef = useRef(false);
+  const wasLyricsEditorOpenRef = useRef(false);
   const baselineSelectedArrangementIdRef = useRef(localSelectedArrangementId);
   const selectedSectionPositionRef = useRef({
     id: null as string | null,
@@ -318,17 +318,17 @@ const LyricsEditorPanel = ({
 
   useEffect(() => {
     const itemChanged = syncedItemIdRef.current !== item._id;
-    const openedEditor = Boolean(isEditMode) && !wasEditModeRef.current;
+    const openedEditor = Boolean(isLyricsEditorOpen) && !wasLyricsEditorOpenRef.current;
     const shouldForceSync = itemChanged || openedEditor;
 
     if (!shouldForceSync && hasPendingChanges) {
-      wasEditModeRef.current = Boolean(isEditMode);
+      wasLyricsEditorOpenRef.current = Boolean(isLyricsEditorOpen);
       return;
     }
 
     resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
     syncedItemIdRef.current = item._id;
-    wasEditModeRef.current = Boolean(isEditMode);
+    wasLyricsEditorOpenRef.current = Boolean(isLyricsEditorOpen);
   }, [
     arrangements,
     selectedArrangement,
@@ -336,7 +336,7 @@ const LyricsEditorPanel = ({
     hasPendingChanges,
     item._id,
     item.name,
-    isEditMode,
+    isLyricsEditorOpen,
     resetLocalEditorState,
   ]);
 
@@ -784,7 +784,7 @@ const LyricsEditorPanel = ({
         if (isLibraryEditor) {
           onLibraryClose?.();
         } else {
-          dispatch(setIsEditMode(false));
+          dispatch(setIsLyricsEditorOpen(false));
         }
       });
       setShowConfirmModal(true);
@@ -793,7 +793,7 @@ const LyricsEditorPanel = ({
       if (isLibraryEditor) {
         onLibraryClose?.();
       } else {
-        dispatch(setIsEditMode(false));
+        dispatch(setIsLyricsEditorOpen(false));
       }
     }
   }, [
@@ -831,12 +831,12 @@ const LyricsEditorPanel = ({
 
   useEffect(() => {
     if (isLibraryEditor) return;
-    if (isEditMode && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
+    if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
       handleReloadRemote();
       return;
     }
 
-    if (!isEditMode || !hasRemoteUpdate) {
+    if (!isLyricsEditorOpen || !hasRemoteUpdate) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
@@ -886,7 +886,7 @@ const LyricsEditorPanel = ({
     hasPendingUpdate,
     itemTypeLabel,
     isLibraryEditor,
-    isEditMode,
+    isLyricsEditorOpen,
     removeToast,
     showToast,
   ]);
@@ -968,7 +968,7 @@ const LyricsEditorPanel = ({
       return;
     }
 
-    dispatch(setIsEditMode(false));
+    dispatch(setIsLyricsEditorOpen(false));
     dispatch(
       updateArrangements({
         arrangements: formattedItem.arrangements,

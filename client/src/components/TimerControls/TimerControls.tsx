@@ -16,9 +16,15 @@ type TimerControlsProps = {
   className?: string;
   /** When collapsed in the item editor, show only play/pause/stop/reset. */
   variant?: "full" | "controlsOnly";
+  /** Show the timer's editable time value alongside compact controls on desktop. */
+  showTimeInput?: boolean;
 };
 
-const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
+const TimerControls = ({
+  className,
+  variant = "full",
+  showTimeInput = false,
+}: TimerControlsProps) => {
   const dispatch = useDispatch();
   const { hostId, access } = useContext(GlobalInfoContext) || {};
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -104,6 +110,7 @@ const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
       onPause={handlePause}
       onStop={handleStop}
       disabled={!canControlTimer}
+      className={showTimeInput ? "lg:w-auto" : undefined}
     />
   );
 
@@ -111,12 +118,29 @@ const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
     return (
       <div
         className={cn(
-          "flex items-center justify-center border border-gray-600 rounded-md w-full p-2",
+          "flex items-center justify-center gap-3 border border-gray-600 rounded-md w-full p-2 lg:flex-row",
           className
         )}
         data-variant="controlsOnly"
       >
         {controlButtons}
+        {showTimeInput ? (
+          <div className="hidden min-w-0 flex-1 lg:block lg:max-w-xs">
+            {timerType === "countdown" ? (
+              <CountdownTimeInput
+                countdownTime={countdownTime}
+                onTimeChange={handleCountdownTimeChange}
+                disabled={!canControlTimer}
+              />
+            ) : (
+              <DurationInputs
+                duration={duration}
+                onDurationChange={handleDurationChange}
+                disabled={!canControlTimer}
+              />
+            )}
+          </div>
+        ) : null}
       </div>
     );
   }

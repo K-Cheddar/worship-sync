@@ -3,7 +3,11 @@ import {
   isDesktopCaptureKind,
   type LocalVideoInputBinding,
 } from "./localVideoInput";
-import { openDesktopCapture, releaseDesktopCapture } from "./desktopCapture";
+import {
+  openDesktopCapture,
+  releaseDesktopCapture,
+  supportsDirectElectronDesktopCapture,
+} from "./desktopCapture";
 import { reportLocalVideoIssue } from "./localVideoIssues";
 import { publishLocalVideoMedia } from "./localVideoMediaRelay";
 import { publishLocalVideoPreview } from "./localVideoPreviewRelay";
@@ -198,6 +202,16 @@ const openCaptureWithOwnership = (
   entry: CaptureEntry,
   binding: LocalVideoInputBinding,
 ) => {
+  // Screen/window capture is not exclusive hardware. Electron can reopen the
+  // same source id in every display window, so skip the broker lock and let
+  // each window attach a local stream instead of relay latency.
+  if (
+    isDesktopCaptureKind(binding.captureKind) &&
+    supportsDirectElectronDesktopCapture()
+  ) {
+    return openCapture(binding);
+  }
+
   const lockManager = (navigator as Navigator & { locks?: CaptureLockManager })
     .locks;
   if (!lockManager) return openCapture(binding);
@@ -265,9 +279,11 @@ const createEntry = (
 };
 
 /**
- * Keeps one capture per physical video/audio binding. Web Locks elect one owner
- * across app windows; logical slides sharing that hardware reuse both tracks
- * and add only a relay publisher for their own stable source id.
+ * Keeps one capture per physical video/audio binding inside a window. USB
+ * cameras still elect one exclusive owner across app windows via Web Locks.
+ * Electron screen/window shares skip that lock so every output can reopen the
+ * same source locally. Logical slides sharing one binding reuse tracks and may
+ * add a relay publisher for their own stable source id.
  */
 export const acquireWarmLocalVideoCapture = async (
   sourceId: string,

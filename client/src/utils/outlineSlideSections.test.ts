@@ -4,6 +4,7 @@ import {
   buildOutlineSlideSections,
   buildOutlineVirtualRows,
   captureOutlineScrollAnchor,
+  captureOutlineZoomFocalPoint,
   getControllerItemPath,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
@@ -329,6 +330,74 @@ describe("outlineSlideSections", () => {
     expect(
       resolveOutlineScrollTopFromAnchor(after, getAfterStart, anchor!),
     ).toBe(120);
+  });
+
+  it("keeps the selected slide as the zoom focal point when it is on screen", () => {
+    const rows = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("a1", "A1"), slide("a2", "A2"), slide("a3", "A3")],
+          isActive: true,
+        },
+      ],
+      2,
+    );
+    const getStart = (index: number) => index * 40;
+    const getHeight = () => 40;
+
+    expect(
+      captureOutlineZoomFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
+    ).toEqual({ kind: "selected", listId: "l-1", slideIndex: 0 });
+  });
+
+  it("keeps the visible row when zooming while the selected slide is off screen", () => {
+    const rows = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("a1", "A1"), slide("a2", "A2")],
+          isActive: true,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      2,
+    );
+    const getStart = (index: number) => index * 40;
+    const getHeight = () => 40;
+    // label, tiles(a), label(b), tiles(b) — selected A1 is at 40; viewport is B's tiles.
+    const focal = captureOutlineZoomFocalPoint(
+      rows,
+      getStart,
+      getHeight,
+      120,
+      80,
+      "l-1",
+      0,
+    );
+
+    expect(focal).toEqual({
+      kind: "viewport",
+      anchor: expect.objectContaining({
+        listId: "l-2",
+        rowType: "tiles",
+        slideId: "b1",
+        localOffset: 0,
+      }),
+    });
   });
 
   it("prefers slide id when matching a tiles-row anchor", () => {

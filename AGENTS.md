@@ -1,29 +1,143 @@
 # AGENTS.md
 
-## Purpose
+## Repository contract
 
-This file defines review expectations for agents and contributors working in this repository. The goal is to keep changes correct, regression-resistant, performant, maintainable, and polished for real operators during live use.
+WorshipSync supports a critical live workflow. Regressions can disrupt a service, confuse an operator under time pressure, or be immediately visible to an audience. Treat every change as live-event software: prioritize safety, clarity, responsiveness, and recovery.
 
-This repository supports a critical live workflow. Regressions are not minor inconveniences here: they can disrupt a worship service, create operator confusion under time pressure, and be immediately visible to an audience. Reviewers should apply a high bar for safety, clarity, and confidence before approving changes.
-
-## Product Context
-
-WorshipSync is a live presentation application with:
+WorshipSync includes:
 
 - A React + TypeScript + Electron client in `client/`
-- A Node/Express server at the repo root
-- Real-time sync across controller, projector, monitor, and stream surfaces
+- A Node/Express server at the repository root
+- Real-time synchronization across controller, projector, monitor, and stream surfaces
 - Media-heavy workflows including video playback, overlays, timers, and multi-window behavior
 
-### Product requirements
+### Critical invariant: stream transparency
 
-- **Stream surface:** The stream output must **always use a transparent background**. Do not add opaque black (or other solid page backgrounds) behind stream composition so OBS, browser captures, or other tools can composite or show content behind it. Projector and monitor surfaces may still use intentional black bars or stages where product behavior calls for them.
+The stream output must always have a transparent background. Do not introduce opaque black or other solid page backgrounds behind stream composition; OBS, browser captures, and other compositors must be able to show content behind it. Projector and monitor may use intentional black stages or bars where product behavior requires them.
 
-Changes should be reviewed with the mindset that this software is used live and mistakes are highly visible.
+## Required workflow
 
-Treat every change as if it could be exercised during a live event with little time to recover.
+For substantive work—anything affecting behavior, data, contracts, shared rendering, live-operation paths, or more than a localized mechanical edit:
 
-## Review Priorities
+1. Use `$implementation-planning` before editing.
+2. Investigate the repository and analogous implementations before designing a solution.
+3. Use the relevant specialist skills.
+4. Implement the smallest correct solution.
+5. Run verification proportional to operational risk.
+6. Use `$code-review` for rigorous final review.
+
+The canonical repository skills are in `.agents/skills/`. Skills own detailed procedures; do not copy their detailed rules back into this file. Follow `.agents/engineering-guidance.md` when deciding whether a lesson belongs in enforcement, a skill, or this repository contract.
+
+### Skill routing
+
+- `$react-quality`: substantive React or TypeScript implementation and review.
+- `$react-state-performance`: high-frequency, broad-fan-out, synchronized, preview, media, or suspected performance work.
+- `$display-window`: projector, monitor, stream, preview, crossfade, media, video, overlay, timer, or display-layer work.
+- `/overlay`: overlay state-machine, timing, and Firebase synchronization work.
+- `$persisted-mutation-safety` and `$schedule-mutation-safety`: overlapping persisted writes and schedule mutations.
+- `$reliable-state-mutations`: async ownership boundaries, durable retry points, and interrupted stateful workflows.
+- `/brand-voice`: user-visible copy.
+
+### Assumptions and decisions
+
+Research the repository first; do not ask about routine implementation details that code and existing patterns can answer. Clarify rather than guess when an unresolved decision could materially affect UX, architecture or data ownership, persisted or synchronized shapes, public contracts, backward compatibility, permissions or security, destructive behavior, or scope. Do not silently make consequential product or architecture decisions.
+
+### Before and after behavior
+
+For substantive work, establish before coding and repeat in the handoff:
+
+- Before behavior
+- After behavior
+- Behavior intentionally unchanged
+
+Cover material UX, contracts, API/network work, persistence and synchronization, Electron/IPC, timing, failures, security, and resource behavior. `$implementation-planning` owns the detailed method. For a behavior-preserving refactor, say so explicitly.
+
+## Prefer the smallest correct solution
+
+Solve the actual problem with the least complexity necessary. Before adding code, consider whether the issue is better addressed by correcting existing logic, removing obsolete logic, consolidating duplicated behavior, deriving state, eliminating competing sources of truth, or simplifying control flow.
+
+Prefer a local correction over a new subsystem; existing state over another source of truth; derived state over synchronized duplicate state; existing components and patterns over parallel implementations; removal over a workaround; and straightforward logic over generalized machinery.
+
+Do not add abstractions, managers, services, hooks, compatibility layers, fallback systems, configuration, extension points, or defensive machinery solely for hypothetical future needs. Introduce an abstraction only when it reduces existing complexity, meaningful duplication, or risk. A small amount of clear duplication is preferable to a premature generalized abstraction.
+
+Keep the change surface narrow. Do not refactor, reorganize, rename, or modernize unrelated code opportunistically unless it is necessary to solve the requested problem or materially reduces the risk or complexity of the required implementation.
+
+### Large localized fixes are a warning signal
+
+For a focused bug or small improvement, roughly 50–100 added lines is a warning threshold, not a hard limit. If the change grows beyond that, explicitly reassess the root cause, code that can be removed or simplified, additional sources of truth, unrequested scope, and premature generalization. If substantial complexity is genuinely necessary, explain why.
+
+Before handoff on a focused fix, be able to explain the root cause, the smallest viable fix considered, code removed or simplified, new complexity introduced, and why any substantial additional complexity was necessary.
+
+## Product and live-workflow safety
+
+Functional correctness alone does not make a user-facing feature complete. Inspect the closest comparable WorshipSync experience before creating UI. Prefer reuse, then composition, then a deliberate variant, and only then a new pattern. When matching an experience, reuse its canonical data source or model as well as its renderer.
+
+Avoid unnecessary page chrome, nested cards, duplicate headers, toolbars, shortcuts, and parallel UI patterns. Live operator interfaces should prioritize clarity, frequent actions, visible safety-critical state, and minimal visual noise. Account for relevant loading, empty, error, interrupted, responsive, permission, and privacy states. Perform a user-perspective acceptance review before reporting user-facing work complete.
+
+Treat shared rendering or state as high risk until demonstrated otherwise. Small changes can affect controller previews, projector, monitor, stream, Electron windows, Firebase synchronization, local persistence, timers, media, overlays, and multi-window behavior. Preserve responsiveness: avoid UI stalls, flicker, dropped frames, delayed input, excessive writes, and cross-window inconsistency.
+
+For stream, preserve transparency and use `$display-window` and `/overlay` for display or overlay work. Do not assume a local fix is isolated from other surfaces or replicas.
+
+## Engineering expectations
+
+Use existing architectural patterns unless there is a clear, evidence-based reason to improve them. Keep public data shapes stable unless an intentional migration changes them; preserve backward compatibility for persisted and synchronized data where feasible. Keep state ownership and synchronization boundaries explicit. New async behavior must be cancellation-safe or interruption-safe where relevant. Prefer graceful degradation for optional integrations.
+
+When async work can outlive the entity, route, item, plan, session, or controller that started it, capture the required identity and state with the work item and treat identity changes as boundaries. Stale results may be ignored, but pending unsaved work must be deliberately completed, preserved, or cancelled; test realistic resets, including counters or versions returning to zero.
+
+For multi-step operations, retries resume after the last successfully completed durable step. Distinguish completed durable mutations from later failed work so a retry does not duplicate an earlier side effect.
+
+Use clear names, focused units, straightforward control flow, and comments only when they clarify a non-obvious invariant. Avoid hidden coupling between UI, remote, persisted, derived, and render-only state. For client details—including TypeScript, component, state, testing, and accessibility conventions—use `$react-quality`.
+
+Server changes must preserve client compatibility, validate input, handle errors safely, and account for upload and third-party failure modes without silently changing response shapes.
+
+## Tests and verification
+
+Tests represent behavior contracts. Do not rewrite an existing expectation merely to make the suite green. Before changing one, establish that:
+
+1. Production behavior intentionally changed.
+2. The old expectation no longer represents the desired contract.
+3. Compatibility, security, operator workflow, and other consumers do not still require the old behavior.
+
+If that cannot be established, fix the implementation or clarify the intended behavior instead of weakening the test. Use focused tests for changed logic and risk-appropriate validation for live display, media, overlay, timer, synchronization, and persistence changes. State verification gaps plainly.
+
+Async and stateful regression tests must exercise interruption boundaries, including identity or route changes during pending work, durable success followed by later failure and retry, live events during loading, and stale responses after newer state is active. Reproduce the production transition and meaningful values; convenient test values that remove the failure condition are not valid coverage.
+
+## Completion contract
+
+Before handoff, re-read the request and acceptance criteria; review the complete diff; check callers, consumers, parallel implementations, affected surfaces, edge cases, and failures; and run required risk-appropriate verification.
+
+Never describe work as complete when required implementation or verification remains. `COMPLETE` requires all acceptance criteria implemented, all required affected surfaces addressed, required verification completed successfully, and no known required implementation or verification work remaining. Otherwise report `INCOMPLETE`.
+
+`Not verified (optional)` may contain only unavailable or additional-confidence checks; it must never hide required verification. If Known follow-ups contains work required by the request, the status is `INCOMPLETE`.
+
+Substantive implementation tasks must end with:
+
+```text
+Implementation status: COMPLETE | INCOMPLETE
+
+Before behavior
+actual behavior before the change
+
+After behavior
+actual behavior after the change
+
+Behavior intentionally unchanged
+important adjacent behavior preserved
+
+Implemented
+concise list
+
+Verified (required)
+exact checks run successfully
+
+Not verified (optional)
+additional confidence checks not run; no required verification belongs here
+
+Known follow-ups
+None or explicit remaining work
+```
+
+## Review standards
 
 Review in this order:
 
@@ -31,276 +145,15 @@ Review in this order:
 2. User experience and operator safety
 3. Performance and reliability
 4. Security and data integrity
-5. Maintainability and code quality
+5. Simplicity and maintainability
 6. Test coverage and verification quality
 
-## Non-Negotiables
+Review behavior and failure paths, including loading, empty, error, offline, interrupted, transition, and undo/redo states when relevant. Give extra scrutiny to presentation across all surfaces, overlays, media, Electron/browser differences, Firebase or local persistence, window assignment, timers, and mobile layouts.
 
-- This is a mission-critical workflow. We cannot afford avoidable regressions.
-- Do not introduce regressions in existing presentation, overlay, timer, media, or sync behavior.
-- Prefer the simplest change that fully solves the problem.
-- Follow existing architectural patterns unless there is a clear reason to improve them.
-- Preserve responsiveness during live operation. Avoid changes that can cause UI stalls, flicker, dropped frames, or delayed input handling.
-- Treat controller workflows as high stakes. Operators must be able to understand the state of the system quickly and act confidently.
-- Keep cross-window and remote-sync behavior consistent. Local fixes must not silently break projector, monitor, stream, Electron, localStorage, or Firebase-backed flows.
-- If a change has meaningful regression risk, require stronger validation rather than relying on assumption.
+When asked to review, provide findings first, ordered by severity, with file references and concise risk explanations; then open questions or assumptions; then a brief summary. If no meaningful issue is found, say so and name residual risk or verification gaps.
 
-## What Reviewers Must Check
-
-### 1. Functional correctness
-
-- Does the change do what the ticket or request actually asks for?
-- Are edge cases handled?
-- Are loading, empty, error, offline, and interrupted states considered?
-- Are state transitions correct, especially for `prev*` and current presentation state used for animations and crossfades?
-- Are undo/redo expectations preserved where applicable?
-
-### 2. Regression risk
-
-Pay extra attention to:
-
-- Presentation updates across projector, monitor, and stream
-- Overlay transitions and timing behavior
-- Media playback, caching, fallback behavior, and cleanup
-- Electron-only behavior versus browser behavior
-- Firebase/localStorage synchronization
-- Multi-window state and display assignment
-- Timer updates and time-based logic
-- Mobile layout versus desktop layout
-
-If a change touches shared rendering paths, assume blast radius is large until proven otherwise.
-If a change touches live presentation paths, shared state, sync code, timers, overlays, media, or window management, review it as high-risk by default.
-
-### 3. User experience
-
-Every change should be reviewed for operator clarity and live-use safety:
-
-- Is the UI understandable without guesswork?
-- Are labels, actions, and toggles clear?
-- Does the interface avoid surprising destructive behavior?
-- Are important actions reversible or clearly confirmed?
-- Do transitions feel intentional and stable rather than flashy or distracting?
-- Are error messages actionable?
-- Does the change remain usable on both desktop and mobile when relevant?
-- Does it avoid layout shift, visual jitter, or visible flicker?
-- Where operator-facing UI is affected, do focus order, keyboard access, labels, and contrast remain sufficient for confident use during a live worship service?
-- Every enabled clickable target must use `cursor-pointer`, including text links, chips, icon controls, and custom buttons. Disabled controls should retain the normal disabled cursor behavior.
-
-### 4. Performance
-
-Be skeptical of changes that:
-
-- Add unnecessary rerenders in large or frequently updating trees
-- Introduce repeated heavy computation in render paths
-- Trigger excessive Firebase writes, storage writes, or IPC traffic
-- Recreate objects/functions in hot paths without need
-- Increase animation, video, or image work in already busy surfaces
-- Block the main thread during live preview or display updates
-
-Prefer efficient incremental updates over broad recalculation.
-
-### 5. Maintainability
-
-Expect:
-
-- Clear naming
-- Small, focused functions/components
-- Minimal duplication
-- Straightforward control flow
-- Comments only where they add real clarity
-- New abstractions only when they reduce complexity
-
-Do not accept speculative abstractions or cleverness that makes live behavior harder to reason about.
-
-**TypeScript**
-
-- Prefer explicit types over `any`. Use `unknown` with narrowing, shared domain types, or `Record<string, unknown>` for loosely shaped JSON when needed.
-- For auth API responses, align client types with `authService.js` payloads (see `client/src/api/authTypes.ts`).
-
-### 6. Testing and verification
-
-Changes should include proportional verification.
-
-For critical-path changes, "proportional" means more than a quick skim. Reviewers should expect targeted validation that matches the operational risk of the change.
-
-Expect tests when logic changes in:
-
-- Reducers
-- Utilities
-- Sync behavior
-- Display/rendering branches
-- Media handling
-- Overlay behavior
-- Timer behavior
-
-**Failing tests: intent before rewriting expectations**
-
-A failing test is a signal, not a prompt to silence it. Agents and contributors must not update tests only to make the suite green without establishing that the **production change is intentional** and the **old expectation is obsolete**.
-
-Changing an existing test expectation is a **behavior-change decision**, not a cleanup step. Treat it as a contract review.
-
-Before changing a test to match new behavior:
-
-1. **Confirm intent** — Was the code change deliberate (ticket, PR description, explicit request)? If the failure might be an accident, fix the implementation first.
-2. **Confirm the contract** — Does the product or API still require the old behavior (compatibility, security, operator workflow)? If yes, preserve or restore that behavior; do not weaken the test.
-3. **If the new behavior is correct** — Update the test to assert the new contract and, when useful, add coverage for edge cases the change introduced.
-
-Required agent workflow before editing an existing test:
-
-1. State in one sentence what behavior changed.
-2. State why that change is intentional.
-3. Check whether the old behavior was user-visible, operator-critical, API-visible, or relied on elsewhere.
-4. Only then update the test expectation.
-
-If an agent cannot complete those steps confidently, it must stop and clarify instead of rewriting the test.
-
-**Heuristic:** If you cannot state in one sentence why the new behavior is correct and the prior test expectation no longer applies, stop and clarify before editing the test.
-
-When a test is updated because the contract truly changed, the agent should also say so explicitly in its summary, review notes, or final response. Do not leave test expectation changes unexplained.
-
-Reviewers should treat unexplained test-only diffs alongside production changes as high risk: they may hide a regression.
-
-When possible, reviewers should verify relevant commands:
-
-- Root server: `npm run dev` or `npm start` as needed
-- Client tests: `cd client && npm test`
-- Client lint: `cd client && npm run lint:check`
-- Client type/build validation: `cd client && npm run build:strict`
-
-**`testing-library/no-node-access`**
-
-- Client lint enforces this rule: **avoid direct Node access; prefer using the methods from Testing Library** (`screen` / `within` / `getBy*` / `findBy*` / `queryBy*`, including `getByRole` with `name` when appropriate). Do not chain DOM traversal APIs on queried elements (for example `closest`, `parentElement`, `querySelector` on a node returned from a query) to reach a parent or sibling; that is what the rule flags.
-
-```tsx
-// Bad — lint error
-const select = screen.getByRole("combobox");
-const options = select.querySelectorAll("option");
-
-// Good
-const options = screen.getAllByRole("option");
-// or, when scoping to a region:
-within(screen.getByRole("dialog")).getAllByRole("option");
-```
-
-After adding or editing tests, run `cd client && npm run lint:check`. Do not leave scratch files such as `__tmp_*.test.tsx`; delete debug-only tests or promote them to real coverage before finishing.
-
-**`jest/no-conditional-expect`**
-
-- Client lint enforces this rule: **do not call `expect` inside conditional branches** (`if` / `else` / `switch`, ternary callbacks, and similar). Conditionals can skip assertions and make failures harder to interpret. Prefer **partitioning the data first** (for example `filter` into two arrays) and then asserting with top-level `expect` calls, or use a single aggregate assertion (`every` / `some` with a clear predicate) that does not wrap `expect` in a branch.
-
-If full verification is not practical, the review should say exactly what was and was not validated.
-If confidence is limited, the review should say so clearly rather than implying the change is safe.
-
-## Repo-Specific Guidance
-
-### Client
-
-**Coding conventions**
-
-- Use Tailwind for styling
-- Write DRY code; prefer reusable components over ad hoc markup
-- Avoid nested ternaries
-- Prefer ES6 syntax for functions
-- Optimize for performance and clarity
-
-Prefer existing patterns already used in the client:
-
-- Redux Toolkit for state changes
-- Existing presentation and overlay slice structure
-- Existing Electron preload boundary for privileged APIs
-- Existing `DisplayWindow` and preview architecture for rendering
-- Existing test style with Jest and Testing Library
-- Reusable shared UI components (`Button`, `Input`, `Select`, and other primitives in `client/src/components`) instead of ad hoc markup when something suitable already exists. Icon-only controls still use `Button` with `svg` + `aria-label` — do not reach for a raw `<button>` for that case.
-
-**Operator UI density (live controllers and moderator surfaces)**
-
-Busy operator pages should respect a clear **hierarchy of concern**: default view emphasizes what is used most often during live use (scanning content, frequent actions, sharing links). Less common or higher-impact actions (fine-tuning presentation sizing, clearing all items, starting a new session, bulk resets) belong in a **single, clearly labeled overflow** (for example a **More tools** control opening a panel or menu), with **short in-context helper text** so operators understand scope before acting.
-
-- Keep the primary column **readable**: give the live feed or preview the most vertical space; avoid stacking rarely used toolbars above it when they can live one level deeper.
-- **Group** related secondary actions together (for example presentation sizing with session-level resets) so operators do not hunt across the page.
-- **Do not hide** safety-critical state (counts, which session is active, connection issues); surface those inline with the feed or header.
-- Destructive actions stay **reachable but not prominent**: same overflow group is fine; avoid duplicate destructive entry points unless a live hotspot truly needs a shortcut.
-- When using **popovers** or **side sheets** (slide-in panels) for overflow, prefer **sheets** when the content is **tall or scrollable** (several sections, forms, or session pickers); **popovers** stay a good fit for compact, single-column actions. Ensure **keyboard access**, **focus return** to the trigger, **Escape to dismiss**, and **stable labels** for tests (`aria-label` on icon-only or ambiguous controls).
-
-Be careful when changing shared display code. A change in one surface may affect:
-
-- Controller previews
-- Overlay controller previews
-- Projector display
-- Monitor display
-- Stream display
-- Electron windows
-
-For DisplayWindow-specific work, use `$display-window` before changing or reviewing projector, monitor, stream, preview, crossfade, media background, video playback, or display-layer behavior. This skill captures the current rendering model, known transition pitfalls, stream transparency constraints, and the expected verification checklist.
-
-**Stream overlay behavior**
-
-On the stream surface, overlays are intended to behave as a **temporary top layer**, not as a destructive replacement for the underlying item. The live item layer (slide text, Bible text, or formatted text) should remain available underneath and fade back in after the overlay finishes unless the operator has explicitly hidden stream content.
-
-- Treat the stream as having **one active overlay lane at a time** for participant, stick-to-bottom, QR, image, and board post overlays. Switching overlay types should feel like a handoff, not a hard cut or stacked pile-up.
-- Preserve the intent of **current + previous** stream state for transitions. Outgoing overlays may remain briefly only to animate off cleanly; stale prior overlay data must not replay or keep the item layer hidden longer than intended.
-- Keep stream transitions **calm and readable**. The stream should favor smooth fade/slide exits and returns over abrupt flashes, flicker, or overly busy animation.
-- Do not break the distinction between **overlay activity** and **operator-controlled overlay-only mode**. Automatic overlay display may temporarily hide the item layer, while the explicit stream content toggle should remain a separate, deliberate operator action.
-- Stream overlay timing now has **two authorities** that must stay in sync:
-  - **Shared timing** for cross-device send/expiry/order (`serverNow()` plus `transitionSequence`)
-  - **Local render timing** for finishing an exit animation on the receiving device
-- Any local “finish the exit” grace must remain **render-only state** inside the display layer. Do not add synced Redux/Firebase writes when an exit animation completes.
-- When a stream overlay moves from **current** to **prev** because of a clear or handoff, any local keep-alive must **replace** the old full-lifetime window with the short prev-exit window. Otherwise the stream item layer can stay hidden until the original duration expires after an early clear.
-- New stream overlay types should be reviewed explicitly for:
-  - shared clock usage
-  - sequence-aware ordering
-  - current/prev handoff safety
-  - late-start local exit completion
-  - early-clear item-layer return timing
-
-For deep context on the overlay state machine, Firebase sync race conditions, and the checklist for adding new overlay types, use `/overlay`.
-
-### Server
-
-Server changes should be reviewed for:
-
-- Backward compatibility with current client expectations
-- Safe error handling
-- Input validation
-- Failure modes for upload and third-party integrations
-- Avoiding silent data shape changes
-
-## Best-Practice Expectations
-
-- Keep public data shapes stable unless the change intentionally migrates them.
-- Preserve backward compatibility for persisted and synced state when feasible.
-- Use explicit, typed data flow rather than implicit behavior.
-- Prefer graceful degradation over hard failure for optional integrations.
-- Ensure new async behavior is cancellation-safe or interruption-safe where relevant.
-- Avoid hidden coupling between UI state, remote sync state, and derived display state.
-
-## Review Output Format
-
-When asked to perform a review, provide:
-
-1. Findings first, ordered by severity
-2. File references and concise explanation of risk
-3. Open questions or assumptions
-4. Brief summary only after findings
-
-If no meaningful issues are found, say so explicitly and mention any residual risks or verification gaps.
-
-## Approval Standard
-
-A change is ready only when it is:
-
-- Correct
-- Low-regression
-- Understandable
-- Fast enough for live use
-- Consistent with existing UX
-- Adequately verified for its risk level
-
-If any of those are missing, the review should not treat the change as complete.
-When in doubt, favor protecting the live workflow over moving quickly.
+A change is ready only when it is correct, low-regression, understandable, responsive enough for live use, consistent with product UX, and adequately verified for its risk. When in doubt, protect the live workflow.
 
 ## Brand voice
 
-When writing or reviewing user-visible copy — labels, buttons, toasts, errors, empty states, onboarding, help text — use `/brand-voice` for the full voice guide, tone examples, and boundaries.
-
-**Summary:** Steady, calm, professional casual. No panic language, no theology, no slang. Short sentences. Active voice. Always give a next step on errors.
+For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `/brand-voice`.

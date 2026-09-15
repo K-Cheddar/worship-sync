@@ -284,7 +284,7 @@ export type ItemState = ItemProperties & {
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
-  isEditMode?: boolean;
+  isLyricsEditorOpen?: boolean;
   isLoading?: boolean;
   isSectionLoading?: boolean;
   isItemFormatting?: boolean;
@@ -320,6 +320,7 @@ export type FormattedLyrics = {
 
 export type FormattedSection = {
   sectionNum: number;
+  name?: string;
   words: string;
   slideSpan: number;
   id?: string;
@@ -380,6 +381,17 @@ export type RestreamConnectionState =
   | "reconnecting"
   | "disconnected";
 
+export type RestreamSessionSuggestionReason =
+  | "day_boundary"
+  | "possible_new_service";
+
+export type RestreamSessionSuggestion = {
+  reason: RestreamSessionSuggestionReason | string;
+  message: string;
+  suggestedAt?: number;
+  fingerprint?: string;
+};
+
 export type RestreamSession = {
   churchId: string;
   database: string;
@@ -398,6 +410,8 @@ export type RestreamSession = {
   activeConnectionCount?: number;
   totalConnectionCount?: number;
   platformSummary: string[];
+  restreamEventId?: string;
+  sessionSuggestion?: RestreamSessionSuggestion | null;
 };
 
 export type RestreamMessageKind = "viewer_message" | "moderator_reply";
@@ -971,6 +985,8 @@ export type LocalVideoFileReference = {
   /** Optional portable copy attached after a background/cloud upload. */
   cloudUrl?: string;
   cloudMediaId?: string;
+  /** Use the cloud-transcoded playback URL when the original codec is local-unplayable. */
+  preferCloudPlayback?: boolean;
 };
 
 export type LocalVideoInputPresentation = {

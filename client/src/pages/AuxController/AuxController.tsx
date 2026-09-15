@@ -1,5 +1,8 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import {
+  DndContext,
+} from "@dnd-kit/core";
+import {
   Link,
   Navigate,
   Route,
@@ -18,16 +21,18 @@ import FreeForms from "../../containers/FreeForms/FreeForms";
 import Timers from "../../containers/Timers/Timers";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import Item from "../Controller/Item";
+import { ItemSlidesDndContext } from "../../containers/ItemSlides/ItemSlides";
 import Preferences from "../Controller/Preferences";
 import QuickLinks from "../Controller/QuickLinks";
 import Displays from "../Controller/Displays";
 import Media from "../../containers/Media/Media";
 import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
+import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
-import { setIsEditMode } from "../../store/itemSlice";
+import { setIsLyricsEditorOpen } from "../../store/itemSlice";
 import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
 import { useControllerPageLifecycle } from "../Controller/useControllerPageLifecycle";
 import {
@@ -41,6 +46,12 @@ import {
 } from "../../utils/controllerProfiles";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
+import { useSensors } from "../../utils/dndUtils";
+import {
+  presentationCollisionDetection,
+} from "../../utils/presentationDnd";
+import MediaDragOverlay from "../../containers/Media/MediaDragOverlay";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 /**
  * Presentation controller for one auxiliary audience screen.
@@ -73,7 +84,7 @@ const AuxControllerBody = () => {
 
   useEffect(() => {
     if (!/\/item\//.test(location.pathname)) {
-      dispatch(setIsEditMode(false));
+      dispatch(setIsLyricsEditorOpen(false));
     }
   }, [location.pathname, dispatch]);
 
@@ -93,6 +104,7 @@ const AuxControllerBody = () => {
   };
 
   const canDrive = !isViewOnlyAccess(access);
+  const sensors = useSensors();
 
   return (
     <ControllerPageShell
@@ -105,6 +117,7 @@ const AuxControllerBody = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className="z-10 mr-2 h-1/4 lg:hidden"
         svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
@@ -112,7 +125,7 @@ const AuxControllerBody = () => {
       />
       <div
         className={cn(
-          "flex h-full flex-col border-r-2 border-gray-500 bg-homepage-canvas transition-all lg:w-[20%] max-lg:absolute max-lg:left-0",
+          "flex h-full flex-col border-r-2 border-gray-500 bg-homepage-canvas transition-all lg:w-[15%] max-lg:absolute max-lg:left-0",
           isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
         )}
         ref={leftPanelRef}
@@ -135,64 +148,78 @@ const AuxControllerBody = () => {
         <ServiceItems />
       </div>
 
-      <div className="relative flex h-full min-h-0 w-[60%] flex-1 flex-col overflow-hidden">
-        {!isProfileKnown && (
-          <p className="border-b-2 border-gray-500 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            Still loading this controller&rsquo;s settings, so it cannot send to
-            a display yet. Your outline and slides are available.
-          </p>
-        )}
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <h2 className="mt-4 text-center text-2xl font-bold">
-                No Item Selected
-              </h2>
-            }
-          />
-          <Route path="item/:itemId/:listId" element={<Item />} />
-          <Route path="free" element={<FreeForms />} />
-          <Route path="create" element={<CreateItem />} />
-          <Route path="songs" element={<Songs />} />
-          <Route path="bible" element={<Bible />} />
-          <Route path="timers" element={<Timers />} />
-          <Route path="preferences" element={<Preferences />} />
-          <Route path="quick-links" element={<QuickLinks />} />
-          <Route path="displays" element={<Displays />} />
-          <Route
-            path="monitor-settings"
-            element={<Navigate to={`${controllerBasePath}/displays`} replace />}
-          />
-        </Routes>
-      </div>
-
-      {canDrive && (
-        <>
-          <Button
-            className="z-10 ml-2 h-1/4 justify-center text-sm lg:hidden"
-            svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
-            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-          />
-          <div
-            className={cn(
-              "flex h-full flex-col border-l-2 border-gray-500 bg-homepage-canvas transition-all lg:w-[25%] max-lg:absolute max-lg:right-0",
-              isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
+      <ItemSlidesDndContext.Provider value="ancestor">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={presentationCollisionDetection}
+        >
+          <div className="relative flex h-full min-h-0 w-[60%] flex-1 flex-col overflow-hidden">
+            {!isProfileKnown && (
+              <p className="border-b-2 border-gray-500 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                Still loading this controller&rsquo;s settings, so it cannot
+                send to a display yet. Your outline and slides are available.
+              </p>
             )}
-            ref={rightPanelRef}
-          >
-            <Button
-              className="mb-2 justify-center text-sm lg:hidden"
-              svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
-              onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-            >
-              Close Panel
-            </Button>
-            <TransmitHandler maxQuickLinks={4} />
-            <Media variant="panel" />
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <h2 className="mt-4 text-center text-2xl font-bold">
+                    No Item Selected
+                  </h2>
+                }
+              />
+              <Route path="item/:itemId/:listId" element={<Item />} />
+              <Route path="free" element={<FreeForms />} />
+              <Route path="create" element={<CreateItem />} />
+              <Route path="songs" element={<Songs />} />
+              <Route path="bible" element={<Bible />} />
+              <Route path="timers" element={<Timers />} />
+              <Route path="preferences" element={<Preferences />} />
+              <Route path="quick-links" element={<QuickLinks />} />
+              <Route path="displays" element={<Displays />} />
+              <Route
+                path="monitor-settings"
+                element={
+                  <Navigate to={`${controllerBasePath}/displays`} replace />
+                }
+              />
+            </Routes>
           </div>
-        </>
-      )}
+
+          {canDrive && (
+            <>
+              <Button
+                className="z-10 ml-2 h-1/4 justify-center text-sm lg:hidden"
+                svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
+                onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+              />
+              <div
+                className={cn(
+                  "flex h-full min-h-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas transition-all lg:w-[25%] max-lg:absolute max-lg:right-0",
+                  isRightPanelOpen
+                    ? "w-[65%] max-lg:z-10"
+                    : "w-0 max-lg:z-[-1]",
+                )}
+                ref={rightPanelRef}
+              >
+                <Button
+                  className="mb-2 justify-center text-sm lg:hidden"
+                  svg={
+                    isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine
+                  }
+                  onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+                >
+                  Close Panel
+                </Button>
+                <TransmitHandler maxQuickLinks={4} />
+                <Media variant="panel" />
+              </div>
+            </>
+          )}
+          <MediaDragOverlay />
+        </DndContext>
+      </ItemSlidesDndContext.Provider>
     </ControllerPageShell>
   );
 };
@@ -243,7 +270,9 @@ const AuxController = () => {
 
   return (
     <ActiveControllerProvider profileId={profileId}>
-      <AuxControllerBody />
+      <PresentationControllerModeProvider>
+        <AuxControllerBody />
+      </PresentationControllerModeProvider>
     </ActiveControllerProvider>
   );
 };

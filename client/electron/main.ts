@@ -49,6 +49,7 @@ import {
   buildLocalAssetProtocolUrl,
   LocalAssetStore,
   type LocalAssetImport,
+  type LocalAssetMetadata,
 } from "./localAssetStore";
 import {
   DESKTOP_AUTH_CALLBACK_CHANNEL,
@@ -677,14 +678,33 @@ app.whenReady().then(() => {
   const getMediaMimeType = (filename: string): string => {
     const ext = filename.split(".").pop()?.toLowerCase();
     switch (ext) {
+      case "3g2":
+        return "video/3gpp2";
+      case "3gp":
+        return "video/3gpp";
+      case "avi":
+        return "video/x-msvideo";
+      case "flv":
+        return "video/x-flv";
+      case "m2ts":
+      case "mts":
+      case "ts":
+        return "video/mp2t";
+      case "m4v":
+        return "video/x-m4v";
+      case "mkv":
+        return "video/x-matroska";
+      case "mpeg":
+      case "mpg":
+        return "video/mpeg";
       case "webm":
         return "video/webm";
       case "mov":
         return "video/quicktime";
-      case "avi":
-        return "video/x-msvideo";
-      case "mkv":
-        return "video/x-matroska";
+      case "ogv":
+        return "video/ogg";
+      case "wmv":
+        return "video/x-ms-wmv";
       case "jpg":
       case "jpeg":
         return "image/jpeg";
@@ -1519,6 +1539,29 @@ ipcMain.handle("import-local-asset", async (event, input: LocalAssetImport) => {
     url: buildLocalAssetProtocolUrl(descriptor),
   };
 });
+
+ipcMain.handle(
+  "import-local-asset-bytes",
+  async (
+    event,
+    input: LocalAssetMetadata & { data: ArrayBuffer },
+  ) => {
+    assertControllerIpcSender(event.sender);
+    if (!localAssetStore) throw new Error("Local asset storage is not ready.");
+    if (!(input.data instanceof ArrayBuffer)) {
+      throw new Error("The local asset bytes are invalid.");
+    }
+    const { data, ...metadata } = input;
+    const descriptor = await localAssetStore.importBytes(
+      metadata,
+      new Uint8Array(data),
+    );
+    return {
+      ...descriptor,
+      url: buildLocalAssetProtocolUrl(descriptor),
+    };
+  },
+);
 
 ipcMain.handle("get-local-asset", async (_event, assetId: string) => {
   if (!localAssetStore) return undefined;

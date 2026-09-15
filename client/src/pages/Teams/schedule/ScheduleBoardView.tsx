@@ -108,6 +108,10 @@ type ScheduleBoardViewProps = {
  * The soonest upcoming service gets a thin orange border plus an absolutely
  * positioned "Up next" marker that never shifts the surrounding cards. Other
  * same-day services get a sky "Today" marker instead (Up next wins when both).
+ *
+ * Cards size to their content (w-fit) inside a round-robin masonry so taller
+ * cards do not stretch shorter neighbors; column count still requires room for
+ * a readable minimum width before adding another column.
  */
 const ScheduleBoardView = ({
   groups,
@@ -169,8 +173,9 @@ const ScheduleBoardView = ({
         key={occurrence.occurrenceId}
         className={cn(
           // Always render the border so colouring the marker card never
-          // shifts layout.
-          "relative flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          // shifts layout. w-fit keeps cards content-sized instead of
+          // stretching with the masonry column; max-w-full prevents overflow.
+          "relative flex w-fit max-w-full break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
           markerBorderClassName,
         )}
       >
@@ -302,7 +307,10 @@ const ScheduleBoardView = ({
     <div className="pt-3">
       <div ref={boardRef} className="flex items-start gap-4">
         {cardColumns.map((cardColumn, columnIndex) => (
-          <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-4">
+          <div
+            key={columnIndex}
+            className="flex w-fit min-w-0 max-w-full flex-col gap-4"
+          >
             {cardColumn.map(renderCard)}
           </div>
         ))}

@@ -15,8 +15,8 @@ let lastAddSongSectionsDrawerProps: any;
 let lastArrangementProps: any[];
 let mockGeneratedIdCounter = 0;
 
-const mockSetIsEditMode = jest.fn((value: boolean) => ({
-  type: "item/setIsEditMode",
+const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
+  type: "item/setIsLyricsEditorOpen",
   payload: value,
 }));
 const mockUpdateArrangements = jest.fn((payload: any) => ({
@@ -44,7 +44,7 @@ jest.mock("../../../hooks", () => ({
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
-  setIsEditMode: (value: boolean) => mockSetIsEditMode(value),
+  setIsLyricsEditorOpen: (value: boolean) => mockSetIsLyricsEditorOpen(value),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
   applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
@@ -180,7 +180,7 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
         item: {
           name: "Sample Song",
           type: "song",
-          isEditMode: true,
+          isLyricsEditorOpen: true,
           selectedArrangement: 0,
           arrangements: [
             {
@@ -259,7 +259,7 @@ describe("LyricsEditor", () => {
       undoable: {
         present: {
           item: {
-            isEditMode: false,
+            isLyricsEditorOpen: false,
           },
         },
       },
@@ -310,7 +310,7 @@ describe("LyricsEditor", () => {
     });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockUpdateArrangements).not.toHaveBeenCalled();
-    expect(mockSetIsEditMode).not.toHaveBeenCalled();
+    expect(mockSetIsLyricsEditorOpen).not.toHaveBeenCalled();
   });
 
   it("dispatches save actions and updates arrangements using formatted song result", async () => {
@@ -333,7 +333,7 @@ describe("LyricsEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
+    expect(mockSetIsLyricsEditorOpen).toHaveBeenCalledWith(false);
     expect(mockFormatSong).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Sample Song",
@@ -345,7 +345,7 @@ describe("LyricsEditor", () => {
       selectedArrangement: 0,
     });
     expect(mockDispatch).toHaveBeenCalledWith({
-      type: "item/setIsEditMode",
+      type: "item/setIsLyricsEditorOpen",
       payload: false,
     });
     expect(mockDispatch).toHaveBeenCalledWith({
@@ -368,9 +368,9 @@ describe("LyricsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
+    expect(mockSetIsLyricsEditorOpen).toHaveBeenCalledWith(false);
     expect(mockDispatch).toHaveBeenCalledWith({
-      type: "item/setIsEditMode",
+      type: "item/setIsLyricsEditorOpen",
       payload: false,
     });
   });
@@ -392,7 +392,7 @@ describe("LyricsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
 
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
+    expect(mockSetIsLyricsEditorOpen).toHaveBeenCalledWith(false);
   });
 
   it("keeps the selected section pinned by id after lyrics reorder", async () => {
@@ -537,7 +537,7 @@ describe("LyricsEditor", () => {
           item: {
             _id: "song-a",
             name: "Song A",
-            isEditMode: true,
+            isLyricsEditorOpen: true,
             selectedArrangement: 0,
             arrangements: [
               {
@@ -577,7 +577,7 @@ describe("LyricsEditor", () => {
           item: {
             _id: "song-b",
             name: "Song B",
-            isEditMode: false,
+            isLyricsEditorOpen: false,
             selectedArrangement: 0,
             arrangements: [
               {
@@ -609,7 +609,7 @@ describe("LyricsEditor", () => {
           item: {
             _id: "song-b",
             name: "Song B",
-            isEditMode: true,
+            isLyricsEditorOpen: true,
             selectedArrangement: 0,
             arrangements: [
               {

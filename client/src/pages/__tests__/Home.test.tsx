@@ -385,6 +385,9 @@ describe("Home", () => {
     expect(
       screen.queryByRole("link", { name: /Service Workspace/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Current Service Viewer/i }),
+    ).toHaveAttribute("href", "/current-service/view");
   });
 
   it("shows Service Workspace on booth workstations with Teams view", () => {
@@ -473,6 +476,37 @@ describe("Home", () => {
         name: /Text Master.*Run slides for the sanctuary/i,
       }),
     ).toHaveAttribute("href", "/controller");
+  });
+
+  it("hides built-in controllers that are switched off in Controllers admin", () => {
+    const profiles = getDefaultControllerProfiles().map((profile) =>
+      profile.id === "presentation" || profile.id === "overlay"
+        ? { ...profile, enabled: false }
+        : profile,
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { profiles },
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /^Presentation /i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Overlays /i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /^Credits Editor / }),
+    ).toHaveAttribute("href", "/credits-editor");
   });
 
   it("hides board moderation and display outputs for view access", () => {

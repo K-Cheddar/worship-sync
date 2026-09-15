@@ -217,7 +217,9 @@ const createMockBoardDb = () => {
       },
     ],
   };
-  const changeListeners: Array<() => void> = [];
+  const changeListeners: Array<(change?: unknown) => void> = [];
+  let deferNextPostLoad = false;
+  const deferredPostLoadResolvers: Array<(result: unknown) => void> = [];
 
   const db = {
     allDocs: jest.fn(async (options: any) => {
@@ -239,9 +241,16 @@ const createMockBoardDb = () => {
 
       const rangeKey = String(options.startkey);
       const boardId = rangeKey.replace(/^post:/, "").replace(/:$/, "").split(":")[0];
-      return {
+      const result = {
         rows: (postDocsByBoardId[boardId] || []).map((doc) => ({ doc })),
       };
+      if (deferNextPostLoad) {
+        deferNextPostLoad = false;
+        return new Promise((resolve) => {
+          deferredPostLoadResolvers.push(resolve);
+        });
+      }
+      return result;
     }),
     get: jest.fn(async (docId: string) => {
       if (docId === "alias:sunday") return aliasDoc;
@@ -258,7 +267,7 @@ const createMockBoardDb = () => {
       throw new Error(`Unexpected doc lookup: ${docId}`);
     }),
     changes: jest.fn(() => ({
-      on: jest.fn((eventName: string, callback: () => void) => {
+      on: jest.fn((eventName: string, callback: (change?: unknown) => void) => {
         if (eventName === "change") {
           changeListeners.push(callback);
         }
@@ -283,8 +292,17 @@ const createMockBoardDb = () => {
         post.id === postId ? { ...post, ...patch } : post,
       );
     },
-    __emitChange: () => {
-      changeListeners.forEach((listener) => listener());
+    __deferNextPostLoad: () => {
+      deferNextPostLoad = true;
+    },
+    __hasDeferredPostLoad: () => deferredPostLoadResolvers.length > 0,
+    __resolveDeferredPostLoad: (result?: unknown) => {
+      deferredPostLoadResolvers.shift()?.(
+        result || { rows: (postDocsByBoardId["board-current"] || []).map((doc) => ({ doc })) },
+      );
+    },
+    __emitChange: (change?: unknown) => {
+      changeListeners.forEach((listener) => listener(change));
     },
   };
 
@@ -320,6 +338,11 @@ describe("BoardControllerContent", () => {
       db: mockBoardDb,
       status: "connected",
       pullFromRemote: jest.fn(),
+      subscribeToChanges: (listener: (change?: unknown) => void) => {
+        const changes = mockBoardDb.changes();
+        changes.on("change", listener);
+        return () => changes.cancel();
+      },
     } as any);
     mockUseRestreamSession.mockReturnValue({
       session: {
@@ -635,7 +658,23 @@ describe("BoardControllerContent", () => {
         createdAt: 1,
         updatedAt: 3,
       });
-      mockBoardDb.__emitChange();
+      mockBoardDb.__emitChange({
+        id: "alias:sunday",
+        doc: {
+          _id: "alias:sunday",
+          _rev: "2-a",
+          type: "alias",
+          docType: "board-alias",
+          aliasId: "sunday",
+          title: "Sunday Board",
+          database: "test",
+          currentBoardId: "board-new",
+          history: ["board-old", "board-current"],
+          presentationFontScale: 1.1,
+          createdAt: 1,
+          updatedAt: 3,
+        },
+      });
     });
 
     expect(await screen.findByText(/Brand new session post/i)).toBeInTheDocument();
@@ -643,6 +682,77 @@ describe("BoardControllerContent", () => {
     expect(
       screen.queryByRole("button", { name: /Return to current session/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not let an older view load overwrite a newer alias change", async () => {
+    renderPage();
+    await screen.findByText(/Earlier question/i);
+
+    mockBoardDb.__deferNextPostLoad();
+    await act(async () => {
+      mockBoardDb.__emitChange({
+        id: "board:board-current",
+      });
+    });
+    await waitFor(() =>
+      expect(mockBoardDb.__hasDeferredPostLoad()).toBe(true),
+    );
+
+    const nextAlias = {
+      _id: "alias:sunday",
+      _rev: "2-a",
+      type: "alias",
+      docType: "board-alias",
+      aliasId: "sunday",
+      title: "Sunday Board",
+      database: "test",
+      currentBoardId: "board-new",
+      history: ["board-current", "board-old"],
+      presentationFontScale: 1.1,
+      createdAt: 1,
+      updatedAt: 3,
+    };
+    mockBoardDb.__setBoardDoc("board-new", {
+      _id: "board:board-new",
+      _rev: "1-new",
+      type: "board",
+      docType: "board",
+      id: "board-new",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: 50,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-new", [
+      {
+        _id: "post:board-new:1",
+        _rev: "1-new-post",
+        type: "post",
+        docType: "board-post",
+        id: "1",
+        aliasId: "sunday",
+        boardId: "board-new",
+        database: "test",
+        author: "Taylor",
+        text: "Fresh board load",
+        timestamp: 55,
+        hidden: false,
+        highlighted: false,
+      },
+    ]);
+    mockBoardDb.__setAliasDoc(nextAlias);
+    await act(async () => {
+      mockBoardDb.__emitChange({ id: "alias:sunday", doc: nextAlias });
+    });
+
+    expect(await screen.findByText(/Fresh board load/i)).toBeInTheDocument();
+
+    await act(async () => {
+      mockBoardDb.__resolveDeferredPostLoad();
+    });
+
+    expect(screen.getByText(/Fresh board load/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Earlier question/i)).not.toBeInTheDocument();
   });
 
   it("does not prompt to start fresh when only Restream chat is stale (server auto-resets it)", async () => {
@@ -779,10 +889,33 @@ describe("BoardControllerContent", () => {
 
     await act(async () => {
       mockBoardDb.__updatePost("board-current", "2", { highlighted: true });
-      mockBoardDb.__emitChange();
+      mockBoardDb.__emitChange({
+        id: "post:board-current:2",
+        doc: {
+          _id: "post:board-current:2",
+          boardId: "board-current",
+          highlighted: true,
+        },
+      });
     });
 
     expect(await screen.findByText(/1 highlighted/i)).toBeInTheDocument();
+  });
+
+  it("ignores unrelated PouchDB document changes without reloading board state", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(await screen.findByText(/Earlier question/i)).toBeInTheDocument();
+
+    const allDocsCallsAfterLoad = mockBoardDb.allDocs.mock.calls.length;
+
+    await act(async () => {
+      mockBoardDb.__emitChange({ id: "item:song-unrelated" });
+      mockBoardDb.__emitChange({ id: "media:video-unrelated" });
+    });
+
+    expect(mockBoardDb.allDocs.mock.calls.length).toBe(allDocsCallsAfterLoad);
+    expect(screen.getByText(/Earlier question/i)).toBeInTheDocument();
   });
 
   it("renders Restream connection guidance in the live activity feed", async () => {

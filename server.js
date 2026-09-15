@@ -910,6 +910,10 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+app.post(
+  "/api/churches/:churchId/current-service-workspace",
+  authHandlers.updateCurrentServiceWorkspace,
+);
 
 app.use("/api/churches/:churchId/chat", requireAppSession);
 app.get("/api/churches/:churchId/chat/context", chatHandlers.getContext);
@@ -1331,6 +1335,10 @@ app.get(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.getServicePlan,
 );
+app.get(
+  "/api/churches/:churchId/service-plans/:planKey/public-snapshot",
+  authHandlers.getServicePlanPublicSnapshot,
+);
 app.post(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.saveServicePlan,
@@ -1338,6 +1346,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/service-plans/:planKey/publish",
   authHandlers.publishServicePlan,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey/email",
+  authHandlers.sendServicePlanShareEmail,
 );
 app.post(
   "/api/churches/:churchId/service-plans/:planKey/unpublish",
@@ -1730,6 +1742,7 @@ app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
     await restreamService.resetSession({
       churchId: req.params.churchId,
       database: req.appSession.database,
+      reason: "manual_reset",
     });
     const status = await restreamService.getStatusForChurch({
       churchId: req.params.churchId,
@@ -1740,6 +1753,29 @@ app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
     respondRestreamJsonError(res, "Error resetting Restream session:", error);
   }
 });
+
+app.post(
+  "/api/churches/:churchId/restream/session/keep-current",
+  async (req, res) => {
+    try {
+      if (req.appSession.churchId !== req.params.churchId) {
+        return res.status(403).json({ error: "That church is not available." });
+      }
+
+      const status = await restreamService.dismissSessionSuggestion({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+      });
+      res.json(status);
+    } catch (error) {
+      respondRestreamJsonError(
+        res,
+        "Error keeping the current Restream session:",
+        error,
+      );
+    }
+  },
+);
 
 app.get("/api/youtube/oauth/callback", async (req, res) => {
   try {

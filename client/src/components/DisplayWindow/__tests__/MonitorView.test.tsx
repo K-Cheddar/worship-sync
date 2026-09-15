@@ -19,10 +19,11 @@ jest.mock("../DisplayBox", () => ({
   ),
 }));
 
-jest.mock("../HLSVideoPlayer", () => ({
+jest.mock("../LocalVideoInputView", () => ({
   __esModule: true,
-  default: () => <div data-testid="monitor-hls-player" />,
+  default: () => <div data-testid="monitor-local-video" />,
 }));
+
 
 jest.mock("../DisplayClock", () => ({
   __esModule: true,
@@ -41,6 +42,8 @@ jest.mock("../VerseDisplay", () => ({
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
+  useCachedVideoUrl: (url?: string) => url,
 }));
 
 jest.mock("../../../hooks/useLocalImageUrl", () => ({
@@ -76,7 +79,7 @@ const baseBox: Box = {
 };
 
 describe("MonitorView", () => {
-  it("does not warn about duplicate keys when current and previous single-slide boxes reuse the same id", () => {
+  it("does not mount stale previous content when single-slide boxes reuse the same id", () => {
     const consoleErrorSpy = jest
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -102,10 +105,7 @@ describe("MonitorView", () => {
       "data-words",
       "Current words",
     );
-    expect(screen.getByTestId("monitor-prev-box")).toHaveAttribute(
-      "data-words",
-      "Previous words",
-    );
+    expect(screen.queryByTestId("monitor-prev-box")).not.toBeInTheDocument();
     expect(consoleErrorSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("Encountered two children with the same key"),
     );

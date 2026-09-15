@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implementation Planning"
+  short_description: "Plan safe, complete changes before editing"
+  default_prompt: "Use $implementation-planning to plan this repository change before implementation."

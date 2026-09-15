@@ -48,6 +48,7 @@ import { ItemState } from "../../types";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 type sections =
   | "configurations"
@@ -106,7 +107,7 @@ const Toolbar = ({
   const controllerBasePath = useControllerBasePath();
   /** Quick Links drawer (overlay controller only; state unused when variant is default). */
   const [quickLinksDrawerOpen, setQuickLinksDrawerOpen] = useState(false);
-  const { isEditMode, type: itemType } = useSelector(
+  const { isLyricsEditorOpen, type: itemType } = useSelector(
     (state) => state.undoable.present.item
   );
   const lastControllerConfigurationRoute = useSelector(
@@ -117,6 +118,7 @@ const Toolbar = ({
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
+  const { mode, setMode } = usePresentationControllerMode();
 
   const primaryToolbarTabRefs = useRef<
     Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
@@ -251,9 +253,8 @@ const Toolbar = ({
     scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
 
-  const renderPresentationTools = () => (
-    <>
-      <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
+  const renderPrimaryToolbarTabs = () => (
+    <div className="flex min-w-max shrink-0 gap-0 overflow-x-auto scrollbar-variable">
         {!isViewOnlyAccess(access) ? (
           <ToolbarButton
             ref={(el) => {
@@ -327,12 +328,16 @@ const Toolbar = ({
             </ToolbarButton>
           </>
         )}
-      </div>
-      <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
+    </div>
+  );
+
+  const renderContextualToolbar = () => (
+    <>
       <div
         className={cn(
-          "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full scrollbar-variable",
-          isEditMode && "hidden"
+          "flex w-full shrink-0 items-center overflow-x-auto px-2 scrollbar-variable",
+          "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
+          isLyricsEditorOpen && "hidden"
         )}
       >
         {!isViewOnlyAccess(access) && (
@@ -413,33 +418,80 @@ const Toolbar = ({
     </>
   );
 
+  const modeToggle = (
+    <div
+      className="flex shrink-0 items-center overflow-hidden rounded-md border border-gray-600"
+      aria-label="Presentation controller workspace mode"
+    >
+      {(["present", "edit"] as const).map((option) => (
+        <ToolbarButton
+          key={option}
+          svg={option === "present" ? MonitorPlay : Pencil}
+          isActive={mode === option}
+          className="rounded-none first:rounded-l-md last:rounded-r-md"
+          onClick={() => setMode(option)}
+        >
+          {option === "present" ? "Present" : "Edit"}
+        </ToolbarButton>
+      ))}
+    </div>
+  );
+
   return (
     <ErrorBoundary>
-      <div className={className}>
-        <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-col justify-center">
-          <Menu variant={variant === "overlay" ? "overlay" : "default"} />
-          {!isEditMode && !isViewOnlyAccess(access) && <Undo />}
+      {variant !== "overlay" ? (
+        <div className={cn(className, "flex items-stretch")}>
+          <div className="flex min-w-0 flex-1 flex-col" data-testid="toolbar-left-column">
+            <div
+              className="flex w-full min-w-0 items-center"
+              data-testid="toolbar-primary-row"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable">
+                <Menu variant="default" />
+                {modeToggle}
+                {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
+                {mode === "edit" && renderPrimaryToolbarTabs()}
+              </div>
+            </div>
+            {mode === "edit" && (
+              <>
+                <div className="w-full border-t border-gray-600" />
+                {renderContextualToolbar()}
+              </>
+            )}
+          </div>
+          <div
+            className="ml-auto flex shrink-0 items-center border-l-2 border-gray-500 px-2"
+            data-testid="toolbar-user-section"
+          >
+            <UserSection variant={mode === "present" ? "compact" : "default"} />
+          </div>
         </div>
-        <div
-          className={cn(
-            "scrollbar-variable flex-1 flex min-h-fit flex-col min-w-0",
-            isEditMode && "invisible"
-          )}
-        >
-          {variant === "overlay" ? (
-            <ToolbarOverlay
-              isEditMode={!!isEditMode}
-              quickLinksDrawerOpen={quickLinksDrawerOpen}
-              onQuickLinksOpenChange={setQuickLinksDrawerOpen}
-            />
-          ) : (
-            renderPresentationTools()
-          )}
+      ) : (
+        <div className={className}>
+          <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-row justify-center">
+            <Menu variant="overlay" />
+            {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
+          </div>
+          <div
+            className={cn(
+              "scrollbar-variable flex-1 flex min-h-fit flex-col min-w-0",
+              isLyricsEditorOpen && "invisible"
+            )}
+          >
+            {variant === "overlay" ? (
+              <ToolbarOverlay
+                isLyricsEditorOpen={!!isLyricsEditorOpen}
+                quickLinksDrawerOpen={quickLinksDrawerOpen}
+                onQuickLinksOpenChange={setQuickLinksDrawerOpen}
+              />
+            ) : null}
+          </div>
+          <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
+            <UserSection />
+          </div>
         </div>
-        <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
-          <UserSection />
-        </div>
-      </div>
+      )}
       {variant === "overlay" && access === "full" && (
         <Drawer
           isOpen={quickLinksDrawerOpen}

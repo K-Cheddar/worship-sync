@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { BookOpen, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
+import type { ReactNode } from "react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImagePreview";
@@ -275,6 +276,7 @@ const PublicServingTeamsPanel = ({
 
 export type ServicePublicViewProps = {
   snapshot: PublicServiceFlowSnapshot;
+  topContent?: ReactNode;
   connection?: PublicServiceConnection;
   error?: string;
   /**
@@ -291,6 +293,7 @@ export type ServicePublicViewProps = {
  */
 const ServicePublicView = ({
   snapshot,
+  topContent,
   connection = "connected",
   error = "",
   embedded = false,
@@ -631,6 +634,7 @@ const ServicePublicView = ({
         embedded ? "px-0 pb-4 pt-0" : "mx-auto px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6",
         hasServingTeams ? "max-w-6xl" : "max-w-3xl",
       )}>
+        {topContent ? <div className="mb-4">{topContent}</div> : null}
         <div className={cn(hasServingTeams && "lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start lg:gap-4")}>
           <div className="min-w-0">
             <header className={cn(

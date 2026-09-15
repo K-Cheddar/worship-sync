@@ -63,7 +63,9 @@ describe("desktopCapture", () => {
 
   const useElectron = () => {
     (
-      window as unknown as { electronAPI: { getDesktopCaptureSources: unknown } }
+      window as unknown as {
+        electronAPI: { getDesktopCaptureSources: unknown };
+      }
     ).electronAPI = { getDesktopCaptureSources };
   };
 
@@ -88,7 +90,7 @@ describe("desktopCapture", () => {
             chromeMediaSourceId: "screen:0:0",
             maxWidth: 1920,
             maxHeight: 1080,
-            maxFrameRate: 30,
+            maxFrameRate: 60,
           },
         },
       });

@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   LayoutTemplate,
+  Mail,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -72,10 +73,12 @@ import {
   publishServicePlan,
   saveServicePlan,
   saveServicePlanAssignmentHistory,
+  sendServicePlanShareEmail,
   unpublishServicePlan,
   updateServicePlanPublicLive,
   AuthApiError,
   type ServicePlanPublicUrls,
+  type ServicePlanShareVersion,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -118,6 +121,9 @@ import {
 import ServicePlanTemplateModal, {
   type ServicePlanTemplateModalMode,
 } from "./ServicePlanTemplateModal";
+import ServicePlanEmailModal, {
+  type ServicePlanEmailDraft,
+} from "./ServicePlanEmailModal";
 import {
   formatPlanStartTimeDisplay,
   servicePlanElementDomId,
@@ -132,7 +138,10 @@ import ServicePlanSetlist from "./ServicePlanSetlist";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
 import ViewPlainLyricsDrawer from "../../components/SongSections/ViewPlainLyricsDrawer";
-import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
+import {
+  applyPlanAnchorStartTime,
+  type ServicePlanTimingSource,
+} from "./servicePlanTimingUtils";
 import {
   getServicePlanLiveProgress,
   getServicePlanLiveStartedAt,
@@ -144,7 +153,10 @@ import {
   isServicePlanUpdatedEvent,
   useTeamsLiveSync,
 } from "../Teams/hooks/useTeamsLiveSync";
-import { useServicePlanAutosave } from "./useServicePlanAutosave";
+import {
+  isMatchingServicePlanWrite,
+  useServicePlanAutosave,
+} from "./useServicePlanAutosave";
 import {
   useServicePlanDraftHistory,
   type ServicePlanDraftSnapshot,
@@ -270,6 +282,25 @@ const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
     timeZone: timezone,
   }).format(new Date(timeMs));
 
+const formatServicePlanEmailDate = (startsAt: string, timezone?: string) => {
+  const parsed = new Date(startsAt);
+  if (Number.isNaN(parsed.getTime())) return "the scheduled date";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: timezone || undefined,
+    }).format(parsed);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(parsed);
+  }
+};
+
 const urlsFromPublishResult = (result: {
   publicUrl: string;
   teamPublicUrl?: string;
@@ -380,7 +411,14 @@ type ServicePlanEditorProps = {
     options: { occurrenceId: string; label: string }[];
     onSelect: (occurrenceId: string) => void;
   };
+  /** Sends the already-loaded/drafted timing source to an embedded surface. */
+  onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
 };
+
+type ServicePlanTimingMetadata = Pick<
+  ServicePlan,
+  "planKey" | "startsAt" | "timezone"
+>;
 
 /**
  * Build or import a service's order-of-service plan for one dated occurrence,
@@ -412,6 +450,7 @@ const ServicePlanEditor = ({
   initialTab = "plan",
   initialEditing = false,
   occurrenceSwitcher,
+  onPlanTimingChange,
 }: ServicePlanEditorProps) => {
   const { churchId, access, churchBranding, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
@@ -482,6 +521,27 @@ const ServicePlanEditor = ({
   const [sourceImport, setSourceImport] = useState<ServicePlanSourceImport | undefined>(
     undefined,
   );
+
+  const notifyPlanTimingChange = useCallback(
+    (
+      nextSections: ServicePlanSection[] | null,
+      sourcePlan?: ServicePlanTimingMetadata | null,
+    ) => {
+      if (!onPlanTimingChange) return;
+      if (!nextSections) {
+        onPlanTimingChange(null);
+        return;
+      }
+      onPlanTimingChange({
+        planKey: sourcePlan?.planKey || planKey,
+        startsAt: sourcePlan?.startsAt || occurrence.startsAt,
+        timezone:
+          sourcePlan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        sections: nextSections,
+      });
+    },
+    [occurrence.startsAt, onPlanTimingChange, planKey],
+  );
   // Do not expose the empty-plan actions until the first fetch has answered.
   // Otherwise a fast click can create a local draft that the initial response
   // immediately replaces.
@@ -527,6 +587,9 @@ const ServicePlanEditor = ({
   const planTabPlanKeyRef = useRef(planKey);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalInitialVersion, setEmailModalInitialVersion] =
+    useState<ServicePlanShareVersion>("detailed");
   const [showServiceDetails, setShowServiceDetails] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
   const [planActionsView, setPlanActionsView] = useState<
@@ -547,11 +610,12 @@ const ServicePlanEditor = ({
       setSections(snapshot.sections);
       setPlanName(snapshot.planName);
       setSourceImport(snapshot.sourceImport);
+      notifyPlanTimingChange(snapshot.sections, plan);
       // An undone plan is still the plan of record — autosave persists it the
       // same way it persists any other edit.
       markDraftChanged();
     },
-    [markDraftChanged],
+    [markDraftChanged, notifyPlanTimingChange, plan],
   );
 
   const {
@@ -586,9 +650,10 @@ const ServicePlanEditor = ({
       if (changes.sections) setSections(changes.sections);
       if (changes.planName !== undefined) setPlanName(changes.planName);
       if ("sourceImport" in changes) setSourceImport(changes.sourceImport);
+      notifyPlanTimingChange(changes.sections ?? sections, plan);
       markDraftChanged();
     },
-    [markDraftChanged, recordDraftHistory],
+    [markDraftChanged, notifyPlanTimingChange, plan, recordDraftHistory, sections],
   );
 
   const updateDraftSections = useCallback(
@@ -638,6 +703,7 @@ const ServicePlanEditor = ({
   }, [canEdit, churchId, showToast]);
 
   useEffect(() => {
+    onPlanTimingChange?.(null);
     setPlan(null);
     setSections(null);
     setPlanName("");
@@ -649,6 +715,7 @@ const ServicePlanEditor = ({
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     setImportPreview(null);
     setPublicUrls(null);
+    setEmailModalOpen(false);
     setConflictPlan(null);
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
@@ -670,6 +737,10 @@ const ServicePlanEditor = ({
         if (cancelled) return;
         setPlan(res.servicePlan);
         setSections(res.servicePlan?.sections ?? null);
+        notifyPlanTimingChange(
+          res.servicePlan?.sections ?? null,
+          res.servicePlan,
+        );
         setPlanName(res.servicePlan?.name || occurrence.name || "");
         setSourceImport(res.servicePlan?.sourceImport);
         setDraftChangeVersion(0);
@@ -689,7 +760,7 @@ const ServicePlanEditor = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planKey, churchId]);
+  }, [churchId, notifyPlanTimingChange, occurrence.startsAt, planKey]);
 
   // Assignment suggestions are church-wide, not per-occurrence, so this loads
   // once per church rather than resetting on every occurrence switch.
@@ -810,20 +881,32 @@ const ServicePlanEditor = ({
       : null;
   }, []);
 
+  const loadLatestPlan = useCallback(async () => {
+    if (!churchId) return null;
+    const response = await getServicePlan(churchId, planKey);
+    return response.servicePlan;
+  }, [churchId, planKey]);
+
   const autosave = useServicePlanAutosave({
     enabled: Boolean(canEdit && churchId && sections),
     resetKey: planKey,
     changeVersion: draftChangeVersion,
-    baseRevision: plan?.revision || 0,
+    // The previous occurrence's plan stays in state until its fetch effect
+    // clears it. Feeding that revision in as the new plan's base is what
+    // made prev/next look like a conflict.
+    baseRevision: plan?.planKey === planKey ? plan.revision || 0 : 0,
     buildPayload: buildAutosavePayload,
     save: saveAutosavePayload,
     getConflictPlan,
+    isOwnWrite: isMatchingServicePlanWrite,
+    loadLatest: loadLatestPlan,
     onSaved: (savedPlan) => {
       // Defence in depth alongside the hook's generation guard: this editor
       // stays mounted across prev/next, so a late response could otherwise
       // describe a plan the operator has already navigated away from.
       if (savedPlan.planKey && savedPlan.planKey !== planKey) return;
       setPlan(savedPlan);
+      notifyPlanTimingChange(savedPlan.sections, savedPlan);
       rememberAssignmentHistory(savedPlan.sections);
     },
     onConflict: (latestPlan) => {
@@ -889,6 +972,7 @@ const ServicePlanEditor = ({
     setSections(servicePlan.sections);
     setPlanName(servicePlan.name || occurrence.name || "");
     setSourceImport(servicePlan.sourceImport);
+    notifyPlanTimingChange(servicePlan.sections, servicePlan);
     // This draft is now another editor's revision. Undoing past it would push
     // our pre-sync snapshot back over their work as a fresh save.
     resetDraftHistory();
@@ -946,6 +1030,7 @@ const ServicePlanEditor = ({
     if (!conflictPlan) return;
     setPlan(conflictPlan);
     setSections(conflictPlan.sections);
+    notifyPlanTimingChange(conflictPlan.sections, conflictPlan);
     setPlanName(conflictPlan.name || occurrence.name || "");
     setSourceImport(conflictPlan.sourceImport);
     setConflictPlan(null);
@@ -1284,10 +1369,13 @@ const ServicePlanEditor = ({
     });
   };
 
-  const ensurePublishedUrls = async (): Promise<ServicePlanPublicUrls | null> => {
+  const ensurePublishedUrls = async ({
+    flushBeforeReuse = false,
+  }: { flushBeforeReuse?: boolean } = {}): Promise<ServicePlanPublicUrls | null> => {
     if (!churchId || !planKey || !plan) return null;
-    if (plan.published && publicUrls?.team) return publicUrls;
+    if (!flushBeforeReuse && plan.published && publicUrls?.team) return publicUrls;
     if (!(await autosave.flush())) return null;
+    if (plan.published && publicUrls?.team) return publicUrls;
     const result = await publishServicePlan(churchId, planKey);
     setPlan(result.servicePlan);
     const urls = urlsFromPublishResult(result);
@@ -1322,6 +1410,29 @@ const ServicePlanEditor = ({
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not publish this service plan.");
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const openServicePlanEmailModal = (shareVersion: ServicePlanShareVersion) => {
+    setShareMenuOpen(false);
+    setPlanActionsOpen(false);
+    setEmailModalInitialVersion(shareVersion);
+    setEmailModalOpen(true);
+  };
+
+  const handleSendServicePlanEmail = async (draft: ServicePlanEmailDraft) => {
+    if (!churchId || !planKey || !plan) {
+      throw new Error("This service plan is not ready to email. Try again in a moment.");
+    }
+    setPublishing(true);
+    try {
+      const urls = await ensurePublishedUrls({ flushBeforeReuse: true });
+      if (!urls?.team) {
+        throw new Error("Could not get a share link. Try again in a moment.");
+      }
+      return await sendServicePlanShareEmail(churchId, planKey, draft);
     } finally {
       setPublishing(false);
     }
@@ -1453,15 +1564,6 @@ const ServicePlanEditor = ({
   const defaultPlanTemplateMissing = Boolean(
     defaultPlanTemplateId && !planTemplatesLoading && !defaultPlanTemplate,
   );
-  const templatesForService = useMemo(() => {
-    const forThisService = planTemplates.filter(
-      (template) => template.serviceId === service.serviceId,
-    );
-    const other = planTemplates.filter(
-      (template) => template.serviceId !== service.serviceId,
-    );
-    return [...forThisService, ...other];
-  }, [planTemplates, service.serviceId]);
   const loadingInitialContent = loading;
   const hasSections = Boolean(sections && sections.length > 0);
   /** Whether the draft holds anything an import would have to reconcile. */
@@ -1825,6 +1927,19 @@ const ServicePlanEditor = ({
           }}
         >
           View
+        </ButtonGroupItem>
+        <ButtonGroupItem
+          type="button"
+          variant="primary"
+          iconSize="sm"
+          svg={Mail}
+          color="#22d3ee"
+          disabled={shareActionsDisabled}
+          className="max-md:min-h-0"
+          aria-label={`Email ${label.toLowerCase()}`}
+          onClick={() => openServicePlanEmailModal(kind)}
+        >
+          Email
         </ButtonGroupItem>
       </ButtonGroup>
     </div>
@@ -2191,63 +2306,36 @@ const ServicePlanEditor = ({
             </>
           ) : null}
           <div className="flex flex-wrap justify-center gap-2">
-            <DropdownMenu>
-              <div className="inline-flex">
-                <Button
-                  type="button"
-                  variant="primary"
-                  className="rounded-r-none border-r-0"
-                  disabled={planTemplatesLoading}
-                  onClick={() => {
-                    if (defaultPlanTemplate) {
-                      applySavedTemplate(defaultPlanTemplate);
-                      return;
-                    }
-                    setTemplateModal("apply");
-                  }}
-                >
-                  {defaultPlanTemplate
-                    ? `Apply ${defaultPlanTemplate.name}`
-                    : "Apply a template"}
-                </Button>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    className="rounded-l-none border-l-2 border-l-gray-500 px-2"
-                    svg={ChevronDown}
-                    iconSize="sm"
-                    disabled={planTemplatesLoading}
-                    aria-haspopup="menu"
-                    aria-label="Choose a template"
-                  />
-                </DropdownMenuTrigger>
-              </div>
-              <DropdownMenuContent align="center" className="min-w-56">
-                <DropdownMenuLabel className="text-xs font-normal text-gray-400">
-                  Apply template
-                </DropdownMenuLabel>
-                {templatesForService.length === 0 ? (
-                  <DropdownMenuItem
-                    onSelect={() => setTemplateModal("apply")}
-                  >
-                    Browse templates…
-                  </DropdownMenuItem>
-                ) : (
-                  templatesForService.map((template) => (
-                    <DropdownMenuItem
-                      key={template.templateId}
-                      onSelect={() => applySavedTemplate(template)}
-                    >
-                      {template.name}
-                      {template.templateId === defaultPlanTemplateId
-                        ? " (default)"
-                        : ""}
-                    </DropdownMenuItem>
-                  ))
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="inline-flex">
+              <Button
+                type="button"
+                variant="primary"
+                className="rounded-r-none border-r-0"
+                disabled={planTemplatesLoading}
+                onClick={() => {
+                  if (defaultPlanTemplate) {
+                    applySavedTemplate(defaultPlanTemplate);
+                    return;
+                  }
+                  setTemplateModal("apply");
+                }}
+              >
+                {defaultPlanTemplate
+                  ? `Apply ${defaultPlanTemplate.name}`
+                  : "Apply a template"}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                className="rounded-l-none border-l-2 border-l-gray-500 px-2"
+                svg={ChevronDown}
+                iconSize="sm"
+                disabled={planTemplatesLoading}
+                aria-haspopup="dialog"
+                aria-label="Choose a template"
+                onClick={() => setTemplateModal("apply")}
+              />
+            </div>
             <Button
               type="button"
               variant="secondary"
@@ -2941,6 +3029,16 @@ const ServicePlanEditor = ({
             });
             setIsEditing(true);
           }}
+        />
+      ) : null}
+
+      {emailModalOpen ? (
+        <ServicePlanEmailModal
+          serviceName={planName.trim() || occurrence.name || service.name || "Service"}
+          dateLabel={formatServicePlanEmailDate(occurrence.startsAt, planTimezone)}
+          initialShareVersion={emailModalInitialVersion}
+          onClose={() => setEmailModalOpen(false)}
+          onSend={handleSendServicePlanEmail}
         />
       ) : null}
 

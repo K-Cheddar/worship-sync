@@ -65,16 +65,27 @@ describe("ServiceItem", () => {
     jest.clearAllMocks();
   });
 
-  it("does not render a per-row delete button", () => {
+  it("renders a per-row delete button in edit mode", () => {
     renderWithProviders(<ServiceItem {...defaultProps} />);
-    // Sortable row is exposed as a single button; delete used to add a second control.
-    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: /delete welcome slides/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /welcome slides/i })).toBeInTheDocument();
+  });
+
+  it("does not render a per-row delete button in present mode", () => {
+    renderWithProviders(
+      <ServiceItem {...defaultProps} canMutateOutline={false} />
+    );
+    expect(
+      screen.queryByRole("button", { name: /delete welcome slides/i })
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /welcome slides/i })).toBeInTheDocument();
   });
 
   it("exposes data-list-id for outline row targeting", () => {
     renderWithProviders(<ServiceItem {...defaultProps} />);
-    expect(screen.getByRole("button", { name: /welcome slides/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Welcome Slides" })).toHaveAttribute(
       "data-list-id",
       item.listId
     );

@@ -17,12 +17,19 @@ import {
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
 import { useControllerBasePath } from "../../context/activeController";
+import cn from "classnames";
 
 type BibleItemActionsProps = {
   item: ItemState;
+  className?: string;
+  inlineVersionLabel?: boolean;
 };
 
-const BibleItemActions = ({ item }: BibleItemActionsProps) => {
+const BibleItemActions = ({
+  item,
+  className,
+  inlineVersionLabel = false,
+}: BibleItemActionsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
@@ -83,7 +90,7 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
   );
 
   return (
-    <div className="flex flex-col gap-2 lg:flex-[0_0_30%] w-full py-2">
+    <div className={cn("flex flex-col gap-2 lg:flex-[0_0_30%] w-full py-2", className)}>
       <Button
         variant="primary"
         svg={BookOpen}
@@ -98,6 +105,7 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
         value={item.bibleInfo!.version}
         onChange={handleVersionChange}
         options={bibleVersions}
+        labelLayout={inlineVersionLabel ? "inline" : "stacked"}
         disabled={isSectionLoading}
         className="w-full"
       />

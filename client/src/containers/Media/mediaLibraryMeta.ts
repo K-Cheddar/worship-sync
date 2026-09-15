@@ -1,6 +1,8 @@
 import type { MediaType } from "../../types";
 import { getMediaLibraryOriginMetaLabel } from "./mediaLibraryOrigin";
 
+export const MEDIA_DISPLAY_NAME_MAX_LEN = 200;
+
 /**
  * Drops the leading path segment (e.g. Cloudinary upload folder prefix) for
  * persisted display names. Trims surrounding whitespace.
@@ -9,6 +11,11 @@ export function normalizeMediaLibraryStoredName(name: string): string {
   const t = name.trim();
   if (!t) return t;
   return t.includes("/") ? t.split("/").slice(1).join("/") : t;
+}
+
+/** Normalizes a user-entered display name using the media rename rules. */
+export function normalizeMediaLibraryDisplayName(name: string): string {
+  return normalizeMediaLibraryStoredName(name).slice(0, MEDIA_DISPLAY_NAME_MAX_LEN);
 }
 
 /** File-style label without leading folder path segments (matches media action bar header). */

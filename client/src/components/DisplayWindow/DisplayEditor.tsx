@@ -6,6 +6,8 @@ import cn from "classnames";
 
 import { Box } from "../../types";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import InstantImageSwap from "./InstantImageSwap";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
@@ -16,6 +18,7 @@ import {
   REFERENCE_WIDTH,
 } from "../../constants";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 type DraggableData = {
   node: HTMLElement;
@@ -44,6 +47,7 @@ type DisplayEditorProps = {
   selectBox?: (index: number) => void;
   isSelected?: boolean;
   isBoxLocked?: boolean;
+  showEditorBoxBorder?: boolean;
   disabled?: boolean;
   referenceWidth?: number;
   referenceHeight?: number;
@@ -60,6 +64,7 @@ const DisplayEditorComponent = ({
   index,
   isSelected,
   isBoxLocked,
+  showEditorBoxBorder = true,
   disabled = false,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
@@ -106,7 +111,20 @@ const DisplayEditorComponent = ({
   const rawBackground = isVideoBg
     ? localVideoThumbnail.url || box.mediaInfo?.placeholderImage
     : box.background;
-  const background = useCachedMediaUrl(rawBackground);
+  // Match DisplayBox: local images resolve through the asset store. Passing
+  // local-image:// into img src is blocked by Electron CSP and left the editor
+  // stage black while slide thumbnails (DisplayBox) still painted.
+  const localImage = useLocalImageUrl(
+    isVideoBg ? undefined : box.mediaInfo?.localImage,
+  );
+  const cachedBackground = useCachedMediaUrl(
+    localImage.isLocalImage || isLocalMediaReferenceUrl(rawBackground)
+      ? undefined
+      : rawBackground,
+  );
+  const background = localImage.isLocalImage
+    ? localImage.url
+    : cachedBackground;
   const { showToast } = useToast();
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const TOAST_DEBOUNCE_MS = 2000;
@@ -475,6 +493,7 @@ const DisplayEditorComponent = ({
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
+        showEditorBoxBorder &&
         (!isBoxLocked || isSelected) &&
         "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
@@ -505,8 +524,22 @@ const DisplayEditorComponent = ({
         right: !isBoxLocked && !disabled,
       }}
     >
-      {background && (
-        <img
+      {localImage.isLocalImage && localImage.status === "unavailable" ? (
+        <div
+          className="display-box-background absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black px-6 text-center text-white"
+          role="status"
+          style={{ fontSize: 16 }}
+        >
+          <p className="text-sm font-semibold">Local image unavailable</p>
+          <p className="text-xs text-neutral-300">
+            {localImage.isOwner
+              ? "Open this item on the source device and choose Relink."
+              : `Available on ${box.mediaInfo?.localImage?.ownerLabel || "the source device"} only.`}
+          </p>
+        </div>
+      ) : background ||
+        (localImage.isLocalImage && localImage.status === "loading") ? (
+        <InstantImageSwap
           className={cn(
             "display-box-background h-full w-full absolute",
             box.shouldKeepAspectRatio && "object-contain",
@@ -518,9 +551,12 @@ const DisplayEditorComponent = ({
             filter: `brightness(${box.brightness}%)`,
           }}
           src={background}
-          alt={box.label}
+          alt={box.label ?? ""}
+          holdWhileLoading={
+            localImage.isLocalImage && localImage.status === "loading"
+          }
         />
-      )}
+      ) : null}
       {typeof onChange === "function" && index !== 0 && (
         <>
           <textarea
@@ -649,6 +685,7 @@ const areDisplayEditorPropsEqual = (
   prevProps.index === nextProps.index &&
   prevProps.isSelected === nextProps.isSelected &&
   prevProps.isBoxLocked === nextProps.isBoxLocked &&
+  prevProps.showEditorBoxBorder === nextProps.showEditorBoxBorder &&
   prevProps.disabled === nextProps.disabled &&
   prevProps.referenceWidth === nextProps.referenceWidth &&
   prevProps.referenceHeight === nextProps.referenceHeight &&

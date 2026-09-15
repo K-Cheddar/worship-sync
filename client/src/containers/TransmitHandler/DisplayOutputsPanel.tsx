@@ -21,6 +21,7 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import Toggle from "../../components/Toggle/Toggle";
+import DeleteModal from "../../components/Modal/DeleteModal";
 import { useDispatch, useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
@@ -168,6 +169,9 @@ const DisplayOutputsPanel = () => {
 
   const [newType, setNewType] = useState<DisplayOutputType>("projector");
   const [newName, setNewName] = useState("");
+  const [displayPendingRemoval, setDisplayPendingRemoval] =
+    useState<DisplayOutput | null>(null);
+  const [isRemovingDisplay, setIsRemovingDisplay] = useState(false);
   const pendingWrite = useRef<{
     timer: ReturnType<typeof setTimeout>;
     failureMessage: string;
@@ -306,6 +310,17 @@ const DisplayOutputsPanel = () => {
     },
     [applyAndPersist],
   );
+
+  const handleConfirmRemove = useCallback(async () => {
+    if (!displayPendingRemoval) return;
+    setIsRemovingDisplay(true);
+    try {
+      await handleRemove(displayPendingRemoval.id);
+      setDisplayPendingRemoval(null);
+    } finally {
+      setIsRemovingDisplay(false);
+    }
+  }, [displayPendingRemoval, handleRemove]);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -555,7 +570,7 @@ const DisplayOutputsPanel = () => {
                           padding="p-1"
                           svg={Trash2}
                           aria-label={`Remove ${output.name}`}
-                          onClick={() => void handleRemove(output.id)}
+                          onClick={() => setDisplayPendingRemoval(output)}
                         />
                       )}
                     </div>
@@ -721,6 +736,19 @@ const DisplayOutputsPanel = () => {
           </div>
         </div>
       </fieldset>
+      {displayPendingRemoval && (
+        <DeleteModal
+          isOpen
+          onClose={() => setDisplayPendingRemoval(null)}
+          onConfirm={() => void handleConfirmRemove()}
+          itemName={displayPendingRemoval.name}
+          title="Remove display"
+          message="Are you sure you want to remove"
+          warningMessage="This will stop the display from receiving content and cannot be undone."
+          confirmText="Remove display"
+          isConfirming={isRemovingDisplay}
+        />
+      )}
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import { mediaInfoType } from "../cloudinaryTypes";
+import { deleteCloudinaryAsset } from "../../../utils/cloudinaryUtils";
 
 function requireNonEmptyString(value: unknown, fieldLabel: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -38,7 +39,7 @@ function requireNonNegativeFiniteInt(
   return value;
 }
 
-type UploadCallbacks = {
+export type CloudinaryUploadCallbacks = {
   onProgress?: (progress: number) => void;
   onStatusUpdate?: (message: string) => void;
   isCancelled?: () => boolean;
@@ -53,7 +54,7 @@ export const uploadImageToCloudinary = async (
   file: File,
   uploadPreset: string,
   cloudName: string,
-  callbacks: UploadCallbacks = {},
+  callbacks: CloudinaryUploadCallbacks = {},
   options: CloudinaryUploadOptions = {},
 ): Promise<mediaInfoType> => {
   // Create FormData for Cloudinary unsigned upload
@@ -227,4 +228,130 @@ export const uploadImageToCloudinary = async (
   };
 
   return mediaInfo;
+};
+
+const CLOUDINARY_CLOUD_NAME = "portable-media";
+
+const buildCloudinaryWebpUrl = (secureUrl: string) => {
+  const marker = "/image/upload/";
+  const markerIndex = secureUrl.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error("The uploaded image did not include a usable cloud URL.");
+  }
+
+  const pathAndQuery = secureUrl.slice(markerIndex + marker.length);
+  const queryIndex = pathAndQuery.indexOf("?");
+  const path = queryIndex === -1 ? pathAndQuery : pathAndQuery.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : pathAndQuery.slice(queryIndex);
+  const webpPath = path.replace(/\.[^/.]+$/, ".webp");
+
+  return `${secureUrl.slice(0, markerIndex + marker.length)}f_webp,q_auto/${webpPath}${query}`;
+};
+
+const downloadCloudinaryFile = async (
+  url: string,
+  fileName: string,
+  callbacks: CloudinaryUploadCallbacks = {},
+): Promise<File> => {
+  const xhr = new XMLHttpRequest();
+  callbacks.setXhr?.(xhr);
+
+  return new Promise<File>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error, file?: File) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else if (file) resolve(file);
+      else reject(new Error("The converted image was empty."));
+    };
+
+    if (callbacks.isCancelled?.()) {
+      finish(new Error("Conversion cancelled"));
+      return;
+    }
+
+    xhr.addEventListener("progress", (event) => {
+      if (callbacks.isCancelled?.()) {
+        xhr.abort();
+        return;
+      }
+      if (event.lengthComputable) {
+        callbacks.onProgress?.(50 + (event.loaded / event.total) * 50);
+      }
+    });
+    xhr.addEventListener("load", () => {
+      if (callbacks.isCancelled?.()) {
+        finish(new Error("Conversion cancelled"));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finish(
+          new Error(`Converted image download failed with status ${xhr.status}.`),
+        );
+        return;
+      }
+      const blob = xhr.response;
+      if (!(blob instanceof Blob) || blob.size <= 0) {
+        finish(new Error("The converted image was empty."));
+        return;
+      }
+      finish(undefined, new File([blob], fileName, { type: "image/webp" }));
+    });
+    xhr.addEventListener("error", () =>
+      finish(new Error("Converted image download failed.")),
+    );
+    xhr.addEventListener("abort", () =>
+      finish(new Error("Conversion cancelled")),
+    );
+
+    xhr.open("GET", url);
+    xhr.responseType = "blob";
+    xhr.send();
+  });
+};
+
+export const convertCloudinaryImageToLocalWebp = async (
+  file: File,
+  uploadPreset: string,
+  callbacks: CloudinaryUploadCallbacks = {},
+): Promise<File> => {
+  let temporaryAsset: mediaInfoType | undefined;
+  let operationFailed = false;
+  try {
+    callbacks.onStatusUpdate?.("Uploading image for conversion...");
+    temporaryAsset = await uploadImageToCloudinary(
+      file,
+      uploadPreset,
+      CLOUDINARY_CLOUD_NAME,
+      {
+        ...callbacks,
+        onProgress: (progress) => callbacks.onProgress?.(progress * 0.5),
+      },
+      { folder: "temporary-conversions" },
+    );
+    callbacks.onStatusUpdate?.("Downloading converted image...");
+    const baseName = file.name.replace(/\.[^/.]+$/, "") || "converted-image";
+    return await downloadCloudinaryFile(
+      buildCloudinaryWebpUrl(temporaryAsset.secure_url),
+      `${baseName}.webp`,
+      callbacks,
+    );
+  } catch (error) {
+    operationFailed = true;
+    throw error;
+  } finally {
+    if (temporaryAsset?.public_id) {
+      const deleted = await deleteCloudinaryAsset(
+        temporaryAsset.public_id,
+        "image",
+      );
+      if (!deleted && !operationFailed) {
+        throw new Error("The temporary cloud image could not be removed.");
+      }
+      if (!deleted) {
+        console.error("Could not remove failed temporary Cloudinary image.");
+      }
+    }
+  }
 };

@@ -18,6 +18,7 @@ import {
   renderIntakeSubmissionsDigestEmail,
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
+  renderServicePlanShareEmail,
   renderPairingSetupCodeEmail,
   renderPasswordResetEmail,
   renderSignInCodeEmail,
@@ -77,6 +78,11 @@ import {
   normalizeChurchIntegrationsAdminUpdate,
   normalizeChurchIntegrationsForStorage,
 } from "./server/churchIntegrations.js";
+import {
+  getCurrentServiceWorkspacePath,
+  normalizeCurrentServiceWorkspaceForStorage,
+  normalizeCurrentServiceWorkspacePatch,
+} from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 
 const SESSION_KIND_HUMAN = "human";
@@ -415,13 +421,16 @@ const formatResendDisplayName = (name) => {
   return s;
 };
 
-const buildResendFrom = () => {
-  const addr = process.env.RESEND_FROM_EMAIL?.trim();
+const buildResendFrom = (
+  addressEnvName = "RESEND_FROM_EMAIL",
+  nameEnvName = "RESEND_FROM_NAME",
+) => {
+  const addr = process.env[addressEnvName]?.trim();
   if (!addr) return null;
   if (addr.includes("<") && addr.includes(">")) {
     return addr;
   }
-  const nameRaw = process.env.RESEND_FROM_NAME;
+  const nameRaw = process.env[nameEnvName];
   const display = formatResendDisplayName(
     nameRaw === undefined ? "WorshipSync" : nameRaw,
   );
@@ -432,6 +441,15 @@ const buildResendFrom = () => {
 };
 
 const resendFromEmail = buildResendFrom();
+const resendServicePlanFromEmail = buildResendFrom(
+  "RESEND_SERVICE_PLAN_FROM_EMAIL",
+  "RESEND_SERVICE_PLAN_FROM_NAME",
+);
+const resendNotificationFromEmail =
+  buildResendFrom(
+    "RESEND_NOTIFICATION_FROM_EMAIL",
+    "RESEND_NOTIFICATION_FROM_NAME",
+  ) || resendServicePlanFromEmail;
 const resendWebhookSecret = process.env.RESEND_WEBHOOK_SECRET || null;
 const resendClient =
   process.env.RESEND_API_KEY && resendFromEmail
@@ -837,10 +855,11 @@ const sendEmail = async ({
   htmlBody,
   tags = {},
   replyTo,
+  fromEmail,
 } = {}) => {
   if (resendClient && resendFromEmail) {
     const payload = {
-      from: resendFromEmail,
+      from: fromEmail || resendNotificationFromEmail || resendFromEmail,
       to: [to],
       subject,
       text: textBody,
@@ -900,6 +919,7 @@ const sendPairingSetupEmailInternal = async ({
     subject: `${deviceWord} setup: ${label}`,
     textBody: text,
     htmlBody: html,
+    fromEmail: resendFromEmail,
     tags: { type: "pairing_setup", kind },
   });
 };
@@ -2492,6 +2512,7 @@ const createEmailChallenge = async ({
     subject: "Your WorshipSync sign-in code",
     textBody: signInEmail.text,
     htmlBody: signInEmail.html,
+    fromEmail: resendFromEmail,
     tags: {
       category: "sign_in_code",
       churchId: church.churchId,
@@ -4488,8 +4509,11 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   getUserByUid,
   getChurchById,
   sendEmail,
+  servicePlanFromEmail: resendServicePlanFromEmail,
+  emailDeliveryConfigured: Boolean(resendClient),
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
+  renderServicePlanShareEmail,
   // Takes the member record rather than an address, so the public endpoint that
   // calls it has no way to redirect the invite.
   sendRosterMemberInvite,
@@ -5565,6 +5589,7 @@ export const authHandlers = {
           subject: "Reset your WorshipSync password",
           textBody: passwordResetEmail.text,
           htmlBody: passwordResetEmail.html,
+          fromEmail: resendFromEmail,
           tags: {
             category: "password_reset",
           },
@@ -5974,6 +5999,38 @@ export const authHandlers = {
       return res.json({
         success: true,
         integrations,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
+  async updateCurrentServiceWorkspace(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const sectionPatch = normalizeCurrentServiceWorkspacePatch(req.body);
+      const rtdb = requireRealtimeDatabase();
+      const workspaceRef = rtdb.ref(
+        getCurrentServiceWorkspacePath(req.params.churchId),
+      );
+
+      await workspaceRef.child("sections").update(sectionPatch.sections);
+      const savedSnapshot = await workspaceRef.once("value");
+      const currentServiceWorkspace =
+        normalizeCurrentServiceWorkspaceForStorage(savedSnapshot.val());
+      await addSecurityEvent({
+        type: "current_service_workspace_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+      });
+
+      return res.json({
+        success: true,
+        currentServiceWorkspace,
       });
     } catch (error) {
       return res.status(error.statusCode || 500).json({
@@ -6554,6 +6611,7 @@ export const authHandlers = {
           subject: "WorshipSync admin access requested",
           textBody: adminRecoveryEmail.text,
           htmlBody: adminRecoveryEmail.html,
+          fromEmail: resendFromEmail,
           tags: {
             category: "admin_recovery_request",
             churchId: church.churchId,
@@ -6676,6 +6734,7 @@ export const authHandlers = {
           subject: "Your WorshipSync account has been restored",
           textBody: accountRestoredEmail.text,
           htmlBody: accountRestoredEmail.html,
+          fromEmail: resendFromEmail,
           tags: {
             category: "support_admin_recovered",
             churchId: req.params.churchId,

@@ -16,7 +16,12 @@ import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
 import { useControllerBasePath } from "../../context/activeController";
-import type { Arrangment, ItemSlideType, TimerInfo } from "../../types";
+import type {
+  Arrangment,
+  FormattedSection,
+  ItemSlideType,
+  TimerInfo,
+} from "../../types";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { cn } from "../../utils/cnHelper";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -27,6 +32,7 @@ import {
   buildOutlineSlideSections,
   buildOutlineVirtualRows,
   captureOutlineScrollAnchor,
+  captureOutlineZoomFocalPoint,
   findOutlineRowIndexForItem,
   getControllerItemPath,
   getNonHeadingOutlineItems,
@@ -36,7 +42,9 @@ import {
   resolveOutlineScrollTopFromAnchor,
   type OutlineScrollAnchor,
   type OutlineSlideSection,
+  type OutlineZoomFocalPoint,
 } from "../../utils/outlineSlideSections";
+import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
 
 const SECTION_LABEL_HEIGHT = 36;
@@ -72,6 +80,7 @@ type OutlineItemSlidesScrollerProps = {
     index: number,
     options?: { skipNextClick?: boolean },
   ) => void;
+  onRenameSection?: (sectionNum: number, name: string) => void;
 };
 
 type OutlineActiveItemSource = {
@@ -82,6 +91,7 @@ type OutlineActiveItemSource = {
   slides?: ItemSlideType[];
   arrangements?: Arrangment[];
   selectedArrangement?: number;
+  formattedSections?: FormattedSection[];
 };
 
 const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
@@ -125,6 +135,7 @@ const OutlineItemSlidesScroller = ({
   selectSlide,
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
+  onRenameSection,
 }: OutlineItemSlidesScrollerProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -147,6 +158,7 @@ const OutlineItemSlidesScroller = ({
       slides: item.slides,
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
+      formattedSections: item.formattedSections,
     };
   }, shallowEqual);
   const activeItemListId = activeItem.listId;
@@ -191,6 +203,55 @@ const OutlineItemSlidesScroller = ({
     [sections, cols],
   );
   const rowsRef = useRef(rows);
+  const virtualizerRef = useRef<ReturnType<typeof useVirtualizer> | null>(null);
+  const pendingZoomFocalRef = useRef<OutlineZoomFocalPoint | null>(null);
+  const isZoomRestoringRef = useRef(false);
+  const zoomRestoreTimerRef = useRef<number | null>(null);
+  const colsSeenRef = useRef(cols);
+
+  const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
+  const tileRowHeightRef = useRef(tileRowHeight);
+  tileRowHeightRef.current = tileRowHeight;
+  const shouldSyncTileRowHeightRef = useRef(true);
+
+  const didInitialScrollRef = useRef(false);
+  const isInitialAnchoringRef = useRef(false);
+
+  // Capture from the previous column packing before this render's rows/virtualizer
+  // replace it. Layout effects run too late: the new DOM is already committed.
+  if (colsSeenRef.current !== cols) {
+    const element = scrollRef.current;
+    const previousVirtualizer = virtualizerRef.current;
+    if (
+      element &&
+      previousVirtualizer &&
+      didInitialScrollRef.current &&
+      rowsRef.current.length > 0
+    ) {
+      const getRowStart = (index: number) =>
+        previousVirtualizer.getOffsetForIndex(index)?.[0] ?? 0;
+      const getRowHeight = (index: number) => {
+        const start = getRowStart(index);
+        const next = previousVirtualizer.getOffsetForIndex(index + 1)?.[0];
+        if (next != null) return Math.max(1, next - start - ROW_GAP);
+        const row = rowsRef.current[index];
+        if (row?.type === "sectionLabel") return SECTION_LABEL_HEIGHT;
+        if (row?.type === "empty") return EMPTY_ROW_HEIGHT;
+        return tileRowHeightRef.current;
+      };
+      pendingZoomFocalRef.current = captureOutlineZoomFocalPoint(
+        rowsRef.current,
+        getRowStart,
+        getRowHeight,
+        element.scrollTop,
+        element.clientHeight,
+        selectedItemListId || activeItemListId,
+        selectedSlide,
+      );
+      isZoomRestoringRef.current = pendingZoomFocalRef.current != null;
+    }
+    colsSeenRef.current = cols;
+  }
   rowsRef.current = rows;
 
   const timersByItemId = useMemo(() => {
@@ -200,11 +261,6 @@ const OutlineItemSlidesScroller = ({
     }
     return map;
   }, [timers]);
-
-  const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
-  const tileRowHeightRef = useRef(tileRowHeight);
-  tileRowHeightRef.current = tileRowHeight;
-  const shouldSyncTileRowHeightRef = useRef(true);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -219,27 +275,15 @@ const OutlineItemSlidesScroller = ({
     gap: ROW_GAP,
     initialRect: { width: 0, height: 600 },
   });
-  const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
 
   const prevTileRowHeightRef = useRef(tileRowHeight);
   useLayoutEffect(() => {
     if (prevTileRowHeightRef.current !== tileRowHeight) {
       prevTileRowHeightRef.current = tileRowHeight;
-      virtualizerRef.current.measure();
+      virtualizerRef.current?.measure();
     }
   }, [tileRowHeight]);
-
-  const prevColsRef = useRef(cols);
-  useLayoutEffect(() => {
-    if (prevColsRef.current !== cols) {
-      prevColsRef.current = cols;
-      shouldSyncTileRowHeightRef.current = true;
-      setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
-      prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
-      virtualizerRef.current.measure();
-    }
-  }, [cols]);
 
   const targetListId =
     selectedItemListId || activeItemListId || undefined;
@@ -254,31 +298,35 @@ const OutlineItemSlidesScroller = ({
     null,
   );
   const lastSelectionScrollKeyRef = useRef<string>("");
-  const didInitialScrollRef = useRef(false);
-  const isInitialAnchoringRef = useRef(false);
+  const selectionScrollCleanupRef = useRef<(() => void) | null>(null);
   const ignorePinRef = useRef(true);
   const pinRafRef = useRef<number | null>(null);
   const viewportAnchorRef = useRef<OutlineScrollAnchor | null>(null);
 
   const readRowOffset = useCallback((rowIndex: number) => {
     if (rowIndex < 0) return null;
-    return virtualizerRef.current.getOffsetForIndex(rowIndex)?.[0] ?? null;
+    return virtualizerRef.current?.getOffsetForIndex(rowIndex)?.[0] ?? null;
   }, []);
 
   const readRowStart = useCallback(
-    (index: number) => virtualizerRef.current.getOffsetForIndex(index)?.[0] ?? 0,
+    (index: number) =>
+      virtualizerRef.current?.getOffsetForIndex(index)?.[0] ?? 0,
     [],
   );
 
-  const captureViewportAnchor = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    viewportAnchorRef.current = captureOutlineScrollAnchor(
-      rowsRef.current,
-      readRowStart,
-      element.scrollTop,
-    );
-  }, [readRowStart, scrollRef]);
+  const captureViewportAnchor = useCallback(
+    (options?: { force?: boolean }) => {
+      if (isZoomRestoringRef.current && !options?.force) return;
+      const element = scrollRef.current;
+      if (!element) return;
+      viewportAnchorRef.current = captureOutlineScrollAnchor(
+        rowsRef.current,
+        readRowStart,
+        element.scrollTop,
+      );
+    },
+    [readRowStart, scrollRef],
+  );
 
   const beginIgnorePin = useCallback((durationMs = OUTLINE_SCROLL_SETTLE_MS) => {
     ignorePinRef.current = true;
@@ -291,6 +339,34 @@ const OutlineItemSlidesScroller = ({
       captureViewportAnchor();
     }, durationMs);
   }, [captureViewportAnchor]);
+
+  const beginZoomRestoreWindow = useCallback(() => {
+    isZoomRestoringRef.current = true;
+    ignorePinRef.current = true;
+    if (zoomRestoreTimerRef.current != null) {
+      window.clearTimeout(zoomRestoreTimerRef.current);
+    }
+    zoomRestoreTimerRef.current = window.setTimeout(() => {
+      zoomRestoreTimerRef.current = null;
+      isZoomRestoringRef.current = false;
+      pendingZoomFocalRef.current = null;
+      ignorePinRef.current = false;
+      captureViewportAnchor({ force: true });
+    }, OUTLINE_INITIAL_ANCHOR_MS);
+  }, [captureViewportAnchor]);
+
+  const layoutColsRef = useRef(cols);
+  useLayoutEffect(() => {
+    if (layoutColsRef.current === cols) return;
+    layoutColsRef.current = cols;
+    shouldSyncTileRowHeightRef.current = true;
+    setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
+    prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
+    virtualizerRef.current?.measure();
+    if (pendingZoomFocalRef.current) {
+      beginZoomRestoreWindow();
+    }
+  }, [beginZoomRestoreWindow, cols]);
 
   const extendInitialAnchoring = useCallback(() => {
     isInitialAnchoringRef.current = true;
@@ -351,7 +427,9 @@ const OutlineItemSlidesScroller = ({
     const element = scrollRef.current;
     if (!element) return;
     const onScroll = () => {
-      captureViewportAnchor();
+      if (!isZoomRestoringRef.current) {
+        captureViewportAnchor();
+      }
       if (!didInitialScrollRef.current || ignorePinRef.current) return;
       if (pinRafRef.current != null) return;
       pinRafRef.current = window.requestAnimationFrame(() => {
@@ -380,6 +458,11 @@ const OutlineItemSlidesScroller = ({
       if (initialAnchorTimerRef.current != null) {
         window.clearTimeout(initialAnchorTimerRef.current);
       }
+      if (zoomRestoreTimerRef.current != null) {
+        window.clearTimeout(zoomRestoreTimerRef.current);
+      }
+      selectionScrollCleanupRef.current?.();
+      selectionScrollCleanupRef.current = null;
     };
   }, []);
 
@@ -413,7 +496,7 @@ const OutlineItemSlidesScroller = ({
         // Instant placement for collapse/open — smooth would still be mid-flight
         // while measurements keep shifting.
         element.scrollTop = offset;
-        virtualizerRef.current.scrollToIndex(rowIndex, {
+        virtualizerRef.current?.scrollToIndex(rowIndex, {
           align: "start",
           behavior: "auto",
         });
@@ -421,7 +504,7 @@ const OutlineItemSlidesScroller = ({
           element.scrollTop = offset;
         }
       } else {
-        virtualizerRef.current.scrollToIndex(rowIndex, {
+        virtualizerRef.current?.scrollToIndex(rowIndex, {
           align: "start",
           behavior: "smooth",
         });
@@ -440,6 +523,71 @@ const OutlineItemSlidesScroller = ({
     [scrollToListId],
   );
 
+  const applyZoomFocal = useCallback(
+    (focal: OutlineZoomFocalPoint) => {
+      const element = scrollRef.current;
+      const currentVirtualizer = virtualizerRef.current;
+      if (!element || !currentVirtualizer) return false;
+
+      beginIgnorePin(OUTLINE_INITIAL_ANCHOR_MS);
+
+      if (focal.kind === "selected") {
+        const rowIndex = findOutlineRowIndexForItem(
+          rowsRef.current,
+          focal.listId,
+          focal.slideIndex,
+        );
+        if (rowIndex < 0) return false;
+        currentVirtualizer.scrollToIndex(rowIndex, {
+          align: "center",
+          behavior: "auto",
+        });
+        const offset = readRowOffset(rowIndex);
+        if (offset != null) {
+          element.scrollTop = Math.max(
+            0,
+            offset - element.clientHeight / 2 + tileRowHeightRef.current / 2,
+          );
+        }
+        const child = document.getElementById(
+          `item-slide-${focal.listId}-${focal.slideIndex}`,
+        );
+        if (child) {
+          const parentRect = element.getBoundingClientRect();
+          const childRect = child.getBoundingClientRect();
+          element.scrollTop +=
+            childRect.top +
+            childRect.height / 2 -
+            (parentRect.top + parentRect.height / 2);
+        }
+        captureViewportAnchor({ force: true });
+        return true;
+      }
+
+      const nextTop = resolveOutlineScrollTopFromAnchor(
+        rowsRef.current,
+        readRowStart,
+        focal.anchor,
+      );
+      if (nextTop == null) return false;
+      const rowIndex = findOutlineRowIndexForItem(
+        rowsRef.current,
+        focal.anchor.listId,
+        focal.anchor.startIndex,
+      );
+      if (rowIndex >= 0) {
+        currentVirtualizer.scrollToIndex(rowIndex, {
+          align: "start",
+          behavior: "auto",
+        });
+      }
+      element.scrollTop = nextTop;
+      captureViewportAnchor({ force: true });
+      return true;
+    },
+    [beginIgnorePin, captureViewportAnchor, readRowOffset, readRowStart, scrollRef],
+  );
+
   useLayoutEffect(() => {
     if (rows.length === 0) return;
     const listId = selectedItemListIdRef.current;
@@ -448,6 +596,7 @@ const OutlineItemSlidesScroller = ({
     const tryScroll = () => {
       // Parent attaches the scroll element ref; child layout can run first.
       if (!scrollRef.current) return false;
+      if (isZoomRestoringRef.current) return true;
       if (!didInitialScrollRef.current) {
         didInitialScrollRef.current = true;
         lastPinnedListIdRef.current = listId;
@@ -490,6 +639,7 @@ const OutlineItemSlidesScroller = ({
       scrollToListId(listId, selectedSlideRef.current, { behavior: "auto" });
       return;
     }
+    if (isZoomRestoringRef.current) return;
     if (isInitialAnchoringRef.current) {
       applyPinnedScroll(selectedSlideRef.current, "auto");
     }
@@ -511,6 +661,7 @@ const OutlineItemSlidesScroller = ({
       if (nextHeight <= 0) return;
       const heightChanged = nextHeight !== lastHeight;
       lastHeight = nextHeight;
+      if (isZoomRestoringRef.current) return;
       if (!heightChanged && didInitialScrollRef.current && !isInitialAnchoringRef.current) {
         return;
       }
@@ -528,13 +679,21 @@ const OutlineItemSlidesScroller = ({
   }, [applyPinnedScroll, extendInitialAnchoring, scrollRef]);
 
   // After the initial anchor window, restore the visible row when virtual
-  // geometry rebuilds (remote doc updates, prefetch, tile-height sync). Do not
-  // pin to selection — the operator may have scrolled elsewhere. Selection
-  // keep-in-view still runs afterward when the chosen slide changes.
+  // geometry rebuilds (remote doc updates, prefetch, tile-height sync). Zoom
+  // uses a frozen slide/row identity captured before the column reflow. Other
+  // rebuilds keep the on-screen row, not the selected slide — the operator may
+  // have scrolled elsewhere. Selection keep-in-view still runs when the chosen
+  // slide changes.
   useLayoutEffect(() => {
-    if (!didInitialScrollRef.current || isInitialAnchoringRef.current) return;
+    if (!didInitialScrollRef.current) return;
 
     const restore = () => {
+      const zoomFocal = pendingZoomFocalRef.current;
+      if (isZoomRestoringRef.current && zoomFocal) {
+        return applyZoomFocal(zoomFocal);
+      }
+      if (isInitialAnchoringRef.current) return false;
+
       const element = scrollRef.current;
       const anchor = viewportAnchorRef.current;
       if (!element || !anchor) {
@@ -561,7 +720,22 @@ const OutlineItemSlidesScroller = ({
       restore();
     });
     return () => window.cancelAnimationFrame(rafId);
-  }, [captureViewportAnchor, readRowStart, rows, scrollRef, tileRowHeight]);
+  }, [
+    applyZoomFocal,
+    captureViewportAnchor,
+    readRowStart,
+    rows,
+    scrollRef,
+    tileRowHeight,
+  ]);
+
+  // Parent scroll ref can attach after child layout (same race as collapse/open).
+  useEffect(() => {
+    if (!didInitialScrollRef.current) return;
+    const zoomFocal = pendingZoomFocalRef.current;
+    if (!isZoomRestoringRef.current || !zoomFocal) return;
+    applyZoomFocal(zoomFocal);
+  }, [applyZoomFocal, rows, tileRowHeight]);
 
   // Left-list / route item changes: update browse pin only. Scrolling to the
   // selection is owned by the activeItemListId + selectedSlide effect below so
@@ -581,82 +755,101 @@ const OutlineItemSlidesScroller = ({
     setBrowsePinListId(selectedItemListId);
   }, [beginIgnorePin, selectedItemListId]);
 
+  const scrollSelectedSlideIntoView = useCallback(
+    (options?: { force?: boolean }) => {
+      selectionScrollCleanupRef.current?.();
+      selectionScrollCleanupRef.current = null;
+
+      if (!didInitialScrollRef.current) return;
+      if (isInitialAnchoringRef.current && !options?.force) return;
+
+      const slideIndex = selectedSlideRef.current;
+      if (slideIndex < 0) return;
+      const listId = activeItemListId || selectedItemListIdRef.current;
+      if (!listId) return;
+
+      if (!options?.force) {
+        const pending = pendingSelectRef.current;
+        if (pending && (pending.listId !== listId || pending.index !== slideIndex)) {
+          return;
+        }
+      }
+
+      const scrollKey = `${listId}:${slideIndex}`;
+      if (!options?.force && lastSelectionScrollKeyRef.current === scrollKey) {
+        return;
+      }
+      lastSelectionScrollKeyRef.current = scrollKey;
+
+      const parent = scrollRef.current;
+      const childId = `item-slide-${listId}-${slideIndex}`;
+      const mountedChild = document.getElementById(childId);
+      beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
+
+      // Tile already in the DOM (typical after browsing then clicking): one smooth
+      // keep-in-view. Far/unmounted tiles: jump the virtualizer, then smooth-center.
+      if (parent && mountedChild) {
+        keepElementInView({
+          child: mountedChild,
+          parent,
+          shouldScrollToCenter: true,
+        });
+        captureViewportAnchor();
+        return;
+      }
+
+      const rowIndex = findOutlineRowIndexForItem(
+        rowsRef.current,
+        listId,
+        slideIndex,
+      );
+      if (rowIndex < 0) return;
+
+      virtualizerRef.current?.scrollToIndex(rowIndex, {
+        align: "center",
+        behavior: "auto",
+      });
+
+      const runKeepInView = () => {
+        const scrollParent = scrollRef.current;
+        const child = document.getElementById(childId);
+        if (!scrollParent || !child) return;
+        keepElementInView({
+          child,
+          parent: scrollParent,
+          shouldScrollToCenter: true,
+        });
+        captureViewportAnchor();
+      };
+
+      const outerRaf = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(runKeepInView);
+      });
+      const retryTimer = window.setTimeout(runKeepInView, 80);
+      selectionScrollCleanupRef.current = () => {
+        window.cancelAnimationFrame(outerRaf);
+        window.clearTimeout(retryTimer);
+      };
+    },
+    [activeItemListId, beginIgnorePin, captureViewportAnchor, scrollRef],
+  );
+
   // Single scroll authority for selection changes after the initial anchor.
   // Avoid stacking virtualizer smooth + keepElementInView smooth, and wait out
   // any pending cross-item click until the final slide index is applied.
   useEffect(() => {
-    if (!didInitialScrollRef.current || isInitialAnchoringRef.current) return;
-    if (selectedSlide < 0) return;
-    const listId = activeItemListId || selectedItemListIdRef.current;
-    if (!listId) return;
-
-    const pending = pendingSelectRef.current;
-    if (pending) {
-      if (pending.listId !== listId || pending.index !== selectedSlide) {
-        return;
-      }
-    }
-
-    const scrollKey = `${listId}:${selectedSlide}`;
-    if (lastSelectionScrollKeyRef.current === scrollKey) return;
-    lastSelectionScrollKeyRef.current = scrollKey;
-
-    const parent = scrollRef.current;
-    const childId = `item-slide-${listId}-${selectedSlide}`;
-    const mountedChild = document.getElementById(childId);
-    beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
-
-    // Tile already in the DOM (typical after browsing then clicking): one smooth
-    // keep-in-view. Far/unmounted tiles: jump the virtualizer, then smooth-center.
-    if (parent && mountedChild) {
-      keepElementInView({
-        child: mountedChild,
-        parent,
-        shouldScrollToCenter: true,
-      });
-      captureViewportAnchor();
-      return;
-    }
-
-    const rowIndex = findOutlineRowIndexForItem(
-      rowsRef.current,
-      listId,
-      selectedSlide,
-    );
-    if (rowIndex < 0) return;
-
-    virtualizerRef.current.scrollToIndex(rowIndex, {
-      align: "center",
-      behavior: "auto",
-    });
-
-    const runKeepInView = () => {
-      const scrollParent = scrollRef.current;
-      const child = document.getElementById(childId);
-      if (!scrollParent || !child) return;
-      keepElementInView({
-        child,
-        parent: scrollParent,
-        shouldScrollToCenter: true,
-      });
-      captureViewportAnchor();
-    };
-
-    const outerRaf = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(runKeepInView);
-    });
-    const retryTimer = window.setTimeout(runKeepInView, 80);
+    scrollSelectedSlideIntoView();
     return () => {
-      window.cancelAnimationFrame(outerRaf);
-      window.clearTimeout(retryTimer);
+      selectionScrollCleanupRef.current?.();
+      selectionScrollCleanupRef.current = null;
     };
-  }, [
-    activeItemListId,
-    beginIgnorePin,
-    captureViewportAnchor,
-    scrollRef,
-    selectedSlide,
-  ]);
+  }, [activeItemListId, scrollSelectedSlideIntoView, selectedSlide]);
+
+  useEffect(() => {
+    return subscribeOutlineSelectionScroll(() => {
+      scrollSelectedSlideIntoView({ force: true });
+    });
+  }, [scrollSelectedSlideIntoView]);
 
   useEffect(() => {
     const pending = pendingSelectRef.current;
@@ -755,6 +948,8 @@ const OutlineItemSlidesScroller = ({
                         itemType={section.type}
                         isMobile={isMobile}
                         draggedSection={isActive ? draggedSection : null}
+                        formattedSections={section.formattedSections}
+                        onRenameSection={isActive ? onRenameSection : undefined}
                         isStreamFormat={isStreamFormat}
                         getBibleInfo={getBibleInfoGetter(section.slides)}
                         borderWidth={sizeConfig.borderWidth}

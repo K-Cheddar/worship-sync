@@ -139,6 +139,18 @@ export interface ElectronAPI {
       height?: number;
     },
   ) => Promise<ElectronLocalAsset>;
+  importLocalAssetBytes: (
+    data: ArrayBuffer,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
 

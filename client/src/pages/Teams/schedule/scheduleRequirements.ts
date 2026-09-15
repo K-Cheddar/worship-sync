@@ -78,9 +78,13 @@ export const resolveOccurrenceRequirements = ({
   const teamPositionIdSet = new Set(teamPositionIds);
   const scope = (reqs: PositionRequirement[]) =>
     reqs.filter((req) => teamPositionIdSet.has(req.positionId));
-  const fromOccurrence = scope(sanitizePositionRequirements(occurrence?.positionRequirements));
+  const fromOccurrence = scope(
+    sanitizePositionRequirements(occurrence?.positionRequirements),
+  );
   if (fromOccurrence.length) return fromOccurrence;
-  const fromService = scope(sanitizePositionRequirements(service?.positionRequirements));
+  const fromService = scope(
+    sanitizePositionRequirements(service?.positionRequirements),
+  );
   if (fromService.length) return fromService;
   return teamPositionIds.map((positionId) => ({ positionId, count: 1 }));
 };
@@ -89,7 +93,8 @@ export const resolveOccurrenceRequirements = ({
 export const getRequiredCount = (
   requirements: PositionRequirement[] | undefined,
   positionId: string,
-): number => requirements?.find((req) => req.positionId === positionId)?.count ?? 0;
+): number =>
+  requirements?.find((req) => req.positionId === positionId)?.count ?? 0;
 
 export type ScheduleSlotColumn = {
   /** Storage/assignment key: makeSlotKey(positionId, slot). */
@@ -105,6 +110,11 @@ export type ScheduleSlotColumn = {
 
 export type OccurrenceFill = {
   filled: number;
+  /**
+   * Staffing target for this occurrence: baseline/core position requirements
+   * plus any occurrence-added `additionalPositionSlots`. Does not mutate the
+   * service's permanent defaults.
+   */
   required: number;
   /** Filled slots whose holder has accepted. Subset of `filled`. */
   accepted: number;
@@ -112,10 +122,38 @@ export type OccurrenceFill = {
   declined: number;
 };
 
+const additionalSlotKeySet = (
+  additionalSlotKeys?: ReadonlySet<string> | readonly string[],
+): ReadonlySet<string> | null => {
+  if (!additionalSlotKeys) return null;
+  return additionalSlotKeys instanceof Set
+    ? additionalSlotKeys
+    : new Set(additionalSlotKeys);
+};
+
 /**
- * How many required slots an occurrence has and how many are filled, using the
- * same `slot < requiredCount` guard the grid and board render with. Shared so
- * every schedule layout shows an identical fill indicator.
+ * Whether a slot counts as a staffing need for one occurrence: a baseline
+ * requirement slot, or a slot the scheduler explicitly added for this date via
+ * `additionalPositionSlots`. Same guard the grid, board, and Who's Serving
+ * summary use when deciding a cell is in play.
+ */
+export const isOccurrenceStaffingSlot = (
+  column: Pick<ScheduleSlotColumn, "columnKey" | "positionId" | "slot">,
+  requirements: PositionRequirement[] | undefined,
+  additionalSlotKeys?: ReadonlySet<string> | readonly string[],
+): boolean => {
+  if (column.slot < getRequiredCount(requirements, column.positionId)) {
+    return true;
+  }
+  const keys = additionalSlotKeySet(additionalSlotKeys);
+  return Boolean(keys?.has(column.columnKey));
+};
+
+/**
+ * How many staffing slots an occurrence has and how many are filled. Counts
+ * baseline requirement slots and occurrence-added `additionalPositionSlots`
+ * with the same enablement guard the grid and board render with, so every
+ * schedule layout shows an identical fill indicator.
  *
  * **A declined slot is not filled.** Before accept/decline existed, "assigned"
  * and "covered" were the same thing. They are not any more, and counting a
@@ -131,13 +169,23 @@ export const computeOccurrenceFill = (
     | Record<string, TeamScheduleCellAssignment>
     | undefined,
   responsesForOccurrence?: Record<string, TeamScheduleAssignmentResponse>,
+  additionalSlotKeys?: ReadonlySet<string> | readonly string[],
 ): OccurrenceFill => {
   let filled = 0;
   let required = 0;
   let accepted = 0;
   let declined = 0;
+  const additionalKeys = additionalSlotKeySet(additionalSlotKeys);
   columns.forEach((column) => {
-    if (column.slot >= getRequiredCount(requirements, column.positionId)) return;
+    if (
+      !isOccurrenceStaffingSlot(
+        column,
+        requirements,
+        additionalKeys || undefined,
+      )
+    ) {
+      return;
+    }
     required += 1;
     const memberId = readCellPrimaryMemberId(
       assignmentsForOccurrence?.[column.columnKey],
@@ -179,7 +227,8 @@ export const buildScheduleColumns = ({
 }): ScheduleSlotColumn[] => {
   const maxCountByPosition = new Map<string, number>();
   occurrences.forEach((occurrence) => {
-    const requirements = requirementsByOccurrence.get(occurrence.occurrenceId) || [];
+    const requirements =
+      requirementsByOccurrence.get(occurrence.occurrenceId) || [];
     requirements.forEach((req) => {
       maxCountByPosition.set(
         req.positionId,
@@ -189,20 +238,19 @@ export const buildScheduleColumns = ({
     const requirementByPosition = new Map(
       requirements.map((requirement) => [requirement.positionId, requirement]),
     );
-    (additionalPositionSlots?.[occurrence.occurrenceId] || []).forEach((slotKey) => {
-      const slot = parseSlotKey(slotKey);
-      const requirement = slot && requirementByPosition.get(slot.positionId);
-      if (
-        !slot ||
-        slot.slot < (requirement?.count || 0)
-      ) {
-        return;
-      }
-      maxCountByPosition.set(
-        slot.positionId,
-        Math.max(maxCountByPosition.get(slot.positionId) || 0, slot.slot + 1),
-      );
-    });
+    (additionalPositionSlots?.[occurrence.occurrenceId] || []).forEach(
+      (slotKey) => {
+        const slot = parseSlotKey(slotKey);
+        const requirement = slot && requirementByPosition.get(slot.positionId);
+        if (!slot || slot.slot < (requirement?.count || 0)) {
+          return;
+        }
+        maxCountByPosition.set(
+          slot.positionId,
+          Math.max(maxCountByPosition.get(slot.positionId) || 0, slot.slot + 1),
+        );
+      },
+    );
   });
 
   const orderedPositionIds: string[] = [];
@@ -215,7 +263,9 @@ export const buildScheduleColumns = ({
   teamPositionIds.forEach(pushPosition);
   [...maxCountByPosition.keys()].forEach(pushPosition);
 
-  const positionById = new Map(positions.map((position) => [position.positionId, position]));
+  const positionById = new Map(
+    positions.map((position) => [position.positionId, position]),
+  );
   const columns: ScheduleSlotColumn[] = [];
   orderedPositionIds.forEach((positionId) => {
     const position = positionById.get(positionId);

@@ -51,6 +51,73 @@ describe("LocalAssetStore", () => {
     );
   });
 
+  it.each([
+    ["camera.mov", "video/quicktime"],
+    ["camera.mkv", "video/x-matroska"],
+    ["camera.avi", "video/x-msvideo"],
+    ["camera.m4v", "video/x-m4v"],
+  ])("stores the supported video type %s", async (fileName, contentType) => {
+    const source = join(root, fileName);
+    writeFileSync(source, "video-bytes");
+    const store = new LocalAssetStore(join(root, "managed"));
+
+    const imported = await store.importFile({
+      assetId: "video-asset",
+      kind: "video",
+      sourcePath: source,
+      fileName,
+      contentType,
+    });
+
+    await expect(store.resolvePath("video-asset")).resolves.toEqual(
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ contentType }),
+      }),
+    );
+    expect(imported.storedFileName).toMatch(/^[a-f0-9]{64}\.\w+$/);
+  });
+
+  it("stores AVIF images in the Electron-backed asset store", async () => {
+    const source = join(root, "design.avif");
+    writeFileSync(source, "avif-bytes");
+    const store = new LocalAssetStore(join(root, "managed"));
+
+    const imported = await store.importFile({
+      assetId: "avif-asset",
+      kind: "image",
+      sourcePath: source,
+      fileName: "design.avif",
+      contentType: "image/avif",
+    });
+
+    expect(imported.contentType).toBe("image/avif");
+    await expect(store.resolvePath("avif-asset")).resolves.toEqual(
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ contentType: "image/avif" }),
+      }),
+    );
+  });
+
+  it("imports downloaded conversion bytes into managed storage", async () => {
+    const store = new LocalAssetStore(join(root, "managed"));
+    const bytes = new Uint8Array([0, 1, 2, 3]);
+
+    const imported = await store.importBytes(
+      {
+        assetId: "converted-video",
+        workspaceId: "church-1",
+        kind: "video",
+        fileName: "camera.mp4",
+        contentType: "video/mp4",
+      },
+      bytes,
+    );
+    const resolved = await store.resolvePath("converted-video");
+
+    expect(imported.size).toBe(bytes.byteLength);
+    expect(readFileSync(resolved!.path)).toEqual(Buffer.from(bytes));
+  });
+
   it("deduplicates identical bytes and removes them after the final reference", async () => {
     const source = join(root, "shared.png");
     writeFileSync(source, "shared-image");

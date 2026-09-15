@@ -22,7 +22,7 @@ const AccountSidebarNav = ({ onNavigate, className }: AccountSidebarNavProps) =>
         onClick={() => onNavigate?.()}
         className={({ isActive }) =>
           cn(
-            "group flex items-center gap-2 rounded-none border px-2 py-2.5 text-left text-sm transition-colors",
+            "group flex cursor-pointer items-center gap-2 rounded-none border px-2 py-2.5 text-left text-sm transition-colors",
             isActive
               ? "border-cyan-400/40 bg-cyan-500/15 text-white"
               : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",

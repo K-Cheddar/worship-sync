@@ -91,7 +91,7 @@ const renderOverlay = ({
   return render(
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ToolbarOverlay
-        isEditMode={false}
+        isLyricsEditorOpen={false}
         quickLinksDrawerOpen={false}
         onQuickLinksOpenChange={jest.fn()}
       />
@@ -173,7 +173,7 @@ describe("ToolbarOverlay", () => {
     render(
       <GlobalInfoContext.Provider value={{ access: "full" } as any}>
         <ToolbarOverlay
-          isEditMode={false}
+          isLyricsEditorOpen={false}
           quickLinksDrawerOpen={false}
           onQuickLinksOpenChange={jest.fn()}
         />

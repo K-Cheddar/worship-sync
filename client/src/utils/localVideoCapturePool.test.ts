@@ -197,6 +197,55 @@ describe("localVideoCapturePool", () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  it("reopens an Electron screen share even when another window holds the lock", async () => {
+    (
+      window as unknown as {
+        electronAPI: { getDesktopCaptureSources: jest.Mock };
+      }
+    ).electronAPI = {
+      getDesktopCaptureSources: jest
+        .fn()
+        .mockResolvedValue([{ id: "screen:0:0", name: "Screen 1" }]),
+    };
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: jest.fn(
+          async (
+            _name: string,
+            _options: unknown,
+            callback: (lock: unknown | null) => Promise<void>,
+          ) => callback(null),
+        ),
+      },
+    });
+    getUserMedia.mockReset();
+    getUserMedia.mockResolvedValue(videoStream);
+    const screenBinding = {
+      sourceId: "screen-source",
+      deviceId: "screen:0:0",
+      deviceLabel: "Screen 1",
+      captureKind: "screen" as const,
+      displaySourceName: "Screen 1",
+    };
+
+    await expect(
+      acquireWarmLocalVideoCapture("screen-source", screenBinding),
+    ).resolves.toEqual({ stream: videoStream, audioError: undefined });
+    expect(getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: {
+          mandatory: expect.objectContaining({
+            chromeMediaSource: "desktop",
+            chromeMediaSourceId: "screen:0:0",
+          }),
+        },
+      }),
+    );
+
+    delete (window as { electronAPI?: unknown }).electronAPI;
+  });
+
   it("retries briefly when the OS reports the device busy", async () => {
     jest.useFakeTimers();
     getUserMedia.mockReset();

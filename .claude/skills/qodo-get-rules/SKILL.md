@@ -173,7 +173,7 @@ After code generation, inform the user about rule application:
 
 ## Configuration
 
-See [README.md](../../README.md#configuration) for full configuration instructions, including API key setup and environment variable options.
+Configure Qodo by setting `QODO_API_KEY` or creating `~/.qodo/config.json`; Step 3 defines the supported configuration fields and precedence.
 
 ---
 

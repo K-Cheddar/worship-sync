@@ -314,6 +314,12 @@ const ContextProbe = () => {
       <div data-testid="integrations-status">
         {context.churchIntegrationsStatus}
       </div>
+      <div data-testid="workspace-status">
+        {context.currentServiceWorkspaceStatus}
+      </div>
+      <div data-testid="workspace-displays">
+        {context.currentServiceWorkspace.sections.displays ? "yes" : "no"}
+      </div>
       <div data-testid="youtube-connected">
         {context.churchIntegrations.youtube.connected ? "yes" : "no"}
       </div>
@@ -528,6 +534,9 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled(),
     );
     expect(globalFireDbInfo.canWriteSharedData).toBe(false);
+    expect(
+      onValueCallbacks.has("churches/church-1/data/currentServiceWorkspace"),
+    ).toBe(false);
   });
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {
@@ -913,6 +922,63 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(screen.getByTestId("branding-status")).toHaveTextContent("ready"),
     );
     expect(screen.getByTestId("branding-mission")).toHaveTextContent("none");
+  });
+
+  it("subscribes to current service workspace settings and normalizes partial data", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    const workspacePath = "churches/church-1/data/currentServiceWorkspace";
+    await waitFor(() => expect(onValueCallbacks.has(workspacePath)).toBe(true));
+
+    act(() => {
+      onValueCallbacks.get(workspacePath)?.(
+        snapshotFor({
+          sections: {
+            displays: false,
+            team: false,
+          },
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-status")).toHaveTextContent("ready"),
+    );
+    expect(screen.getByTestId("workspace-displays")).toHaveTextContent("no");
+  });
+
+  it("preserves the last workspace configuration when its listener errors", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    const workspacePath = "churches/church-1/data/currentServiceWorkspace";
+    await waitFor(() => expect(onValueCallbacks.has(workspacePath)).toBe(true));
+    act(() => {
+      onValueCallbacks.get(workspacePath)?.(
+        snapshotFor({ sections: { displays: false } }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-displays")).toHaveTextContent("no"),
+    );
+    act(() => {
+      onValueErrorCallbacks.get(workspacePath)?.(new Error("listener failed"));
+    });
+
+    expect(screen.getByTestId("workspace-displays")).toHaveTextContent("no");
+    expect(screen.getByTestId("workspace-status")).toHaveTextContent("ready");
   });
 
   it("keeps a live YouTube connection after integrations listen failure and retries later", async () => {

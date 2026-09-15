@@ -113,6 +113,7 @@ type CreateNewSlideType = {
   mediaInfo?: MediaType;
   mediaSource?: SlideMediaSource;
   textBoxHeight?: number;
+  shouldKeepAspectRatio?: boolean;
 };
 
 export const createNewSlide = ({
@@ -135,8 +136,9 @@ export const createNewSlide = ({
   mediaInfo,
   mediaSource,
   textBoxHeight,
+  shouldKeepAspectRatio,
 }: CreateNewSlideType) => {
-  const defaultBox = createBox({});
+  const defaultBox = createBox({ shouldKeepAspectRatio });
 
   if (!box) {
     box = defaultBox;
@@ -264,3 +266,43 @@ export const createNewSlide = ({
 
   return obj;
 };
+
+/** Creates the normal box-0 media/background slide used by custom items. */
+export const createSlideFromMedia = (
+  media: MediaType,
+  options: {
+    name?: string;
+    brightness?: number;
+    overflow?: OverflowMode;
+  } = {},
+) => {
+  const mediaSource = media.localVideoInput?.kind === "local-video-input"
+    ? media.localVideoInput
+    : undefined;
+  const slide = createNewSlide({
+    type: "Section",
+    name: options.name || media.name || "Section",
+    fontSize: DEFAULT_FONT_PX,
+    words: ["", ""],
+    background: mediaSource ? "" : media.background,
+    mediaInfo: mediaSource ? undefined : media,
+    mediaSource,
+    brightness: options.brightness,
+    overflow: options.overflow,
+    shouldKeepAspectRatio: true,
+  });
+  // `createNewSlide` defaults an empty body to a space for text slides; media
+  // slides intentionally start without visible body text.
+  slide.boxes[1].words = "";
+  return slide;
+};
+
+export const insertSlidesAt = <T,>(
+  slides: T[],
+  insertedSlides: T[],
+  index: number,
+) => [
+  ...slides.slice(0, Math.max(0, Math.min(index, slides.length))),
+  ...insertedSlides,
+  ...slides.slice(Math.max(0, Math.min(index, slides.length))),
+];

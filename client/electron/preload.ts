@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { WindowType } from "./windowState";
+import type { LocalAssetMetadata } from "./localAssetStore";
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -143,20 +144,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // boundary; renderers receive only metadata and a streamable protocol URL.
   importLocalAsset: (
     file: File,
-    metadata: {
-      assetId: string;
-      workspaceId?: string;
-      kind: "image" | "video" | "audio" | "pdf";
-      fileName: string;
-      contentType: string;
-      width?: number;
-      height?: number;
-    },
+    metadata: LocalAssetMetadata,
   ) =>
     ipcRenderer.invoke("import-local-asset", {
       ...metadata,
       sourcePath: webUtils.getPathForFile(file),
     }),
+  importLocalAssetBytes: (data: ArrayBuffer, metadata: LocalAssetMetadata) =>
+    ipcRenderer.invoke("import-local-asset-bytes", { ...metadata, data }),
   getLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("get-local-asset", assetId),
 

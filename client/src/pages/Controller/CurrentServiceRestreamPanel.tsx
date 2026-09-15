@@ -6,6 +6,7 @@ import {
   RestreamActivityCard,
 } from "../../boards/BoardRestreamTabContent";
 import { BoardYouTubeChatComposer } from "../../boards/BoardYouTubeChatComposer";
+import RestreamSessionSuggestionBanner from "../../boards/RestreamSessionSuggestionBanner";
 import { useRestreamSession } from "../../boards/useRestreamSession";
 import { useYouTubeConnectionStatus } from "../../boards/useYouTubeConnectionStatus";
 import { useStickToBottomScroll } from "../../hooks/useStickToBottomScroll";
@@ -360,6 +361,15 @@ const CurrentServiceRestreamPanel = ({
             <p className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3 text-xs text-amber-100/90">
               You are offline. Live messages will resume when this device reconnects.
             </p>
+          ) : null}
+
+          {restream.session?.sessionSuggestion ? (
+            <RestreamSessionSuggestionBanner
+              churchId={churchId}
+              suggestion={restream.session.sessionSuggestion}
+              onResolved={restream.reload}
+              showToast={showToast}
+            />
           ) : null}
 
           {restreamStatusIssues.length ? (

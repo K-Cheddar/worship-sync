@@ -65,6 +65,24 @@
         { "fieldPath": "dayKey", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "database", "order": "ASCENDING" },
+        { "fieldPath": "sessionId", "order": "ASCENDING" },
+        { "fieldPath": "fingerprint", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "database", "order": "ASCENDING" },
+        { "fieldPath": "sessionId", "order": "ASCENDING" },
+        { "fieldPath": "messageTimestamp", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -81,6 +99,24 @@
     {
       "collectionGroup": "chatMessages",
       "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamMessages",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamOauthStates",
+      "fieldPath": "ttlExpireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "restreamConnectRequests",
+      "fieldPath": "ttlExpireAt",
       "ttl": true,
       "indexes": []
     },

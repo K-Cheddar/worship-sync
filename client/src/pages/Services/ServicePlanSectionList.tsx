@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, GripVertical, MoreHorizontal, Trash2, X } from "lucide-react";
-import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import {
+  DndContext,
+  DragOverlay,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import {
   arrayMove,
   SortableContext,
@@ -29,15 +35,19 @@ import ServicePlanElementRow, {
 import {
   SERVICE_PLAN_ELEMENT_DND_PREFIX,
   SERVICE_PLAN_SECTION_DND_PREFIX,
-  resolveServicePlanDropAction,
+  commitServicePlanElementDrag,
+  pointerYFromDragEvent,
+  previewServicePlanSections,
+  resolveServicePlanElementPlacement,
   servicePlanCollisionDetection,
+  servicePlanElementPlacementsEqual,
+  type ServicePlanElementPlacement,
   useServicePlanSensors,
 } from "./servicePlanDnd";
 import {
   removeElement,
   removeSection,
   renameSection,
-  moveElementToPosition,
   reorderSections,
   updateElement,
 } from "./servicePlanDraftUtils";
@@ -145,6 +155,8 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   onOpenAssignment: (elementId: string, trigger?: HTMLElement) => void;
   onOpenContent: (elementId: string, trigger?: HTMLElement) => void;
   onOpenSongDetails: (songRef: ServicePlanSongReference) => void;
+  /** When an item is dragging, section cards must not also translate — the preview array is the layout. */
+  lockSortableLayout?: boolean;
 };
 
 const SortableSectionCard = ({
@@ -193,6 +205,7 @@ const SortableSectionCard = ({
   onOpenAssignment,
   onOpenContent,
   onOpenSongDetails,
+  lockSortableLayout = false,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
   const {
@@ -221,8 +234,8 @@ const SortableSectionCard = ({
       ref={setNodeRef}
       className="overflow-hidden rounded-lg border border-gray-700/80 border-l-2 bg-gray-950/40"
       style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
+        transform: lockSortableLayout ? undefined : CSS.Transform.toString(transform),
+        transition: lockSortableLayout ? undefined : transition,
         opacity: isDragging ? 0.6 : undefined,
         borderLeftColor: sectionBorderColor,
       }}
@@ -457,11 +470,30 @@ const ServicePlanSectionList = ({
   const [songDetailsRef, setSongDetailsRef] = useState<ServicePlanSongReference | null>(null);
   const [songDetailsEditing, setSongDetailsEditing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-  const [dragSections, setDragSections] = useState<ServicePlanSection[] | null>(null);
+  const [elementPlacement, setElementPlacement] =
+    useState<ServicePlanElementPlacement | null>(null);
+  const elementPlacementRef = useRef<ServicePlanElementPlacement | null>(null);
+  const setDragElementPlacement = (
+    next: ServicePlanElementPlacement | null,
+  ) => {
+    elementPlacementRef.current = next;
+    setElementPlacement(next);
+  };
   const clearDragState = () => {
     setActiveDragId(null);
-    setDragSections(null);
+    setDragElementPlacement(null);
   };
+  const activeElementId = activeDragId?.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
+    ? activeDragId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length)
+    : null;
+  const displayedSections = useMemo(
+    () =>
+      activeElementId
+        ? previewServicePlanSections(sections, activeElementId, elementPlacement)
+        : sections,
+    [activeElementId, elementPlacement, sections],
+  );
+  const lockSectionSortableLayout = Boolean(activeElementId);
   const assignmentPanelTriggerRef = useRef<HTMLElement | null>(null);
   const assignmentPanelElement = assignmentPanelElementId
     ? sections.flatMap((section) => section.elements).find(
@@ -523,132 +555,84 @@ const ServicePlanSectionList = ({
     ? allSongDocs.find((song) => song._id === songDetailsRef.songId && song.type === "song")
     : undefined;
 
+  const commitDisplayedSections = (next: ServicePlanSection[]) => {
+    if (next === sections) return;
+    const anchor = sections.flatMap((section) => section.elements)[0]?.startTime;
+    onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
-    const previewSections = dragSections;
-    const sectionsAtDrop = previewSections || sections;
-    clearDragState();
     const { active, over } = event;
-    if (!canEdit || !isEditing || !over) return;
     const activeId = String(active.id);
-    const overId = String(over.id);
-    const rawActiveElementId = activeId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
+    const overId = over ? String(over.id) : null;
+    const draggedElementId = activeId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
       ? activeId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length)
       : null;
-    const activeElementOwningSectionId = rawActiveElementId
-      ? sections.find((section) =>
-        section.elements.some((element) => element.id === rawActiveElementId),
-      )?.id ?? null
-      : null;
-    const dropAction = resolveServicePlanDropAction({
-      activeId,
-      overId,
-      activeElementOwningSectionId,
-    });
+    const placement = elementPlacementRef.current;
+    const previewSections =
+      draggedElementId && placement
+        ? previewServicePlanSections(sections, draggedElementId, placement)
+        : null;
+    clearDragState();
+    if (!canEdit || !isEditing) return;
 
-    if (dropAction.type === "reorder-sections") {
-      const ids = sectionsAtDrop.map((section) => sectionDndId(section.id));
+    if (
+      activeId.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX) &&
+      overId &&
+      overId.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX) &&
+      activeId !== overId
+    ) {
+      const ids = sections.map((section) => sectionDndId(section.id));
       const oldIndex = ids.indexOf(activeId);
       const newIndex = ids.indexOf(overId);
       if (oldIndex === -1 || newIndex === -1) return;
       const reorderedIds = arrayMove(ids, oldIndex, newIndex).map((id) =>
         id.slice(SERVICE_PLAN_SECTION_DND_PREFIX.length),
       );
-      const next = reorderSections(sectionsAtDrop, reorderedIds);
-      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
-      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
+      commitDisplayedSections(reorderSections(sections, reorderedIds));
       return;
     }
 
-    if (dropAction.type === "move-element-to-element" && rawActiveElementId) {
-      const rawOverId = overId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length);
-      const owningSection = sections.find((section) =>
-        section.elements.some((element) => element.id === rawActiveElementId),
-      );
-      const destination = sections.find((section) =>
-        section.elements.some((element) => element.id === rawOverId),
-      );
-      if (!owningSection || !destination) return;
-      const targetIndex = destination.elements.findIndex((element) => element.id === rawOverId);
-      const next = owningSection.id !== destination.id && previewSections
-        ? previewSections
-        : moveElementToPosition(
-          sections,
-          rawActiveElementId,
-          owningSection.id,
-          destination.id,
-          targetIndex,
-        );
-      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
-      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
-      return;
-    }
-
-    if (dropAction.type === "move-element-to-section" && rawActiveElementId) {
-      const destinationId = overId.slice(SERVICE_PLAN_SECTION_DND_PREFIX.length);
-      const owningSection = sections.find((section) =>
-        section.elements.some((element) => element.id === rawActiveElementId),
-      );
-      const destination = sections.find((section) => section.id === destinationId);
-      if (!owningSection || !destination) return;
-      const next = owningSection.id !== destination.id && previewSections
-        ? previewSections
-        : moveElementToPosition(
-          sections,
-          rawActiveElementId,
-          owningSection.id,
-          destination.id,
-          destination.elements.length,
-        );
-      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
-      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
-    }
+    if (!draggedElementId) return;
+    commitDisplayedSections(
+      commitServicePlanElementDrag({
+        originalSections: sections,
+        previewSections,
+        overId,
+      }),
+    );
   };
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveDragId(String(event.active.id));
-    setDragSections(sections);
+    setDragElementPlacement(null);
   };
 
-  const handleDragOver = (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
-    if (
-      !canEdit ||
-      !isEditing ||
-      !event.over ||
-      !String(event.active.id).startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
-    ) {
+  const handleDragOver = (event: DragOverEvent) => {
+    if (!canEdit || !isEditing) return;
+    const activeId = String(event.active.id);
+    if (!activeId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)) return;
+    const nextPlacement = resolveServicePlanElementPlacement({
+      sections,
+      activeElementId: activeId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length),
+      overId: event.over ? String(event.over.id) : null,
+      pointerY: pointerYFromDragEvent(event),
+      overRect: event.over?.rect
+        ? { top: event.over.rect.top, height: event.over.rect.height }
+        : null,
+      previousPlacement: elementPlacementRef.current,
+    });
+    if (servicePlanElementPlacementsEqual(nextPlacement, elementPlacementRef.current)) {
       return;
     }
-    const activeId = String(event.active.id);
-    const overId = String(event.over.id);
-    const current = dragSections || sections;
-    const source = current.find((section) =>
-      section.elements.some((element) => elementDndId(element.id) === activeId),
-    );
-    const destination = overId.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX)
-      ? current.find((section) => sectionDndId(section.id) === overId)
-      : current.find((section) =>
-        section.elements.some((element) => elementDndId(element.id) === overId),
-      );
-    if (!source || !destination || source.id === destination.id) return;
-    const targetIndex = overId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
-      ? destination.elements.findIndex((element) => elementDndId(element.id) === overId)
-      : destination.elements.length;
-    setDragSections(
-      moveElementToPosition(
-        current,
-        activeId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length),
-        source.id,
-        destination.id,
-        targetIndex,
-      ),
-    );
+    setDragElementPlacement(nextPlacement);
   };
 
   const activeDragSection = activeDragId?.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX)
     ? sections.find((section) => sectionDndId(section.id) === activeDragId)
     : undefined;
   const activeDragElement = activeDragId?.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
-    ? (dragSections || sections)
+    ? displayedSections
       .flatMap((section) => section.elements)
       .find((element) => elementDndId(element.id) === activeDragId)
     : undefined;
@@ -771,12 +755,13 @@ const ServicePlanSectionList = ({
               showAssignedColumn={!structureOnly}
             />
 
-            {(dragSections || sections).map((section) => (
+            {displayedSections.map((section) => (
               <SortableSectionCard
                 key={section.id}
                 section={section}
                 canEdit={canEdit}
                 isEditing={isEditing}
+                lockSortableLayout={lockSectionSortableLayout}
                 onRename={(name) =>
                   onSectionsChange(
                     renameSection(sections, section.id, name),

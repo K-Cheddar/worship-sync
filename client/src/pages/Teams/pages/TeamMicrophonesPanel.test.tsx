@@ -1,8 +1,14 @@
+import type { ReactElement } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import TeamMicrophonesPanel from "./TeamMicrophonesPanel";
 import type { TeamsAssignmentSummaryRow } from "./teamsAssignmentsSummary";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+
+const renderPanel = (ui: ReactElement) =>
+  render(<MemoryRouter>{ui}</MemoryRouter>);
 
 const microphones: ServicePlanMicrophone[] = [
   { id: "mic-lead", name: "Lead", type: "Handheld", color: "#9ca3af" },
@@ -31,7 +37,7 @@ describe("TeamMicrophonesPanel", () => {
     const user = userEvent.setup();
     const onChange = jest.fn();
 
-    render(
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={microphones}
@@ -77,7 +83,7 @@ describe("TeamMicrophonesPanel", () => {
   it("does not label the option as assigned for the role that already holds it", async () => {
     const user = userEvent.setup();
 
-    render(
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={microphones}
@@ -110,7 +116,7 @@ describe("TeamMicrophonesPanel", () => {
     const user = userEvent.setup();
     const onChange = jest.fn();
 
-    render(
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={microphones}
@@ -136,8 +142,8 @@ describe("TeamMicrophonesPanel", () => {
     );
   });
 
-  it("shows church-list guidance when there are no rows and no microphones", () => {
-    render(
+  it("links to the church Microphones page when the catalog is empty", () => {
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={[]}
@@ -150,6 +156,9 @@ describe("TeamMicrophonesPanel", () => {
       screen.getByText(/No microphones in the church list yet/i),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("link", { name: /^Open Microphones$/i }),
+    ).toHaveAttribute("href", TEAMS_SECTION_PATHS.microphones);
+    expect(
       screen.getByText(/No scheduled roles for teams that use microphones yet/i),
     ).toBeInTheDocument();
   });
@@ -158,7 +167,7 @@ describe("TeamMicrophonesPanel", () => {
   // and "assign people on the schedule" would be aimed at an operator who has
   // already done exactly that.
   it("says the roles have not loaded rather than telling the operator to assign them", () => {
-    render(
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={microphones}
@@ -177,7 +186,7 @@ describe("TeamMicrophonesPanel", () => {
   });
 
   it("says the roles are loading while they are being fetched", () => {
-    render(
+    renderPanel(
       <TeamMicrophonesPanel
         canEdit
         microphones={microphones}

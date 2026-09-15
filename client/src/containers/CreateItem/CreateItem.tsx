@@ -38,7 +38,7 @@ import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
-import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import SendTargets from "../../components/SendTargets/SendTargets";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
@@ -75,35 +75,11 @@ import {
   lineTabsListShellClassName,
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
-
-type ItemTypesType = {
-  type: ItemType;
-  label: string;
-  access?: AccessType[];
-};
-
-const types: ItemTypesType[] = [
-  {
-    type: "song",
-    label: "Song",
-    access: ["full", "music"],
-  },
-  {
-    type: "bible",
-    label: "Bible",
-    access: ["full"],
-  },
-  {
-    type: "free",
-    label: "Custom Item",
-    access: ["full", "music"],
-  },
-  {
-    type: "timer",
-    label: "Timer",
-    access: ["full"],
-  },
-];
+import {
+  getCreateItemTypeOptions,
+  getDefaultCreateItemType,
+  isContentBlankCreateItemDraft,
+} from "./createItemTypeDefaults";
 
 const buildCreateItemOverrideState = (
   name: string,
@@ -112,6 +88,7 @@ const buildCreateItemOverrideState = (
   ...initialCreateItemState,
   name,
   type,
+  hasUserSelectedType: true,
 });
 
 type MobileSongTab = "create" | "import";
@@ -207,10 +184,16 @@ const CreateItem = ({
     lyricsImportError = "",
   } = createItemDraft;
 
+  const hideFreeFormPasteText =
+    createControllerProfile.type === "aux-presentation" &&
+    selectedType === "free";
+
   const itemTypes = useMemo(
     () =>
-      types.filter((itemType) => access && itemType.access?.includes(access)),
-    [access]
+      getCreateItemTypeOptions(createControllerProfile.type).filter(
+        (itemType) => access && itemType.access?.includes(access),
+      ),
+    [access, createControllerProfile.type],
   );
 
   const selectedTypeLabel = isEmbedded
@@ -274,7 +257,9 @@ const CreateItem = ({
 
     if (!overrideType || !overrideName) return;
 
-    const isValidType = types.some((itemType) => itemType.type === overrideType);
+    const isValidType = getCreateItemTypeOptions(
+      createControllerProfile.type,
+    ).some((itemType) => itemType.type === overrideType);
     if (!isValidType) return;
 
     dispatch(
@@ -283,7 +268,42 @@ const CreateItem = ({
       )
     );
     setSearchParams({}, { replace: true });
-  }, [dispatch, isEmbedded, searchParams, setSearchParams]);
+  }, [
+    createControllerProfile.type,
+    dispatch,
+    isEmbedded,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  // Blank drafts adopt the active controller's default type. An explicit type
+  // choice (radio, ?type= override, or import) sets hasUserSelectedType and is
+  // kept across remounts even when the form fields are still empty.
+  useEffect(() => {
+    if (isEmbedded) return;
+    if (searchParams.get("type") && searchParams.get("name")) return;
+    if (createItemDraft.hasUserSelectedType) return;
+    if (!isContentBlankCreateItemDraft(createItemDraft)) return;
+
+    const preferredType = getDefaultCreateItemType(
+      createControllerProfile.type,
+    );
+    if (preferredType === selectedType) return;
+
+    dispatch(
+      setCreateItem({
+        ...createItemDraft,
+        type: preferredType,
+      }),
+    );
+  }, [
+    createControllerProfile.type,
+    createItemDraft,
+    dispatch,
+    isEmbedded,
+    searchParams,
+    selectedType,
+  ]);
 
   const applyLrclibImport = async (candidate: NormalizedLrclibTrack) => {
     let resolvedCandidate = candidate;
@@ -744,7 +764,10 @@ const CreateItem = ({
                 <RadioGroup
                   value={selectedType}
                   onValueChange={(v) =>
-                    updateCreateItemDraft({ type: v as ItemType })
+                    updateCreateItemDraft({
+                      type: v as ItemType,
+                      hasUserSelectedType: true,
+                    })
                   }
                   className="flex flex-col gap-2"
                 >
@@ -822,7 +845,7 @@ const CreateItem = ({
               </div>
             )}
 
-            {(selectedType === "song" || selectedType === "free") && (
+            {!hideFreeFormPasteText && (selectedType === "song" || selectedType === "free") && (
               <TextArea
                 textareaClassName="min-h-56 rounded-md"
                 className={cn(
