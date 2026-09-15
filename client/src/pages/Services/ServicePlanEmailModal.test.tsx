@@ -22,12 +22,16 @@ const renderModal = (
   );
 
 describe("ServicePlanEmailModal", () => {
+  // Radix modal + user-event typing stacks under full-suite coverage load;
+  // the default 5s Jest timeout is too tight for this file when the machine is busy.
+  jest.setTimeout(15_000);
+
   beforeEach(() => {
     localStorage.clear();
   });
 
   it("prepopulates editable fields and prevents duplicate clicks while sending", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let resolveSend!: () => void;
     const sentDrafts: ServicePlanEmailDraft[] = [];
     const onSend = jest.fn(
@@ -86,7 +90,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("shows a useful provider error and keeps the draft available", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => {
       throw new Error("Email provider is unavailable.");
     });
@@ -107,7 +111,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("reports partial delivery and retries only failed recipients", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest
       .fn<
         (
@@ -188,7 +192,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("initializes the selected version and sends the version chosen in the modal", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => ({
       success: true,
       sent: 1,
@@ -221,7 +225,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("sends simple after changing the detailed default", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => ({
       success: true,
       sent: 1,
@@ -249,7 +253,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("commits, deduplicates, removes, and rejects recipient chips", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => ({ success: true, sent: 1, failed: 0, failedRecipients: [] }));
     renderModal(onSend);
     const input = screen.getByRole("textbox", { name: "To" });
@@ -272,7 +276,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("suggests successful recipients and restores the last successful message", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => ({ success: true, sent: 1, failed: 0, failedRecipients: [] }));
     renderModal(onSend);
     await user.type(screen.getByRole("textbox", { name: "To" }), "mailbox@example.com");
@@ -293,7 +297,7 @@ describe("ServicePlanEmailModal", () => {
   });
 
   it("does not persist failed recipient or message drafts", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSend = jest.fn(async () => { throw new Error("provider down"); });
     renderModal(onSend);
     await user.type(screen.getByRole("textbox", { name: "To" }), "failed@example.com");

@@ -39,6 +39,8 @@ type LeftPanelButtonProps = {
     action: (itemId: string) => void;
     svg: FunctionComponent<{}>;
     id: string;
+    /** Accessible name for icon-only row actions. */
+    label?: string;
   }[];
   image?: string;
   /** Local image metadata so `local-image://` backgrounds can resolve. */
@@ -195,6 +197,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
+              aria-label={action.label}
+              title={action.label}
               className="relative z-10 shrink-0 transition-colors duration-150 ease-out hover:bg-white/10 active:bg-white/15"
             />
           ))}

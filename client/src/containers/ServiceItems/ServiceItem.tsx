@@ -91,8 +91,9 @@ const ServiceItem = ({
       },
       svg: Trash2,
       id: generateRandomId(),
+      label: `Delete ${item.name}`,
     }];
-  }, [canMutateOutline, dispatch]);
+  }, [canMutateOutline, dispatch, item.name]);
 
   const { isSelected, isInsertPoint } = getOutlineRowSelectionState(
     item.listId,
