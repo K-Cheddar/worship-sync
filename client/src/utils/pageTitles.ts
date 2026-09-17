@@ -30,6 +30,7 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname === "/workstation/pair" || pathname === "/display/pair") {
     return title("Pair Workstation");
   }
+  if (pathname.startsWith("/device-pairing/approve/")) return title("Approve Device");
   if (pathname === "/workstation/operator")
     return title("Workstation Operator");
   if (pathname === "/my-schedule") return title("My Schedule");

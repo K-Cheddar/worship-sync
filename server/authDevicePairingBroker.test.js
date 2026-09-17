@@ -1,0 +1,62 @@
+process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT = "1";
+process.env.FIREBASE_PROJECT_ID = "";
+process.env.FIREBASE_CLIENT_EMAIL = "";
+process.env.FIREBASE_PRIVATE_KEY = "";
+import test from "node:test";
+import assert from "node:assert/strict";
+const { authHandlers, canSeedHumanBearerAuthForServerTests, seedActiveHumanBearerForServerTests } = await import("../authService.js");
+const createReq = ({ body = {}, headers = {}, params = {} } = {}) => ({ body, headers, params, session: { destroy(callback) { callback?.(); } } });
+const createRes = () => ({ statusCode: 200, payload: null, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } });
+
+test("device pairing broker keeps the secret off the QR and exchanges the existing workstation pairing", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) { t.skip("requires in-memory auth store"); return; }
+  const startRes = createRes();
+  await authHandlers.startDevicePairingRequest(createReq({ body: { kind: "workstation", platformType: "web" } }), startRes);
+  assert.equal(startRes.payload?.success, true);
+  assert.match(startRes.payload?.approvalUrl || "", new RegExp(startRes.payload.requestId));
+  assert.ok(!startRes.payload.approvalUrl.includes(startRes.payload.requestSecret));
+  const badStatusRes = createRes();
+  await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: "wrong" } }), badStatusRes);
+  assert.equal(badStatusRes.statusCode, 403);
+  const stamp = Date.now();
+  const { humanApiToken, churchId } = await seedActiveHumanBearerForServerTests({ req: createReq(), userId: `device_pairing_${stamp}`, email: `device-pairing-${stamp}@example.com`, churchId: `church_device_pairing_${stamp}` });
+  const meRes = createRes();
+  await authHandlers.getAuthMe(createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }), meRes);
+  const approveRes = createRes();
+  await authHandlers.approveDevicePairingRequest(createReq({ params: { churchId, requestId: startRes.payload.requestId }, headers: { authorization: `Bearer ${humanApiToken}`, "x-csrf-token": meRes.payload.csrfToken }, body: { label: "Front laptop", appAccess: "music", serviceWorkspaceAccess: true } }), approveRes);
+  assert.equal(approveRes.payload?.success, true);
+  assert.equal(approveRes.payload?.pairingToken, undefined);
+  const duplicateRes = createRes();
+  await authHandlers.approveDevicePairingRequest(createReq({ params: { churchId, requestId: startRes.payload.requestId }, headers: { authorization: `Bearer ${humanApiToken}`, "x-csrf-token": meRes.payload.csrfToken }, body: { label: "Duplicate", appAccess: "full" } }), duplicateRes);
+  assert.equal(duplicateRes.statusCode, 409);
+  const statusRes = createRes();
+  await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), statusRes);
+  assert.equal(statusRes.payload?.status, "awaiting_exchange");
+  const redeemRes = createRes();
+  await authHandlers.redeemWorkstationPairing(createReq({ body: { token: statusRes.payload.pairingToken, platformType: "web" } }), redeemRes);
+  assert.equal(redeemRes.payload?.device.label, "Front laptop");
+  assert.equal(redeemRes.payload?.device.appAccess, "music");
+  assert.equal(redeemRes.payload?.device.serviceWorkspaceAccess, true);
+  assert.equal(redeemRes.payload?.device.platformType, "web");
+});
+
+test("device pairing broker creates and redeems the existing display pairing", async () => {
+  const startRes = createRes();
+  await authHandlers.startDevicePairingRequest(createReq({ body: { kind: "display" } }), startRes);
+  const stamp = Date.now();
+  const { humanApiToken, churchId } = await seedActiveHumanBearerForServerTests({ req: createReq(), userId: `display_pairing_${stamp}`, email: `display-pairing-${stamp}@example.com`, churchId: `church_display_pairing_${stamp}` });
+  const meRes = createRes();
+  await authHandlers.getAuthMe(createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }), meRes);
+  const approveRes = createRes();
+  await authHandlers.approveDevicePairingRequest(createReq({ params: { churchId, requestId: startRes.payload.requestId }, headers: { authorization: `Bearer ${humanApiToken}`, "x-csrf-token": meRes.payload.csrfToken }, body: { label: "Lobby TV", surfaceType: "stream", outputId: "main" } }), approveRes);
+  assert.equal(approveRes.statusCode, 200);
+  const statusRes = createRes();
+  await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), statusRes);
+  const redeemRes = createRes();
+  await authHandlers.redeemDisplayPairing(createReq({ body: { token: statusRes.payload.pairingToken } }), redeemRes);
+  assert.equal(redeemRes.payload?.success, true);
+  assert.equal(redeemRes.payload?.device.label, "Lobby TV");
+  assert.equal(redeemRes.payload?.device.surfaceType, "stream");
+  assert.equal(redeemRes.payload?.device.outputId, "main");
+  assert.ok(redeemRes.payload?.credential);
+});
