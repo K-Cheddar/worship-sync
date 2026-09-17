@@ -64,7 +64,6 @@ import {
   getLaneBackgroundMediaKey,
   resolveLaneBackgroundMedia,
 } from "./laneBackgroundMedia";
-import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
 
@@ -386,18 +385,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const elementRef = useRef<HTMLDivElement | null>(null);
-    const displaySlideId = boxes[0]?.id;
-    const displayPayloadKey = `${displaySlideId ?? ""}:${time ?? ""}`;
-
-    useEffect(() => {
-      markPresentationPerformance("display-payload-received", {
-        outputId: outputId ?? displayType ?? "unknown",
-        windowRole: displayType ?? "unknown",
-        slideId: displaySlideId ?? null,
-        time: time ?? null,
-      });
-    }, [displayPayloadKey, displaySlideId, displayType, outputId, time]);
-
     // Handle both callback refs and object refs
     const setRef = (node: HTMLDivElement | null) => {
       elementRef.current = node;

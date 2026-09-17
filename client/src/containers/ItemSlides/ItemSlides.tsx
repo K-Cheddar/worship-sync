@@ -142,7 +142,6 @@ import {
 } from "../../utils/outlineSlideSections";
 import MediaDragPreview from "../Media/MediaDragPreview";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
-import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
 
 /** Keep capture warm while the display window takes over the stream. */
@@ -764,14 +763,6 @@ const ItemSlidesContent = () => {
       const prevSelected = selectedSlideRef.current;
       if (!options?.presentationOnly) dispatch(setSelectedSlide(index));
       const slide = presentationSlides[index];
-      markPresentationPerformance("presentation-send-start", {
-        outputId: "projector,monitor,stream",
-        windowRole: "controller",
-        itemId: presentationItemId,
-        slideIndex: index,
-        crossItem: Boolean(options?.presentation),
-      });
-
       if (slide?.mediaSource?.kind === "local-video-input") {
         const localVideoInput = buildLocalVideoInputPresentation(
           slide.mediaSource,
@@ -965,12 +956,6 @@ const ItemSlidesContent = () => {
             ),
           ),
         );
-        markPresentationPerformance("projector-action-dispatched", {
-          outputId: "projector",
-          windowRole: "controller",
-          itemId: presentationItemId,
-          slideIndex: index,
-        });
       }
 
       if (presentationType === "timer") {

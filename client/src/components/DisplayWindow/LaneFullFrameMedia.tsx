@@ -155,7 +155,7 @@ const LaneFullFrameMedia = ({
           playbackRole={isEditor ? "preview" : playbackRole}
           preloadRole={preloadRole ?? (isEditor ? "preview" : playbackRole)}
           suspendPlayback={suspendPlayback}
-          mediaKey={!isPrevious && isEditor ? fileMediaKey : undefined}
+          mediaKey={fileMediaKey}
           // Keep the outgoing cue attached to the same player while it fades
           // out. Changing lane role must not make the video lose its position.
           playback={playback}

@@ -40,11 +40,6 @@ describe("LaneFullFrameMedia", () => {
         width: 100,
         height: 100,
         words: "",
-        mediaInfo: {
-          id: "video-a",
-          type: "video" as const,
-          background: "media-cache://video-a.mp4",
-        },
       },
     };
 

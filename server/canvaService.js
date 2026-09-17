@@ -964,7 +964,10 @@ export const createCanvaService = ({
       Number(design.thumbnail?.height || 0) >
       Number(design.thumbnail?.width || 0);
     const assets = [];
-    if (format === "png") {
+    let cleanupCreatedMuxAssets = null;
+    const committedMuxAssetIds = new Set();
+    try {
+      if (format === "png") {
       for (const pageNumber of selectedPages) {
         await importPageProgress(pageNumber, "waiting");
         await importPageProgress(pageNumber, "exporting");
@@ -1047,6 +1050,8 @@ export const createCanvaService = ({
       }
       for (let index = 0; index < pageUrls.length; index += 1) {
         const pageNumber = selectedPages[index];
+        if (isCancelled?.())
+          throw createClientError("Canva import cancelled.", 499);
         await importPageProgress(pageNumber, "processing");
         let uploaded;
         try {
@@ -1100,11 +1105,13 @@ export const createCanvaService = ({
           ? selectedPages.map((pageNumber) => [pageNumber])
           : [selectedPages];
       const createdMuxAssetIds = new Set();
-      const cleanupCreatedMuxAssets = async () => {
+      cleanupCreatedMuxAssets = async () => {
         const deleteAsset = mux.video.assets.delete;
         if (typeof deleteAsset !== "function") return;
         await runBounded(
-          [...createdMuxAssetIds],
+          [...createdMuxAssetIds].filter(
+            (assetId) => !committedMuxAssetIds.has(assetId),
+          ),
           resolvedMuxProcessingConcurrency,
           async (assetId) => {
             try {
@@ -1308,11 +1315,9 @@ export const createCanvaService = ({
         finishExportQueue();
         await Promise.all(muxWorkers);
         if (isCancelled?.()) {
-          await cleanupCreatedMuxAssets();
           throw createClientError("Canva import cancelled.", 499);
         }
         if (exportedPages.errors.length > 0) {
-          await cleanupCreatedMuxAssets();
           throw exportedPages.errors[0].error;
         }
         const processedPages = {
@@ -1320,11 +1325,9 @@ export const createCanvaService = ({
           errors: processedErrors,
         };
         if (isCancelled?.()) {
-          await cleanupCreatedMuxAssets();
           throw createClientError("Canva import cancelled.", 499);
         }
         if (processedPages.errors.length > 0) {
-          await cleanupCreatedMuxAssets();
           throw processedPages.errors[0].error;
         }
         assets.push(...processedPages.results.filter(Boolean));
@@ -1361,10 +1364,19 @@ export const createCanvaService = ({
           await importPageProgress(pageNumber, "ready", { exported: true });
         }
       }
+      }
+      await emitProgress({ type: "finalizing" });
+      await updateStatus(churchId, { lastImportedAt: now(), lastError: "" });
+      for (const asset of assets) {
+        if (asset.kind === "video" && asset.data.assetId) {
+          committedMuxAssetIds.add(asset.data.assetId);
+        }
+      }
+      return { assets, skippedCount, revision };
+    } catch (error) {
+      await cleanupCreatedMuxAssets?.();
+      throw error;
     }
-    await emitProgress({ type: "finalizing" });
-    await updateStatus(churchId, { lastImportedAt: now(), lastError: "" });
-    return { assets, skippedCount, revision };
   };
 
   return {

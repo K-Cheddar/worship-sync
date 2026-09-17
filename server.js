@@ -1451,6 +1451,10 @@ app.post(
   authHandlers.approveDevicePairingRequest,
 );
 app.post(
+  "/api/device-pairing-requests/exchange",
+  authHandlers.exchangeDevicePairingRequest,
+);
+app.post(
   "/api/workstation-pairings/redeem",
   authHandlers.redeemWorkstationPairing,
 );

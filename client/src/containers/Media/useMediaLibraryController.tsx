@@ -1295,11 +1295,6 @@ export function useMediaLibraryController({
             folders: currentFolders,
           }),
         );
-        setPendingDeletionIds((current) => {
-          const next = new Set(current);
-          rows.forEach((row) => next.delete(row.id));
-          return next;
-        });
 
         const flushResult = await flushMediaLibraryDocToPouch(
           db,
@@ -1308,7 +1303,28 @@ export function useMediaLibraryController({
         );
         if (!flushResult.ok) {
           alertMediaLibraryFlushFailed(flushResult.error, "library");
+          // Keep the optimistic rows hidden while the local library is out of
+          // sync. This also prevents a stale remote echo from making a
+          // provider-deleted asset look available again during reconciliation.
+          updateToast(toastId, {
+            message:
+              "Media deletion was not saved. The items remain pending until the library can be reconciled.",
+            variant: "error",
+            persist: true,
+            showCloseButton: true,
+          });
+          if (failed.length > 0) {
+            setProviderRetryRows(failed);
+            setShowProviderRetryModal(true);
+          }
+          return { succeeded, failed };
         }
+
+        setPendingDeletionIds((current) => {
+          const next = new Set(current);
+          rows.forEach((row) => next.delete(row.id));
+          return next;
+        });
         if (failed.length > 0) {
           setProviderRetryRows(failed);
           setShowProviderRetryModal(true);

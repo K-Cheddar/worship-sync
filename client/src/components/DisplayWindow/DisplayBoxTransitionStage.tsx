@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -20,10 +19,6 @@ import {
   NONE_LANE_BACKGROUND_MEDIA,
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
-import {
-  markPresentationPerformance,
-  markPresentationReadiness,
-} from "../../utils/presentationPerformanceDebug";
 
 type LaneId = "a" | "b";
 
@@ -204,70 +199,52 @@ const DisplayBoxTransitionStage = ({
   >({ a: snapshot, b: null });
   laneSnapshotsRef.current = state.lanes;
   /**
-   * The outgoing lane keeps the cue it had before the transition started.
-   * This is render-only continuity state: the incoming lane may receive a new
-   * cue while its media prepares, but the outgoing player must not be
-   * re-cued, paused, or reset merely because its visual role changed.
+   * Playback ownership follows the lane's media identity, not its transient
+   * visual role. A lane can become the baseline during an interruption while
+   * still rendering the cue it received as the incoming lane.
    */
-  const previousPlaybackRef = useRef<
-    VideoBackgroundPlaybackCue | undefined
-  >(mediaPlayback?.activeFileVideoPlayback);
-  const outgoingPlaybackRef = useRef<
-    VideoBackgroundPlaybackCue | undefined
-  >(undefined);
-  const requestedVideoSrc =
-    snapshot.backgroundMedia.kind === "fileVideo"
-      ? snapshot.backgroundMedia.originalSrc
-      : undefined;
+  const lanePlaybackRef = useRef<
+    Record<
+      LaneId,
+      { mediaKey: string; cue: VideoBackgroundPlaybackCue } | undefined
+    >
+  >({ a: undefined, b: undefined });
+  // A cue belongs to a media identity, not to whichever lane currently has
+  // the active role. This also protects the first render of a transition,
+  // before the layout effect promotes the old lane to outgoing.
+  const resolvePlaybackForLane = (
+    laneId: LaneId,
+    media: LaneBackgroundMedia,
+  ): VideoBackgroundPlaybackCue | undefined => {
+    if (media.kind !== "fileVideo") return undefined;
 
-  useEffect(() => {
-    markPresentationPerformance("display-payload-received", {
-      snapshotKey: snapshot.key,
-      outputId: mediaPlayback?.outputId ?? "unknown",
-      windowRole: mediaPlayback?.windowRole ?? "unknown",
-    });
-    if (state.phase === "preparing") {
-      markPresentationPerformance("transition-preparing", {
-        snapshotKey: snapshot.key,
-        outputId: mediaPlayback?.outputId ?? "unknown",
-        windowRole: mediaPlayback?.windowRole ?? "unknown",
-      });
-    }
-    if (state.phase === "animating") {
-      markPresentationPerformance("transition-start", {
-        snapshotKey: snapshot.key,
-        outputId: mediaPlayback?.outputId ?? "unknown",
-        windowRole: mediaPlayback?.windowRole ?? "unknown",
-      });
-    }
-    if (requestedVideoSrc) {
-      markPresentationPerformance("video-requested", {
-        outputId: mediaPlayback?.outputId ?? "unknown",
-        windowRole: mediaPlayback?.windowRole ?? "unknown",
-        src: requestedVideoSrc,
-      });
-    }
-  }, [
-    mediaPlayback?.outputId,
-    mediaPlayback?.windowRole,
-    snapshot.backgroundMedia.kind,
-    requestedVideoSrc,
-    snapshot.key,
-    state.phase,
-  ]);
+    const lanePlayback = lanePlaybackRef.current[laneId];
+    if (lanePlayback?.mediaKey === media.mediaKey) return lanePlayback.cue;
+
+    const activeCue = mediaPlayback?.activeFileVideoPlayback;
+    if (activeCue?.mediaKey === media.mediaKey) return activeCue;
+    return undefined;
+  };
 
   useLayoutEffect(() => {
-    const active = state.lanes[state.activeLaneId];
-    if (state.phase === "idle" && active && snapshot.key !== active.key) {
-      outgoingPlaybackRef.current = previousPlaybackRef.current;
+    const activeCue = mediaPlayback?.activeFileVideoPlayback;
+    if (!activeCue) return;
+
+    for (const laneId of ["a", "b"] as const) {
+      const laneSnapshot = state.lanes[laneId];
+      const laneMedia = laneSnapshot?.backgroundMedia;
+      const mediaKey =
+        laneMedia?.kind === "fileVideo" ? laneMedia.mediaKey : "none";
+      if (mediaKey === activeCue.mediaKey) {
+        lanePlaybackRef.current[laneId] = {
+          mediaKey,
+          cue: activeCue,
+        };
+      }
     }
-    previousPlaybackRef.current = mediaPlayback?.activeFileVideoPlayback;
   }, [
     mediaPlayback?.activeFileVideoPlayback,
-    snapshot.key,
-    state.activeLaneId,
     state.lanes,
-    state.phase,
   ]);
 
   useLayoutEffect(() => {
@@ -325,13 +302,6 @@ const DisplayBoxTransitionStage = ({
             gsap.set(contentRefs.current[laneId], { opacity });
           }
         }
-        markPresentationPerformance("transition-interrupted", {
-          previousKey: state.requestedKey,
-          baselineKey: baselineSnapshot.key,
-          nextKey: snapshot.key,
-          outputId: mediaPlayback?.outputId ?? "unknown",
-          windowRole: mediaPlayback?.windowRole ?? "unknown",
-        });
         setState({
           activeLaneId: baselineLaneId,
           lanes: lanePair(baselineLaneId, baselineSnapshot, snapshot),
@@ -475,13 +445,6 @@ const DisplayBoxTransitionStage = ({
       ) {
         return;
       }
-      markPresentationReadiness({
-        laneId,
-        mediaKey,
-        ready,
-        outputId: mediaPlayback?.outputId ?? "unknown",
-        windowRole: mediaPlayback?.windowRole ?? "unknown",
-      });
       setMediaPaintReadiness((current) => {
         const laneState = current[laneId];
         if (
@@ -496,7 +459,7 @@ const DisplayBoxTransitionStage = ({
         };
       });
     },
-    [mediaPlayback?.outputId, mediaPlayback?.windowRole],
+    [],
   );
 
   const isLanePaintReady = (
@@ -960,9 +923,10 @@ const DisplayBoxTransitionStage = ({
                   playbackRole={mediaPlayback?.playbackRole}
                   preloadRole={mediaPlayback?.preloadRole}
                   suspendPlayback={mediaPlayback?.suspendPlayback}
-                  playback={isPrevious
-                    ? outgoingPlaybackRef.current
-                    : mediaPlayback?.activeFileVideoPlayback}
+                  playback={resolvePlaybackForLane(
+                    laneId,
+                    mediaSnapshot.backgroundMedia,
+                  )}
                   isEditor={mediaPlayback?.isEditor}
                   outputId={mediaPlayback?.outputId}
                   windowRole={mediaPlayback?.windowRole}

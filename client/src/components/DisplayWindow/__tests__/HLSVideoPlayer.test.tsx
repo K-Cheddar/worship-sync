@@ -66,6 +66,10 @@ describe("HLSVideoPlayer", () => {
     HTMLMediaElement.prototype,
     "paused",
   );
+  const originalCurrentTimeDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "currentTime",
+  );
 
   /** Overrides `paused`, returning a restore fn — jsdom keeps it read-only. */
   const stubPaused = (value: boolean) => {
@@ -126,6 +130,16 @@ describe("HLSVideoPlayer", () => {
       writable: true,
       value: originalCanPlayType,
     });
+  });
+
+  afterEach(() => {
+    if (originalCurrentTimeDescriptor) {
+      Object.defineProperty(
+        HTMLMediaElement.prototype,
+        "currentTime",
+        originalCurrentTimeDescriptor,
+      );
+    }
   });
 
   it("uses native playback for non-HLS src and falls back from cached media URL on error", () => {
@@ -517,6 +531,65 @@ describe("HLSVideoPlayer", () => {
 
     fireEvent.loadedMetadata(video);
     expect(play).toHaveBeenCalled();
+  });
+
+  it("ignores a cue for another media identity without seeking or reloading", () => {
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+    const currentTimeSetter = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => 14.2,
+      set: currentTimeSetter,
+    });
+
+    const cueA = {
+      mediaKey: "remote:video-a",
+      positionSeconds: 14.2,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 1,
+      applySeek: false,
+    };
+    const { rerender } = render(
+      <HLSPlayer
+        src="https://cdn.example.com/video-a.mp4"
+        mediaKey="remote:video-a"
+        playback={cueA}
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player");
+    fireEvent.loadedMetadata(video);
+    currentTimeSetter.mockClear();
+    (HTMLMediaElement.prototype.load as jest.Mock).mockClear();
+
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video-a.mp4"
+        mediaKey="remote:video-a"
+        playback={{ ...cueA, mediaKey: "remote:video-b", generation: 2 }}
+      />,
+    );
+
+    expect(currentTimeSetter).not.toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.load).not.toHaveBeenCalled();
+    expect(video).toHaveAttribute("src", "https://cdn.example.com/video-a.mp4");
+
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video-a.mp4"
+        mediaKey="remote:video-a"
+        playback={{
+          ...cueA,
+          generation: 3,
+          positionSeconds: 16,
+          applySeek: true,
+        }}
+      />,
+    );
+    expect(currentTimeSetter).toHaveBeenCalled();
   });
 
   /**

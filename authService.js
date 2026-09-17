@@ -1405,6 +1405,15 @@ const expireDevicePairingRequestIfNeeded = async (request) => {
   return { ...request, status: DEVICE_PAIRING_STATUS_EXPIRED, pairingTokenPlaintext: null };
 };
 
+const validateDevicePairingRequestForExchange = (request, requestSecret) => {
+  if (!request) throw httpError(404, "This device pairing request was not found. Generate a new QR code.");
+  if (request.secretHash !== hashValue(requestSecret)) throw httpError(403, "This device pairing request is not valid.");
+  if (request.status !== DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE) {
+    throw httpError(409, "This device pairing request is not ready for exchange.");
+  }
+  if (!request.pairingId) throw httpError(409, "This device pairing request is missing its pairing record.");
+};
+
 const readDevicePairingRequestForSecret = async ({ requestId, requestSecret }) => {
   const request = await expireDevicePairingRequestIfNeeded(
     await getDoc(COLLECTIONS.devicePairingRequests, requestId),
@@ -2199,6 +2208,61 @@ const redeemDisplayPairingMemory = async (token) => {
     display,
     pairingChurchId: pairing.churchId,
   };
+};
+
+const redeemDevicePairingRequestMemory = async ({ requestId, requestSecret, platformType }) => {
+  const request = await expireDevicePairingRequestIfNeeded(
+    await getDoc(COLLECTIONS.devicePairingRequests, requestId),
+  );
+  validateDevicePairingRequestForExchange(request, requestSecret);
+  const pairingCollection = request.kind === "workstation"
+    ? COLLECTIONS.workstationPairings
+    : COLLECTIONS.displayPairings;
+  const pairing = await getDoc(pairingCollection, request.pairingId);
+  if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+  if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+    await setDoc(pairingCollection, request.pairingId, { status: "expired" }, { merge: true });
+    throw httpError(400, "That pairing request expired. Generate a new one.");
+  }
+  const credential = crypto.randomUUID();
+  const deviceId = createId(request.kind);
+  const device = request.kind === "workstation"
+    ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
+    : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
+  const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+  await setDoc(deviceCollection, deviceId, device);
+  await setDoc(pairingCollection, request.pairingId, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) }, { merge: true });
+  await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null }, { merge: true });
+  return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+};
+
+const redeemDevicePairingRequestFirestore = async ({ requestId, requestSecret, platformType }) => {
+  const db = requireFirestore();
+  return db.runTransaction(async (transaction) => {
+    const requestRef = db.collection(COLLECTIONS.devicePairingRequests).doc(requestId);
+    const requestSnap = await transaction.get(requestRef);
+    const request = requestSnap.exists ? { id: requestSnap.id, ...requestSnap.data() } : null;
+    validateDevicePairingRequestForExchange(request, requestSecret);
+    const pairingCollection = request.kind === "workstation" ? COLLECTIONS.workstationPairings : COLLECTIONS.displayPairings;
+    const pairingRef = db.collection(pairingCollection).doc(request.pairingId);
+    const pairingSnap = await transaction.get(pairingRef);
+    const pairing = pairingSnap.exists ? pairingSnap.data() : null;
+    if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+    if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+      transaction.update(pairingRef, { status: "expired" });
+      throw httpError(400, "That pairing request expired. Generate a new one.");
+    }
+    const credential = crypto.randomUUID();
+    const deviceId = createId(request.kind);
+    const device = request.kind === "workstation"
+      ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
+      : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
+    const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+    transaction.set(db.collection(deviceCollection).doc(deviceId), device);
+    transaction.update(pairingRef, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) });
+    transaction.update(requestRef, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null });
+    return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+  });
 };
 
 /** Test-only override for Firebase Auth verifyIdToken (invite accept happy paths). */
@@ -6861,7 +6925,7 @@ export const authHandlers = {
       await setDoc(COLLECTIONS.devicePairingRequests, requestId, {
         requestId, kind, platformType, secretHash: hashValue(requestSecret), status: DEVICE_PAIRING_STATUS_PENDING,
         createdAt: nowIso(), expiresAt, ttlExpireAt: devicePairingTtlExpireAt(expiresAt), approvedAt: null,
-        approvedByUid: null, churchId: null, pairingId: null, pairingTokenPlaintext: null, expiredAt: null, failedAt: null,
+        approvedByUid: null, churchId: null, pairingId: null, expiredAt: null, failedAt: null,
       });
       return res.json({ success: true, requestId, requestSecret, approvalUrl: buildDevicePairingApprovalUrl(requestId), status: DEVICE_PAIRING_STATUS_PENDING, expiresAt, pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS });
     } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not start device pairing." }); }
@@ -6874,7 +6938,6 @@ export const authHandlers = {
       if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
       const request = await readDevicePairingRequestForSecret({ requestId, requestSecret });
       const payload = { success: true, status: request.status || DEVICE_PAIRING_STATUS_PENDING, expiresAt: request.expiresAt };
-      if (request.status === DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE && request.pairingTokenPlaintext) payload.pairingToken = request.pairingTokenPlaintext;
       return res.json(payload);
     } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not load device pairing status." }); }
   },
@@ -6908,7 +6971,7 @@ export const authHandlers = {
           if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
           const result = issue(request);
           transaction.create(db.collection(result.collection).doc(result.pairing.pairingId), result.pairing);
-          transaction.update(requestRef, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId, pairingTokenPlaintext: result.rawToken, ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt) });
+          transaction.update(requestRef, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId, ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt) });
           return { request, result };
         });
       } else {
@@ -6918,13 +6981,39 @@ export const authHandlers = {
           if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
           const result = issue(request);
           await setDoc(result.collection, result.pairing.pairingId, result.pairing);
-          await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId, pairingTokenPlaintext: result.rawToken }, { merge: true });
+          await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId }, { merge: true });
           return { request, result };
         });
       }
       await addSecurityEvent({ type: `${issued.request.kind}_device_pairing_approved`, churchId: req.params.churchId, userId: admin.user.uid, pairingId: issued.result.pairing.pairingId, requestId });
       return res.json({ success: true, request: { requestId, kind: issued.request.kind, status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE } });
     } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not approve device pairing." }); }
+  },
+
+  async exchangeDevicePairingRequest(req, res) {
+    try {
+      const requestId = String(req.body?.requestId || "").trim();
+      const requestSecret = String(req.body?.requestSecret || "").trim();
+      if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
+      enforceRateLimit({ scope: "device-pairing-exchange", key: `${getClientIp(req)}:${hashValue(requestId)}`, limit: 10, windowMs: 30 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      const platformType = req.body?.platformType;
+      const db = requireFirestore();
+      const payload = db
+        ? await redeemDevicePairingRequestFirestore({ requestId, requestSecret, platformType })
+        : await enqueueMemoryPairingRedeem(hashValue(requestId), () => redeemDevicePairingRequestMemory({ requestId, requestSecret, platformType }));
+      if (payload.kind === "workstation" && platformType === "web") {
+        const church = await getChurchById(payload.pairingChurchId);
+        if (church) {
+          const bootstrap = await establishWorkstationSession({ req, church, workstation: { deviceId: payload.deviceId, ...payload.device } });
+          await addSecurityEvent({ type: "workstation_pairing_redeemed", churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: "session" });
+          return res.json({ success: true, credential: payload.credential, sessionEstablished: true, bootstrap, device: sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+        }
+      }
+      await addSecurityEvent({ type: `${payload.kind}_pairing_redeemed`, churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: payload.kind === "workstation" ? "credential" : undefined });
+      return res.json({ success: true, credential: payload.credential, device: payload.kind === "workstation" ? sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) : sanitizeDisplayDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message });
+    }
   },
 
   async createWorkstationPairing(req, res) {

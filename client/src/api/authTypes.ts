@@ -764,6 +764,7 @@ export type DevicePairingKind = "workstation" | "display";
 export type DevicePairingRequestStatus =
   | "pending"
   | "awaiting_exchange"
+  | "redeemed"
   | "expired"
   | "failed";
 export type DevicePairingRequestPreview = {
@@ -787,5 +788,4 @@ export type DevicePairingRequestStatusResponse = {
   success: boolean;
   status: DevicePairingRequestStatus;
   expiresAt: string;
-  pairingToken?: string;
 };

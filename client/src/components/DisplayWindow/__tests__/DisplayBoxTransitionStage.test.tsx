@@ -8,6 +8,7 @@ import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
 
 let mockTimelineComplete: (() => void) | undefined;
 let mockMediaReady = true;
+const playbackCuesByMedia = new Map<string, string[]>();
 const mockTimeline = {
   addLabel: jest.fn(),
   fromTo: jest.fn(),
@@ -39,6 +40,11 @@ jest.mock("../LaneFullFrameMedia", () => ({
     media: { kind: string; mediaKey?: string; input?: { sourceId: string } };
     playback?: { mediaKey?: string; generation?: number; positionSeconds?: number };
   }) {
+    if (media.kind === "fileVideo") {
+      const cues = playbackCuesByMedia.get(media.mediaKey ?? "") ?? [];
+      cues.push(playback?.mediaKey ?? "none");
+      playbackCuesByMedia.set(media.mediaKey ?? "", cues);
+    }
     useEffect(() => {
       onPaintReadyChange(mockMediaReady);
     }, [onPaintReadyChange]);
@@ -126,6 +132,7 @@ describe("DisplayBoxTransitionStage", () => {
     jest.clearAllMocks();
     mockTimelineComplete = undefined;
     mockMediaReady = true;
+    playbackCuesByMedia.clear();
   });
 
   it("keeps the outgoing video cue while the incoming video prepares", () => {
@@ -201,6 +208,8 @@ describe("DisplayBoxTransitionStage", () => {
     );
     expect(outgoingPlayer).toHaveAttribute("data-playback-generation", "4");
     expect(outgoingPlayer).toHaveAttribute("data-playback-position", "17");
+    expect(playbackCuesByMedia.get("remote:a")).not.toContain("remote:b");
+    expect(playbackCuesByMedia.get("remote:b")).toContain("remote:b");
   });
 
   it("preserves the outgoing DOM, waits for paint readiness, and cleans up on completion", () => {
@@ -356,10 +365,19 @@ describe("DisplayBoxTransitionStage", () => {
     const first = song("song-a", "A", "blue");
     const middle = song("song-b", "B", "red");
     const latest = song("song-c", "C", "green");
+    const cue = (mediaKey: string, generation: number) => ({
+      mediaKey,
+      positionSeconds: 14.2,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation,
+      applySeek: false,
+    });
     const { rerender } = render(
       <DisplayBoxTransitionStage
         snapshot={first}
         shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("blue", 1) }}
         renderLane={readyRenderLane()}
       />,
     );
@@ -368,6 +386,7 @@ describe("DisplayBoxTransitionStage", () => {
       <DisplayBoxTransitionStage
         snapshot={middle}
         shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("red", 2) }}
         renderLane={readyRenderLane()}
       />,
     );
@@ -376,6 +395,7 @@ describe("DisplayBoxTransitionStage", () => {
       <DisplayBoxTransitionStage
         snapshot={latest}
         shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("green", 3) }}
         renderLane={readyRenderLane()}
       />,
     );
@@ -394,6 +414,72 @@ describe("DisplayBoxTransitionStage", () => {
       "data-media-id",
       "green",
     );
+    expect(playbackCuesByMedia.get("blue")).not.toContain("red");
+    expect(playbackCuesByMedia.get("blue")).not.toContain("green");
+    expect(playbackCuesByMedia.get("red")).not.toContain("green");
+  });
+
+  it("keeps the dominant incoming lane's cue when interruption promotes it", () => {
+    const song = (key: string, words: string, mediaKey: string) => ({
+      key,
+      boxes: [{ id: "box", words, width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey,
+        originalSrc: `https://cdn.example.com/${mediaKey}.mp4`,
+      },
+    });
+    const first = song("song-a", "A", "blue");
+    const middle = song("song-b", "B", "red");
+    const latest = song("song-c", "C", "green");
+    const cue = (mediaKey: string, generation: number) => ({
+      mediaKey,
+      positionSeconds: 14.2,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation,
+      applySeek: false,
+    });
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("blue", 1) }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={middle}
+        shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("red", 2) }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const activeMedia = screen.getByTestId("display-box-transition-media-a");
+    const incomingMedia = screen.getByTestId("display-box-transition-media-b");
+    activeMedia.style.opacity = "0.2";
+    incomingMedia.style.opacity = "0.8";
+    screen.getByTestId("display-box-transition-content-a").style.opacity = "0.2";
+    screen.getByTestId("display-box-transition-content-b").style.opacity = "0.8";
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: cue("green", 3) }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    const promotedMedia = screen.getByTestId("display-box-transition-media-b");
+    expect(promotedMedia).toHaveAttribute("data-lane-role", "outgoing");
+    expect(
+      within(promotedMedia).getByTestId("lane-full-frame-media-mock"),
+    ).toHaveAttribute("data-playback-media-key", "red");
+    expect(playbackCuesByMedia.get("red")).toContain("red");
+    expect(playbackCuesByMedia.get("red")).not.toContain("blue");
   });
 
   it("replaces a preparing request so late readiness cannot activate it", () => {

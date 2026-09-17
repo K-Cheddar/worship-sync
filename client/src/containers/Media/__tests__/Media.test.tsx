@@ -94,10 +94,13 @@ jest.mock("../../../hooks/useGlobalBroadcast", () => ({
 
 const mockNavigate = jest.fn();
 const mockShowToast = jest.fn();
+const mockUpdateToast = jest.fn();
+var mockFlushMediaLibraryDocToPouch = jest.fn();
 
 jest.mock("../../../context/toastContext", () => ({
   useToast: () => ({
     showToast: mockShowToast,
+    updateToast: mockUpdateToast,
     removeToast: jest.fn(),
   }),
 }));
@@ -188,7 +191,18 @@ jest.mock("../MediaTypeBadge", () => ({
 
 jest.mock("../../../components/Modal/DeleteModal", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    isOpen,
+    onConfirm,
+  }: {
+    isOpen: boolean;
+    onConfirm: () => void;
+  }) =>
+    isOpen ? (
+      <button type="button" onClick={onConfirm}>
+        confirm-delete
+      </button>
+    ) : null,
 }));
 
 jest.mock("../MediaModal", () => ({
@@ -203,7 +217,8 @@ jest.mock("../../../utils/mediaReferenceSweep", () => ({
 }));
 
 jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
-  flushMediaLibraryDocToPouch: jest.fn().mockResolvedValue({ ok: true }),
+  flushMediaLibraryDocToPouch: (...args: unknown[]) =>
+    mockFlushMediaLibraryDocToPouch(...args),
 }));
 
 jest.mock("../../../api/canva", () => ({
@@ -415,6 +430,9 @@ const renderMedia = async ({
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFlushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
+    mockShowToast.mockReturnValue("delete-toast");
+    mockSelectedMediaIds = new Set();
     mockNavigate.mockClear();
     mockShowToast.mockClear();
     mockUseLocation.mockReturnValue({ pathname: "/item/123" });
@@ -801,6 +819,42 @@ describe("Media", () => {
     expect(mockShowToast).toHaveBeenCalledWith(
       'Sent "Sunrise Image" to Projector.',
       "success",
+    );
+  });
+
+  it("does not report success or clear history when the library flush fails", async () => {
+    mockState = makeBaseState();
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = {
+      ...mockState.media.list[0],
+      source: "cloudinary" as const,
+    };
+    mockFlushMediaLibraryDocToPouch.mockResolvedValue({
+      ok: false,
+      error: new Error("disk unavailable"),
+    });
+    jest.spyOn(window, "alert").mockImplementation(() => undefined);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => {
+      expect(mockUpdateToast).toHaveBeenCalledWith(
+        "delete-toast",
+        expect.objectContaining({
+          variant: "error",
+          persist: true,
+          message: expect.stringContaining("was not saved"),
+        }),
+      );
+    });
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CLEAR_HISTORY" }),
+    );
+    expect(mockUpdateToast).not.toHaveBeenCalledWith(
+      "delete-toast",
+      expect.objectContaining({ variant: "success" }),
     );
   });
 });

@@ -32,12 +32,17 @@ test("device pairing broker keeps the secret off the QR and exchanges the existi
   const statusRes = createRes();
   await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), statusRes);
   assert.equal(statusRes.payload?.status, "awaiting_exchange");
+  assert.equal(statusRes.payload?.pairingToken, undefined);
   const redeemRes = createRes();
-  await authHandlers.redeemWorkstationPairing(createReq({ body: { token: statusRes.payload.pairingToken, platformType: "web" } }), redeemRes);
+  await authHandlers.exchangeDevicePairingRequest(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret, platformType: "web" } }), redeemRes);
   assert.equal(redeemRes.payload?.device.label, "Front laptop");
   assert.equal(redeemRes.payload?.device.appAccess, "music");
   assert.equal(redeemRes.payload?.device.serviceWorkspaceAccess, true);
   assert.equal(redeemRes.payload?.device.platformType, "web");
+  const completedStatusRes = createRes();
+  await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), completedStatusRes);
+  assert.equal(completedStatusRes.payload?.status, "redeemed");
+  assert.equal(completedStatusRes.payload?.pairingToken, undefined);
 });
 
 test("device pairing broker creates and redeems the existing display pairing", async () => {
@@ -53,7 +58,7 @@ test("device pairing broker creates and redeems the existing display pairing", a
   const statusRes = createRes();
   await authHandlers.getDevicePairingRequestStatus(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), statusRes);
   const redeemRes = createRes();
-  await authHandlers.redeemDisplayPairing(createReq({ body: { token: statusRes.payload.pairingToken } }), redeemRes);
+  await authHandlers.exchangeDevicePairingRequest(createReq({ body: { requestId: startRes.payload.requestId, requestSecret: startRes.payload.requestSecret } }), redeemRes);
   assert.equal(redeemRes.payload?.success, true);
   assert.equal(redeemRes.payload?.device.label, "Lobby TV");
   assert.equal(redeemRes.payload?.device.surfaceType, "stream");

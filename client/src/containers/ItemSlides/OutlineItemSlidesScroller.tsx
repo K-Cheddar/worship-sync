@@ -52,7 +52,6 @@ import {
 import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
 import ContinuousStaticItemSlide from "./ContinuousStaticItemSlide";
-import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 
 const SECTION_LABEL_HEIGHT = 36;
 const EMPTY_ROW_HEIGHT = 28;
@@ -294,7 +293,6 @@ const OutlineItemSlidesScroller = ({
     };
   }, shallowEqual);
   const activeItemListId = activeItem.listId;
-  const activeItemId = activeItem._id;
 
   const outlineItems = useMemo(
     () => getNonHeadingOutlineItems(outlineList),
@@ -570,12 +568,6 @@ const OutlineItemSlidesScroller = ({
     (listId: string, options?: { selectedSlide?: number }) => {
       const item = outlineItemByListId.get(listId);
       if (!item) return;
-      const uiDetails = {
-        outputId: "controller",
-        windowRole: "controller",
-        itemId: item._id,
-        listId,
-      };
       beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
       lastPinnedListIdRef.current = listId;
       setBrowsePinListId(listId);
@@ -588,7 +580,6 @@ const OutlineItemSlidesScroller = ({
       const doc = docsById.get(item._id);
       if (doc) {
         const prepared = prepareItemForEditor(doc, listId);
-        markPresentationPerformance("prepare-item-complete", uiDetails);
         dispatch(
           setActiveItem(
             options?.selectedSlide != null
@@ -597,13 +588,9 @@ const OutlineItemSlidesScroller = ({
           ),
         );
       }
-      markPresentationPerformance("active-item-dispatch-complete", uiDetails);
-      markPresentationPerformance("navigation-start", uiDetails);
       navigate(getControllerItemPath(item, controllerBasePath), {
         replace: true,
       });
-      markPresentationPerformance("navigation-complete", uiDetails);
-      markPresentationPerformance("cross-item-ui-update-complete", uiDetails);
     },
     [
       beginIgnorePin,
@@ -845,16 +832,6 @@ const OutlineItemSlidesScroller = ({
     tileRowHeight,
   ]);
 
-  useEffect(() => {
-    if (!activeItemListId) return;
-    markPresentationPerformance("outline-react-commit", {
-      outputId: "controller",
-      windowRole: "controller",
-      itemId: activeItemId,
-      listId: activeItemListId,
-    });
-  }, [activeItemId, activeItemListId]);
-
   // useEffect runs after parent refs attach, so collapse/open still lands on
   // the selected item when child layout raced ahead of the scroll element.
   useEffect(() => {
@@ -1082,19 +1059,6 @@ const OutlineItemSlidesScroller = ({
       index: number,
     ) => {
       if (!section.isActive) {
-        markPresentationPerformance("cross-item-ui-update-start", {
-          outputId: "controller",
-          windowRole: "controller",
-          itemId: section.itemId,
-          listId: section.listId,
-          slideIndex: index,
-        });
-        markPresentationPerformance("continuous-slide-click", {
-          outputId: "controller",
-          windowRole: "controller",
-          itemId: section.itemId,
-          slideIndex: index,
-        });
         // Transmit from the already available section before activating the
         // editor item. This keeps the live path independent of navigation and
         // the pending-selection effect.

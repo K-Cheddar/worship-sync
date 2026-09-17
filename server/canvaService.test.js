@@ -320,6 +320,41 @@ test("Canva PNG imports are copied to Cloudinary instead of storing export URLs"
   });
 });
 
+test("Canva PNG cancellation stops uploads for remaining pages", async () => {
+  let cancelled = false;
+  const uploaded = [];
+  const { service } = await createConnectedService({
+    exportJobForRequest: ({ body }) => ({
+      id: "export-png-cancelled",
+      status: "success",
+      urls: body.format.pages.map(
+        (pageNumber) => `https://document-export.canva.com/page-${pageNumber}.png`,
+      ),
+    }),
+    uploadResultForUrl: (url) => {
+      uploaded.push(url);
+      cancelled = true;
+      return {
+        asset_id: "asset-1",
+        public_id: "worship-sync/canva/church-1/page-1",
+        secure_url: url,
+      };
+    },
+  });
+
+  await assert.rejects(
+    service.importDesign({
+      churchId: "church-1",
+      designId: "DAF_design_1",
+      pages: [1, 2],
+      format: "png",
+      isCancelled: () => cancelled,
+    }),
+    /cancelled/i,
+  );
+  assert.deepEqual(uploaded, ["https://document-export.canva.com/page-1.png"]);
+});
+
 test("Canva getDesign explains that public link access does not grant API access on 403", async () => {
   const { service, httpClient } = await createConnectedService();
   const originalGet = httpClient.get.bind(httpClient);
@@ -796,6 +831,7 @@ test("Canva does not wait for an absent static rendition", async () => {
 });
 
 test("Canva rejects an errored Mux asset", async () => {
+  const deletedAssets = [];
   const muxClient = {
     video: {
       assets: {
@@ -808,6 +844,9 @@ test("Canva rejects an errored Mux asset", async () => {
         },
         async retrieve() {
           throw new Error("Mux should not poll an errored asset");
+        },
+        async delete(assetId) {
+          deletedAssets.push(assetId);
         },
       },
     },
@@ -823,6 +862,88 @@ test("Canva rejects an errored Mux asset", async () => {
     }),
     /could not process the Canva video/i,
   );
+  assert.deepEqual(deletedAssets, ["mux-asset-errored"]);
+});
+
+test("combined MP4 cancellation after Mux creation cleans up the asset", async () => {
+  let cancelled = false;
+  const deletedAssets = [];
+  const muxClient = {
+    video: {
+      assets: {
+        async create() {
+          return { id: "mux-combined-cancelled", status: "processing", playback_ids: [] };
+        },
+        async retrieve() {
+          throw new Error("retrieve should not run after cancellation");
+        },
+        async delete(assetId) {
+          deletedAssets.push(assetId);
+        },
+      },
+    },
+  };
+  const { service } = await createConnectedService({
+    muxClient,
+    wait: async () => {
+      cancelled = true;
+    },
+  });
+
+  await assert.rejects(
+    service.importDesign({
+      churchId: "church-1",
+      designId: "DAF_design_1",
+      pages: [1, 2],
+      format: "mp4",
+      isCancelled: () => cancelled,
+    }),
+    /cancelled/i,
+  );
+  assert.deepEqual(deletedAssets, ["mux-combined-cancelled"]);
+});
+
+test("combined MP4 processing timeout cleans up the asset", async () => {
+  let clock = 0;
+  const deletedAssets = [];
+  const muxClient = {
+    video: {
+      assets: {
+        async create() {
+          return { id: "mux-combined-stuck", status: "processing", playback_ids: [] };
+        },
+        async retrieve() {
+          return {
+            id: "mux-combined-stuck",
+            status: "processing",
+            playback_ids: [],
+          };
+        },
+        async delete(assetId) {
+          deletedAssets.push(assetId);
+        },
+      },
+    },
+  };
+  const { service } = await createConnectedService({
+    muxClient,
+    muxProcessingDeadlineMs: 1500,
+    now: () => clock,
+    wait: async () => {
+      clock += 1000;
+    },
+  });
+
+  await assert.rejects(
+    service.importDesign({
+      churchId: "church-1",
+      designId: "DAF_design_1",
+      pages: [1, 2],
+      format: "mp4",
+    }),
+    /video processing timed out/i,
+  );
+  assert.deepEqual(deletedAssets, ["mux-combined-stuck"]);
 });
 
 const createReadyMuxClient = (created = []) => ({

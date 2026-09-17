@@ -19,7 +19,6 @@ import {
   getVideoSourceKind,
   isHLSVideoSource,
 } from "../../utils/isInstantVideoSource";
-import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 
 type HLSPlayerProps = {
   src: string;
@@ -126,6 +125,11 @@ const applyCueToVideo = (
   startPlayback(video);
 };
 
+const cueBelongsToMedia = (
+  cue: VideoBackgroundPlaybackCue | undefined,
+  mediaKey: string | undefined,
+) => !cue || !mediaKey || cue.mediaKey === mediaKey;
+
 const HLSPlayer = ({
   src,
   originalSrc,
@@ -153,6 +157,8 @@ const HLSPlayer = ({
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
   playbackRoleRef.current = playbackRole;
+  const mediaKeyRef = useRef(mediaKey);
+  mediaKeyRef.current = mediaKey;
   const suspendPlaybackRef = useRef(suspendPlayback);
   suspendPlaybackRef.current = suspendPlayback;
   const onLoadedDataRef = useRef(onLoadedData);
@@ -230,11 +236,6 @@ const HLSPlayer = ({
           return;
         }
         paintReadySrcRef.current = videoSrc;
-        markPresentationPerformance("video-loadeddata-first-paint", {
-          outputId: outputId ?? "unknown",
-          windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
-          src: videoSrc,
-        });
         clearPaintReadyWaits();
         logVideoCue("player.paintReady", {
           role: playbackRoleRef.current,
@@ -245,7 +246,7 @@ const HLSPlayer = ({
 
       finish();
     },
-    [clearPaintReadyWaits, outputId, windowRole],
+    [clearPaintReadyWaits],
   );
 
   const notifyPaintReadyRef = useRef(notifyPaintReady);
@@ -278,6 +279,12 @@ const HLSPlayer = ({
     }
 
     const cue = playbackRef.current;
+    if (!cueBelongsToMedia(cue, mediaKeyRef.current)) {
+      // A stale cue for another clip must never seek or otherwise synchronize
+      // this element. The transition stage owns the primary identity check;
+      // this guards the player when props race at any other boundary.
+      return;
+    }
     if (!cue) {
       // A rate correction belongs only to the cue that requested it. Do not
       // let it leak into local preview playback after the cue is removed.
@@ -353,14 +360,9 @@ const HLSPlayer = ({
 
   /** Metadata is loaded: the element now knows its duration and can be cued. */
   const handleMediaReady = useCallback((videoSrc: string) => {
-    markPresentationPerformance("video-loadedmetadata", {
-      outputId: outputId ?? "unknown",
-      windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
-      src: videoSrc,
-    });
     readySrcRef.current = videoSrc;
     syncPlaybackRef.current();
-  }, [outputId, windowRole]);
+  }, []);
 
   const handleEnded = useCallback(() => {
     const video = videoRef.current;
@@ -368,6 +370,7 @@ const HLSPlayer = ({
     video.playbackRate = 1;
     rateCorrectionStartedAtRef.current = null;
     const cue = playbackRef.current;
+    if (!cueBelongsToMedia(cue, mediaKeyRef.current)) return;
     video.currentTime = cue
       ? resolveVideoPlaybackPosition(cue, finiteDuration(video))
       : 0;
@@ -526,11 +529,6 @@ const HLSPlayer = ({
     if (video) video.playbackRate = 1;
     if (!video || !src) return;
 
-    markPresentationPerformance("video-source-available", {
-      outputId: outputId ?? "unknown",
-      windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
-      src,
-    });
 
     if (isHLSVideoSource(src)) {
       const stopHls = playHLS(video, src);
@@ -550,16 +548,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
     };
-  }, [src, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
-
-  useEffect(() => {
-    if (!videoRef.current) return;
-    markPresentationPerformance("video-player-mounted", {
-      outputId: outputId ?? "unknown",
-      windowRole: windowRole ?? playbackRole ?? "unknown",
-      src,
-    });
-  }, [outputId, playbackRole, src, windowRole]);
+  }, [src, playNative, playHLS, clearPaintReadyWaits]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -617,7 +606,12 @@ const HLSPlayer = ({
 
     syncPlayback();
     const cue = playbackRef.current;
-    if (video.paused && cue && !cue.paused) {
+    if (
+      cueBelongsToMedia(cue, mediaKeyRef.current) &&
+      video.paused &&
+      cue &&
+      !cue.paused
+    ) {
       startPlayback(video, srcRef.current);
     } else if (
       video.paused &&
@@ -644,6 +638,11 @@ const HLSPlayer = ({
     const id = window.setInterval(() => {
       const cue = playbackRef.current;
       if (!cue || cue.paused || suspendPlaybackRef.current) {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
+        return;
+      }
+      if (!cueBelongsToMedia(cue, mediaKeyRef.current)) {
         video.playbackRate = 1;
         rateCorrectionStartedAtRef.current = null;
         return;

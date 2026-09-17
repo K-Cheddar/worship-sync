@@ -743,6 +743,16 @@ export const getDevicePairingRequestStatus = async (body: {
     { method: "POST", body: JSON.stringify(body) },
   );
 
+export const exchangeDevicePairingRequest = async (body: {
+  requestId: string;
+  requestSecret: string;
+  platformType?: "electron" | "web";
+}) =>
+  apiFetchWithoutAuthRecovery<RedeemWorkstationPairingResponse | RedeemDisplayPairingResponse>(
+    "api/device-pairing-requests/exchange",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
 export const getDevicePairingRequest = async (requestId: string) =>
   apiFetch<{ success: boolean; request: DevicePairingRequestPreview }>(
     `api/device-pairing-requests/${requestId}`,
