@@ -1,3 +1,22 @@
+# [2.35.0](https://github.com/K-Cheddar/worship-sync/compare/v2.34.0...v2.35.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* harden service plans, teams, and client state workflows ([e1e5c91](https://github.com/K-Cheddar/worship-sync/commit/e1e5c91afc3e0faa28e68eb20e9a25224e098049))
+
+
+### Features
+
+* add device pairing and service plan viewer access ([a5f5bd3](https://github.com/K-Cheddar/worship-sync/commit/a5f5bd3ae0a4ab264afe777040f5820dc2607bdc))
+* expand Canva media import workflows ([aa4314a](https://github.com/K-Cheddar/worship-sync/commit/aa4314a6c18756aa77695c92285462346f388d1e))
+* improve lyrics search and desktop media support ([224d58a](https://github.com/K-Cheddar/worship-sync/commit/224d58ad60a37513f4273f0d678193b684014db1))
+
+
+### Performance Improvements
+
+* improve presentation rendering and slide thumbnails ([870ad6a](https://github.com/K-Cheddar/worship-sync/commit/870ad6a95ad9999f75dc16548d0ae507dceb7dd2))
+
 # [2.34.0](https://github.com/K-Cheddar/worship-sync/compare/v2.33.1...v2.34.0) (2026-09-15)
 
 
