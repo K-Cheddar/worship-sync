@@ -40,18 +40,20 @@ interface WindowState {
   displayId?: number;
   x?: number;
   y?: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
+  width?: number;
+  height?: number;
+  isFullScreen?: boolean;
 }
 
 interface WindowStatesInfo {
-  projector: WindowState;
-  monitor: WindowState;
-  board: WindowState;
-  projectorOpen: boolean;
-  monitorOpen: boolean;
-  boardOpen: boolean;
+  /** Per-window state keyed by window key, each carrying whether it is open. */
+  displays: Record<string, WindowState & { isOpen: boolean }>;
+}
+
+interface ElectronDesktopCaptureSource {
+  id: string;
+  name: string;
+  thumbnailDataUrl?: string;
 }
 
 interface ElectronLocalAsset {
@@ -74,6 +76,17 @@ interface ElectronAPI {
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
   openExternalUrl: (url: string) => Promise<boolean>;
+  fetchGeniusLyrics: (url: string) => Promise<{
+    ok: boolean;
+    status: number;
+    lyrics?: string;
+    html?: string;
+  }>;
+  searchGeniusLyrics: (query: {
+    trackName: string;
+    artistName?: string;
+    albumName?: string;
+  }) => Promise<unknown[]>;
 
   // Window management - all generic handlers
   /** `surface` names the render profile when opening an output window. */
@@ -110,7 +123,7 @@ interface ElectronAPI {
    * generation floor so any in-flight identifyDisplay is rejected.
    */
   cancelIdentifyDisplay: (generation: number) => Promise<boolean>;
-  getWindowStates: () => Promise<WindowStatesInfo>;
+  getWindowStates: (windowKeys?: string[]) => Promise<WindowStatesInfo>;
   /** Reload open projector/monitor/board windows (e.g. after sign-in). */
   refreshDisplayWindows: () => Promise<number>;
   onDesktopAuthCallback: (
@@ -191,6 +204,9 @@ interface ElectronAPI {
   ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
+  getDesktopCaptureSources: (options?: {
+    withThumbnails?: boolean;
+  }) => Promise<ElectronDesktopCaptureSource[]>;
 
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

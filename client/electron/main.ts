@@ -66,6 +66,7 @@ import {
   shouldForwardUpdaterErrorToRenderer,
 } from "./updaterHelpers";
 import { isTrustedControllerIpcSender } from "./ipcSenderAuthorization";
+import { createLyricsImportService } from "../../lyricsImport.js";
 
 const { autoUpdater } = updaterPkg;
 
@@ -79,6 +80,37 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
+
+const localLyricsImportService = createLyricsImportService();
+
+type LocalGeniusSearchQuery = {
+  trackName?: unknown;
+  artistName?: unknown;
+  albumName?: unknown;
+};
+
+const getTrimmedQueryValue = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const normalizeLocalGeniusSearchQuery = (
+  query: LocalGeniusSearchQuery,
+): Record<string, string> => {
+  const trackName = getTrimmedQueryValue(query.trackName);
+  if (!trackName) {
+    throw new Error("A song title is required to search Genius locally.");
+  }
+
+  const artistName = getTrimmedQueryValue(query.artistName);
+  const albumName = getTrimmedQueryValue(query.albumName);
+  return {
+    track_name: trackName,
+    ...(artistName ? { artist_name: artistName } : {}),
+    ...(albumName ? { album_name: albumName } : {}),
+  };
+};
 
 /**
  * In-app auto-updates on macOS require Apple code signing + notarization.
@@ -1729,6 +1761,29 @@ ipcMain.handle(
       mainWindow.setProgressBar(clamped);
     }
     return true;
+  },
+);
+
+ipcMain.handle(
+  "search-genius-lyrics",
+  async (_event, query: LocalGeniusSearchQuery) => {
+    const startedAt = performance.now();
+    const params = normalizeLocalGeniusSearchQuery(query ?? {});
+    try {
+      const tracks = await localLyricsImportService.searchGeniusTracks(params, {
+        fetchLyrics: false,
+      });
+      if (isDev) {
+        console.debug(
+          `[lyrics-import] local Genius search: ${(performance.now() - startedAt).toFixed(0)}ms`,
+          { resultCount: tracks.length },
+        );
+      }
+      return tracks;
+    } catch (error) {
+      console.error("Local Genius search failed:", error);
+      throw error;
+    }
   },
 );
 

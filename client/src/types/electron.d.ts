@@ -74,6 +74,11 @@ export interface ElectronAPI {
     lyrics?: string;
     html?: string;
   }>;
+  searchGeniusLyrics: (query: {
+    trackName: string;
+    artistName?: string;
+    albumName?: string;
+  }) => Promise<unknown[]>;
 
   // Window management - all generic handlers
   /** `surface` names the render profile when opening an output window. */
@@ -115,6 +120,38 @@ export interface ElectronAPI {
   refreshDisplayWindows: () => Promise<number>;
   onDesktopAuthCallback: (
     callback: (payload: { desktopAuthId: string }) => void,
+  ) => () => void;
+  onWindowStateChanged: (callback: () => void) => () => void;
+  checkForUpdates: () => Promise<{
+    available: boolean;
+    updateInfo?: unknown;
+    error?: string;
+    message?: string;
+  }>;
+  getDesktopUpdateCapabilities: () => Promise<{
+    autoUpdate: boolean;
+    manualReleaseDownload: boolean;
+  }>;
+  openDesktopReleaseDownload: () => Promise<{ ok: boolean; error?: string }>;
+  installUpdate: () => Promise<
+    { ok: true } | { ok: false; reason?: string; error?: string }
+  >;
+  onUpdateAvailable?: (
+    callback: (info: { version: string; releaseDate?: string }) => void,
+  ) => () => void;
+  onUpdateNotAvailable?: (callback: () => void) => () => void;
+  onUpdateDownloaded?: (
+    callback: (info: { version: string; releaseDate?: string }) => void,
+  ) => () => void;
+  onUpdateDownloadProgress?: (
+    callback: (progress: {
+      percent: number;
+      transferred: number;
+      total: number;
+    }) => void,
+  ) => () => void;
+  onUpdateError?: (
+    callback: (error: { message: string }) => void,
   ) => () => void;
 
   // Media cache

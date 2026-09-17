@@ -27,6 +27,7 @@ describe("electron preload API contract", () => {
       "getDesktopCaptureSources",
       "openExternalUrl",
       "fetchGeniusLyrics",
+      "searchGeniusLyrics",
       "saveLastRoute",
       "getLastRoute",
     ];

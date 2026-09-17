@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("open-external-url", url),
   fetchGeniusLyrics: (url: string) =>
     ipcRenderer.invoke("fetch-genius-lyrics", url),
+  searchGeniusLyrics: (query: {
+    trackName: string;
+    artistName?: string;
+    albumName?: string;
+  }) => ipcRenderer.invoke("search-genius-lyrics", query),
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType, surface?: string) =>

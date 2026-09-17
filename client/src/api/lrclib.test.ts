@@ -56,7 +56,7 @@ describe("lrclib api", () => {
       status: 200,
       html: `<div id="lyrics-root"><div data-lyrics-container="true"><div data-exclude-from-selection="true">Song description Read More</div>1 Contributor Example Song Lyrics[Verse 1]<br>Amazing grace<br>How sweet the sound</div></div>`,
     });
-    window.electronAPI = { fetchGeniusLyrics } as typeof window.electronAPI;
+    window.electronAPI = { fetchGeniusLyrics } as unknown as typeof window.electronAPI;
 
     const result = await fetchGeniusLyricsLocally({
       source: "genius",
@@ -176,6 +176,127 @@ describe("lrclib api", () => {
         },
       ],
     });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.example.com/api/lrclib/search?trackName=Great+Is+Thy+Faithfulness&artistName=Traditional",
+    );
+  });
+
+  it("starts Electron server providers and local Genius search concurrently", async () => {
+    let resolveServerResponse: (response: Response) => void = () => undefined;
+    const serverResponse = new Promise<Response>((resolve) => {
+      resolveServerResponse = resolve;
+    });
+    (global.fetch as jest.Mock).mockReturnValue(serverResponse);
+
+    const searchGeniusLyrics = jest.fn().mockResolvedValue([
+      {
+        source: "genius",
+        geniusId: 13,
+        geniusUrl: "https://genius.com/great-is-thy-faithfulness-lyrics",
+        trackName: "Great Is Thy Faithfulness",
+        artistName: "Traditional",
+        albumName: "Hymns",
+        plainLyrics: null,
+        syncedLyrics: null,
+      },
+    ]);
+    window.electronAPI = {
+      searchGeniusLyrics,
+    } as unknown as typeof window.electronAPI;
+
+    const resultsPromise = searchLrclibTracks({
+      trackName: "Great Is Thy Faithfulness",
+      artistName: "Traditional",
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.example.com/api/lrclib/search?trackName=Great+Is+Thy+Faithfulness&artistName=Traditional&localGenius=true",
+    );
+    expect(searchGeniusLyrics).toHaveBeenCalledWith({
+      trackName: "Great Is Thy Faithfulness",
+      artistName: "Traditional",
+    });
+
+    resolveServerResponse({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          source: "lyricsovh",
+          lyricsOvhKey: "Traditional::Great Is Thy Faithfulness",
+          trackName: "Great Is Thy Faithfulness",
+          artistName: "Traditional",
+          plainLyrics: "Great is thy faithfulness",
+          syncedLyrics: null,
+        },
+      ],
+    } as Response);
+
+    await expect(resultsPromise).resolves.toEqual([
+      expect.objectContaining({ source: "genius", geniusId: 13 }),
+      expect.objectContaining({
+        source: "lyricsovh",
+        lyricsOvhKey: "Traditional::Great Is Thy Faithfulness",
+      }),
+    ]);
+  });
+
+  it("keeps local Genius results when server providers fail", async () => {
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("server offline"));
+    window.electronAPI = {
+      searchGeniusLyrics: jest.fn().mockResolvedValue([
+        {
+          source: "genius",
+          geniusId: 21,
+          geniusUrl: "https://genius.com/example-song-lyrics",
+          trackName: "Example Song",
+          artistName: "Example Artist",
+          plainLyrics: null,
+          syncedLyrics: null,
+        },
+      ]),
+    } as unknown as typeof window.electronAPI;
+
+    await expect(
+      searchLrclibTracks({ trackName: "Example Song" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        source: "genius",
+        geniusId: 21,
+        geniusUrl: "https://genius.com/example-song-lyrics",
+      }),
+    ]);
+  });
+
+  it("keeps server-provider results when local Genius search fails", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          id: 22,
+          trackName: "Example Song",
+          artistName: "Example Artist",
+          plainLyrics: "Example lyrics",
+          syncedLyrics: null,
+        },
+      ],
+    });
+    window.electronAPI = {
+      searchGeniusLyrics: jest
+        .fn()
+        .mockRejectedValue(new Error("Genius unavailable")),
+    } as unknown as typeof window.electronAPI;
+
+    await expect(
+      searchLrclibTracks({ trackName: "Example Song" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        source: "lrclib",
+        lrclibId: 22,
+        plainLyrics: "Example lyrics",
+      }),
+    ]);
   });
 
   it("returns lyrics.ovh candidates from the shared search endpoint", async () => {

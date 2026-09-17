@@ -350,6 +350,7 @@ const CreateItem = ({
       return;
     }
 
+    const startedAt = performance.now();
     setIsImportingLyrics(true);
     updateCreateItemDraft({ lyricsImportError: "" });
     setMobileSongTab("import");
@@ -374,7 +375,7 @@ const CreateItem = ({
         return;
       }
 
-      const hydratedCandidates = await Promise.all(
+      const hydrationResults = await Promise.allSettled(
         result.candidates.map(async (candidate) => {
           if (
             candidate.source !== "genius" ||
@@ -383,12 +384,13 @@ const CreateItem = ({
             return candidate;
           }
 
-          try {
-            return await fetchGeniusLyricsLocally(candidate);
-          } catch {
-            return candidate;
-          }
+          return fetchGeniusLyricsLocally(candidate);
         }),
+      );
+      const hydratedCandidates = hydrationResults.map((hydration, index) =>
+        hydration.status === "fulfilled"
+          ? hydration.value
+          : result.candidates[index],
       );
 
       updateCreateItemDraft({ lyricsImportCandidates: hydratedCandidates });
@@ -398,6 +400,11 @@ const CreateItem = ({
         lyricsImportError: "Could not import lyrics right now. Try again.",
       });
     } finally {
+      if (import.meta.env.DEV) {
+        console.debug(
+          `[lyrics-import] total import search: ${(performance.now() - startedAt).toFixed(0)}ms`,
+        );
+      }
       setIsImportingLyrics(false);
     }
   };
