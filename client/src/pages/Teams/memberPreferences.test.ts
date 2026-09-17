@@ -62,7 +62,7 @@ describe("member preferences", () => {
   it("limits scheduling to selected and last weeks of the month", () => {
     const fourthWeekOnly = {
       recurringAvailability: {
-        weeksOfMonth: [4],
+        weeksOfMonth: [4] as (1 | 2 | 3 | 4 | 5)[],
         includeLastWeekOfMonth: false,
       },
     };
@@ -72,7 +72,7 @@ describe("member preferences", () => {
 
     const lastWeekOnly = {
       recurringAvailability: {
-        weeksOfMonth: [],
+        weeksOfMonth: [] as (1 | 2 | 3 | 4 | 5)[],
         includeLastWeekOfMonth: true,
       },
     };

@@ -56,6 +56,16 @@ export const allDocsSlice = createSlice({
         state[key] = [...arr, doc];
       }
     },
+    upsertItemsInAllDocs: (state, action: PayloadAction<DBItem[]>) => {
+      for (const doc of action.payload) {
+        const key = getDocsKey(doc.type);
+        if (!key) continue;
+        const arr = state[key];
+        const idx = arr.findIndex((candidate) => candidate._id === doc._id);
+        if (idx >= 0) arr[idx] = doc;
+        else state[key] = [...arr, doc];
+      }
+    },
     removeItemFromAllDocs: (
       state,
       action: PayloadAction<{ _id: string; type: string }>,
@@ -126,6 +136,7 @@ export const {
   updateAllTimerDocs,
   updateAllBibleDocs,
   upsertItemInAllDocs,
+  upsertItemsInAllDocs,
   removeItemFromAllDocs,
   attachCloudCopyToLocalImageInAllDocs,
   updateLocalImageReferenceInAllDocs,

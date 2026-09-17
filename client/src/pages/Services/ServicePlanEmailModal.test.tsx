@@ -113,11 +113,16 @@ describe("ServicePlanEmailModal", () => {
   it("reports partial delivery and retries only failed recipients", async () => {
     const user = userEvent.setup({ delay: null });
     const onSend = jest
-      .fn<
-        (
-          draft: ServicePlanEmailDraft,
-        ) => Promise<ServicePlanShareEmailResult>
-      >()
+      .fn(
+        async (
+          _draft: ServicePlanEmailDraft,
+        ): Promise<ServicePlanShareEmailResult> => ({
+          success: true,
+          sent: 1,
+          failed: 0,
+          failedRecipients: [],
+        }),
+      )
       .mockResolvedValueOnce({
         success: false,
         sent: 1,
@@ -217,16 +222,15 @@ describe("ServicePlanEmailModal", () => {
 
     expect(onSend).toHaveBeenCalledWith({
       recipients: ["one@example.com"],
-      subject: "Easter Sunday Service Plan â€” July 26, 2026",
       message: "Here is the service plan for Easter Sunday on July 26, 2026.",
       shareVersion: "detailed",
-      ...{ subject: expect.any(String) },
+      subject: expect.any(String),
     });
   });
 
   it("sends simple after changing the detailed default", async () => {
     const user = userEvent.setup({ delay: null });
-    const onSend = jest.fn(async () => ({
+    const onSend = jest.fn(async (_draft: ServicePlanEmailDraft) => ({
       success: true,
       sent: 1,
       failed: 0,

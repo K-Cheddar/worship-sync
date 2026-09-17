@@ -36,6 +36,7 @@ const microphone = (
   name: "Handheld 1",
   type: "handheld",
   ...overrides,
+  color: overrides.color ?? "#9ca3af",
 });
 
 const renderPage = () =>

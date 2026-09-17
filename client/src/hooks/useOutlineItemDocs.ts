@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { useDispatch, useSelector } from "./reduxHooks";
-import { upsertItemInAllDocs } from "../store/allDocsSlice";
+import { upsertItemsInAllDocs } from "../store/allDocsSlice";
 import type { DBItem } from "../types";
 import { mergeDocsById } from "../utils/outlineSlideSections";
 
@@ -60,12 +60,16 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
           include_docs: true,
         })) as PouchAllDocsResult;
         if (cancelled) return;
+        const fetchedDocs: DBItem[] = [];
         const nextExtras = new Map(extraDocsRef.current);
         for (const row of result.rows ?? []) {
           const doc = row.doc;
           if (!doc || row.error || !doc._id) continue;
-          dispatch(upsertItemInAllDocs(doc));
+          fetchedDocs.push(doc);
           nextExtras.set(doc._id, doc);
+        }
+        if (fetchedDocs.length > 0) {
+          dispatch(upsertItemsInAllDocs(fetchedDocs));
         }
         extraDocsRef.current = nextExtras;
         setExtraDocs(nextExtras);
@@ -74,7 +78,7 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
           console.error(error);
         }
       } finally {
-        if (!cancelled && inFlightKeyRef.current === requestKey) {
+        if (inFlightKeyRef.current === requestKey) {
           inFlightKeyRef.current = "";
         }
       }

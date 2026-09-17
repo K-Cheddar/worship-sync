@@ -6,7 +6,7 @@ export const matchesScopedTeam = (teamId: string, scopedTeamIds: string[]) =>
 export const toCheckboxOption = (item: {
   id: string;
   label: string;
-  archived?: boolean | null;
+  archived?: boolean | string | null;
 }): MultiCheckboxOption => ({
   id: item.id,
   label: item.label,

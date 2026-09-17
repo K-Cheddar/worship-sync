@@ -8,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, TriangleAlert, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
@@ -187,6 +187,7 @@ type ScheduleAssignmentPickerProps = {
   ) => Promise<void> | void;
   onEditGuest?: (guest: TeamScheduleGuest) => Promise<void> | void;
   onClearAssignment?: () => void;
+  onClose?: () => void;
   /** Shadows currently on the active cell, offered for one-tap removal. */
   currentShadows?: { memberId: string; kind: TeamScheduleShadowKind; label: string }[];
   onRemoveShadow?: (memberId: string, kind: TeamScheduleShadowKind) => void;
@@ -229,6 +230,7 @@ const ScheduleAssignmentPicker = memo(({
   onAssignGuest,
   onEditGuest,
   onClearAssignment,
+  onClose,
   currentShadows = emptyShadows,
   onRemoveShadow,
   pendingSubmenu,
@@ -335,9 +337,12 @@ const ScheduleAssignmentPicker = memo(({
     Boolean(getAssignmentActionIssues);
 
   useEffect(() => {
-    if (!open || !occupiedActionMenuAvailable) return;
-    setMenuView("occupiedActions");
+    if (!open) return;
+    setMenuView(occupiedActionMenuAvailable ? "occupiedActions" : "members");
     setMemberPickerAction(null);
+    setActiveSubmenuMemberId(null);
+    setActiveSwapRecommendation(null);
+    setEditingGuest(false);
   }, [anchorEl, occupiedActionMenuAvailable, open]);
 
   useLayoutEffect(() => {
@@ -505,7 +510,13 @@ const ScheduleAssignmentPicker = memo(({
   const getSelectedActionIssue = (memberId: string) => {
     if (!memberPickerAction || !getAssignmentActionIssues) return "";
     const issues = getAssignmentActionIssues(memberId);
-    return issues[memberPickerAction === "replace" ? "replace" : memberPickerAction];
+    const issueKey =
+      memberPickerAction === "reverse_shadow"
+        ? "reverseShadow"
+        : memberPickerAction === "replace"
+          ? "replace"
+          : memberPickerAction;
+    return issues[issueKey];
   };
   const selectableRows = positionMembers.filter(
     (row) => row.eligible && !getSelectedActionIssue(row.member.memberId),
@@ -743,7 +754,7 @@ const ScheduleAssignmentPicker = memo(({
         side={lockedSide ?? "bottom"}
         sideOffset={4}
         avoidCollisions={!lockedSide}
-        className="z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+        className="relative z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
           if (
@@ -754,6 +765,21 @@ const ScheduleAssignmentPicker = memo(({
           }
         }}
       >
+        {onClose ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={X}
+            iconSize="sm"
+            padding="p-1"
+            className="absolute right-1 top-1 z-10 text-gray-400 hover:text-white"
+            aria-label="Close assignee picker"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onClose();
+            }}
+          />
+        ) : null}
         {menuView !== "occupiedActions" ? <div className="border-b border-gray-800 p-2">
           <label className="sr-only">{label}</label>
           <div className="relative flex min-w-0 items-stretch">
@@ -764,14 +790,11 @@ const ScheduleAssignmentPicker = memo(({
               aria-controls={listboxId}
               aria-expanded={pickerOpen}
               aria-label={label}
-              className="w-full rounded-md border border-gray-800 bg-gray-950 py-1 pl-9 pr-2 text-sm text-white focus:border-gray-600 focus:outline-none"
+              className="w-full rounded-md border border-gray-800 bg-gray-950 py-1 pl-9 pr-8 text-sm text-white focus:border-gray-600 focus:outline-none"
               value={assignmentQuery}
               onChange={(event) => {
                 onAssignmentQueryChange(event.target.value);
-                const nextAction =
-                  menuView === "occupiedActions" ? "replace" : memberPickerAction;
                 setMenuView("members");
-                setMemberPickerAction(nextAction);
                 setActiveSubmenuMemberId(null);
                 setActiveSwapRecommendation(null);
               }}

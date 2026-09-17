@@ -367,8 +367,10 @@ describe("ServicePlanLibraryPicker", () => {
 
   it("waits for the song library before allowing a new song to be attached", async () => {
     const user = userEvent.setup();
-    const controllerContext = createMockControllerContext();
-    controllerContext.db = undefined;
+    const controllerContext = {
+      ...createMockControllerContext(),
+      db: undefined,
+    } as unknown as ReturnType<typeof createMockControllerContext>;
     renderPicker(createPickerStore(), {
       controllerContext,
     });

@@ -70,7 +70,8 @@ export const resolvePlanTimelineStartMs = (
   if (!match) return startsAtMs;
   const planStartMinutes = localMinutesInTimezone(startsAtMs, timezone);
   if (planStartMinutes == null) return startsAtMs;
-  let deltaMinutes = Number(match[1]) * 60 + Number(match[2]) - planStartMinutes;
+  let deltaMinutes =
+    Number(match[1]) * 60 + Number(match[2]) - planStartMinutes;
   // Element times are bare wall clocks with no date, so keep the anchor on the
   // nearest side of the service start rather than jumping most of a day.
   if (deltaMinutes > 720) deltaMinutes -= 1440;
@@ -83,6 +84,19 @@ export type ServicePlanTimingSource = {
   startsAt?: string;
   timezone?: string;
   sections?: ServicePlanSection[] | null;
+  publicLive?:
+    | {
+        mode: "schedule";
+      }
+    | {
+        mode: "manual";
+        currentElementId: string;
+      }
+    | {
+        mode: "anchored";
+        currentElementId: string;
+        startedAt: string;
+      };
 };
 
 type TimedItem = {
@@ -118,10 +132,36 @@ export const resolveServicePlanEndMs = (
   const startsAtMs = Number.isFinite(planStartsAtMs)
     ? planStartsAtMs
     : fallbackStartsAtMs;
-  if (!Number.isFinite(startsAtMs)) return null;
+  if (typeof startsAtMs !== "number" || !Number.isFinite(startsAtMs)) {
+    return null;
+  }
 
   const sections = plan.sections || [];
   const elements = sections.flatMap((section) => section?.elements || []);
+  const publicLive = plan.publicLive;
+
+  if (
+    publicLive?.mode === "anchored" &&
+    Number.isFinite(Date.parse(publicLive.startedAt))
+  ) {
+    const currentElementId = publicLive.currentElementId;
+    const anchorIndex = elements.findIndex(
+      (element) => element.id === currentElementId,
+    );
+    if (anchorIndex >= 0) {
+      const anchoredEndMs = Date.parse(publicLive.startedAt);
+      let hasDuration = false;
+      let durationMs = 0;
+      for (const element of elements.slice(anchorIndex)) {
+        const elementDurationMs = getReliableDurationMs(element);
+        if (elementDurationMs == null) continue;
+        hasDuration = true;
+        durationMs += elementDurationMs;
+      }
+      return hasDuration ? anchoredEndMs + durationMs : null;
+    }
+  }
+
   const firstStartTime = elements.find((element) =>
     TIME_PATTERN.test(String(element?.startTime || "").trim()),
   )?.startTime;
@@ -157,7 +197,10 @@ export const resolveServicePlanEndMs = (
     const durationMs = getReliableDurationMs(element);
     if (durationMs == null) continue;
     const endMs = timelineStartMs + elapsedFromTimelineStartMs + durationMs;
-    if (Number.isFinite(endMs) && (latestEndMs == null || endMs > latestEndMs)) {
+    if (
+      Number.isFinite(endMs) &&
+      (latestEndMs == null || endMs > latestEndMs)
+    ) {
       latestEndMs = endMs;
     }
   }
@@ -339,6 +382,27 @@ export const applyElementStartTimeChange = (
     sections,
     applyStartTimeChange(flat, index, startTime),
   );
+};
+
+/** Removes an element and shifts the remaining timeline to close the gap. */
+export const applyElementRemoval = (
+  sections: ServicePlanSection[],
+  elementId: string,
+): ServicePlanSection[] => {
+  const flat = flattenElements(sections);
+  if (!flat.some((element) => element.id === elementId)) return sections;
+  const anchor = flat[0]?.startTime;
+  const remaining = flat.filter((element) => element.id !== elementId);
+  const nextFlat = anchor
+    ? recomputeStartTimesFromAnchor(remaining, anchor)
+    : remaining;
+  const byId = new Map(nextFlat.map((element) => [element.id, element]));
+  return sections.map((section) => ({
+    ...section,
+    elements: section.elements
+      .filter((element) => element.id !== elementId)
+      .map((element) => byId.get(element.id) || element),
+  }));
 };
 
 /** Set (or reset) the whole plan's anchor start time, recomputing every

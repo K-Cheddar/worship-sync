@@ -241,7 +241,7 @@ describe("isServicePastEnd / isServiceActive", () => {
       service({ serviceId: "ended", endDateISO: "2020-01-01" }),
     ];
     expect(
-      services.filter(isServiceActive).map((item) => item.serviceId),
+      services.filter(isServiceActive as (item: TeamService) => boolean).map((item) => item.serviceId),
     ).toEqual(["open"]);
   });
 });

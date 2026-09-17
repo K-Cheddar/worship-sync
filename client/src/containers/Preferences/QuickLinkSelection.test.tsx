@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import QuickLinkSelection from "./QuickLinkSelection";
+import type { ItemSlideType } from "../../types";
 
 const mockDispatch = jest.fn();
 const mockRemoveToast = jest.fn();
@@ -12,7 +13,7 @@ const mockState = {
         _id: "item-1",
         type: "song",
         selectedSlide: 0,
-        slides: [],
+        slides: [] as ItemSlideType[],
         name: "Item Name",
         timerInfo: undefined,
       },

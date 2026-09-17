@@ -3,6 +3,7 @@ import {
   FLUSH_MEDIA_STALE_DB_MESSAGE,
   flushMediaLibraryDocToPouch,
 } from "./flushMediaLibraryDoc";
+import type { MediaType } from "../types";
 
 let mockGlobalDb: PouchDB.Database | undefined;
 
@@ -47,7 +48,22 @@ describe("flushMediaLibraryDocToPouch", () => {
         rev: "2-media",
       }),
     } as unknown as PouchDB.Database;
-    const list = [{ id: "media-1", name: "Kept media" }];
+    const list = [
+      {
+        id: "media-1",
+        name: "Kept media",
+        path: "",
+        createdAt: "",
+        updatedAt: "",
+        format: "",
+        height: 0,
+        width: 0,
+        publicId: "media-1",
+        type: "image" as const,
+        background: "",
+        thumbnail: "",
+      },
+    ] satisfies MediaType[];
     mockGlobalDb = db;
 
     const result = await flushMediaLibraryDocToPouch(db, list, []);

@@ -23,6 +23,12 @@ describe("Legal pages", () => {
     expect(
       screen.getByRole("heading", { name: /Privacy Policy/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Google and YouTube integration/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "support@worshipsync.net" }),
+    ).toHaveAttribute("href", "mailto:support@worshipsync.net");
     const footer = screen.getByRole("contentinfo");
     expect(
       within(footer).getByRole("link", { name: /Terms of Service/i }),
@@ -42,6 +48,13 @@ describe("Legal pages", () => {
     expect(
       screen.getByRole("heading", { name: /Terms of Service/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Indemnification/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Feedback/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "support@worshipsync.net" }),
+    ).toHaveAttribute("href", "mailto:support@worshipsync.net");
     const footer = screen.getByRole("contentinfo");
     expect(
       within(footer).getByRole("link", { name: /Privacy Policy/i }),

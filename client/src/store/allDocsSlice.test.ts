@@ -5,6 +5,7 @@ import allDocsReducer, {
   updateAllTimerDocs,
   updateAllBibleDocs,
   upsertItemInAllDocs,
+  upsertItemsInAllDocs,
   removeItemFromAllDocs,
 } from "./allDocsSlice";
 import type { DBItem } from "../types";
@@ -99,6 +100,22 @@ describe("allDocsSlice", () => {
       expect(state.allTimerDocs).toHaveLength(0);
       expect(state.allBibleDocs).toHaveLength(0);
     });
+  });
+
+  it("upserts fetched documents across libraries in one reducer action", () => {
+    const store = createStore();
+    store.dispatch(
+      upsertItemsInAllDocs([
+        makeDoc("song-1", "song"),
+        makeDoc("free-1", "free"),
+      ]),
+    );
+    expect(store.getState().allDocs.allSongDocs).toEqual([
+      expect.objectContaining({ _id: "song-1" }),
+    ]);
+    expect(store.getState().allDocs.allFreeFormDocs).toEqual([
+      expect.objectContaining({ _id: "free-1" }),
+    ]);
   });
 
   describe("removeItemFromAllDocs", () => {

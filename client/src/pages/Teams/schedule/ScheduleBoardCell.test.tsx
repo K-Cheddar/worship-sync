@@ -33,6 +33,7 @@ const baseProps = {
   allMembers: [member()],
   duplicateFirstNames: new Set<string>(),
   canEdit: true,
+  isAdditionalPosition: false,
 };
 
 /** Render a cell wired to a spyable activateSlot handler via the shared context. */

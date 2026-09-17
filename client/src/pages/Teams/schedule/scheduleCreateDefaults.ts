@@ -1,4 +1,8 @@
-import type { TeamSchedule, TeamService } from "../../../api/authTypes";
+import type {
+  TeamSchedule,
+  TeamScheduleSummary,
+  TeamService,
+} from "../../../api/authTypes";
 import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import { filterServicesWithOccurrencesInRange } from "@/utils/teamScheduleOccurrences";
 import { scheduleDateRangesOverlap } from "./scheduleConflicts";
@@ -19,7 +23,10 @@ export const getCalendarMonthRange = (
   };
 };
 
-const activeTeamSchedules = (schedules: TeamSchedule[], teamId: string) =>
+const activeTeamSchedules = (
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
+  teamId: string,
+) =>
   schedules.filter(
     (schedule) => schedule.teamId === teamId && isActive(schedule),
   );
@@ -30,7 +37,7 @@ export const teamHasScheduleOverlappingRange = ({
   teamId,
   range,
 }: {
-  schedules: TeamSchedule[];
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   teamId: string;
   range: ScheduleDateRange;
 }) => {
@@ -50,7 +57,7 @@ export const getCreateScheduleDefaultRange = ({
   now = new Date(),
 }: {
   teamId: string;
-  schedules: TeamSchedule[];
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   now?: Date;
 }): ScheduleDateRange => {
   const currentMonth = getCalendarMonthRange(0, now);
@@ -72,9 +79,9 @@ export const getMostRecentTeamSchedule = ({
   schedules,
   teamId,
 }: {
-  schedules: TeamSchedule[];
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   teamId: string;
-}): TeamSchedule | null => {
+}): TeamSchedule | TeamScheduleSummary | null => {
   if (!teamId) return null;
   const sorted = [...activeTeamSchedules(schedules, teamId)].sort(
     (left, right) => {
@@ -103,7 +110,7 @@ export const getCreateScheduleDefaultServiceIds = ({
   range,
 }: {
   teamId: string;
-  schedules: TeamSchedule[];
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   services: TeamService[];
   range: ScheduleDateRange;
 }): string[] => {

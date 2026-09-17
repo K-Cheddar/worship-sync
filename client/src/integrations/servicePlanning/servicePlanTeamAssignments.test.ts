@@ -13,7 +13,9 @@ const row = (
   columnKey: "position-1::0",
   slotLabel: "Keys",
   memberName: "Dana Robinson",
+  microphoneIds: [],
   ...overrides,
+  canNotify: overrides.canNotify ?? true,
 });
 
 describe("toServicePlanningTeamAssignments", () => {

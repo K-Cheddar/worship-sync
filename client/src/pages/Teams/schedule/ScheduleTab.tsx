@@ -2031,7 +2031,7 @@ const ScheduleTab = ({
               action,
               allowBlockout,
               allowRecurringAvailability,
-              allowOccurrenceConflict: true,
+              allowCrossTeamConflict: true,
             }),
         });
         return;
@@ -5004,6 +5004,7 @@ const ScheduleTab = ({
                         ? undefined
                         : handleActiveSlotClearAssignment
                     }
+                    onClose={clearActiveSlot}
                     currentShadows={activeSlotMeta?.currentShadows}
                     onRemoveShadow={
                       slotPickerMode === "replace"

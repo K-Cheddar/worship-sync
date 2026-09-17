@@ -208,7 +208,8 @@ export const memberMatchesListFilters = (
       }
       if (
         filters.qualificationLevelIds.length > 0 &&
-        !filters.qualificationLevelIds.includes(qualification.levelId)
+        (qualification.levelId == null ||
+          !filters.qualificationLevelIds.includes(qualification.levelId))
       ) {
         return false;
       }

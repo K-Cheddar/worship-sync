@@ -393,7 +393,7 @@ const ChatWindow = () => {
   useEffect(() => {
     if (!isCurrentWeek || !isNearBottomRef.current) return;
     const latestMessage = chat?.messages.at(-1);
-    if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+    if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
   }, [chat, chat?.messages, chat?.markReadThrough, isCurrentWeek]);
 
   const handleMessagesScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -403,7 +403,7 @@ const ChatWindow = () => {
     if (isNearBottom) {
       setShowNewMessages(false);
       const latestMessage = chat?.messages.at(-1);
-      if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+      if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
     }
     updateVisibleMessageDay();
   };
@@ -412,7 +412,7 @@ const ChatWindow = () => {
     isNearBottomRef.current = true;
     setShowNewMessages(false);
     const latestMessage = chat?.messages.at(-1);
-    if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+    if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   };
 

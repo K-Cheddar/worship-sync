@@ -101,7 +101,7 @@ const TeamIntakePublic = () => {
 
   const submit = async () => {
     const nextFieldErrors: MemberDetailErrors = {};
-    if (enabledFields.includes("title") && !payload.title.trim()) {
+    if (enabledFields.includes("title") && !payload.title?.trim()) {
       nextFieldErrors.title = "Enter your title.";
     }
     if (enabledFields.includes("firstName") && !payload.firstName.trim()) {
@@ -118,7 +118,7 @@ const TeamIntakePublic = () => {
     }
 
     const missingMemberDetailFields = [
-      enabledFields.includes("title") && !payload.title.trim()
+      enabledFields.includes("title") && !payload.title?.trim()
         ? "title"
         : "",
       enabledFields.includes("firstName") && !payload.firstName.trim()

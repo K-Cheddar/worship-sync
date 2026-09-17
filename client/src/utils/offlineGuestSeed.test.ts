@@ -69,6 +69,7 @@ describe("offlineGuestSeed", () => {
     const itemDocs = docs.filter((doc) =>
       ["song", "free", "timer"].includes(String(doc.type)),
     ) as Array<{
+      type?: string;
       background?: string;
       slides?: { boxes: { background?: string }[] }[];
       arrangements?: { slides: { boxes: { background?: string }[] }[] }[];
@@ -96,7 +97,9 @@ describe("offlineGuestSeed", () => {
     ]);
     expect(slideBoxBackgrounds.filter(Boolean).length).toBeGreaterThan(0);
     expect(
-      slideBoxBackgrounds.filter(Boolean).every((b) => /^https:\/\//.test(b)),
+      slideBoxBackgrounds
+        .filter((b): b is string => Boolean(b))
+        .every((b) => /^https:\/\//.test(b)),
     ).toBe(true);
   });
 
@@ -165,7 +168,7 @@ describe("offlineGuestSeed", () => {
 
   it("places the blank slide last in guest demo songs", () => {
     const docs = createOfflineGuestSeedDocs("2026-01-01T00:00:00.000Z");
-    const songs = docs.filter((d) => d.type === "song") as Array<{
+    const songs = docs.filter((d) => d.type === "song") as unknown as Array<{
       arrangements: { slides: { type: string }[] }[];
     }>;
     expect(songs.length).toBeGreaterThan(0);

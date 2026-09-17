@@ -417,7 +417,7 @@ type ServicePlanEditorProps = {
 
 type ServicePlanTimingMetadata = Pick<
   ServicePlan,
-  "planKey" | "startsAt" | "timezone"
+  "planKey" | "startsAt" | "timezone" | "publicLive"
 >;
 
 /**
@@ -538,6 +538,7 @@ const ServicePlanEditor = ({
         timezone:
           sourcePlan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         sections: nextSections,
+        publicLive: sourcePlan?.publicLive,
       });
     },
     [occurrence.startsAt, onPlanTimingChange, planKey],
@@ -945,6 +946,7 @@ const ServicePlanEditor = ({
           publicLive: servicePlan.publicLive,
           updatedAt: servicePlan.updatedAt,
         } : current);
+        notifyPlanTimingChange(servicePlan.sections, servicePlan);
       }
       return;
     }
@@ -1486,6 +1488,7 @@ const ServicePlanEditor = ({
         currentElementId: elementId,
       });
       setPlan(result.servicePlan);
+      notifyPlanTimingChange(result.servicePlan.sections, result.servicePlan);
       showToast(
         isManualLive
           ? "Live item updated. Automatic advance remains paused."
@@ -1508,6 +1511,7 @@ const ServicePlanEditor = ({
         currentElementId: liveElementId,
       });
       setPlan(result.servicePlan);
+      notifyPlanTimingChange(result.servicePlan.sections, result.servicePlan);
       showToast("Automatic advance paused.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not pause automatic advance.");
@@ -1525,6 +1529,7 @@ const ServicePlanEditor = ({
         currentElementId: liveElementId,
       });
       setPlan(result.servicePlan);
+      notifyPlanTimingChange(result.servicePlan.sections, result.servicePlan);
       showToast("Automatic advance resumed.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not resume automatic advance.");
@@ -1541,6 +1546,7 @@ const ServicePlanEditor = ({
         mode: "schedule",
       });
       setPlan(result.servicePlan);
+      notifyPlanTimingChange(result.servicePlan.sections, result.servicePlan);
       showToast("Returned to the planned schedule.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");

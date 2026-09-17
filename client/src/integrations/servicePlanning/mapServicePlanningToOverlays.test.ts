@@ -131,6 +131,7 @@ describe("ruleAppliesToOverlaySync", () => {
 describe("mapServicePlanningRows", () => {
   const integrationsPastoral: ChurchIntegrations["servicePlanning"] = {
     enabled: true,
+    sectionRules: [],
     elementRules: [
       {
         id: "pastoral",
@@ -163,6 +164,7 @@ describe("mapServicePlanningRows", () => {
   it("single mode: blank display name falls back to match element type string", () => {
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "pastoral",
@@ -222,6 +224,7 @@ describe("mapServicePlanningRows", () => {
   it("skips overlay mapping for rules with overlay sync turned off", () => {
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "song-outline-only",
@@ -250,6 +253,7 @@ describe("mapServicePlanningRows", () => {
   it("lets a more specific outline-only rule override a broader overlay rule", () => {
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "generic-song",
@@ -310,6 +314,7 @@ describe("mapServicePlanningRows", () => {
 
   const integrationsSabbath: ChurchIntegrations["servicePlanning"] = {
     enabled: true,
+    sectionRules: [],
     elementRules: [
       {
         id: "ss",
@@ -350,6 +355,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "ss",
@@ -380,6 +386,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "m",
@@ -496,6 +503,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "ss",
@@ -541,6 +549,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "ss",
@@ -578,6 +587,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "song",
@@ -611,6 +621,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "p",
@@ -641,6 +652,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "p",
@@ -671,6 +683,7 @@ describe("mapServicePlanningRows", () => {
     };
     const config: ChurchIntegrations["servicePlanning"] = {
       enabled: true,
+      sectionRules: [],
       elementRules: [
         {
           id: "p",

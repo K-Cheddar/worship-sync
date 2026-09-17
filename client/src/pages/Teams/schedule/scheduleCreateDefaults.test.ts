@@ -28,6 +28,7 @@ const weeklyService = (
   overrides: Partial<TeamService> & Pick<TeamService, "serviceId" | "name">,
 ): TeamService => ({
   id: overrides.serviceId,
+  timerType: "countdown",
   churchId: "church-1",
   reccurence: "weekly",
   dayOfWeek: 6,

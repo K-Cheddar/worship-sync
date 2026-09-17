@@ -1,6 +1,7 @@
 import { Database } from "firebase/database";
 import { Cloudinary } from "@cloudinary/url-gen";
 import type PouchDB from "pouchdb-browser";
+import type { NotificationCategory, NotificationPreference } from "../api/authTypes";
 import { emptyChurchBranding } from "../utils/churchBranding";
 import { createDefaultChurchIntegrations } from "../types/integrations";
 import { createDefaultCurrentServiceWorkspace } from "../utils/currentServiceWorkspace";
@@ -113,6 +114,9 @@ export function createMockGlobalContext(
     permissions: { teams: "edit" as const },
     canViewTeams: true,
     canEditTeams: true,
+    canEditServices: true,
+    canViewServices: true,
+    completeDesktopExchange: jest.fn(() => Promise.resolve(true)),
     canViewTeam: jest.fn(() => true),
     canEditTeam: jest.fn(() => true),
     churchId: "church-1",
@@ -146,13 +150,13 @@ export function createMockGlobalContext(
       "scheduleReminders",
       "scheduleResponses",
       "intakeSubmissions",
-    ],
+    ] as NotificationCategory[],
     notificationPreferences: {
       scheduleAssignments: "default",
       scheduleReminders: "default",
       scheduleResponses: "default",
       intakeSubmissions: "default",
-    },
+    } as Record<NotificationCategory, NotificationPreference>,
     setNotificationPreference: jest.fn(() => Promise.resolve(true)),
     endWorkstationOperatorSession: jest.fn(),
     ...overrides,
@@ -191,6 +195,9 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     permissions: { teams: "edit" as const },
     canViewTeams: true,
     canEditTeams: true,
+    canEditServices: true,
+    canViewServices: true,
+    completeDesktopExchange: jest.fn(() => Promise.resolve(true)),
     canViewTeam: jest.fn(() => true),
     canEditTeam: jest.fn(() => true),
     churchId: "church-1",
@@ -224,13 +231,13 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
       "scheduleReminders",
       "scheduleResponses",
       "intakeSubmissions",
-    ],
+    ] as NotificationCategory[],
     notificationPreferences: {
       scheduleAssignments: "default",
       scheduleReminders: "default",
       scheduleResponses: "default",
       intakeSubmissions: "default",
-    },
+    } as Record<NotificationCategory, NotificationPreference>,
     setNotificationPreference: jest.fn(() => Promise.resolve(true)),
     endWorkstationOperatorSession: jest.fn(() => Promise.resolve()),
     setUser: jest.fn(),

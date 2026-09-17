@@ -122,6 +122,7 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import { markPresentationPerformance } from "../utils/presentationPerformanceDebug";
 
 /**
  * Store wipes that drop presentation/session slices.
@@ -521,11 +522,21 @@ const createPresentationUpdate = (state: RootState) => {
 };
 
 type PresentationUpdate = ReturnType<typeof createPresentationUpdate>;
+type PresentationSyncDebugContext = {
+  sequenceId?: string;
+  scheduledAt?: number;
+};
 
 const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
+  debugContext?: PresentationSyncDebugContext,
 ) => {
+  markPresentationPerformance("presentation-local-write-start", {
+    outputId: "projector",
+    windowRole: "controller",
+    ...debugContext,
+  });
   const { streamInfo } = toLegacyPresentationShape(state.presentation);
 
   localStorage.setItem(
@@ -583,6 +594,11 @@ const persistPresentationUpdateLocally = (
     "outputs",
     JSON.stringify(nestSlashPathOutputs(presentationUpdate.outputs)),
   );
+  markPresentationPerformance("presentation-local-write-complete", {
+    outputId: "projector,monitor,stream",
+    windowRole: "controller",
+    ...debugContext,
+  });
 };
 
 type PresentationWrite = {
@@ -591,6 +607,7 @@ type PresentationWrite = {
   triggerAction?: string;
   streamTransmitting: boolean;
   activeOverlayLanes: string[];
+  debugContext?: PresentationSyncDebugContext;
 };
 
 const getActiveOverlayLanes = (state: RootState) => {
@@ -619,9 +636,21 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
       cleanObject(legacyUpdate) as Record<string, unknown>,
     );
     if (Object.keys(changedLegacy).length > 0) {
+      markPresentationPerformance("presentation-firebase-write-start", {
+        outputId: "projector,monitor,stream",
+        windowRole: "controller",
+        writeKind: "legacy",
+        ...write.debugContext,
+      });
       await Promise.resolve(
         update(ref(firebaseDb, presentationPath), changedLegacy),
       );
+      markPresentationPerformance("presentation-firebase-write-complete", {
+        outputId: "projector,monitor,stream",
+        windowRole: "controller",
+        writeKind: "legacy",
+        ...write.debugContext,
+      });
     }
 
     const changedOutputs = onlyChangedSincePublish(
@@ -629,6 +658,12 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
       cleanObject(remoteOutputs) as Record<string, unknown>,
     );
     if (Object.keys(changedOutputs).length > 0) {
+      markPresentationPerformance("presentation-firebase-write-start", {
+        outputId: Object.keys(changedOutputs).join(","),
+        windowRole: "controller",
+        writeKind: "outputs",
+        ...write.debugContext,
+      });
       await Promise.resolve(
         update(
           ref(
@@ -638,6 +673,12 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
           changedOutputs,
         ),
       );
+      markPresentationPerformance("presentation-firebase-write-complete", {
+        outputId: Object.keys(changedOutputs).join(","),
+        windowRole: "controller",
+        writeKind: "outputs",
+        ...write.debugContext,
+      });
     }
   } catch (error) {
     const permissionDenied = isFirebasePermissionDenied(error);
@@ -675,9 +716,16 @@ export const clearRemoteOutputState = async (outputId: string) => {
 export const writePresentationSnapshotToFirebase = async (
   state: RootState,
   triggerAction?: string,
+  debugContext?: PresentationSyncDebugContext,
 ) => {
+  markPresentationPerformance("presentation-sync-start", {
+    outputId: "projector,monitor,stream",
+    windowRole: "controller",
+    triggerAction: triggerAction ?? null,
+    ...debugContext,
+  });
   const presentationUpdate = createPresentationUpdate(state);
-  persistPresentationUpdateLocally(state, presentationUpdate);
+  persistPresentationUpdateLocally(state, presentationUpdate, debugContext);
   const activeOverlayLanes = getActiveOverlayLanes(state);
   const { isStreamTransmitting } = toLegacyPresentationShape(
     state.presentation,
@@ -713,6 +761,7 @@ export const writePresentationSnapshotToFirebase = async (
     triggerAction,
     streamTransmitting: isStreamTransmitting,
     activeOverlayLanes,
+    debugContext,
   });
 };
 
@@ -751,11 +800,13 @@ const reportPresentationDeliveryFailure = (triggerAction: string) => {
 const syncPresentationSnapshot = async (
   state: RootState,
   triggerAction: string,
+  debugContext?: PresentationSyncDebugContext,
 ) => {
   try {
     const delivered = await writePresentationSnapshotToFirebase(
       state,
       triggerAction,
+      debugContext,
     );
     if (!delivered) reportPresentationDeliveryFailure(triggerAction);
   } catch {
@@ -861,6 +912,7 @@ const excludedActions: string[] = [
   allDocsSlice.actions.updateAllSongDocs.toString(),
   allDocsSlice.actions.updateAllTimerDocs.toString(),
   allDocsSlice.actions.upsertItemInAllDocs.toString(),
+  allDocsSlice.actions.upsertItemsInAllDocs.toString(),
   allItemsSlice.actions.initiateAllItemsList.toString(),
   overlayTemplatesSlice.actions.initiateTemplates.toString(),
   overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
@@ -2499,6 +2551,9 @@ listenerMiddleware.startListening({
 });
 
 // handle updating presentation
+let presentationListenerGeneration = 0;
+let pendingPresentationListenerSequence: string | null = null;
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const excluded = isAnyOf(
@@ -2535,12 +2590,50 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const scheduledAt = performance.now();
+    const sequenceId = `presentation-listener-${++presentationListenerGeneration}`;
+    if (pendingPresentationListenerSequence) {
+      markPresentationPerformance("presentation-listener-cancelled", {
+        outputId: "projector,monitor,stream",
+        windowRole: "controller",
+        triggerAction: action.type,
+        sequenceId: pendingPresentationListenerSequence,
+      });
+    }
+    pendingPresentationListenerSequence = sequenceId;
+    markPresentationPerformance("redux-dispatch-observed", {
+      outputId: "projector,monitor,stream",
+      windowRole: "controller",
+      action: action.type,
+      sequenceId,
+    });
+    markPresentationPerformance("presentation-listener-scheduled", {
+      outputId: "projector,monitor,stream",
+      windowRole: "controller",
+      triggerAction: action.type,
+      sequenceId,
+      scheduledAt,
+    });
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    markPresentationPerformance("presentation-listener-delay-complete", {
+      outputId: "projector,monitor,stream",
+      windowRole: "controller",
+      triggerAction: action.type,
+      sequenceId,
+      scheduledAt,
+    });
+    try {
+      await syncPresentationSnapshot(
+        listenerApi.getState() as RootState,
+        action.type,
+        { sequenceId, scheduledAt },
+      );
+    } finally {
+      if (pendingPresentationListenerSequence === sequenceId) {
+        pendingPresentationListenerSequence = null;
+      }
+    }
   },
 });
 

@@ -30,6 +30,7 @@ const baseRow = (
   memberName: "Johnny Mclain",
   microphoneIds: [],
   ...overrides,
+  canNotify: overrides.canNotify ?? true,
 });
 
 describe("TeamMicrophonesPanel", () => {

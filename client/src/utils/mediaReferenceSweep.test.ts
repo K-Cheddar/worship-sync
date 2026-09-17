@@ -39,8 +39,6 @@ describe("sweepMediaReferencesBeforeDelete", () => {
       type: "free",
       background: "",
       selectedArrangement: 0,
-      selectedSlide: 0,
-      selectedBox: 1,
       arrangements: [],
       slides: [
         {
@@ -57,15 +55,20 @@ describe("sweepMediaReferencesBeforeDelete", () => {
               words: "",
               background: "",
               fontSize: 40,
+              width: 1920,
+              height: 1080,
             },
             {
               words: "",
               background: "",
               fontSize: 40,
+              width: 1920,
+              height: 1080,
             },
           ],
         },
       ],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
     };
 
     const put = jest.fn(async (doc: DBItem) => ({

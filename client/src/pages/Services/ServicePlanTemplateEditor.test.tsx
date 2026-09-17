@@ -275,7 +275,7 @@ describe("ServicePlanTemplateEditor", () => {
     await waitFor(
       () => {
         const [, payload] = mockSaveServicePlanTemplate.mock.calls.at(-1) ?? [];
-        expect(payload?.sections[0].elements[0].assignees[0]).toMatchObject({
+        expect(payload?.sections?.[0]?.elements?.[0]?.assignees?.[0]).toMatchObject({
           name: "Audience",
           microphoneIds: ["mic-orange"],
         });

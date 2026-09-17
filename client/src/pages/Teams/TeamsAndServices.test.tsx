@@ -670,7 +670,6 @@ describe("Teams", () => {
       const afterCleared: TeamSchedule = {
         ...microphoneSchedule,
         microphoneAssignments: {},
-        updatedAt: "2026-07-05T12:00:00.000Z",
       };
       const {
         assignments: _assignments,
@@ -750,7 +749,7 @@ describe("Teams", () => {
       // Retained hydration must reuse the cleared maps from the local save — not
       // the pre-clear snapshot that was retained when the grid first opened.
       mockGetTeamsBootstrap.mockResolvedValue(
-        asTeamsBootstrapResponse(summaryRefresh),
+        asTeamsBootstrapResponse(summaryRefresh as unknown as TestTeamsBootstrap),
       );
       await act(async () => {
         jest.advanceTimersByTime(3500);
@@ -870,7 +869,8 @@ describe("Teams", () => {
       success: true,
       schedule: {
         ...autoFillSchedule,
-        assignments: mockUpdateTeamSchedule.mock.calls[0][2].assignments,
+        assignments:
+          mockUpdateTeamSchedule.mock.calls[0]?.[2]?.assignments ?? {},
       },
     });
     await waitFor(() => {
@@ -944,7 +944,7 @@ describe("Teams", () => {
       assignments: {},
       occurrences: [
         {
-          ...scheduleBootstrap.schedules[0].occurrences[0],
+          ...scheduleBootstrap.schedules[0].occurrences![0],
           positionRequirements: [{ positionId: "position-vocal", count: 1 }],
         },
       ],
@@ -962,7 +962,6 @@ describe("Teams", () => {
     };
     const staleOtherTeamSchedule: TeamScheduleSummary = {
       ...otherTeamSchedule,
-      assignments: {},
     };
     mockGetTeamsBootstrap.mockResolvedValue({
       ...scheduleBootstrap,

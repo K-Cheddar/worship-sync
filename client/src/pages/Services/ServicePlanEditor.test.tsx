@@ -440,6 +440,7 @@ describe("ServicePlanEditor", () => {
       columnKey: "position-vocal::0",
       slotLabel: "Vocal 1",
       memberName: "Avery Stone",
+      canNotify: true,
       microphoneIds: [],
     };
 
@@ -539,6 +540,8 @@ describe("ServicePlanEditor", () => {
       positionName: "Vocal",
       columnKey: "position-vocal::0",
       slotLabel: "Vocal 1",
+      memberName: null,
+      canNotify: null,
       microphoneIds: [],
     };
 
@@ -1344,7 +1347,7 @@ describe("ServicePlanEditor", () => {
     }, { timeout: 2_500 });
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(
-      body.sections[0].elements[0].teamNotes.map((note: { label: string }) => note.label),
+      body.sections?.[0]?.elements?.[0]?.teamNotes?.map((note: { label: string }) => note.label),
     ).toEqual(["Media Team", "Sabbath School Panel (g)", "Coordinators"]);
   });
 
@@ -1506,10 +1509,10 @@ Opening Song to begin the worship experience.
       loadedAt: expect.any(String),
       planLabel: expect.stringContaining("Main Worship Service"),
     });
-    expect(body.sections[0].elements[0].assignees[0].name).toBe(
+    expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe(
       "Host: Charmers Malcolm",
     );
-    expect(body.sections[0].elements[1].songRef).toEqual({
+    expect(body.sections?.[0]?.elements?.[1]?.songRef).toEqual({
       kind: "pending",
       title: "Come Before His Presence",
       lyricsText: "",
@@ -1590,12 +1593,12 @@ Opening Song to begin the worship experience.
 
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
     const [, , body] = mockSaveServicePlan.mock.calls[0];
-    expect(body.sections[0].elements[0]).toMatchObject({
+    expect(body.sections?.[0]?.elements?.[0]).toMatchObject({
       id: "element-1",
       startTime: "09:00",
     });
-    expect(body.sections[0].elements[0].assignees[0].name).toBe("Blair");
-    expect(body.sections[0].elements[0].title.blocks[0].spans[0].text).toBe("Welcome home");
+    expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe("Blair");
+    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome home");
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
@@ -2606,6 +2609,7 @@ Opening Song to begin the worship experience.
     mockPublishServicePlan.mockResolvedValue({
       success: true,
       servicePlan: { ...draftPlan, published: true },
+      publicUrl: "/public/plan",
     });
 
     const user = userEvent.setup();

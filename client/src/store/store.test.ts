@@ -2503,8 +2503,8 @@ describe("store module", () => {
     ];
     let committedServices: any[] = [];
     runTransactionMock.mockImplementationOnce(
-      async (_path: unknown, update: (current: unknown) => any[]) => {
-        committedServices = update(remoteServices);
+      async (_path: unknown, update: (current: unknown) => unknown) => {
+        committedServices = update(remoteServices) as any[];
         return {
           committed: true,
           snapshot: { val: () => committedServices },

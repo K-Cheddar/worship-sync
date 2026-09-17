@@ -5,10 +5,12 @@
  * pdfjs is loaded only when a PDF is imported. Keep it out of the module graph
  * for Jest — pdfjs-dist's ESM build uses `import.meta`, which Node/Jest reject.
  */
-import { reconstructPdfPageText } from "./pdfTextLayout";
+import {
+  reconstructPdfPageText,
+  type PdfTextLayoutItem,
+} from "./pdfTextLayout";
 
 type PdfjsModule = typeof import("pdfjs-dist");
-type TextItem = import("pdfjs-dist").TextItem;
 
 let workerConfigured = false;
 
@@ -40,7 +42,7 @@ export const extractTextFromPdfFile = async (file: File): Promise<string> => {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(reconstructPdfPageText(content.items as TextItem[]));
+    pages.push(reconstructPdfPageText(content.items as PdfTextLayoutItem[]));
   }
 
   const text = pages.filter(Boolean).join("\n").trim();

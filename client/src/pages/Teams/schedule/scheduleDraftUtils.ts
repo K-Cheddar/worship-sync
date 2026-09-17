@@ -4,6 +4,7 @@ import type {
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleOccurrence,
+  TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
 import { clampPlainDateToMin } from "@/utils/plainDate";
@@ -418,7 +419,7 @@ export type ScheduleEditFormProps = {
    * All schedules (summaries included) used to seed create defaults when the
    * operator changes team — date window and last-schedule services.
    */
-  seedSchedules: TeamSchedule[];
+  seedSchedules: (TeamSchedule | TeamScheduleSummary)[];
   churchId: string;
   canEdit: boolean;
   onDraftChange: (draftKey: string, draft: TeamSchedulePayload) => void;

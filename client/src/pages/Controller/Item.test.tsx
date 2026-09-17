@@ -142,7 +142,7 @@ describe("Controller Item page", () => {
 
     const { formattedSections } = store.getState().undoable.present.item;
     expect(formattedSections).toHaveLength(1);
-    expect(formattedSections[0]).toEqual(
+    expect(formattedSections?.[0]).toEqual(
       expect.objectContaining({
         sectionNum: 1,
         words: "Line one\nLine two",
