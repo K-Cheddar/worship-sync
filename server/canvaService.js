@@ -8,6 +8,17 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_SKEW_MS = 60 * 1000;
 const SCOPES = "design:meta:read design:content:read profile:read";
 const MAX_IMPORT_PAGES = 25;
+const DEFAULT_CANVA_EXPORT_CONCURRENCY = 2;
+const DEFAULT_MUX_PROCESSING_CONCURRENCY = 2;
+const DEFAULT_CANVA_EXPORT_INTERVAL_MS = 3000;
+const MUX_PROCESSING_POLL_INTERVAL_MS = 1000;
+const CANVA_EXPORT_POLL_MAX_DELAY_MS = 8000;
+const CANVA_EXPORT_DEADLINE_MS = 5 * 60 * 1000;
+const CANVA_EXPORT_MAX_ATTEMPTS = 90;
+const CANVA_EXPORT_CREATE_MAX_RETRIES = 4;
+const MAX_CANVA_SHORT_LINK_REDIRECTS = 3;
+const CANVA_SHORT_LINK_HOST = "canva.link";
+const CANVA_DESIGN_HOSTS = new Set(["canva.com", "www.canva.com"]);
 
 const createClientError = (message, statusCode = 400) => {
   const error = new Error(message);
@@ -22,6 +33,20 @@ const randomValue = (bytes = 32) =>
   crypto.randomBytes(bytes).toString("base64url");
 const DEFAULT_RETURN_TO = "/account/integrations";
 const RETURN_TO_BASE_URL = "https://worshipsync.invalid";
+
+export const normalizeMuxStaticRenditions = (asset) => {
+  const staticRenditions = asset?.static_renditions;
+  if (Array.isArray(staticRenditions?.files)) {
+    return staticRenditions.files;
+  }
+  if (Array.isArray(staticRenditions)) {
+    return staticRenditions;
+  }
+  if (staticRenditions && typeof staticRenditions === "object") {
+    return Object.values(staticRenditions);
+  }
+  return [];
+};
 
 export const safeCanvaReturnTo = (value) => {
   const candidate = String(value || "").trim();
@@ -74,14 +99,52 @@ const canvaMp4ImportKey = (designId, revision, pageNumbers) =>
   `canva:${designId}:rev:${revision}:mp4:${[...new Set(pageNumbers)].sort((a, b) => a - b).join(",")}`;
 
 const normalizeAxiosError = (error, fallback) => {
+  const statusCode = error?.response?.status || 502;
   const providerMessage =
     error?.response?.data?.message ||
     error?.response?.data?.error_description ||
     error?.response?.data?.error?.message;
-  return createClientError(
-    providerMessage || fallback,
-    error?.response?.status || 502,
+  const normalized = createClientError(
+    statusCode === 429
+      ? "Canva is temporarily limiting export requests. Wait a moment and try again."
+      : providerMessage || fallback,
+    statusCode,
   );
+  const providerCode =
+    error?.response?.data?.code || error?.response?.data?.error?.code;
+  if (providerCode) normalized.providerCode = String(providerCode);
+  const responseHeaders = error?.response?.headers;
+  const retryAfter =
+    (typeof responseHeaders?.get === "function"
+      ? responseHeaders.get("retry-after")
+      : undefined) ??
+    responseHeaders?.["retry-after"] ??
+    responseHeaders?.["Retry-After"];
+  if (retryAfter !== undefined) {
+    const seconds = Number(retryAfter);
+    normalized.retryAfterMs = Number.isFinite(seconds)
+      ? Math.max(0, seconds * 1000)
+      : Math.max(0, new Date(String(retryAfter)).getTime() - Date.now());
+  }
+  return normalized;
+};
+
+const canvaDesignIdFromUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (
+      parsed.protocol !== "https:" ||
+      !CANVA_DESIGN_HOSTS.has(parsed.hostname.toLowerCase())
+    ) {
+      return null;
+    }
+    return (
+      parsed.pathname.match(/^\/design\/([A-Za-z0-9_-]{3,200})(?:\/|$)/i)?.[1] ||
+      null
+    );
+  } catch {
+    return null;
+  }
 };
 
 export const createCanvaService = ({
@@ -98,6 +161,11 @@ export const createCanvaService = ({
   redirectUri = process.env.CANVA_OAUTH_REDIRECT_URI,
   now = () => Date.now(),
   wait = sleep,
+  exportConcurrency = DEFAULT_CANVA_EXPORT_CONCURRENCY,
+  muxProcessingConcurrency = DEFAULT_MUX_PROCESSING_CONCURRENCY,
+  exportCreationIntervalMs = DEFAULT_CANVA_EXPORT_INTERVAL_MS,
+  exportDeadlineMs = CANVA_EXPORT_DEADLINE_MS,
+  muxProcessingDeadlineMs = exportDeadlineMs,
 }) => {
   const memory = {
     [TOKEN_COLLECTION]: new Map(),
@@ -117,6 +185,39 @@ export const createCanvaService = ({
   const callbackUrl =
     String(redirectUri || "").trim() ||
     `${String(redirectBaseUrl || "").replace(/\/$/, "")}/api/canva/oauth/callback`;
+  const resolvedExportConcurrency = Number.isFinite(Number(exportConcurrency))
+    ? Math.max(1, Math.floor(Number(exportConcurrency)))
+    : DEFAULT_CANVA_EXPORT_CONCURRENCY;
+  // Canva documents POST /exports at 20 requests per minute per user.
+  const resolvedExportCreationIntervalMs = Number.isFinite(
+    Number(exportCreationIntervalMs),
+  )
+    ? Math.max(0, Number(exportCreationIntervalMs))
+    : DEFAULT_CANVA_EXPORT_INTERVAL_MS;
+  const resolvedMuxProcessingConcurrency = Number.isFinite(
+    Number(muxProcessingConcurrency),
+  )
+    ? Math.max(1, Math.floor(Number(muxProcessingConcurrency)))
+    : DEFAULT_MUX_PROCESSING_CONCURRENCY;
+  const resolvedMuxProcessingDeadlineMs = Number.isFinite(
+    Number(muxProcessingDeadlineMs),
+  )
+    ? Math.max(1000, Number(muxProcessingDeadlineMs))
+    : CANVA_EXPORT_DEADLINE_MS;
+  const createExportPacer = () => {
+    let nextAllowedAt = 0;
+    let turn = Promise.resolve();
+    return async () => {
+      const currentTurn = turn.then(async () => {
+        const delay = Math.max(0, nextAllowedAt - now());
+        if (delay > 0) await wait(delay);
+        nextAllowedAt =
+          Math.max(nextAllowedAt, now()) + resolvedExportCreationIntervalMs;
+      });
+      turn = currentTurn.catch(() => {});
+      await currentTurn;
+    };
+  };
 
   const rtdbPath = (collection, id) =>
     `${RTDB_ROOT}/${collection}/${encodeURIComponent(String(id))}`;
@@ -540,8 +641,21 @@ export const createCanvaService = ({
       return normalizeCanvaDesign(response.data?.design || response.data || {});
     } catch (error) {
       if (error?.statusCode === 403 || error?.statusCode === 404) {
+        let accountLabel = "";
+        try {
+          accountLabel = String((await getDoc(TOKEN_COLLECTION, churchId))?.accountLabel || "").trim();
+        } catch {
+          accountLabel = "";
+        }
+        const accountReference = accountLabel
+          ? ` ("${accountLabel}")`
+          : "";
+        const message =
+          error.statusCode === 403
+            ? `WorshipSync found this Canva design, but the Canva account connected to WorshipSync${accountReference} does not have API access to it. “Anyone with the link” access is not enough for Canva Connect. In Canva, share the design directly with the connected account under People with access, then try again.`
+            : `Canva could not find this design for the account connected to WorshipSync${accountReference}. If the design exists and is only shared by link, share it directly with the connected account under People with access, then try again.`;
         throw createClientError(
-          "This design is not available to the church Canva account. Share it with that account, then try again.",
+          message,
           error.statusCode,
         );
       }
@@ -549,24 +663,169 @@ export const createCanvaService = ({
     }
   };
 
-  const waitForExport = async (churchId, initialJob) => {
-    let job = initialJob;
-    for (
-      let attempt = 0;
-      attempt < 90 && job?.status === "in_progress";
-      attempt += 1
-    ) {
-      await wait(1000);
-      const response = await canvaGet(
-        churchId,
-        `/exports/${encodeURIComponent(job.id)}`,
-      );
-      job = response.data?.job;
+  const resolveDesignLink = async ({ url }) => {
+    let current;
+    try {
+      current = new URL(String(url || "").trim());
+    } catch {
+      throw createClientError("Paste a valid Canva short link.");
     }
     if (
+      current.protocol !== "https:" ||
+      current.hostname.toLowerCase() !== CANVA_SHORT_LINK_HOST ||
+      current.username ||
+      current.password ||
+      current.port
+    ) {
+      throw createClientError("Paste a valid Canva short link.");
+    }
+
+    for (let redirect = 0; redirect <= MAX_CANVA_SHORT_LINK_REDIRECTS; redirect += 1) {
+      let response;
+      try {
+        response = await httpClient.get(current.toString(), {
+          maxRedirects: 0,
+          timeout: 10000,
+          validateStatus: () => true,
+        });
+      } catch {
+        throw createClientError("That Canva short link could not be resolved.", 422);
+      }
+      const status = Number(response?.status || 0);
+      if (status >= 300 && status < 400) {
+        if (redirect >= MAX_CANVA_SHORT_LINK_REDIRECTS) {
+          throw createClientError("That Canva short link has too many redirects.", 422);
+        }
+        const location = response.headers?.location;
+        let next;
+        try {
+          next = new URL(String(location || ""), current);
+        } catch {
+          throw createClientError("That Canva short link has an invalid redirect.", 422);
+        }
+        const nextHost = next.hostname.toLowerCase();
+        if (
+          next.protocol !== "https:" ||
+          (nextHost !== CANVA_SHORT_LINK_HOST && !CANVA_DESIGN_HOSTS.has(nextHost)) ||
+          next.username ||
+          next.password ||
+          next.port
+        ) {
+          throw createClientError("That Canva short link redirects outside Canva.", 422);
+        }
+        current = next;
+        continue;
+      }
+      const designId = canvaDesignIdFromUrl(current);
+      if (status >= 200 && status < 300 && designId) return { designId };
+      throw createClientError("That Canva short link does not resolve to a Canva design.", 422);
+    }
+    throw createClientError("That Canva short link could not be resolved.", 422);
+  };
+
+  const runBounded = async (items, concurrency, task, isCancelled) => {
+    const results = new Array(items.length);
+    const errors = [];
+    let nextIndex = 0;
+    const worker = async () => {
+      while (true) {
+        if (isCancelled?.()) return;
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+        try {
+          results[index] = await task(items[index], index);
+        } catch (error) {
+          errors.push({ index, error });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(Math.max(1, concurrency), items.length) },
+        worker,
+      ),
+    );
+    return { results, errors };
+  };
+
+  const requestExportJob = async (
+    churchId,
+    body,
+    paceExportCreation,
+    isCancelled,
+  ) => {
+    let retry = 0;
+    while (true) {
+      if (isCancelled?.()) throw createClientError("Canva import cancelled.", 499);
+      await paceExportCreation();
+      try {
+        const response = await canvaPost(churchId, "/exports", body);
+        const job = response.data?.job;
+        if (!job?.id) {
+          throw createClientError("Canva did not start the export. Try again.", 502);
+        }
+        return job;
+      } catch (error) {
+        if (error?.statusCode !== 429 || retry >= CANVA_EXPORT_CREATE_MAX_RETRIES) {
+          throw error;
+        }
+        const backoff = Math.min(
+          1000 * 2 ** retry,
+          CANVA_EXPORT_POLL_MAX_DELAY_MS,
+        );
+        await wait(Math.max(backoff, error.retryAfterMs || 0));
+        retry += 1;
+      }
+    }
+  };
+
+  const waitForExport = async (
+    churchId,
+    initialJob,
+    { allowEmptyUrls = false, onRateLimit, isCancelled } = {},
+  ) => {
+    let job = initialJob;
+    let pollDelay = 1000;
+    let attempt = 0;
+    let sawRateLimit = false;
+    const deadline = now() + exportDeadlineMs;
+    while (job?.status === "in_progress" && attempt < CANVA_EXPORT_MAX_ATTEMPTS) {
+      if (isCancelled?.()) throw createClientError("Canva import cancelled.", 499);
+      const remaining = deadline - now();
+      if (remaining <= 0) break;
+      await wait(Math.min(pollDelay, remaining));
+      if (isCancelled?.()) throw createClientError("Canva import cancelled.", 499);
+      attempt += 1;
+      try {
+        const response = await canvaGet(
+          churchId,
+          `/exports/${encodeURIComponent(job.id)}`,
+        );
+        job = response.data?.job;
+        pollDelay = Math.min(pollDelay * 2, CANVA_EXPORT_POLL_MAX_DELAY_MS);
+      } catch (error) {
+        if (error?.statusCode !== 429) throw error;
+        sawRateLimit = true;
+        const retryDelay = Math.max(
+          Math.min(pollDelay * 2, CANVA_EXPORT_POLL_MAX_DELAY_MS),
+          error.retryAfterMs || 0,
+        );
+        pollDelay = Math.min(retryDelay, CANVA_EXPORT_POLL_MAX_DELAY_MS);
+        await onRateLimit?.({ delayMs: pollDelay, attempt });
+      }
+    }
+    if (job?.status === "in_progress" && (sawRateLimit || now() >= deadline)) {
+      throw createClientError(
+        "Canva is temporarily limiting export requests. Wait a moment and try again.",
+        429,
+      );
+    }
+    const hasUrlArray = Array.isArray(job?.urls);
+    if (
       job?.status !== "success" ||
-      !Array.isArray(job.urls) ||
-      !job.urls.length
+      (!hasUrlArray && !allowEmptyUrls) ||
+      (!allowEmptyUrls && !job.urls.length)
     ) {
       const reason =
         job?.error?.message ||
@@ -574,7 +833,27 @@ export const createCanvaService = ({
         "The Canva export did not finish.";
       throw createClientError(`${reason} Try another design or format.`, 422);
     }
-    return job.urls;
+    return hasUrlArray ? job.urls : [];
+  };
+
+  const isUsableExportUrl = (url) =>
+    typeof url === "string" && url.trim().length > 0;
+  const logPngExportMismatch = ({
+    designId,
+    requestedPages,
+    expectedUrlCount,
+    actualUrlCount,
+    job,
+  }) => {
+    console.warn("[Canva] PNG export returned an unexpected URL count.", {
+      designId,
+      format: "png",
+      requestedPages,
+      expectedUrlCount,
+      actualUrlCount,
+      exportJobId: job?.id,
+      exportStatus: job?.status,
+    });
   };
 
   const importDesign = async ({
@@ -582,7 +861,10 @@ export const createCanvaService = ({
     designId,
     pages,
     format,
+    mp4ImportMode = "combined",
     existingImportKeys,
+    onProgress,
+    isCancelled,
   }) => {
     if (!/^[A-Za-z0-9_-]{3,200}$/.test(String(designId || ""))) {
       throw createClientError("Choose a valid Canva design.");
@@ -599,6 +881,12 @@ export const createCanvaService = ({
     }
     if (format !== "png" && format !== "mp4")
       throw createClientError("Choose PNG or MP4.");
+    if (
+      format === "mp4" &&
+      mp4ImportMode !== "combined" &&
+      mp4ImportMode !== "separate"
+    )
+      throw createClientError("Choose a valid MP4 import mode.");
 
     const designResponse = await canvaGet(
       churchId,
@@ -628,50 +916,157 @@ export const createCanvaService = ({
                 canvaPngImportKey(designId, revision, pageNumber),
               ),
           )
+        : mp4ImportMode === "separate"
+          ? requestedPages.filter(
+              (pageNumber) =>
+                !existingKeySet.has(
+                  canvaMp4ImportKey(designId, revision, [pageNumber]),
+                ),
+            )
         : existingKeySet.has(mp4ImportKey)
           ? []
           : requestedPages;
     const skippedCount =
       format === "png"
         ? requestedPages.length - selectedPages.length
+        : mp4ImportMode === "separate"
+          ? requestedPages.length - selectedPages.length
         : selectedPages.length
           ? 0
           : 1;
+    const emitProgress = async (event) => {
+      await onProgress?.(event);
+    };
+      await emitProgress({
+      type: "started",
+      total: requestedPages.length,
+      pages: requestedPages,
+    });
+    for (const pageNumber of requestedPages) {
+      const isSkipped = !selectedPages.includes(pageNumber);
+      if (isSkipped) {
+        await emitProgress({
+          type: "page-progress",
+          page: pageNumber,
+          status: "ready",
+          skipped: true,
+        });
+      }
+    }
     if (!selectedPages.length) {
       return { assets: [], skippedCount, revision };
     }
+    const paceExportCreation = createExportPacer();
+    const importPageProgress = async (page, status, extra = {}) => {
+      await emitProgress({ type: "page-progress", page, status, ...extra });
+    };
     const isVertical =
       Number(design.thumbnail?.height || 0) >
       Number(design.thumbnail?.width || 0);
-    const exportResponse = await canvaPost(churchId, "/exports", {
-      design_id: designId,
-      format:
-        format === "png"
-          ? { type: "png", pages: selectedPages }
-          : {
-              type: "mp4",
-              pages: selectedPages,
-              quality: isVertical ? "vertical_1080p" : "horizontal_1080p",
-            },
-    });
-    const urls = await waitForExport(churchId, exportResponse.data?.job);
     const assets = [];
     if (format === "png") {
+      for (const pageNumber of selectedPages) {
+        await importPageProgress(pageNumber, "waiting");
+        await importPageProgress(pageNumber, "exporting");
+      }
+      const exportJob = await requestExportJob(churchId, {
+        design_id: designId,
+        format: { type: "png", pages: selectedPages, as_single_image: false },
+      }, paceExportCreation, isCancelled);
+      const urls = await waitForExport(churchId, exportJob, {
+        allowEmptyUrls: true,
+        isCancelled,
+      });
+      let pageUrls = urls;
+      const initialExportIsUsable =
+        urls.length === selectedPages.length && urls.every(isUsableExportUrl);
+      if (!initialExportIsUsable) {
+        logPngExportMismatch({
+          designId,
+          requestedPages: selectedPages,
+          expectedUrlCount: selectedPages.length,
+          actualUrlCount: urls.length,
+          job: exportJob,
+        });
+        pageUrls = await Promise.all(
+          selectedPages.map(async (pageNumber) => {
+            let pageJob;
+            try {
+              pageJob = await requestExportJob(churchId, {
+                design_id: designId,
+                format: {
+                  type: "png",
+                  pages: [pageNumber],
+                  as_single_image: false,
+                },
+              }, paceExportCreation, isCancelled);
+              const pageUrls = await waitForExport(churchId, pageJob, {
+                allowEmptyUrls: true,
+                isCancelled,
+              });
+              if (pageUrls.length !== 1 || !isUsableExportUrl(pageUrls[0])) {
+                logPngExportMismatch({
+                  designId,
+                  requestedPages: [pageNumber],
+                  expectedUrlCount: 1,
+                  actualUrlCount: pageUrls.length,
+                  job: pageJob,
+                });
+                throw createClientError(
+                  `Canva returned an unusable PNG export for page ${pageNumber}.`,
+                  422,
+                );
+              }
+              return pageUrls[0];
+            } catch (error) {
+              if (error?.statusCode) {
+                await importPageProgress(pageNumber, "error", {
+                  error: error.message,
+                });
+                throw createClientError(
+                  `Could not export Canva page ${pageNumber}. ${error.message}`,
+                  error.statusCode,
+                );
+              }
+              await importPageProgress(pageNumber, "error", {
+                error: `Could not export Canva page ${pageNumber}. Try again.`,
+              });
+              throw createClientError(
+                `Could not export Canva page ${pageNumber}. Try again.`,
+                422,
+              );
+            }
+          }),
+        );
+      }
       if (!cloudinaryClient?.uploader?.upload) {
         throw createClientError(
           "Image storage is not configured. Ask an admin to check the server.",
           503,
         );
       }
-      for (let index = 0; index < urls.length; index += 1) {
-        const uploaded = await cloudinaryClient.uploader.upload(urls[index], {
-          resource_type: "image",
-          folder: `worship-sync/canva/${churchId}`,
-          tags: ["canva-import"],
-          context: {
-            caption: `${title} - Page ${selectedPages[index] || index + 1}`,
-          },
-        });
+      for (let index = 0; index < pageUrls.length; index += 1) {
+        const pageNumber = selectedPages[index];
+        await importPageProgress(pageNumber, "processing");
+        let uploaded;
+        try {
+          uploaded = await cloudinaryClient.uploader.upload(
+            pageUrls[index],
+            {
+              resource_type: "image",
+              folder: `worship-sync/canva/${churchId}`,
+              tags: ["canva-import"],
+              context: {
+                caption: `${title} - Page ${pageNumber || index + 1}`,
+              },
+            },
+          );
+        } catch (error) {
+          await importPageProgress(pageNumber, "error", {
+            error: `Could not save Canva page ${pageNumber}. Try again.`,
+          });
+          throw error;
+        }
         assets.push({
           kind: "image",
           data: {
@@ -679,18 +1074,19 @@ export const createCanvaService = ({
             id: uploaded.asset_id,
             batchId: "canva",
             thumbnail_url: uploaded.secure_url,
-            original_filename: `${title} - Page ${selectedPages[index] || index + 1}`,
+            original_filename: `${title} - Page ${pageNumber || index + 1}`,
             path: uploaded.public_id,
             done: true,
             existing: false,
             canvaImportKey: canvaPngImportKey(
               designId,
               revision,
-              selectedPages[index] || index + 1,
+              pageNumber || index + 1,
             ),
-            canvaSource: sourceFor([selectedPages[index] || index + 1]),
+            canvaSource: sourceFor([pageNumber || index + 1]),
           },
         });
+        await importPageProgress(pageNumber, "ready");
       }
     } else {
       const mux = getMuxClient?.();
@@ -699,45 +1095,274 @@ export const createCanvaService = ({
           "Video storage is not configured. Ask an admin to check the server.",
           503,
         );
-      const asset = await mux.video.assets.create({
-        inputs: [{ url: urls[0] }],
-        playback_policies: ["public"],
-        video_quality: "basic",
-        meta: { title, creator_id: churchId, external_id: designId },
-      });
-      let ready = asset;
-      for (
-        let attempt = 0;
-        attempt < 120 && ready.status !== "ready";
-        attempt += 1
-      ) {
+      const pageSelections =
+        mp4ImportMode === "separate"
+          ? selectedPages.map((pageNumber) => [pageNumber])
+          : [selectedPages];
+      const createdMuxAssetIds = new Set();
+      const cleanupCreatedMuxAssets = async () => {
+        const deleteAsset = mux.video.assets.delete;
+        if (typeof deleteAsset !== "function") return;
+        await runBounded(
+          [...createdMuxAssetIds],
+          resolvedMuxProcessingConcurrency,
+          async (assetId) => {
+            try {
+              await deleteAsset.call(mux.video.assets, assetId);
+            } catch (error) {
+              console.warn("Could not remove failed Canva Mux asset:", {
+                assetId,
+                error,
+              });
+            }
+          },
+        );
+      };
+      const hasPlaybackId = (asset) =>
+        typeof asset?.playback_ids?.[0]?.id === "string" &&
+        asset.playback_ids[0].id.length > 0;
+      const createMuxAsset = async (videoUrl, pageNumbers) => {
+        if (isCancelled?.())
+          throw createClientError("Canva import cancelled.", 499);
+        const asset = await mux.video.assets.create({
+          inputs: [{ url: videoUrl }],
+          playback_policies: ["public"],
+          video_quality: "basic",
+          static_renditions: [{ resolution: "highest" }],
+          meta: { title, creator_id: churchId, external_id: designId },
+        });
+        if (asset?.id) createdMuxAssetIds.add(asset.id);
+        const processingDeadline = now() + resolvedMuxProcessingDeadlineMs;
+        const maxProcessingPolls = Math.max(
+          1,
+          Math.ceil(
+            resolvedMuxProcessingDeadlineMs / MUX_PROCESSING_POLL_INTERVAL_MS,
+          ),
+        );
+        let ready = asset;
+        for (
+          let attempt = 0;
+          attempt < maxProcessingPolls &&
+          (ready.status !== "ready" ||
+            !hasPlaybackId(ready));
+          attempt += 1
+        ) {
+          if (isCancelled?.())
+            throw createClientError("Canva import cancelled.", 499);
+          if (now() >= processingDeadline)
+            throw createClientError(
+              "Mux video processing timed out.",
+              504,
+            );
+          if (ready.status === "errored")
+            throw createClientError(
+              "Mux could not process the Canva video.",
+              422,
+            );
+          await wait(MUX_PROCESSING_POLL_INTERVAL_MS);
+          if (isCancelled?.())
+            throw createClientError("Canva import cancelled.", 499);
+          if (now() >= processingDeadline)
+            throw createClientError(
+              "Mux video processing timed out.",
+              504,
+            );
+          ready = await mux.video.assets.retrieve(asset.id);
+        }
         if (ready.status === "errored")
           throw createClientError(
             "Mux could not process the Canva video.",
             422,
           );
-        await wait(1000);
-        ready = await mux.video.assets.retrieve(asset.id);
-      }
-      const playbackId = ready.playback_ids?.[0]?.id;
-      if (!playbackId)
-        throw createClientError(
-          "The Canva video did not finish processing. Try again.",
-          504,
+        if (ready.status !== "ready")
+          throw createClientError(
+            "Mux video processing timed out.",
+            504,
+          );
+        const playbackId = ready.playback_ids?.[0]?.id;
+        if (!playbackId)
+          throw createClientError(
+            "The Canva video did not finish processing. Try again.",
+            504,
+          );
+        return {
+          kind: "video",
+          data: {
+            playbackId,
+            assetId: ready.id,
+            playbackUrl: `https://stream.mux.com/${playbackId}.m3u8`,
+            thumbnailUrl: `https://image.mux.com/${playbackId}/thumbnail.jpg`,
+            name:
+              mp4ImportMode === "separate"
+                ? `${title} - Page ${pageNumbers[0]}`
+                : title,
+            canvaImportKey: canvaMp4ImportKey(
+              designId,
+              revision,
+              pageNumbers,
+            ),
+            canvaSource: sourceFor(pageNumbers),
+          },
+        };
+      };
+      const exportSeparatePage = async (pageNumbers) => {
+        const pageNumber = pageNumbers[0];
+        try {
+          await importPageProgress(pageNumber, "exporting");
+          const exportJob = await requestExportJob(
+            churchId,
+            {
+              design_id: designId,
+              format: {
+                type: "mp4",
+                pages: pageNumbers,
+                quality: isVertical ? "vertical_1080p" : "horizontal_1080p",
+              },
+            },
+            paceExportCreation,
+            isCancelled,
+          );
+          const urls = await waitForExport(churchId, exportJob, {
+            onRateLimit: () => importPageProgress(pageNumber, "waiting"),
+            isCancelled,
+          });
+          if (urls.length !== 1 || !isUsableExportUrl(urls[0])) {
+            throw createClientError(
+              "Canva did not return a usable MP4 export. Try again.",
+              422,
+            );
+          }
+          return { pageNumbers, url: urls[0] };
+        } catch (error) {
+          await importPageProgress(pageNumber, "error", {
+            error: `Page ${pageNumber} could not finish Canva export. Try again.`,
+          });
+          throw error;
+        }
+      };
+      const processSeparatePage = async ({ pageNumbers, url }) => {
+        const pageNumber = pageNumbers[0];
+        try {
+          await importPageProgress(pageNumber, "processing", { exported: true });
+          const asset = await createMuxAsset(url, pageNumbers);
+          await importPageProgress(pageNumber, "ready", { exported: true });
+          return asset;
+        } catch (error) {
+          await importPageProgress(pageNumber, "error", {
+            error: `Page ${pageNumber} could not finish video processing. Try again.`,
+          });
+          throw error;
+        }
+      };
+      if (mp4ImportMode === "separate") {
+        for (const pageNumber of selectedPages) {
+          await importPageProgress(pageNumber, "waiting");
+        }
+        const exportedQueue = [];
+        const queueWaiters = [];
+        let exportsComplete = false;
+        const processedResults = new Array(pageSelections.length);
+        const processedErrors = [];
+        const takeExportedPage = () => {
+          if (exportedQueue.length > 0) {
+            return Promise.resolve(exportedQueue.shift());
+          }
+          if (exportsComplete || isCancelled?.()) return Promise.resolve(null);
+          return new Promise((resolve) => queueWaiters.push(resolve));
+        };
+        const enqueueExportedPage = (page) => {
+          const waiter = queueWaiters.shift();
+          if (waiter) waiter(page);
+          else exportedQueue.push(page);
+        };
+        const finishExportQueue = () => {
+          exportsComplete = true;
+          while (queueWaiters.length > 0) queueWaiters.shift()(null);
+        };
+        const exportRun = runBounded(
+          pageSelections,
+          resolvedExportConcurrency,
+          async (pageNumbers, index) => {
+            const exported = await exportSeparatePage(pageNumbers);
+            enqueueExportedPage({ index, ...exported });
+            return exported;
+          },
+          isCancelled,
         );
-      assets.push({
-        kind: "video",
-        data: {
-          playbackId,
-          assetId: ready.id,
-          playbackUrl: `https://stream.mux.com/${playbackId}.m3u8`,
-          thumbnailUrl: `https://image.mux.com/${playbackId}/thumbnail.jpg`,
-          name: title,
-          canvaImportKey: mp4ImportKey,
-          canvaSource: sourceFor(selectedPages),
-        },
-      });
+        const muxWorkers = Array.from(
+          { length: resolvedMuxProcessingConcurrency },
+          async () => {
+            while (true) {
+              const page = await takeExportedPage();
+              if (!page) return;
+              if (isCancelled?.()) return;
+              try {
+                processedResults[page.index] = await processSeparatePage(page);
+              } catch (error) {
+                processedErrors.push({ index: page.index, error });
+              }
+            }
+          },
+        );
+        const exportedPages = await exportRun;
+        finishExportQueue();
+        await Promise.all(muxWorkers);
+        if (isCancelled?.()) {
+          await cleanupCreatedMuxAssets();
+          throw createClientError("Canva import cancelled.", 499);
+        }
+        if (exportedPages.errors.length > 0) {
+          await cleanupCreatedMuxAssets();
+          throw exportedPages.errors[0].error;
+        }
+        const processedPages = {
+          results: processedResults,
+          errors: processedErrors,
+        };
+        if (isCancelled?.()) {
+          await cleanupCreatedMuxAssets();
+          throw createClientError("Canva import cancelled.", 499);
+        }
+        if (processedPages.errors.length > 0) {
+          await cleanupCreatedMuxAssets();
+          throw processedPages.errors[0].error;
+        }
+        assets.push(...processedPages.results.filter(Boolean));
+      } else {
+        for (const pageNumber of selectedPages) {
+          await importPageProgress(pageNumber, "waiting");
+          await importPageProgress(pageNumber, "exporting");
+        }
+        const exportJob = await requestExportJob(
+          churchId,
+          {
+            design_id: designId,
+            format: {
+              type: "mp4",
+              pages: selectedPages,
+              quality: isVertical ? "vertical_1080p" : "horizontal_1080p",
+            },
+          },
+          paceExportCreation,
+          isCancelled,
+        );
+        const urls = await waitForExport(churchId, exportJob, { isCancelled });
+        if (urls.length !== 1 || !isUsableExportUrl(urls[0])) {
+          throw createClientError(
+            "Canva did not return a usable MP4 export. Try again.",
+            422,
+          );
+        }
+        for (const pageNumber of selectedPages) {
+          await importPageProgress(pageNumber, "processing", { exported: true });
+        }
+        assets.push(await createMuxAsset(urls[0], selectedPages));
+        for (const pageNumber of selectedPages) {
+          await importPageProgress(pageNumber, "ready", { exported: true });
+        }
+      }
     }
+    await emitProgress({ type: "finalizing" });
     await updateStatus(churchId, { lastImportedAt: now(), lastError: "" });
     return { assets, skippedCount, revision };
   };
@@ -750,6 +1375,7 @@ export const createCanvaService = ({
     disconnect,
     listDesigns,
     getDesign,
+    resolveDesignLink,
     importDesign,
   };
 };

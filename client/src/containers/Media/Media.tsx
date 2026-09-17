@@ -72,6 +72,19 @@ type MediaProps = {
   pageMode?: "default" | "overlayController";
 };
 
+export const getMediaPanelClassName = ({
+  isPanelVariant,
+  isMediaExpanded,
+}: {
+  isPanelVariant: boolean;
+  isMediaExpanded: boolean;
+}) =>
+  cn(
+    isPanelVariant && "flex flex-col min-h-0 w-full overflow-hidden",
+    isPanelVariant && (isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
+    !isPanelVariant && "contents",
+  );
+
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
@@ -233,13 +246,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   return (
     <ErrorBoundary>
       <div
-        className={cn(
-          c.isPanelVariant &&
-          "flex h-full flex-col min-h-0 w-full overflow-hidden",
-          c.isPanelVariant &&
-          (c.isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
-          !c.isPanelVariant && "contents",
-        )}
+        className={getMediaPanelClassName({
+          isPanelVariant: c.isPanelVariant,
+          isMediaExpanded: c.isMediaExpanded,
+        })}
       >
         <div
           className={cn(

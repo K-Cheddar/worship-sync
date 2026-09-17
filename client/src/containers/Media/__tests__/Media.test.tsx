@@ -9,7 +9,7 @@ import {
   act,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import Media from "../Media";
+import Media, { getMediaPanelClassName } from "../Media";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const mockDispatch = jest.fn();
@@ -426,6 +426,29 @@ describe("Media", () => {
       connected: true,
       accountLabel: "Church Canva",
     });
+  });
+
+  it("keeps panel sizing tied to the expanded state", () => {
+    const collapsedClassName = getMediaPanelClassName({
+      isPanelVariant: true,
+      isMediaExpanded: false,
+    });
+    const expandedClassName = getMediaPanelClassName({
+      isPanelVariant: true,
+      isMediaExpanded: true,
+    });
+
+    expect(collapsedClassName).toContain("shrink-0");
+    expect(collapsedClassName).toContain("mt-auto");
+    expect(collapsedClassName).not.toContain("h-full");
+    expect(expandedClassName).toContain("flex-1");
+    expect(expandedClassName).not.toContain("h-full");
+    expect(
+      getMediaPanelClassName({
+        isPanelVariant: false,
+        isMediaExpanded: false,
+      }),
+    ).toBe("contents");
   });
 
   it("renders media from store and sets media items per row", async () => {

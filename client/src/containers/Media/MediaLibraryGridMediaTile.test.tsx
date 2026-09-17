@@ -26,7 +26,7 @@ jest.mock("../../hooks/useCachedMediaUrl", () => ({
 
 const mockUseLocalImageUrl = jest.mocked(useLocalImageUrl);
 const mockUseLocalVideoFileUrl = jest.mocked(useLocalVideoFileUrl);
-const mockUseDraggable = jest.fn(() => ({
+const mockUseDraggable = jest.fn((..._args: any[]) => ({
   attributes: {},
   listeners: {},
   setNodeRef: jest.fn(),

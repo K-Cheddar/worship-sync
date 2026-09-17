@@ -9,7 +9,7 @@ import type { MediaType } from "../../types";
 import { convertMuxVideoToLocalMp4 } from "./utils/muxUpload";
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 
-const mockValidateFiles = jest.fn((files: File[]) => ({
+const mockValidateFiles = jest.fn((files: File[]): { valid: File[]; invalid: File[] } => ({
   valid: files,
   invalid: [],
 }));

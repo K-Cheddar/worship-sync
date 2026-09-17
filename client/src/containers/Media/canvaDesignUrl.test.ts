@@ -1,4 +1,4 @@
-import { parseCanvaDesignId } from "./canvaDesignUrl";
+import { isCanvaShortLink, parseCanvaDesignId } from "./canvaDesignUrl";
 
 describe("parseCanvaDesignId", () => {
   it("accepts a raw design id", () => {
@@ -14,6 +14,9 @@ describe("parseCanvaDesignId", () => {
     expect(
       parseCanvaDesignId("https://www.canva.com/design/DAF_abc-123/edit"),
     ).toBe("DAF_abc-123");
+    expect(
+      parseCanvaDesignId("https://canva.com/design/DAF_abc-123/edit"),
+    ).toBe("DAF_abc-123");
   });
 
   it("rejects non-Canva hosts and empty input", () => {
@@ -22,5 +25,11 @@ describe("parseCanvaDesignId", () => {
       parseCanvaDesignId("https://example.com/design/DAFZr1z5464/view"),
     ).toBeNull();
     expect(parseCanvaDesignId("not a link")).toBeNull();
+  });
+
+  it("leaves official short-link resolution to the server", () => {
+    expect(parseCanvaDesignId("https://canva.link/hy5vwxec3e5yyhg")).toBeNull();
+    expect(isCanvaShortLink("https://canva.link/hy5vwxec3e5yyhg")).toBe(true);
+    expect(isCanvaShortLink("https://canva.link.evil.example/code")).toBe(false);
   });
 });

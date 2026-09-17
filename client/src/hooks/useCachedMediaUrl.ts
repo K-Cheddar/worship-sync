@@ -18,6 +18,58 @@ const resolveMediaUrl = async (url: string): Promise<string | undefined> => {
   }
 };
 
+const MAX_RESOLVED_MEDIA_URLS = 128;
+const resolvedByUrl = new Map<string, string>();
+const inFlightByUrl = new Map<string, Promise<string | undefined>>();
+
+const rememberResolvedUrl = (url: string, resolvedUrl: string) => {
+  // Keep the most recently used URLs. Continuous mode supplies the lifecycle
+  // bound for image elements; this bound prevents the resolution map itself
+  // from growing with a long-lived service or many opened services.
+  resolvedByUrl.delete(url);
+  resolvedByUrl.set(url, resolvedUrl);
+  while (resolvedByUrl.size > MAX_RESOLVED_MEDIA_URLS) {
+    const oldestUrl = resolvedByUrl.keys().next().value;
+    if (oldestUrl === undefined) break;
+    resolvedByUrl.delete(oldestUrl);
+  }
+};
+
+const peekResolvedMediaUrl = (url: string): string | undefined =>
+  resolvedByUrl.get(url);
+
+const getResolvedMediaUrl = (url: string): string | undefined => {
+  const resolvedUrl = peekResolvedMediaUrl(url);
+  if (resolvedUrl === undefined) return undefined;
+  // A successful lookup is also a use, so make it the newest bounded entry.
+  rememberResolvedUrl(url, resolvedUrl);
+  return resolvedUrl;
+};
+
+const resolveSharedMediaUrl = (url: string): Promise<string | undefined> => {
+  const resolvedUrl = getResolvedMediaUrl(url);
+  if (resolvedUrl !== undefined) return Promise.resolve(resolvedUrl);
+
+  const inFlight = inFlightByUrl.get(url);
+  if (inFlight) return inFlight;
+
+  const request = resolveMediaUrl(url).then((result) => {
+    if (result !== undefined) rememberResolvedUrl(url, result);
+    return result;
+  });
+  inFlightByUrl.set(url, request);
+  void request.finally(() => {
+    if (inFlightByUrl.get(url) === request) inFlightByUrl.delete(url);
+  });
+  return request;
+};
+
+/** Test-only reset for the module-level cache. */
+export const clearMediaResolutionCacheForTests = () => {
+  resolvedByUrl.clear();
+  inFlightByUrl.clear();
+};
+
 /**
  * Returns a locally-cached URL for the given media URL when running in Electron,
  * or the original URL otherwise. Uses the Redux cache map for instant resolution when available.
@@ -29,7 +81,9 @@ export const useCachedMediaUrl = (
   const cachedUrl = useSelector((state: RootState) =>
     safeUrl ? state.mediaCacheMap?.map?.[safeUrl] : undefined,
   );
-  const [resolved, setResolved] = useState<string | undefined>(safeUrl);
+  const [resolved, setResolved] = useState<string | undefined>(() =>
+    safeUrl ? peekResolvedMediaUrl(safeUrl) ?? safeUrl : undefined,
+  );
   const checkIdRef = useRef(0);
 
   useEffect(() => {
@@ -45,7 +99,7 @@ export const useCachedMediaUrl = (
     // whether a better local path exists for the current URL.
     setResolved(safeUrl);
 
-    resolveMediaUrl(safeUrl).then((result) => {
+    void resolveSharedMediaUrl(safeUrl).then((result) => {
       if (checkId !== checkIdRef.current) return;
       setResolved(result);
     });
@@ -69,7 +123,10 @@ export const useResolvedCachedMediaUrl = (
   const [state, setState] = useState<{
     resolved: string | undefined;
     forUrl: string | undefined;
-  }>({ resolved: undefined, forUrl: undefined });
+  }>(() => ({
+    resolved: safeUrl ? peekResolvedMediaUrl(safeUrl) : undefined,
+    forUrl: safeUrl,
+  }));
   const checkIdRef = useRef(0);
 
   useEffect(() => {
@@ -81,12 +138,21 @@ export const useResolvedCachedMediaUrl = (
       setState({ resolved: safeUrl, forUrl: safeUrl });
       return;
     }
-    if (cachedUrl) return;
+    if (cachedUrl) {
+      setState({ resolved: cachedUrl, forUrl: safeUrl });
+      return;
+    }
+
+    const resolvedUrl = getResolvedMediaUrl(safeUrl);
+    if (resolvedUrl !== undefined) {
+      setState({ resolved: resolvedUrl, forUrl: safeUrl });
+      return;
+    }
 
     const checkId = ++checkIdRef.current;
     setState({ resolved: undefined, forUrl: safeUrl });
 
-    resolveMediaUrl(safeUrl).then((result) => {
+    void resolveSharedMediaUrl(safeUrl).then((result) => {
       if (checkId !== checkIdRef.current) return;
       setState({ resolved: result, forUrl: safeUrl });
     });

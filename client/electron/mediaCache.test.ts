@@ -85,4 +85,31 @@ describe("MediaCacheManager", () => {
     expect(fromHls).toBe(cachedPath);
     expect(fromMp4).toBe(cachedPath);
   });
+
+  it("maps both stored Mux playback URL forms to one cached MP4", () => {
+    const manager = new MediaCacheManager();
+    const localPath = join(tempRoot, "media-cache", "playback-id.mp4");
+    fs.writeFileSync(localPath, "video");
+    manager["cacheIndex"].set(
+      "https://stream.mux.com/playback-id/highest.mp4",
+      {
+        url: "https://stream.mux.com/playback-id/highest.mp4",
+        localPath,
+        lastUsed: Date.now(),
+        contentType: "video/mp4",
+      },
+    );
+
+    const map = manager.getMediaCacheMap();
+
+    expect(map["https://stream.mux.com/playback-id/highest.mp4"]).toBe(
+      "media-cache://playback-id.mp4",
+    );
+    expect(map["https://stream.mux.com/playback-id.m3u8"]).toBe(
+      "media-cache://playback-id.mp4",
+    );
+    expect(map["https://stream.mux.com/playback-id/master.m3u8"]).toBe(
+      "media-cache://playback-id.mp4",
+    );
+  });
 });

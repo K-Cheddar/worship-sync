@@ -24,3 +24,12 @@ export const parseCanvaDesignId = (raw: string): string | null => {
     return null;
   }
 };
+
+export const isCanvaShortLink = (raw: string): boolean => {
+  try {
+    const parsed = new URL(String(raw || "").trim());
+    return parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "canva.link";
+  } catch {
+    return false;
+  }
+};
