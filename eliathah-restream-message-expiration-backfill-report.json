@@ -1,0 +1,16 @@
+{
+  "startedAt": "2026-09-16T02:41:13.497Z",
+  "dryRun": false,
+  "database": "eliathah",
+  "allDatabases": false,
+  "limit": 500,
+  "startAfter": "restream_msg_d2a6ed49-fd3b-4285-8979-8c02b119007f",
+  "inspected": 207,
+  "updated": 207,
+  "skippedExisting": 0,
+  "skippedNoTimestamp": 0,
+  "failed": 0,
+  "failures": [],
+  "finishedAt": "2026-09-16T02:41:36.157Z",
+  "nextStartAfter": "restream_msg_fffd10bd-033f-4303-b020-2fae47ad0e62"
+}
