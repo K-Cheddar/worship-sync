@@ -1,5 +1,6 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -20,6 +21,7 @@ import type {
   Arrangment,
   FormattedSection,
   ItemSlideType,
+  ShouldSendTo,
   TimerInfo,
 } from "../../types";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
@@ -30,13 +32,16 @@ import {
   OUTLINE_SCROLL_SETTLE_MS,
   OUTLINE_SMOOTH_SCROLL_MS,
   buildOutlineSlideSections,
+  buildOutlineVirtualRowIndex,
   buildOutlineVirtualRows,
+  captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
   captureOutlineZoomFocalPoint,
   findOutlineRowIndexForItem,
   getControllerItemPath,
+  getOutlineVirtualRowKey,
   getNonHeadingOutlineItems,
-  getPinnedListIdFromRowOffsets,
+  getPinnedListIdFromVirtualItems,
   getPrefetchItemIds,
   prepareItemForEditor,
   resolveOutlineScrollTopFromAnchor,
@@ -46,6 +51,8 @@ import {
 } from "../../utils/outlineSlideSections";
 import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
+import ContinuousStaticItemSlide from "./ContinuousStaticItemSlide";
+import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 
 const SECTION_LABEL_HEIGHT = 36;
 const EMPTY_ROW_HEIGHT = 28;
@@ -73,7 +80,19 @@ type OutlineItemSlidesScrollerProps = {
   timers: TimerInfo[];
   selectSlide: (
     index: number,
-    options?: { preserveBackgroundTargetRangeAnchor?: boolean },
+    options?: {
+      preserveBackgroundTargetRangeAnchor?: boolean;
+      presentationOnly?: boolean;
+      presentation?: {
+        slides: ItemSlideType[];
+        type: string;
+        name: string;
+        itemId: string;
+        listId: string;
+        timerId?: string;
+        shouldSendTo?: ShouldSendTo;
+      };
+    },
   ) => void;
   onSlideGridClick: (e: React.MouseEvent, index: number) => void;
   onEnterBackgroundTargetSelectMode?: (
@@ -81,6 +100,7 @@ type OutlineItemSlidesScrollerProps = {
     options?: { skipNextClick?: boolean },
   ) => void;
   onRenameSection?: (sectionNum: number, name: string) => void;
+  thumbnailScaleFactor?: number;
 };
 
 type OutlineActiveItemSource = {
@@ -92,6 +112,7 @@ type OutlineActiveItemSource = {
   arrangements?: Arrangment[];
   selectedArrangement?: number;
   formattedSections?: FormattedSection[];
+  shouldSendTo?: ShouldSendTo;
 };
 
 const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
@@ -119,6 +140,115 @@ const getBibleInfoGetter = (slides: ItemSlideType[]) => {
   return getter;
 };
 
+type OutlineVirtualSlideProps = {
+  section: OutlineSlideSection;
+  slide: ItemSlideType;
+  index: number;
+  selectedSlide: number;
+  isLive: boolean;
+  size: number;
+  sizeConfig: SizeConfig;
+  isMobile: boolean;
+  isStreamFormat: boolean;
+  canEdit: boolean;
+  draggedSection: string | null;
+  timerInfo?: TimerInfo;
+  backgroundTargetSlideIds: string[];
+  onTileClick: (
+    event: React.MouseEvent,
+    section: OutlineSlideSection,
+    index: number,
+  ) => void;
+  selectSlide: OutlineItemSlidesScrollerProps["selectSlide"];
+  onEnterBackgroundTargetSelectMode?: OutlineItemSlidesScrollerProps["onEnterBackgroundTargetSelectMode"];
+  onRenameSection?: (sectionNum: number, name: string) => void;
+  thumbnailScaleFactor: number;
+};
+
+const OutlineVirtualSlide = memo(
+  ({
+    section,
+    slide,
+    index,
+    selectedSlide,
+    isLive,
+    size,
+    sizeConfig,
+    isMobile,
+    isStreamFormat,
+    canEdit,
+    draggedSection,
+    timerInfo,
+    backgroundTargetSlideIds,
+    onTileClick,
+    selectSlide,
+    onEnterBackgroundTargetSelectMode,
+    onRenameSection,
+    thumbnailScaleFactor,
+  }: OutlineVirtualSlideProps) => {
+    const isActive = section.isActive;
+    const handleClick = useCallback(
+      (event: React.MouseEvent, clickedIndex: number) =>
+        onTileClick(event, section, clickedIndex),
+      [onTileClick, section],
+    );
+    const bibleInfo =
+      section.type === "bible"
+        ? getBibleInfoFromSlides(section.slides, index)
+        : undefined;
+
+    if (!isActive) {
+      return (
+        <ContinuousStaticItemSlide
+          slide={slide}
+          index={index}
+          itemType={section.type}
+          isStreamFormat={isStreamFormat}
+          timerInfo={timerInfo}
+          formattedSections={section.formattedSections}
+          isLive={isLive}
+          onSlideGridClick={handleClick}
+          slideDomId={`item-slide-${section.listId}-${index}`}
+          bibleInfo={bibleInfo}
+          hSize={sizeConfig.hSize}
+          borderWidth={sizeConfig.borderWidth}
+          thumbnailScaleFactor={thumbnailScaleFactor}
+        />
+      );
+    }
+
+    return (
+      <ItemSlide
+        key={`${section.listId}-${slide.id || index}`}
+        timerInfo={timerInfo}
+        slide={slide}
+        index={index}
+        selectSlide={selectSlide}
+        isSelected={index === selectedSlide}
+        isLive={isLive}
+        size={size}
+        itemType={section.type}
+        isMobile={isMobile}
+        draggedSection={draggedSection}
+        formattedSections={section.formattedSections}
+        onRenameSection={onRenameSection}
+        isStreamFormat={isStreamFormat}
+        getBibleInfo={getBibleInfoGetter(section.slides)}
+        borderWidth={sizeConfig.borderWidth}
+        hSize={sizeConfig.hSize}
+        canEdit={canEdit}
+        isBackgroundTargetSelected={backgroundTargetSlideIds.includes(slide.id)}
+        slideDomId={`item-slide-${section.listId}-${index}`}
+        onSlideGridClick={handleClick}
+        onEnterBackgroundTargetSelectMode={
+          canEdit ? onEnterBackgroundTargetSelectMode : undefined
+        }
+        thumbnailScaleFactor={thumbnailScaleFactor}
+      />
+    );
+  },
+);
+
 const OutlineItemSlidesScroller = ({
   scrollRef,
   cols,
@@ -136,6 +266,7 @@ const OutlineItemSlidesScroller = ({
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
   onRenameSection,
+  thumbnailScaleFactor = 0,
 }: OutlineItemSlidesScrollerProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -159,6 +290,7 @@ const OutlineItemSlidesScroller = ({
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
       formattedSections: item.formattedSections,
+      shouldSendTo: item.shouldSendTo,
     };
   }, shallowEqual);
   const activeItemListId = activeItem.listId;
@@ -168,6 +300,27 @@ const OutlineItemSlidesScroller = ({
     () => getNonHeadingOutlineItems(outlineList),
     [outlineList],
   );
+  const outlineItemByListId = useMemo(() => {
+    const map = new Map<string, (typeof outlineItems)[number]>();
+    for (const item of outlineItems) map.set(item.listId, item);
+    return map;
+  }, [outlineItems]);
+  const sectionCacheRef = useRef<
+    Map<
+      string,
+      {
+        item: (typeof outlineItems)[number];
+        source: OutlineActiveItemSource | undefined;
+        section: OutlineSlideSection;
+      }
+    >
+  >(new Map());
+  const rowCacheRef = useRef<
+    Map<
+      string,
+      { section: OutlineSlideSection; cols: number; rows: ReturnType<typeof buildOutlineVirtualRows> }
+    >
+  >(new Map());
   // Prefetch follows where the operator is browsing, not only the selected item.
   const [browsePinListId, setBrowsePinListId] = useState(
     () => selectedItemListId || activeItemListId,
@@ -189,6 +342,7 @@ const OutlineItemSlidesScroller = ({
       buildOutlineSlideSections(outlineItems, {
         activeItem,
         docsById,
+        sectionCache: sectionCacheRef.current,
       }),
     [outlineItems, activeItem, docsById],
   );
@@ -197,13 +351,23 @@ const OutlineItemSlidesScroller = ({
     for (const section of sections) map.set(section.listId, section);
     return map;
   }, [sections]);
+  const sectionsByListIdRef = useRef(sectionsByListId);
+  sectionsByListIdRef.current = sectionsByListId;
 
   const rows = useMemo(
-    () => buildOutlineVirtualRows(sections, cols),
+    () => buildOutlineVirtualRows(sections, cols, rowCacheRef.current),
     [sections, cols],
   );
+  const rowIndexData = useMemo(
+    () => buildOutlineVirtualRowIndex(rows, sectionsByListId),
+    [rows, sectionsByListId],
+  );
+  const rowIndexDataRef = useRef(rowIndexData);
+  rowIndexDataRef.current = rowIndexData;
   const rowsRef = useRef(rows);
-  const virtualizerRef = useRef<ReturnType<typeof useVirtualizer> | null>(null);
+  const virtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(
+    null,
+  );
   const pendingZoomFocalRef = useRef<OutlineZoomFocalPoint | null>(null);
   const isZoomRestoringRef = useRef(false);
   const zoomRestoreTimerRef = useRef<number | null>(null);
@@ -212,7 +376,7 @@ const OutlineItemSlidesScroller = ({
   const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
   const tileRowHeightRef = useRef(tileRowHeight);
   tileRowHeightRef.current = tileRowHeight;
-  const shouldSyncTileRowHeightRef = useRef(true);
+  const representativeTileRowKeyRef = useRef<string | null>(null);
 
   const didInitialScrollRef = useRef(false);
   const isInitialAnchoringRef = useRef(false);
@@ -247,12 +411,17 @@ const OutlineItemSlidesScroller = ({
         element.clientHeight,
         selectedItemListId || activeItemListId,
         selectedSlide,
+        sectionsByListId,
       );
       isZoomRestoringRef.current = pendingZoomFocalRef.current != null;
     }
     colsSeenRef.current = cols;
   }
   rowsRef.current = rows;
+
+  const virtualizerChangeRef = useRef<
+    ((instance: Virtualizer<HTMLElement, Element>, sync: boolean) => void) | null
+  >(null);
 
   const timersByItemId = useMemo(() => {
     const map = new Map<string, TimerInfo>();
@@ -265,6 +434,10 @@ const OutlineItemSlidesScroller = ({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => {
+      const row = rowsRef.current[index];
+      return row ? getOutlineVirtualRowKey(row) : index;
+    },
     estimateSize: (index) => {
       const row = rowsRef.current[index];
       if (row?.type === "sectionLabel") return SECTION_LABEL_HEIGHT;
@@ -274,8 +447,24 @@ const OutlineItemSlidesScroller = ({
     overscan: 2,
     gap: ROW_GAP,
     initialRect: { width: 0, height: 600 },
+    useFlushSync: false,
+    onChange: (instance, sync) => {
+      virtualizerChangeRef.current?.(instance, sync);
+    },
   });
   virtualizerRef.current = virtualizer;
+
+  const measureVirtualRow = useCallback((element: Element | null) => {
+    if (!element || element.getAttribute("data-row-type") !== "tiles") return;
+    const rowKey = element.getAttribute("data-row-key");
+    if (!rowKey || representativeTileRowKeyRef.current) return;
+    representativeTileRowKeyRef.current = rowKey;
+    virtualizerRef.current?.measureElement(element);
+    const height = element.getBoundingClientRect().height;
+    if (height > 0 && Math.abs(height - tileRowHeightRef.current) > 1) {
+      setTileRowHeight(height);
+    }
+  }, []);
 
   const prevTileRowHeightRef = useRef(tileRowHeight);
   useLayoutEffect(() => {
@@ -294,13 +483,10 @@ const OutlineItemSlidesScroller = ({
   selectedSlideRef.current = selectedSlide;
   const ignorePinTimerRef = useRef<number | null>(null);
   const initialAnchorTimerRef = useRef<number | null>(null);
-  const pendingSelectRef = useRef<{ listId: string; index: number } | null>(
-    null,
-  );
   const lastSelectionScrollKeyRef = useRef<string>("");
   const selectionScrollCleanupRef = useRef<(() => void) | null>(null);
   const ignorePinRef = useRef(true);
-  const pinRafRef = useRef<number | null>(null);
+  const browsePinTimerRef = useRef<number | null>(null);
   const viewportAnchorRef = useRef<OutlineScrollAnchor | null>(null);
 
   const readRowOffset = useCallback((rowIndex: number) => {
@@ -323,6 +509,7 @@ const OutlineItemSlidesScroller = ({
         rowsRef.current,
         readRowStart,
         element.scrollTop,
+        sectionsByListIdRef.current,
       );
     },
     [readRowStart, scrollRef],
@@ -359,7 +546,7 @@ const OutlineItemSlidesScroller = ({
   useLayoutEffect(() => {
     if (layoutColsRef.current === cols) return;
     layoutColsRef.current = cols;
-    shouldSyncTileRowHeightRef.current = true;
+    representativeTileRowKeyRef.current = null;
     setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
     prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
     virtualizerRef.current?.measure();
@@ -381,15 +568,27 @@ const OutlineItemSlidesScroller = ({
 
   const activateItem = useCallback(
     (listId: string, options?: { selectedSlide?: number }) => {
-      const item = outlineItems.find((entry) => entry.listId === listId);
+      const item = outlineItemByListId.get(listId);
       if (!item) return;
+      const uiDetails = {
+        outputId: "controller",
+        windowRole: "controller",
+        itemId: item._id,
+        listId,
+      };
       beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
       lastPinnedListIdRef.current = listId;
       setBrowsePinListId(listId);
+      browsePinListIdRef.current = listId;
+      if (browsePinTimerRef.current != null) {
+        window.clearTimeout(browsePinTimerRef.current);
+        browsePinTimerRef.current = null;
+      }
       dispatch(setActiveItemInList(listId));
       const doc = docsById.get(item._id);
       if (doc) {
         const prepared = prepareItemForEditor(doc, listId);
+        markPresentationPerformance("prepare-item-complete", uiDetails);
         dispatch(
           setActiveItem(
             options?.selectedSlide != null
@@ -398,57 +597,54 @@ const OutlineItemSlidesScroller = ({
           ),
         );
       }
+      markPresentationPerformance("active-item-dispatch-complete", uiDetails);
+      markPresentationPerformance("navigation-start", uiDetails);
       navigate(getControllerItemPath(item, controllerBasePath), {
         replace: true,
       });
+      markPresentationPerformance("navigation-complete", uiDetails);
+      markPresentationPerformance("cross-item-ui-update-complete", uiDetails);
     },
     [
       beginIgnorePin,
       dispatch,
       docsById,
       navigate,
-      outlineItems,
+      outlineItemByListId,
       controllerBasePath,
     ],
   );
 
-  const readPinnedListId = useCallback(() => {
-    const scrollTop = scrollRef.current?.scrollTop ?? 0;
-    return getPinnedListIdFromRowOffsets(
-      rowsRef.current,
-      readRowStart,
-      scrollTop,
-    );
-  }, [readRowStart, scrollRef]);
-
-  // Keep a viewport row anchor for geometry rebuilds. Manual scroll also updates
-  // prefetch focus, but must not change the selected item/slide.
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    const onScroll = () => {
+  const handleVirtualizerChange = useCallback(
+    (instance: Virtualizer<HTMLElement, Element>) => {
+      const scrollTop = instance.scrollOffset ?? scrollRef.current?.scrollTop ?? 0;
+      const virtualItems = instance.getVirtualItems();
       if (!isZoomRestoringRef.current) {
-        captureViewportAnchor();
+        viewportAnchorRef.current = captureOutlineScrollAnchorFromVirtualItems(
+          rowsRef.current,
+          virtualItems,
+          scrollTop,
+        );
       }
       if (!didInitialScrollRef.current || ignorePinRef.current) return;
-      if (pinRafRef.current != null) return;
-      pinRafRef.current = window.requestAnimationFrame(() => {
-        pinRafRef.current = null;
-        const pinned = readPinnedListId();
-        if (!pinned || pinned === browsePinListIdRef.current) return;
-        browsePinListIdRef.current = pinned;
-        setBrowsePinListId(pinned);
-      });
-    };
-    element.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      element.removeEventListener("scroll", onScroll);
-      if (pinRafRef.current != null) {
-        window.cancelAnimationFrame(pinRafRef.current);
-        pinRafRef.current = null;
+      const pinned = getPinnedListIdFromVirtualItems(
+        rowsRef.current,
+        virtualItems,
+        scrollTop,
+      );
+      if (!pinned || pinned === browsePinListIdRef.current) return;
+      browsePinListIdRef.current = pinned;
+      if (browsePinTimerRef.current != null) {
+        window.clearTimeout(browsePinTimerRef.current);
       }
-    };
-  }, [captureViewportAnchor, readPinnedListId, scrollRef]);
+      browsePinTimerRef.current = window.setTimeout(() => {
+        browsePinTimerRef.current = null;
+        setBrowsePinListId(pinned);
+      }, OUTLINE_SCROLL_SETTLE_MS);
+    },
+    [scrollRef],
+  );
+  virtualizerChangeRef.current = handleVirtualizerChange;
 
   useEffect(() => {
     return () => {
@@ -460,6 +656,9 @@ const OutlineItemSlidesScroller = ({
       }
       if (zoomRestoreTimerRef.current != null) {
         window.clearTimeout(zoomRestoreTimerRef.current);
+      }
+      if (browsePinTimerRef.current != null) {
+        window.clearTimeout(browsePinTimerRef.current);
       }
       selectionScrollCleanupRef.current?.();
       selectionScrollCleanupRef.current = null;
@@ -477,6 +676,7 @@ const OutlineItemSlidesScroller = ({
         rowsRef.current,
         listId,
         slideIndex,
+        rowIndexDataRef.current,
       );
       if (rowIndex < 0) return;
       const behavior: ScrollBehavior =
@@ -536,29 +736,39 @@ const OutlineItemSlidesScroller = ({
           rowsRef.current,
           focal.listId,
           focal.slideIndex,
+          rowIndexData,
         );
         if (rowIndex < 0) return false;
+        const rowStart = readRowOffset(rowIndex);
+        if (rowStart == null) return false;
+        const nextRowStart = currentVirtualizer.getOffsetForIndex(rowIndex + 1)?.[0];
+        const rowHeight =
+          nextRowStart != null
+            ? Math.max(1, nextRowStart - rowStart - ROW_GAP)
+            : tileRowHeightRef.current;
+        const targetViewportCenter =
+          focal.viewportCenter ?? element.clientHeight / 2;
         currentVirtualizer.scrollToIndex(rowIndex, {
           align: "center",
           behavior: "auto",
         });
-        const offset = readRowOffset(rowIndex);
-        if (offset != null) {
-          element.scrollTop = Math.max(
-            0,
-            offset - element.clientHeight / 2 + tileRowHeightRef.current / 2,
-          );
-        }
+        element.scrollTop = Math.max(
+          0,
+          rowStart + rowHeight / 2 - targetViewportCenter,
+        );
         const child = document.getElementById(
           `item-slide-${focal.listId}-${focal.slideIndex}`,
         );
         if (child) {
           const parentRect = element.getBoundingClientRect();
           const childRect = child.getBoundingClientRect();
-          element.scrollTop +=
-            childRect.top +
-            childRect.height / 2 -
-            (parentRect.top + parentRect.height / 2);
+          element.scrollTop = Math.max(
+            0,
+            element.scrollTop +
+              childRect.top +
+              childRect.height / 2 -
+              (parentRect.top + targetViewportCenter),
+          );
         }
         captureViewportAnchor({ force: true });
         return true;
@@ -568,12 +778,14 @@ const OutlineItemSlidesScroller = ({
         rowsRef.current,
         readRowStart,
         focal.anchor,
+        rowIndexData,
       );
       if (nextTop == null) return false;
       const rowIndex = findOutlineRowIndexForItem(
         rowsRef.current,
         focal.anchor.listId,
         focal.anchor.startIndex,
+        rowIndexData,
       );
       if (rowIndex >= 0) {
         currentVirtualizer.scrollToIndex(rowIndex, {
@@ -585,7 +797,14 @@ const OutlineItemSlidesScroller = ({
       captureViewportAnchor({ force: true });
       return true;
     },
-    [beginIgnorePin, captureViewportAnchor, readRowOffset, readRowStart, scrollRef],
+    [
+      beginIgnorePin,
+      captureViewportAnchor,
+      readRowOffset,
+      readRowStart,
+      rowIndexData,
+      scrollRef,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -625,6 +844,16 @@ const OutlineItemSlidesScroller = ({
     scrollToListId,
     tileRowHeight,
   ]);
+
+  useEffect(() => {
+    if (!activeItemListId) return;
+    markPresentationPerformance("outline-react-commit", {
+      outputId: "controller",
+      windowRole: "controller",
+      itemId: activeItemId,
+      listId: activeItemListId,
+    });
+  }, [activeItemId, activeItemListId]);
 
   // useEffect runs after parent refs attach, so collapse/open still lands on
   // the selected item when child layout raced ahead of the scroll element.
@@ -704,6 +933,7 @@ const OutlineItemSlidesScroller = ({
         rowsRef.current,
         readRowStart,
         anchor,
+        rowIndexData,
       );
       if (nextTop != null && Math.abs(element.scrollTop - nextTop) >= 1) {
         element.scrollTop = nextTop;
@@ -724,6 +954,7 @@ const OutlineItemSlidesScroller = ({
     applyZoomFocal,
     captureViewportAnchor,
     readRowStart,
+    rowIndexData,
     rows,
     scrollRef,
     tileRowHeight,
@@ -768,13 +999,6 @@ const OutlineItemSlidesScroller = ({
       const listId = activeItemListId || selectedItemListIdRef.current;
       if (!listId) return;
 
-      if (!options?.force) {
-        const pending = pendingSelectRef.current;
-        if (pending && (pending.listId !== listId || pending.index !== slideIndex)) {
-          return;
-        }
-      }
-
       const scrollKey = `${listId}:${slideIndex}`;
       if (!options?.force && lastSelectionScrollKeyRef.current === scrollKey) {
         return;
@@ -802,6 +1026,7 @@ const OutlineItemSlidesScroller = ({
         rowsRef.current,
         listId,
         slideIndex,
+        rowIndexDataRef.current,
       );
       if (rowIndex < 0) return;
 
@@ -835,8 +1060,7 @@ const OutlineItemSlidesScroller = ({
   );
 
   // Single scroll authority for selection changes after the initial anchor.
-  // Avoid stacking virtualizer smooth + keepElementInView smooth, and wait out
-  // any pending cross-item click until the final slide index is applied.
+  // Avoid stacking virtualizer smooth + keepElementInView smooth.
   useEffect(() => {
     scrollSelectedSlideIntoView();
     return () => {
@@ -851,14 +1075,6 @@ const OutlineItemSlidesScroller = ({
     });
   }, [scrollSelectedSlideIntoView]);
 
-  useEffect(() => {
-    const pending = pendingSelectRef.current;
-    if (!pending) return;
-    if (pending.listId !== activeItemListId) return;
-    pendingSelectRef.current = null;
-    selectSlide(pending.index);
-  }, [activeItemListId, activeItemId, selectSlide]);
-
   const handleTileClick = useCallback(
     (
       event: React.MouseEvent,
@@ -866,15 +1082,40 @@ const OutlineItemSlidesScroller = ({
       index: number,
     ) => {
       if (!section.isActive) {
-        pendingSelectRef.current = { listId: section.listId, index };
-        // Apply the clicked slide immediately so we never scroll toward the
-        // previous item's slide index (or slide 0) before selectSlide runs.
+        markPresentationPerformance("cross-item-ui-update-start", {
+          outputId: "controller",
+          windowRole: "controller",
+          itemId: section.itemId,
+          listId: section.listId,
+          slideIndex: index,
+        });
+        markPresentationPerformance("continuous-slide-click", {
+          outputId: "controller",
+          windowRole: "controller",
+          itemId: section.itemId,
+          slideIndex: index,
+        });
+        // Transmit from the already available section before activating the
+        // editor item. This keeps the live path independent of navigation and
+        // the pending-selection effect.
+        selectSlide(index, {
+          presentationOnly: true,
+          presentation: {
+            slides: section.slides,
+            type: section.type,
+            name: section.name,
+            itemId: section.itemId,
+            listId: section.listId,
+            shouldSendTo: section.shouldSendTo,
+            timerId: timersByItemId.get(section.itemId)?.id,
+          },
+        });
         activateItem(section.listId, { selectedSlide: index });
         return;
       }
       onSlideGridClick(event, index);
     },
-    [activateItem, onSlideGridClick],
+    [activateItem, onSlideGridClick, selectSlide, timersByItemId],
   );
 
   const activeSlideIds = useMemo(
@@ -895,24 +1136,11 @@ const OutlineItemSlidesScroller = ({
 
           return (
             <div
-              key={`${row.type}-${row.listId}-${virtualRow.index}`}
+              key={virtualRow.key}
               data-index={virtualRow.index}
-              ref={(el) => {
-                virtualizer.measureElement(el);
-                if (
-                  el &&
-                  row.type === "tiles" &&
-                  shouldSyncTileRowHeightRef.current
-                ) {
-                  const height = el.getBoundingClientRect().height;
-                  if (height > 0) {
-                    shouldSyncTileRowHeightRef.current = false;
-                    if (Math.abs(height - tileRowHeightRef.current) > 1) {
-                      setTileRowHeight(height);
-                    }
-                  }
-                }
-              }}
+              data-row-type={row.type}
+              data-row-key={getOutlineVirtualRowKey(row)}
+              ref={measureVirtualRow}
               className="absolute left-0 top-0 w-full"
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
@@ -932,42 +1160,36 @@ const OutlineItemSlidesScroller = ({
               )}
               {row.type === "tiles" && section && (
                 <ul className={cn("grid", sizeConfig.cols)}>
-                  {row.slides.map((slide, offset) => {
+                  {section.slides
+                    .slice(row.startIndex, row.startIndex + row.count)
+                    .map((slide, offset) => {
                     const index = row.startIndex + offset;
                     const isActive = section.isActive;
                     return (
-                      <ItemSlide
+                      <OutlineVirtualSlide
                         key={`${section.listId}-${slide.id || index}`}
-                        timerInfo={timersByItemId.get(section.itemId)}
+                        section={section}
                         slide={slide}
                         index={index}
-                        selectSlide={selectSlide}
-                        isSelected={isActive && index === selectedSlide}
+                        selectedSlide={selectedSlide}
                         isLive={isActive && liveSlideIds.has(slide.id)}
                         size={size}
-                        itemType={section.type}
+                        sizeConfig={sizeConfig}
                         isMobile={isMobile}
-                        draggedSection={isActive ? draggedSection : null}
-                        formattedSections={section.formattedSections}
-                        onRenameSection={isActive ? onRenameSection : undefined}
                         isStreamFormat={isStreamFormat}
-                        getBibleInfo={getBibleInfoGetter(section.slides)}
-                        borderWidth={sizeConfig.borderWidth}
-                        hSize={sizeConfig.hSize}
                         canEdit={isActive && canEdit}
-                        isBackgroundTargetSelected={
-                          isActive &&
-                          backgroundTargetSlideIds.includes(slide.id)
-                        }
-                        slideDomId={`item-slide-${section.listId}-${index}`}
-                        onSlideGridClick={(event) =>
-                          handleTileClick(event, section, index)
-                        }
+                        draggedSection={isActive ? draggedSection : null}
+                        timerInfo={timersByItemId.get(section.itemId)}
+                        backgroundTargetSlideIds={backgroundTargetSlideIds}
+                        onTileClick={handleTileClick}
+                        selectSlide={selectSlide}
                         onEnterBackgroundTargetSelectMode={
                           isActive && canEdit
                             ? onEnterBackgroundTargetSelectMode
                             : undefined
                         }
+                        onRenameSection={isActive ? onRenameSection : undefined}
+                        thumbnailScaleFactor={thumbnailScaleFactor}
                       />
                     );
                   })}

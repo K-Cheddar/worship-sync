@@ -607,7 +607,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
                             void (async () => {
                               setSavingCategory(category);
                               try {
-                                await setNotificationPreference(
+                                await setNotificationPreference?.(
                                   category,
                                   checked,
                                 );

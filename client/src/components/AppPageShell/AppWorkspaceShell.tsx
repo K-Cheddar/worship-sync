@@ -15,7 +15,7 @@ type AppWorkspaceShellProps = {
   icon: LucideIcon;
   toolbarLogos?: ChurchToolbarLogoUrls | null;
   churchName?: string | null;
-  scrollbarWidth?: number;
+  scrollbarWidth?: string | number;
   toolbarActions?: ReactNode;
   /** Replaces the standard dropdown menu on narrow screens. */
   mobileNavigation?: (menuItems: MenuItemType[]) => ReactNode;

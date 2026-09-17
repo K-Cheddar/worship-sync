@@ -28,6 +28,11 @@ import { shouldSkipDisplayTextAnimation } from "./utils";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
+type ManagedImage = {
+  identity: string;
+  url: string;
+};
+
 /**
  * Shared start for every layer of a box transition.
  *
@@ -153,9 +158,6 @@ const DisplayBox = ({
   ]);
 
   const background = box.background;
-  const shouldShowBackground = Boolean(
-    paintBackground && showBackground && background,
-  );
   const localVideoThumbnail = useLocalVideoFileUrl(
     box.mediaInfo?.localVideoFile,
     "thumbnail",
@@ -167,6 +169,11 @@ const DisplayBox = ({
   const videoPlaceholderImage =
     localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
+  const shouldShowBackground = Boolean(
+    paintBackground &&
+      showBackground &&
+      (background || (isVideoBg && rawImage)),
+  );
   const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const prevIsVideoBg = prevBox?.mediaInfo?.type === "video";
   let prevRawImage = prevBox?.background;
@@ -184,24 +191,43 @@ const DisplayBox = ({
   }
   const cachedImage = useCachedMediaUrl(rawImage);
   const resolvedCachedImage = useResolvedCachedMediaUrl(rawImage);
-  const [managedRemoteImage, setManagedRemoteImage] = useState(
-    resolvedCachedImage,
+  const backgroundTransitionIdentity = getBackgroundTransitionIdentity(
+    box,
+    rawImage,
   );
+  // Transition-managed stills must mount synchronously. If Electron has not
+  // finished checking its cache, use the remote URL now and keep that choice
+  // for this lane; cache promotion belongs to a later snapshot, never mid-fade.
+  const [managedRemoteImage, setManagedRemoteImage] = useState<
+    ManagedImage | undefined
+  >(() => {
+    const url = resolvedCachedImage ?? cachedImage ?? rawImage;
+    return url ? { identity: backgroundTransitionIdentity, url } : undefined;
+  });
   // Object URLs already point at IndexedDB-backed bytes on this device. Sending
   // them through Electron's remote-media cache adds IPC and can retain the
   // previous URL for one render during a relink.
   const [deferredRemoteImage, setDeferredRemoteImage] = useState(cachedImage);
+  const managedImageForCurrentIdentity =
+    managedRemoteImage?.identity === backgroundTransitionIdentity
+      ? managedRemoteImage.url
+      : undefined;
+  const currentImageCandidate = resolvedCachedImage ?? cachedImage ?? rawImage;
+  const currentTransitionImage =
+    managedImageForCurrentIdentity ?? currentImageCandidate;
   let displayImage = isTransitionManaged
-    ? managedRemoteImage
+    ? currentTransitionImage
     : deferredRemoteImage;
   if (localImage.isLocalImage) {
     displayImage = localImage.url;
   } else if (localVideoThumbnail.url) {
     displayImage = localVideoThumbnail.url;
   }
-  const [decodedImageUrl, setDecodedImageUrl] = useState<string>();
+  const [decodedImage, setDecodedImage] = useState<ManagedImage>();
   const isImageReadyToPaint = Boolean(
-    displayImage && decodedImageUrl === displayImage,
+    displayImage &&
+      decodedImage?.identity === backgroundTransitionIdentity &&
+      decodedImage.url === displayImage,
   );
   const isLocalImageReadyToPaint =
     !localImage.isLocalImage || isImageReadyToPaint;
@@ -213,10 +239,6 @@ const DisplayBox = ({
     shouldAnimate &&
     Boolean(prevBox) &&
     shouldSkipDisplayTextAnimation(box.words, prevBox?.words);
-  const backgroundTransitionIdentity = getBackgroundTransitionIdentity(
-    box,
-    rawImage,
-  );
   const prevBackgroundTransitionIdentity = getBackgroundTransitionIdentity(
     prevBox,
     prevRawImage,
@@ -245,17 +267,26 @@ const DisplayBox = ({
       : 0;
 
   useEffect(() => {
-    if (
-      isTransitionManaged &&
-      !managedRemoteImage &&
-      resolvedCachedImage
-    ) {
-      // Freeze this lane on the first fully resolved Electron/cache URL. The
-      // lane is remounted for the next snapshot, so a later cache-map update
-      // cannot replace the visible image after its transition has begun.
-      setManagedRemoteImage(resolvedCachedImage);
+    if (isTransitionManaged && currentTransitionImage) {
+      // Freeze the first URL selected for this background identity. A reused
+      // DisplayBox must never let a URL acquired by another identity survive
+      // into the next snapshot.
+      if (
+        managedRemoteImage?.identity !== backgroundTransitionIdentity ||
+        managedRemoteImage?.url !== currentTransitionImage
+      ) {
+        setManagedRemoteImage({
+          identity: backgroundTransitionIdentity,
+          url: currentTransitionImage,
+        });
+      }
     }
-  }, [isTransitionManaged, managedRemoteImage, resolvedCachedImage]);
+  }, [
+    backgroundTransitionIdentity,
+    currentTransitionImage,
+    isTransitionManaged,
+    managedRemoteImage,
+  ]);
 
   useEffect(() => {
     if (isTransitionManaged) return;
@@ -305,7 +336,10 @@ const DisplayBox = ({
           backgroundImageRef.current === image &&
           displayImage === imageUrl
         ) {
-          setDecodedImageUrl(imageUrl);
+          setDecodedImage({
+            identity: backgroundTransitionIdentity,
+            url: imageUrl,
+          });
         }
       };
 
@@ -321,7 +355,7 @@ const DisplayBox = ({
         if (image.complete && image.naturalWidth > 0) commitReady();
       });
     },
-    [displayImage],
+    [backgroundTransitionIdentity, displayImage],
   );
 
   useLayoutEffect(() => {
@@ -478,6 +512,7 @@ const DisplayBox = ({
     fontWeight: box.isBold ? "bold" : "normal",
     fontStyle: box.isItalic ? "italic" : "normal",
   };
+  const brightnessValue = brightness ?? box.brightness;
 
   const renderContent = () => {
     if (words.includes("{{timer}}") || words.includes("{{service-time}}")) {
@@ -490,12 +525,11 @@ const DisplayBox = ({
     return words;
   };
 
-  const brightnessValue = brightness ?? box.brightness;
-
   return (
     <div
       ref={boxRef}
       className="absolute leading-tight"
+      data-testid="display-box"
       style={{
         width: boxWidth,
         height: boxHeight,
@@ -556,7 +590,7 @@ const DisplayBox = ({
               shouldImageBeHidden ? "opacity-0" : "opacity-100",
             )}
             src={displayImage}
-            alt={box.label}
+            alt={box.label || ""}
             onLoad={(event) => {
               markImageDecoded(event.currentTarget, displayImage);
             }}

@@ -149,11 +149,15 @@ jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
 }));
 
 const displayWindowCapture: {
+  className: string | undefined;
+  showBorder: boolean | undefined;
   onChange: ((info: any) => void) | null;
   videoPlayback: unknown;
   localVideoInput: unknown;
   canCaptureLocalVideo: boolean | undefined;
 } = {
+  className: undefined,
+  showBorder: undefined,
   onChange: null,
   videoPlayback: undefined,
   localVideoInput: undefined,
@@ -163,12 +167,16 @@ const displayWindowCapture: {
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
   default: (props: {
+    className?: string;
     disabled?: boolean;
+    showBorder?: boolean;
     onChange?: (info: any) => void;
     videoPlayback?: unknown;
     localVideoInput?: unknown;
     canCaptureLocalVideo?: boolean;
   }) => {
+    displayWindowCapture.className = props.className;
+    displayWindowCapture.showBorder = props.showBorder;
     if (props.onChange) displayWindowCapture.onChange = props.onChange;
     displayWindowCapture.videoPlayback = props.videoPlayback;
     displayWindowCapture.localVideoInput = props.localVideoInput;
@@ -176,6 +184,7 @@ jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
     return (
       <div
         data-testid="display-window"
+        data-class-name={props.className}
         data-disabled={props.disabled ? "true" : "false"}
         data-has-video-playback={props.videoPlayback ? "true" : "false"}
         data-has-local-video={props.localVideoInput ? "true" : "false"}
@@ -366,6 +375,7 @@ const renderWithToastContext = () =>
     <ToastContext.Provider
       value={{
         showToast: mockShowToast,
+        updateToast: jest.fn(),
         removeToast: mockRemoveToast,
       }}
     >
@@ -376,6 +386,8 @@ const renderWithToastContext = () =>
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    displayWindowCapture.className = undefined;
+    displayWindowCapture.showBorder = undefined;
     displayWindowCapture.onChange = null;
     displayWindowCapture.videoPlayback = undefined;
     displayWindowCapture.localVideoInput = undefined;
@@ -383,6 +395,21 @@ describe("SlideEditor", () => {
     mockState = makeBaseState();
     mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
+  });
+
+  it("uses the larger present preview without an outer gray border", () => {
+    render(<SlideEditor access="full" presentationMode="present" />);
+
+    expect(displayWindowCapture.className).toContain("lg:max-h-[36vh]");
+    expect(displayWindowCapture.className).toContain("max-lg:max-h-[30vh]");
+    expect(displayWindowCapture.showBorder).toBeUndefined();
+  });
+
+  it("keeps the edit preview free of an outer gray border", () => {
+    render(<SlideEditor access="full" />);
+
+    expect(displayWindowCapture.className).toContain("lg:max-h-[42vh]");
+    expect(displayWindowCapture.showBorder).toBeUndefined();
   });
 
   it("renders empty state when no slide is selected", () => {

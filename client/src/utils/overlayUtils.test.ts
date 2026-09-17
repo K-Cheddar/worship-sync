@@ -42,8 +42,8 @@ describe("overlayUtils", () => {
       heading: "Hi",
       formatting: { bottom: 12 },
     } as Parameters<typeof normalizeOverlayForSync>[0]);
-    expect(normalized.formatting.bottom).toBe(12);
-    expect(normalized.formatting.backgroundColor).toBe(
+    expect(normalized.formatting?.bottom).toBe(12);
+    expect(normalized.formatting?.backgroundColor).toBe(
       defaultParticipantOverlayStyles.backgroundColor,
     );
   });
@@ -61,8 +61,8 @@ describe("overlayUtils", () => {
     expect(get).toHaveBeenCalledWith("overlay-abc");
     expect(loaded?.id).toBe("abc");
     expect(loaded?.type).toBe("qr-code");
-    expect(loaded?.formatting.bottom).toBe(9);
-    expect(loaded?.formatting.backgroundColor).toBe(
+    expect(loaded?.formatting?.bottom).toBe(9);
+    expect(loaded?.formatting?.backgroundColor).toBe(
       defaultQrCodeOverlayStyles.backgroundColor,
     );
   });

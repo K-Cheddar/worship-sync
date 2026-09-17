@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -19,6 +20,10 @@ import {
   NONE_LANE_BACKGROUND_MEDIA,
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
+import {
+  markPresentationPerformance,
+  markPresentationReadiness,
+} from "../../utils/presentationPerformanceDebug";
 
 type LaneId = "a" | "b";
 
@@ -48,12 +53,14 @@ type TransitionState = {
 };
 
 export type LaneMediaPlaybackOptions = {
+  outputId?: string;
+  windowRole?: string;
   fileVideoAudioEnabled?: boolean;
   volume?: number;
   playbackRole?: "preview" | "output";
   preloadRole?: "preview" | "output";
   suspendPlayback?: boolean;
-  /** Applied only to the active (non-previous) file-video lane. */
+  /** Cue for the current live file-video lane. */
   activeFileVideoPlayback?: VideoBackgroundPlaybackCue;
   isEditor?: boolean;
   localVideo?: {
@@ -143,6 +150,12 @@ const resolveTransitionMode = (
   return "full";
 };
 
+const readLaneOpacity = (element: HTMLDivElement | null) => {
+  if (!element) return undefined;
+  const opacity = Number.parseFloat(element.style.opacity);
+  return Number.isFinite(opacity) ? opacity : undefined;
+};
+
 /**
  * Owns one deterministic background-media + box transition.
  *
@@ -170,6 +183,7 @@ const DisplayBoxTransitionStage = ({
     b: null,
   });
   const timelineRef = useRef<GSAPTimeline | null>(null);
+  const requestGenerationRef = useRef(0);
   const [state, setState] = useState<TransitionState>(() => ({
     activeLaneId: "a",
     lanes: { a: snapshot, b: null },
@@ -185,8 +199,152 @@ const DisplayBoxTransitionStage = ({
   const [mediaPaintReadiness, setMediaPaintReadiness] = useState<
     Record<LaneId, { mediaKey: string; ready: boolean } | null>
   >({ a: null, b: null });
+  const laneSnapshotsRef = useRef<
+    Record<LaneId, DisplayBoxTransitionSnapshot | null>
+  >({ a: snapshot, b: null });
+  laneSnapshotsRef.current = state.lanes;
+  /**
+   * The outgoing lane keeps the cue it had before the transition started.
+   * This is render-only continuity state: the incoming lane may receive a new
+   * cue while its media prepares, but the outgoing player must not be
+   * re-cued, paused, or reset merely because its visual role changed.
+   */
+  const previousPlaybackRef = useRef<
+    VideoBackgroundPlaybackCue | undefined
+  >(mediaPlayback?.activeFileVideoPlayback);
+  const outgoingPlaybackRef = useRef<
+    VideoBackgroundPlaybackCue | undefined
+  >(undefined);
+  const requestedVideoSrc =
+    snapshot.backgroundMedia.kind === "fileVideo"
+      ? snapshot.backgroundMedia.originalSrc
+      : undefined;
+
+  useEffect(() => {
+    markPresentationPerformance("display-payload-received", {
+      snapshotKey: snapshot.key,
+      outputId: mediaPlayback?.outputId ?? "unknown",
+      windowRole: mediaPlayback?.windowRole ?? "unknown",
+    });
+    if (state.phase === "preparing") {
+      markPresentationPerformance("transition-preparing", {
+        snapshotKey: snapshot.key,
+        outputId: mediaPlayback?.outputId ?? "unknown",
+        windowRole: mediaPlayback?.windowRole ?? "unknown",
+      });
+    }
+    if (state.phase === "animating") {
+      markPresentationPerformance("transition-start", {
+        snapshotKey: snapshot.key,
+        outputId: mediaPlayback?.outputId ?? "unknown",
+        windowRole: mediaPlayback?.windowRole ?? "unknown",
+      });
+    }
+    if (requestedVideoSrc) {
+      markPresentationPerformance("video-requested", {
+        outputId: mediaPlayback?.outputId ?? "unknown",
+        windowRole: mediaPlayback?.windowRole ?? "unknown",
+        src: requestedVideoSrc,
+      });
+    }
+  }, [
+    mediaPlayback?.outputId,
+    mediaPlayback?.windowRole,
+    snapshot.backgroundMedia.kind,
+    requestedVideoSrc,
+    snapshot.key,
+    state.phase,
+  ]);
 
   useLayoutEffect(() => {
+    const active = state.lanes[state.activeLaneId];
+    if (state.phase === "idle" && active && snapshot.key !== active.key) {
+      outgoingPlaybackRef.current = previousPlaybackRef.current;
+    }
+    previousPlaybackRef.current = mediaPlayback?.activeFileVideoPlayback;
+  }, [
+    mediaPlayback?.activeFileVideoPlayback,
+    snapshot.key,
+    state.activeLaneId,
+    state.lanes,
+    state.phase,
+  ]);
+
+  useLayoutEffect(() => {
+    const isNewRequest = snapshot.key !== state.requestedKey;
+    if (isNewRequest) requestGenerationRef.current += 1;
+
+    // The latest operator request must take over immediately. Preserve one
+    // coherent baseline, kill the obsolete fade, and prepare the new request
+    // directly instead of making it wait behind a queued destination.
+    if (isNewRequest && state.phase === "animating") {
+      const activeLaneId = state.activeLaneId;
+      const incomingLaneId = otherLane(activeLaneId);
+      const incomingContentOpacity = readLaneOpacity(
+        contentRefs.current[incomingLaneId],
+      );
+      const activeContentOpacity = readLaneOpacity(
+        contentRefs.current[activeLaneId],
+      );
+      const incomingMediaOpacity = readLaneOpacity(
+        mediaRefs.current[incomingLaneId],
+      );
+      const activeMediaOpacity = readLaneOpacity(
+        mediaRefs.current[activeLaneId],
+      );
+      let baselineLaneId = activeLaneId;
+      if (state.mode === "content") {
+        // The existing media anchor is the stable baseline for lyric-only
+        // interruption; keeping it in place avoids remounting video/capture.
+        baselineLaneId = state.mediaAnchorLaneId;
+      } else if (
+        state.mode === "full" &&
+        incomingContentOpacity != null &&
+        activeContentOpacity != null &&
+        incomingMediaOpacity != null &&
+        activeMediaOpacity != null &&
+        incomingContentOpacity >= activeContentOpacity &&
+        incomingMediaOpacity >= activeMediaOpacity
+      ) {
+        // A full transition can use the incoming lane only when both visual
+        // planes have become dominant; this never combines split baselines.
+        baselineLaneId = incomingLaneId;
+      }
+      const baselineSnapshot =
+        state.lanes[baselineLaneId] ?? state.lanes[activeLaneId];
+
+      if (baselineSnapshot) {
+        timelineRef.current?.kill();
+        timelineRef.current = null;
+        for (const laneId of ["a", "b"] as const) {
+          const opacity = laneId === baselineLaneId ? 1 : 0;
+          if (mediaRefs.current[laneId]) {
+            gsap.set(mediaRefs.current[laneId], { opacity });
+          }
+          if (contentRefs.current[laneId]) {
+            gsap.set(contentRefs.current[laneId], { opacity });
+          }
+        }
+        markPresentationPerformance("transition-interrupted", {
+          previousKey: state.requestedKey,
+          baselineKey: baselineSnapshot.key,
+          nextKey: snapshot.key,
+          outputId: mediaPlayback?.outputId ?? "unknown",
+          windowRole: mediaPlayback?.windowRole ?? "unknown",
+        });
+        setState({
+          activeLaneId: baselineLaneId,
+          lanes: lanePair(baselineLaneId, baselineSnapshot, snapshot),
+          phase: "preparing",
+          requestedKey: snapshot.key,
+          queuedSnapshot: null,
+          mode: resolveTransitionMode(baselineSnapshot, snapshot),
+          mediaAnchorLaneId: baselineLaneId,
+        });
+        return;
+      }
+    }
+
     setState((current) => {
       const active = current.lanes[current.activeLaneId];
       if (!active) {
@@ -218,13 +376,7 @@ const DisplayBoxTransitionStage = ({
             requestedKey: snapshot.key,
           };
         }
-        if (current.phase === "animating") {
-          return {
-            ...current,
-            requestedKey: snapshot.key,
-            queuedSnapshot: snapshot,
-          };
-        }
+        if (current.phase === "animating") return current;
         // Preparing: refresh the incoming lane if it already targets this key.
         if (snapshot.key === current.requestedKey) {
           const incomingLaneId = otherLane(current.activeLaneId);
@@ -272,13 +424,7 @@ const DisplayBoxTransitionStage = ({
         return current;
       }
 
-      if (current.phase === "animating") {
-        return {
-          ...current,
-          requestedKey: snapshot.key,
-          queuedSnapshot: snapshot,
-        };
-      }
+      if (current.phase === "animating") return current;
 
       const mode = resolveTransitionMode(active, snapshot);
       const incomingLaneId = otherLane(current.activeLaneId);
@@ -294,10 +440,11 @@ const DisplayBoxTransitionStage = ({
         mediaAnchorLaneId: current.mediaAnchorLaneId,
       };
     });
-  }, [snapshot]);
+  }, [mediaPlayback?.outputId, mediaPlayback?.windowRole, snapshot, state]);
 
   const reportBoxPaintReady = useCallback(
     (laneId: LaneId, laneKey: string, index: number, ready: boolean) => {
+      if (laneSnapshotsRef.current[laneId]?.key !== laneKey) return;
       setBoxPaintReadiness((current) => {
         const laneState = current[laneId];
         const readyIndexes =
@@ -321,6 +468,20 @@ const DisplayBoxTransitionStage = ({
 
   const reportMediaPaintReady = useCallback(
     (laneId: LaneId, mediaKey: string, ready: boolean) => {
+      const laneSnapshot = laneSnapshotsRef.current[laneId];
+      if (
+        !laneSnapshot ||
+        getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia) !== mediaKey
+      ) {
+        return;
+      }
+      markPresentationReadiness({
+        laneId,
+        mediaKey,
+        ready,
+        outputId: mediaPlayback?.outputId ?? "unknown",
+        windowRole: mediaPlayback?.windowRole ?? "unknown",
+      });
       setMediaPaintReadiness((current) => {
         const laneState = current[laneId];
         if (
@@ -335,7 +496,7 @@ const DisplayBoxTransitionStage = ({
         };
       });
     },
-    [],
+    [mediaPlayback?.outputId, mediaPlayback?.windowRole],
   );
 
   const isLanePaintReady = (
@@ -422,6 +583,7 @@ const DisplayBoxTransitionStage = ({
 
     const animateMedia = mode === "full" || mode === "media";
     const animateContent = mode === "full" || mode === "content";
+    const animationGeneration = requestGenerationRef.current;
 
     if (animateMedia && (!outgoingMedia || !incomingMedia)) return;
     if (animateContent && (!outgoingContent || !incomingContent)) return;
@@ -431,6 +593,7 @@ const DisplayBoxTransitionStage = ({
     const incomingKey = incomingSnapshot.key;
     const timeline = gsap.timeline({
       onComplete: () => {
+        if (animationGeneration !== requestGenerationRef.current) return;
         // Do NOT clearProps("opacity") here. Clearing restores default opacity
         // 1 on the outgoing wrapper while old content is still mounted, which
         // paints a one-frame flash of the previous lyrics before React
@@ -797,12 +960,12 @@ const DisplayBoxTransitionStage = ({
                   playbackRole={mediaPlayback?.playbackRole}
                   preloadRole={mediaPlayback?.preloadRole}
                   suspendPlayback={mediaPlayback?.suspendPlayback}
-                  playback={
-                    isPrevious
-                      ? undefined
-                      : mediaPlayback?.activeFileVideoPlayback
-                  }
+                  playback={isPrevious
+                    ? outgoingPlaybackRef.current
+                    : mediaPlayback?.activeFileVideoPlayback}
                   isEditor={mediaPlayback?.isEditor}
+                  outputId={mediaPlayback?.outputId}
+                  windowRole={mediaPlayback?.windowRole}
                   localVideo={mediaPlayback?.localVideo}
                 />
                 {needsStillHold &&

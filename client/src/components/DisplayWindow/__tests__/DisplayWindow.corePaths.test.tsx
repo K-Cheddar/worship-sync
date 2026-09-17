@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import DisplayWindow from "../DisplayWindow";
-import type { Box } from "../../../types";
+import type { Box, MediaType } from "../../../types";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 
 const mockUseSelector = jest.fn();
@@ -710,9 +710,19 @@ describe("DisplayWindow core paths", () => {
       ...baseBox,
       background: "local-image://asset",
       mediaInfo: {
-        id: assetId,
+        path: "",
+        createdAt: "",
+        updatedAt: "",
+        format: "png",
+        height: 1080,
+        width: 1920,
+        name: `${assetId}.png`,
+        publicId: assetId,
         type: "image",
+        id: assetId,
         background: "local-image://asset",
+        thumbnail: "",
+        source: "local",
         localImage: {
           id: assetId,
           ownerDeviceId: "device-1",
@@ -721,7 +731,7 @@ describe("DisplayWindow core paths", () => {
           contentType: "image/png",
           storagePolicy: "local-only",
         },
-      },
+      } satisfies MediaType,
     });
 
     const { rerender } = render(

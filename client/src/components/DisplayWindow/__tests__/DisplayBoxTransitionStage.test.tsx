@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { useEffect, type ReactElement } from "react";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
@@ -7,6 +7,7 @@ import DisplayBoxTransitionStage, {
 import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
 
 let mockTimelineComplete: (() => void) | undefined;
+let mockMediaReady = true;
 const mockTimeline = {
   addLabel: jest.fn(),
   fromTo: jest.fn(),
@@ -32,12 +33,14 @@ jest.mock("../LaneFullFrameMedia", () => ({
   default: function MockLaneFullFrameMedia({
     onPaintReadyChange,
     media,
+    playback,
   }: {
     onPaintReadyChange: (ready: boolean) => void;
     media: { kind: string; mediaKey?: string; input?: { sourceId: string } };
+    playback?: { mediaKey?: string; generation?: number; positionSeconds?: number };
   }) {
     useEffect(() => {
-      onPaintReadyChange(true);
+      onPaintReadyChange(mockMediaReady);
     }, [onPaintReadyChange]);
     const id =
       media.kind === "fileVideo"
@@ -45,7 +48,15 @@ jest.mock("../LaneFullFrameMedia", () => ({
         : media.kind === "localVideo"
           ? media.input?.sourceId
           : "none";
-    return <div data-testid="lane-full-frame-media-mock" data-media-id={id} />;
+    return (
+      <div
+        data-testid="lane-full-frame-media-mock"
+        data-media-id={id}
+        data-playback-media-key={playback?.mediaKey}
+        data-playback-generation={playback?.generation}
+        data-playback-position={playback?.positionSeconds}
+      />
+    );
   },
 }));
 
@@ -114,6 +125,82 @@ describe("DisplayBoxTransitionStage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTimelineComplete = undefined;
+    mockMediaReady = true;
+  });
+
+  it("keeps the outgoing video cue while the incoming video prepares", () => {
+    mockMediaReady = false;
+    const mediaA = {
+      ...sharedFileMedia,
+      mediaKey: "remote:a",
+      originalSrc: "https://cdn.example.com/a.mp4",
+    };
+    const mediaB = {
+      ...sharedFileMedia,
+      mediaKey: "remote:b",
+      originalSrc: "https://cdn.example.com/b.mp4",
+    };
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "video-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: mediaA,
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "video-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: mediaB,
+    };
+    const outgoingCue = {
+      mediaKey: "remote:a",
+      positionSeconds: 17,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 4,
+      applySeek: false,
+    };
+    const incomingCue = {
+      ...outgoingCue,
+      mediaKey: "remote:b",
+      positionSeconds: 0,
+      generation: 5,
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: outgoingCue }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const outgoingPlayerBefore = within(
+      screen.getByTestId("display-box-transition-media-a"),
+    ).getByTestId("lane-full-frame-media-mock");
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{ activeFileVideoPlayback: incomingCue }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    const outgoingMedia = screen.getByTestId("display-box-transition-media-a");
+    const outgoingPlayer = within(outgoingMedia).getByTestId(
+      "lane-full-frame-media-mock",
+    );
+    expect(outgoingPlayer).toBe(outgoingPlayerBefore);
+    expect(outgoingMedia).toHaveAttribute("data-lane-role", "outgoing");
+    expect(outgoingPlayer).toHaveAttribute(
+      "data-playback-media-key",
+      "remote:a",
+    );
+    expect(outgoingPlayer).toHaveAttribute("data-playback-generation", "4");
+    expect(outgoingPlayer).toHaveAttribute("data-playback-position", "17");
   });
 
   it("preserves the outgoing DOM, waits for paint readiness, and cleans up on completion", () => {
@@ -206,7 +293,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(mockTimeline.fromTo).not.toHaveBeenCalled();
   });
 
-  it("serializes a newer slide request without restarting the active fade", () => {
+  it("interrupts an active fade and prepares only the newest slide", () => {
     const { rerender } = render(
       <DisplayBoxTransitionStage
         snapshot={oldSnapshot}
@@ -233,18 +320,140 @@ describe("DisplayBoxTransitionStage", () => {
       />,
     );
 
-    expect(mockTimeline.fromTo.mock.calls.length).toBe(callsAfterFirst);
+    expect(mockTimeline.kill).toHaveBeenCalled();
+    expect(mockTimeline.fromTo.mock.calls.length).toBeGreaterThan(
+      callsAfterFirst,
+    );
     expect(screen.getByTestId("content-Old")).toBeInTheDocument();
-    expect(screen.getByTestId("content-New")).toBeInTheDocument();
-    expect(screen.queryByTestId("content-Latest")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("content-New")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-Latest")).toBeInTheDocument();
 
     act(() => firstTransitionComplete?.());
 
-    expect(screen.queryByTestId("content-Old")).not.toBeInTheDocument();
-    expect(screen.getByTestId("content-New")).toBeInTheDocument();
+    expect(screen.getByTestId("content-Old")).toBeInTheDocument();
+    expect(screen.queryByTestId("content-New")).not.toBeInTheDocument();
     expect(screen.getByTestId("content-Latest")).toBeInTheDocument();
-    expect(mockTimeline.fromTo.mock.calls.length).toBeGreaterThan(
-      callsAfterFirst,
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+
+    act(() => mockTimelineComplete?.());
+    expect(screen.queryByTestId("content-Old")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-Latest")).toBeInTheDocument();
+  });
+
+  it("interrupts a full background transition without requiring the middle slide", () => {
+    const song = (key: string, words: string, mediaKey: string) => ({
+      key,
+      boxes: [{ id: "box", words, width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey,
+        originalSrc: `https://cdn.example.com/${mediaKey}.mp4`,
+      },
+    });
+    const first = song("song-a", "A", "blue");
+    const middle = song("song-b", "B", "red");
+    const latest = song("song-c", "C", "green");
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={middle}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const obsoleteComplete = mockTimelineComplete;
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.queryByTestId("content-B")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-A")).toBeInTheDocument();
+    expect(screen.getByTestId("content-C")).toBeInTheDocument();
+    expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+
+    act(() => obsoleteComplete?.());
+    expect(screen.queryByTestId("content-B")).not.toBeInTheDocument();
+    act(() => mockTimelineComplete?.());
+    expect(screen.queryByTestId("content-A")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-C")).toBeInTheDocument();
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toHaveAttribute(
+      "data-media-id",
+      "green",
+    );
+  });
+
+  it("replaces a preparing request so late readiness cannot activate it", () => {
+    let readyKeys = new Set(["old"]);
+    const renderLane = (
+      snapshot: DisplayBoxTransitionSnapshot,
+      _isPrevious: boolean,
+      reportPaintReady: (index: number, ready: boolean) => void,
+      laneMedia: LaneRenderMediaOptions,
+    ) => (
+      <LaneContent
+        snapshot={snapshot}
+        ready={readyKeys.has(snapshot.key)}
+        reportPaintReady={reportPaintReady}
+        laneMedia={laneMedia}
+      />
+    );
+    const preparing = { ...newSnapshot, key: "preparing" };
+    const latest = { ...latestSnapshot, key: "latest-preparing" };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={oldSnapshot}
+        shouldAnimate
+        renderLane={renderLane}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={preparing}
+        shouldAnimate
+        renderLane={renderLane}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        renderLane={renderLane}
+      />,
+    );
+    readyKeys = new Set(["old", latest.key]);
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        renderLane={renderLane}
+      />,
+    );
+
+    expect(screen.queryByTestId("content-preparing")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-Latest")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-mode",
+      "full",
     );
   });
 
@@ -526,7 +735,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
   });
 
-  it("rapid same-background lyric changes keep one media surface and coalesce text", () => {
+  it("rapid same-background lyric changes keep one media surface and skip obsolete lyrics", () => {
     const verse = (n: number): DisplayBoxTransitionSnapshot => ({
       key: `v-${n}`,
       boxes: [{ id: "box", words: `Verse ${n}`, width: 100, height: 100 }],
@@ -560,15 +769,15 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
     expect(screen.getByTestId("content-Verse 1")).toBeInTheDocument();
-    expect(screen.getByTestId("content-Verse 2")).toBeInTheDocument();
-    expect(screen.queryByTestId("content-Verse 3")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("content-Verse 2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
 
     act(() => firstComplete?.());
 
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
-    expect(screen.queryByTestId("content-Verse 1")).not.toBeInTheDocument();
-    expect(screen.getByTestId("content-Verse 2")).toBeInTheDocument();
+    expect(screen.getByTestId("content-Verse 1")).toBeInTheDocument();
+    expect(screen.queryByTestId("content-Verse 2")).not.toBeInTheDocument();
     expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
 
     act(() => mockTimelineComplete?.());
@@ -802,8 +1011,7 @@ describe("DisplayBoxTransitionStage", () => {
         />,
       );
       assertContentCrossfadeContract(`S${n}V1`, `S${n}V2`);
-      const complete = mockTimelineComplete;
-      act(() => complete?.());
+      act(() => mockTimelineComplete?.());
       expect(screen.getByTestId(`content-S${n}V2`)).toBeInTheDocument();
       expect(screen.queryByTestId(`content-S${n}V1`)).not.toBeInTheDocument();
       expect(
@@ -878,8 +1086,7 @@ describe("DisplayBoxTransitionStage", () => {
       const incoming = screen.getByTestId(`content-Verse ${to}`);
       expect(outgoing).toBeInTheDocument();
       expect(incoming).toBeInTheDocument();
-      const complete = mockTimelineComplete;
-      act(() => complete?.());
+      act(() => mockTimelineComplete?.());
       expect(screen.queryByTestId(`content-Verse ${from}`)).not.toBeInTheDocument();
       expect(screen.getByTestId(`content-Verse ${to}`)).toBe(incoming);
       expect(mockGsapSet).not.toHaveBeenCalledWith(

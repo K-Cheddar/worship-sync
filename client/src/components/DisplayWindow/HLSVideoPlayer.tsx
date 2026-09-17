@@ -19,6 +19,7 @@ import {
   getVideoSourceKind,
   isHLSVideoSource,
 } from "../../utils/isInstantVideoSource";
+import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
 
 type HLSPlayerProps = {
   src: string;
@@ -39,6 +40,8 @@ type HLSPlayerProps = {
   mediaKey?: string;
   /** Live/output cue applied when this surface is following a send. */
   playback?: VideoBackgroundPlaybackCue;
+  outputId?: string;
+  windowRole?: string;
 };
 
 /** Re-seeking for less than this is invisible and only costs a decode stall. */
@@ -71,7 +74,7 @@ const elementState = (video: HTMLVideoElement) => ({
   errorCode: video.error?.code,
 });
 
-const startPlayback = (video: HTMLVideoElement) => {
+const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
   logVideoCue("play.before", elementState(video));
   video
     .play()
@@ -90,6 +93,13 @@ const startPlayback = (video: HTMLVideoElement) => {
         message: (e as Error)?.message,
         ...elementState(video),
       });
+      if (
+        (e as Error)?.name === "AbortError" &&
+        expectedSrc &&
+        video.src !== expectedSrc
+      ) {
+        return;
+      }
       console.warn("Error playing video", e);
     });
 };
@@ -130,6 +140,8 @@ const HLSPlayer = ({
   suspendPlayback = false,
   mediaKey,
   playback,
+  outputId,
+  windowRole,
 }: HLSPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -218,6 +230,11 @@ const HLSPlayer = ({
           return;
         }
         paintReadySrcRef.current = videoSrc;
+        markPresentationPerformance("video-loadeddata-first-paint", {
+          outputId: outputId ?? "unknown",
+          windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
+          src: videoSrc,
+        });
         clearPaintReadyWaits();
         logVideoCue("player.paintReady", {
           role: playbackRoleRef.current,
@@ -228,7 +245,7 @@ const HLSPlayer = ({
 
       finish();
     },
-    [clearPaintReadyWaits],
+    [clearPaintReadyWaits, outputId, windowRole],
   );
 
   const notifyPaintReadyRef = useRef(notifyPaintReady);
@@ -270,7 +287,7 @@ const HLSPlayer = ({
       syncedSrcRef.current = activeSrc;
       appliedGenerationRef.current = null;
       // Outputs start on their own; the editor preview waits for the operator.
-      if (playbackRoleRef.current !== "preview") startPlayback(video);
+      if (playbackRoleRef.current !== "preview") startPlayback(video, activeSrc);
       notifyPaintReadyRef.current(activeSrc);
       return;
     }
@@ -336,9 +353,14 @@ const HLSPlayer = ({
 
   /** Metadata is loaded: the element now knows its duration and can be cued. */
   const handleMediaReady = useCallback((videoSrc: string) => {
+    markPresentationPerformance("video-loadedmetadata", {
+      outputId: outputId ?? "unknown",
+      windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
+      src: videoSrc,
+    });
     readySrcRef.current = videoSrc;
     syncPlaybackRef.current();
-  }, []);
+  }, [outputId, windowRole]);
 
   const handleEnded = useCallback(() => {
     const video = videoRef.current;
@@ -350,7 +372,7 @@ const HLSPlayer = ({
       ? resolveVideoPlaybackPosition(cue, finiteDuration(video))
       : 0;
     if (cue?.paused) return;
-    startPlayback(video);
+    startPlayback(video, srcRef.current);
   }, []);
 
   const playNative = useCallback(
@@ -504,6 +526,12 @@ const HLSPlayer = ({
     if (video) video.playbackRate = 1;
     if (!video || !src) return;
 
+    markPresentationPerformance("video-source-available", {
+      outputId: outputId ?? "unknown",
+      windowRole: windowRole ?? playbackRoleRef.current ?? "unknown",
+      src,
+    });
+
     if (isHLSVideoSource(src)) {
       const stopHls = playHLS(video, src);
       return () => {
@@ -522,7 +550,16 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
     };
-  }, [src, playNative, playHLS, clearPaintReadyWaits]);
+  }, [src, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    markPresentationPerformance("video-player-mounted", {
+      outputId: outputId ?? "unknown",
+      windowRole: windowRole ?? playbackRole ?? "unknown",
+      src,
+    });
+  }, [outputId, playbackRole, src, windowRole]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -581,14 +618,14 @@ const HLSPlayer = ({
     syncPlayback();
     const cue = playbackRef.current;
     if (video.paused && cue && !cue.paused) {
-      startPlayback(video);
+      startPlayback(video, srcRef.current);
     } else if (
       video.paused &&
       !cue &&
       playbackRoleRef.current !== "preview" &&
       readySrcRef.current === srcRef.current
     ) {
-      startPlayback(video);
+      startPlayback(video, srcRef.current);
     }
   }, [suspendPlayback, syncPlayback]);
 
@@ -618,7 +655,7 @@ const HLSPlayer = ({
         // Recovers a resume whose play() was rejected or stalled.
         if (resumeRetries < MAX_RESUME_RETRIES) {
           resumeRetries += 1;
-          startPlayback(video);
+          startPlayback(video, srcRef.current);
         }
         return;
       }
@@ -727,7 +764,7 @@ const HLSPlayer = ({
       if (command.type === "play") {
         video.playbackRate = 1;
         rateCorrectionStartedAtRef.current = null;
-        startPlayback(video);
+        startPlayback(video, srcRef.current);
         return;
       }
       if (command.type === "pause") {
@@ -745,7 +782,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
       video.currentTime = 0;
-      startPlayback(video);
+      startPlayback(video, srcRef.current);
     };
 
     return subscribeVideoPreviewCommands(applyCommand);

@@ -2,10 +2,14 @@ import type { DBItem, ItemSlideType, ServiceItem } from "../types";
 import {
   buildDocsById,
   buildOutlineSlideSections,
+  buildOutlineVirtualRowIndex,
   buildOutlineVirtualRows,
+  captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
   captureOutlineZoomFocalPoint,
   getControllerItemPath,
+  getOutlineVirtualRowKey,
+  getPinnedListIdFromVirtualItems,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
   getPrefetchItemIds,
@@ -88,10 +92,6 @@ describe("outlineSlideSections", () => {
           selectedArrangement: 0,
           arrangements: [
             {
-              id: "arr-1",
-              name: "Default",
-              formattedLyrics: [],
-              songOrder: [],
               slides: [slide("live", "Live")],
             },
           ],
@@ -110,10 +110,6 @@ describe("outlineSlideSections", () => {
           selectedArrangement: 0,
           arrangements: [
             {
-              id: "arr-1",
-              name: "Default",
-              formattedLyrics: [],
-              songOrder: [],
               slides: [slide("live", "Live")],
             },
           ],
@@ -216,17 +212,55 @@ describe("outlineSlideSections", () => {
       expect.objectContaining({
         type: "tiles",
         startIndex: 0,
-        slides: [
-          expect.objectContaining({ id: "a" }),
-          expect.objectContaining({ id: "b" }),
-        ],
+        count: 2,
+        firstSlideId: "a",
       }),
     );
     expect(rows[2]).toEqual(
       expect.objectContaining({
         type: "tiles",
         startIndex: 2,
-        slides: [expect.objectContaining({ id: "c" })],
+        count: 1,
+        firstSlideId: "c",
+      }),
+    );
+  });
+
+  it("keeps the large-service hot path bounded by the visible virtual range", () => {
+    const sections = Array.from({ length: 100 }, (_, itemIndex) => ({
+      listId: `list-${itemIndex}`,
+      itemId: `item-${itemIndex}`,
+      name: `Item ${itemIndex}`,
+      type: "song",
+      slides: Array.from({ length: 15 }, (_, slideIndex) =>
+        slide(`slide-${itemIndex}-${slideIndex}`, `Slide ${slideIndex}`),
+      ),
+      isActive: itemIndex === 0,
+    }));
+    const rows = buildOutlineVirtualRows(sections, 5);
+    const index = buildOutlineVirtualRowIndex(
+      rows,
+      new Map(sections.map((section) => [section.listId, section])),
+    );
+    const visibleItems = [
+      { index: 198, start: 0, end: 140 },
+      { index: 199, start: 144, end: 284 },
+      { index: 200, start: 288, end: 428 },
+    ];
+
+    expect(rows).toHaveLength(400);
+    expect(rows.every((row) => !Object.hasOwn(row, "slides"))).toBe(true);
+    expect(index.rowIndexBySlideIndex.get("list-50:10")).toBe(203);
+    expect(
+      getPinnedListIdFromVirtualItems(rows, visibleItems, 160),
+    ).toBe("list-49");
+    expect(
+      captureOutlineScrollAnchorFromVirtualItems(rows, visibleItems, 160),
+    ).toEqual(
+      expect.objectContaining({
+        listId: "list-49",
+        rowType: "tiles",
+        localOffset: 16,
       }),
     );
   });
@@ -351,10 +385,15 @@ describe("outlineSlideSections", () => {
 
     expect(
       captureOutlineZoomFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
-    ).toEqual({ kind: "selected", listId: "l-1", slideIndex: 0 });
+    ).toEqual({
+      kind: "selected",
+      listId: "l-1",
+      slideIndex: 0,
+      viewportCenter: 60,
+    });
   });
 
-  it("keeps the visible row when zooming while the selected slide is off screen", () => {
+  it("keeps the selected slide as the focal point even when it is off screen", () => {
     const rows = buildOutlineVirtualRows(
       [
         {
@@ -378,7 +417,7 @@ describe("outlineSlideSections", () => {
     );
     const getStart = (index: number) => index * 40;
     const getHeight = () => 40;
-    // label, tiles(a), label(b), tiles(b) — selected A1 is at 40; viewport is B's tiles.
+    // label, tiles(a), label(b), tiles(b) — selected A1 is above the viewport.
     const focal = captureOutlineZoomFocalPoint(
       rows,
       getStart,
@@ -390,61 +429,221 @@ describe("outlineSlideSections", () => {
     );
 
     expect(focal).toEqual({
-      kind: "viewport",
-      anchor: expect.objectContaining({
-        listId: "l-2",
-        rowType: "tiles",
-        slideId: "b1",
-        localOffset: 0,
-      }),
+      kind: "selected",
+      listId: "l-1",
+      slideIndex: 0,
     });
   });
 
-  it("prefers slide id when matching a tiles-row anchor", () => {
-    const rows = buildOutlineVirtualRows(
-      [
+  it.each([
+    [4, 2],
+    [2, 6],
+    [6, 1],
+    [1, 5],
+  ])(
+    "keeps a deep-service selected slide visible when columns change %i to %i",
+    (beforeCols, afterCols) => {
+      const sections = Array.from({ length: 25 }, (_, sectionIndex) => ({
+        listId: `item-${sectionIndex + 1}`,
+        itemId: `item-${sectionIndex + 1}`,
+        name: `Item ${sectionIndex + 1}`,
+        type: "song",
+        slides: Array.from({ length: 8 }, (_, slideIndex) =>
+          slide(
+            `item-${sectionIndex + 1}-slide-${slideIndex + 1}`,
+            `Slide ${slideIndex + 1}`,
+          ),
+        ),
+        isActive: sectionIndex === 19,
+      }));
+      const sectionsByListId = new Map(
+        sections.map((section) => [section.listId, section]),
+      );
+      const beforeRows = buildOutlineVirtualRows(sections, beforeCols);
+      const afterRows = buildOutlineVirtualRows(sections, afterCols);
+      const getStart = (index: number) => index * 40;
+      const getHeight = () => 40;
+      const selectedSlide = 4;
+      const selectedBeforeRow = findOutlineRowIndexForItem(
+        beforeRows,
+        "item-20",
+        selectedSlide,
+      );
+      const focal = captureOutlineZoomFocalPoint(
+        beforeRows,
+        getStart,
+        getHeight,
+        getStart(selectedBeforeRow) - 10,
+        80,
+        "item-20",
+        selectedSlide,
+        sectionsByListId,
+      );
+      const selectedAfterRow = findOutlineRowIndexForItem(
+        afterRows,
+        "item-20",
+        selectedSlide,
+      );
+      const restoredTop = Math.max(
+        0,
+        getStart(selectedAfterRow) + getHeight() / 2 -
+          (focal?.kind === "selected" && focal.viewportCenter != null
+            ? focal.viewportCenter
+            : 40),
+      );
+
+      expect(focal).toEqual(
+        expect.objectContaining({
+          kind: "selected",
+          listId: "item-20",
+          slideIndex: selectedSlide,
+        }),
+      );
+      expect(getStart(selectedAfterRow)).toBeLessThan(restoredTop + 80);
+      expect(getStart(selectedAfterRow) + getHeight()).toBeGreaterThan(
+        restoredTop,
+      );
+    },
+  );
+
+  it("falls back to the logical viewport anchor without a resolvable selection", () => {
+    const sections = [
+      {
+        listId: "l-1",
+        itemId: "a",
+        name: "A",
+        type: "song",
+        slides: [slide("a1", "A1"), slide("a2", "A2")],
+        isActive: true,
+      },
+    ];
+    const rows = buildOutlineVirtualRows(sections, 2);
+    const focal = captureOutlineZoomFocalPoint(
+      rows,
+      (index) => index * 40,
+      () => 40,
+      40,
+      80,
+      undefined,
+      -1,
+    );
+
+    expect(focal).toEqual(
+      expect.objectContaining({
+        kind: "viewport",
+        anchor: expect.objectContaining({ listId: "l-1" }),
+      }),
+    );
+  });
+
+  it.each([0, 4, 7])(
+    "restores the selected item's %s slide position after repacking",
+    (selectedSlide) => {
+      const sections = [
         {
           listId: "l-1",
           itemId: "a",
           name: "A",
           type: "song",
-          slides: [
-            slide("a1", "A1"),
-            slide("a2", "A2"),
-            slide("a3", "A3"),
-            slide("a4", "A4"),
-          ],
+          slides: Array.from({ length: 8 }, (_, index) =>
+            slide(`a${index + 1}`, `A${index + 1}`),
+          ),
           isActive: true,
         },
+      ];
+      const beforeRows = buildOutlineVirtualRows(sections, 4);
+      const afterRows = buildOutlineVirtualRows(sections, 2);
+      const getStart = (index: number) => index * 40;
+      const selectedBeforeRow = findOutlineRowIndexForItem(
+        beforeRows,
+        "l-1",
+        selectedSlide,
+      );
+      const focal = captureOutlineZoomFocalPoint(
+        beforeRows,
+        getStart,
+        () => 40,
+        getStart(selectedBeforeRow),
+        80,
+        "l-1",
+        selectedSlide,
+      );
+      const selectedAfterRow = findOutlineRowIndexForItem(
+        afterRows,
+        "l-1",
+        selectedSlide,
+      );
+      const restoredTop =
+        getStart(selectedAfterRow) + 20 -
+        (focal?.kind === "selected" && focal.viewportCenter != null
+          ? focal.viewportCenter
+          : 40);
+
+      expect(focal).toEqual(
+        expect.objectContaining({
+          kind: "selected",
+          listId: "l-1",
+          slideIndex: selectedSlide,
+        }),
+      );
+      expect(getStart(selectedAfterRow)).toBeLessThan(restoredTop + 80);
+      expect(getStart(selectedAfterRow) + 40).toBeGreaterThan(restoredTop);
+    },
+  );
+
+  it("prefers slide id when matching a tiles-row anchor", () => {
+    const section = {
+      listId: "l-1",
+      itemId: "a",
+      name: "A",
+      type: "song",
+      slides: [
+        slide("a1", "A1"),
+        slide("a2", "A2"),
+        slide("a3", "A3"),
+        slide("a4", "A4"),
       ],
+      isActive: true,
+    };
+    const rows = buildOutlineVirtualRows(
+      [section],
       2,
     );
-    const anchor = captureOutlineScrollAnchor(rows, (index) => index * 40, 40);
+    const sectionMap = new Map([[
+      "l-1",
+      section,
+    ]]);
+    const anchor = captureOutlineScrollAnchor(
+      rows,
+      (index) => index * 40,
+      40,
+      sectionMap,
+    );
     expect(anchor?.slideId).toBe("a1");
 
     // Insert a new first row of slides; a1 moves to the second tiles row.
-    const grown = buildOutlineVirtualRows(
-      [
-        {
-          listId: "l-1",
-          itemId: "a",
-          name: "A",
-          type: "song",
-          slides: [
-            slide("new1", "N1"),
-            slide("new2", "N2"),
-            slide("a1", "A1"),
-            slide("a2", "A2"),
-            slide("a3", "A3"),
-            slide("a4", "A4"),
-          ],
-          isActive: true,
-        },
+    const grownSection = {
+      ...section,
+      slides: [
+        slide("new1", "N1"),
+        slide("new2", "N2"),
+        slide("a1", "A1"),
+        slide("a2", "A2"),
+        slide("a3", "A3"),
+        slide("a4", "A4"),
       ],
+    };
+    const grown = buildOutlineVirtualRows(
+      [grownSection],
       2,
     );
     expect(
-      resolveOutlineScrollTopFromAnchor(grown, (index) => index * 40, anchor!),
+      resolveOutlineScrollTopFromAnchor(
+        grown,
+        (index) => index * 40,
+        anchor!,
+        buildOutlineVirtualRowIndex(grown, new Map([["l-1", grownSection]])),
+      ),
     ).toBe(80);
   });
 
@@ -509,17 +708,27 @@ describe("outlineSlideSections", () => {
         arrangements: [],
         slides: [
           {
+            id: "s1",
+            type: "Section",
             name: "Section 1",
-            boxes: [{ words: "ignored" }, { words: "Line one" }],
+            boxes: [
+              { words: "ignored", width: 1920, height: 1080 },
+              { words: "Line one", width: 1920, height: 1080 },
+            ],
           },
           {
+            id: "s2",
+            type: "Section",
             name: "Section 1",
-            boxes: [{ words: "ignored" }, { words: "Line two" }],
+            boxes: [
+              { words: "ignored", width: 1920, height: 1080 },
+              { words: "Line two", width: 1920, height: 1080 },
+            ],
           },
         ],
         formattedSections: [],
         shouldSendTo: { projector: true, monitor: true, stream: true },
-      } as DBItem,
+      } as unknown as DBItem,
       "list-1",
     );
 
@@ -540,6 +749,134 @@ describe("outlineSlideSections", () => {
       `/controller/item/${window.btoa(encodeURI("song/1"))}/${window.btoa(
         encodeURI("list 2"),
       )}`,
+    );
+  });
+
+  it("keeps logical row keys stable when rows are inserted above the viewport", () => {
+    const before = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("a1", "A1"), slide("a2", "A2")],
+          isActive: false,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      2,
+    );
+    const after = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("new", "New"), slide("a1", "A1"), slide("a2", "A2")],
+          isActive: false,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      2,
+    );
+
+    expect(getOutlineVirtualRowKey(before[3])).toBe("l-2:tiles:0");
+    expect(getOutlineVirtualRowKey(after[4])).toBe("l-2:tiles:0");
+  });
+
+  it("derives pin and anchor from the current virtual range", () => {
+    const rows = buildOutlineVirtualRows(
+      [
+        {
+          listId: "l-1",
+          itemId: "a",
+          name: "A",
+          type: "song",
+          slides: [slide("a1", "A1")],
+          isActive: false,
+        },
+        {
+          listId: "l-2",
+          itemId: "b",
+          name: "B",
+          type: "song",
+          slides: [slide("b1", "B1")],
+          isActive: false,
+        },
+      ],
+      1,
+    );
+    const virtualItems = [
+      { index: 3, start: 120, end: 260 },
+      { index: 4, start: 264, end: 404 },
+    ];
+
+    expect(getPinnedListIdFromVirtualItems(rows, virtualItems, 120)).toBe("l-2");
+    expect(
+      captureOutlineScrollAnchorFromVirtualItems(rows, virtualItems, 140),
+    ).toEqual(
+      expect.objectContaining({
+        listId: "l-2",
+        rowType: "tiles",
+        localOffset: 20,
+      }),
+    );
+  });
+
+  it("reuses unrelated sections and rows when the active item changes", () => {
+    const items = [
+      outlineItem({ _id: "a", listId: "l-a", name: "A", type: "song" }),
+      outlineItem({ _id: "b", listId: "l-b", name: "B", type: "song" }),
+      outlineItem({ _id: "c", listId: "l-c", name: "C", type: "song" }),
+    ];
+    const docsById = buildDocsById({
+      allSongDocs: [
+        songDoc("a", "a-1", [slide("a1", "A1")]),
+        songDoc("b", "b-1", [slide("b1", "B1")]),
+        songDoc("c", "c-1", [slide("c1", "C1")]),
+      ],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const sectionCache = new Map();
+    const rowCache = new Map();
+    const first = buildOutlineSlideSections(items, {
+      activeItem: { _id: "a", listId: "l-a", slides: [slide("a1", "A1")] },
+      docsById,
+      sectionCache,
+    });
+    const firstRows = buildOutlineVirtualRows(first, 1, rowCache);
+    const second = buildOutlineSlideSections(items, {
+      activeItem: { _id: "b", listId: "l-b", slides: [slide("b1", "B1")] },
+      docsById,
+      sectionCache,
+    });
+    const secondRows = buildOutlineVirtualRows(second, 1, rowCache);
+
+    expect(second[0]).not.toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[2]).toBe(first[2]);
+    expect(
+      secondRows.find((row) => row.listId === "l-c" && row.type === "tiles"),
+    ).toBe(
+      firstRows.find((row) => row.listId === "l-c" && row.type === "tiles"),
     );
   });
 });

@@ -18,8 +18,10 @@ type LaneFullFrameMediaProps = {
   playbackRole?: "preview" | "output";
   preloadRole?: "preview" | "output";
   suspendPlayback?: boolean;
-  /** Live cue only for the active (non-previous) file-video lane. */
+  /** Cue for the file-video lane; outgoing lanes retain their own cue. */
   playback?: VideoBackgroundPlaybackCue;
+  outputId?: string;
+  windowRole?: string;
   isEditor?: boolean;
   localVideo?: {
     playAudio: boolean;
@@ -51,6 +53,8 @@ const LaneFullFrameMedia = ({
   preloadRole,
   suspendPlayback = false,
   playback,
+  outputId,
+  windowRole,
   isEditor = false,
   localVideo,
 }: LaneFullFrameMediaProps) => {
@@ -152,7 +156,11 @@ const LaneFullFrameMedia = ({
           preloadRole={preloadRole ?? (isEditor ? "preview" : playbackRole)}
           suspendPlayback={suspendPlayback}
           mediaKey={!isPrevious && isEditor ? fileMediaKey : undefined}
-          playback={isPrevious ? undefined : playback}
+          // Keep the outgoing cue attached to the same player while it fades
+          // out. Changing lane role must not make the video lose its position.
+          playback={playback}
+          outputId={outputId}
+          windowRole={windowRole}
         />
       </div>
     );

@@ -12,6 +12,7 @@ import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
 import HLSPlayer from "./HLSVideoPlayer";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import cn from "classnames";
+import { isQrCodePayloadSafe } from "../../utils/qrCode";
 
 interface SharedOverlayProps {
   width: number;
@@ -232,7 +233,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
         if (
           child.label === "QR Code" &&
           "url" in overlayInfo &&
-          overlayInfo.url
+          isQrCodePayloadSafe(overlayInfo.url)
         ) {
           return (
             <div
@@ -244,10 +245,14 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
                 whiteSpace: childWhiteSpace,
               }}
             >
-              <QRCode
-                style={{ width: "100%", height: "auto" }}
-                value={overlayInfo.url}
-              />
+              <div className="bg-white p-3" data-testid="overlay-qr-code-quiet-zone">
+                <QRCode
+                  aria-label={`QR code${"description" in overlayInfo && overlayInfo.description ? `: ${overlayInfo.description}` : ""}`}
+                  role="img"
+                  style={{ width: "100%", height: "auto", display: "block" }}
+                  value={overlayInfo.url}
+                />
+              </div>
             </div>
           );
         } else if (

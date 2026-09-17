@@ -1454,11 +1454,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
             <DisplayWindow
               className={cn(
                 isPresentMode
-                  ? "lg:max-h-[32vh] max-lg:max-h-[30vh]"
+                  ? "lg:max-h-[36vh] max-lg:max-h-[30vh]"
                   : "lg:max-h-[42vh] max-lg:max-h-[30vh]",
                 "h-full w-full",
               )}
-              showBorder
               boxes={boxes}
               boxCursorPositions={cursorPositionsRef.current}
               selectBox={(val) => dispatch(setSelectedBox(val))}

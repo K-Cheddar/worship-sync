@@ -1,14 +1,21 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import ItemSlide from "./ItemSlide";
 
-const mockUseDroppable = jest.fn(() => ({
+const mockUseDroppable = jest.fn((_options?: unknown) => ({
   isOver: false,
   setNodeRef: jest.fn(),
 }));
 
 jest.mock("../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
-  default: () => <div />,
+  default: () => <div data-testid="display-window-thumbnail" />,
+}));
+
+jest.mock("./StaticSlideThumbnail", () => ({
+  __esModule: true,
+  default: ({ slide }: { slide: { name: string } }) => (
+    <div data-testid="static-slide-thumbnail">{slide.name}</div>
+  ),
 }));
 
 jest.mock("../../components/FloatingWindow/FloatingWindow", () => ({
@@ -77,6 +84,12 @@ describe("ItemSlide media insertion zones", () => {
     );
 
     const slideGridItem = screen.getByRole("listitem");
+    expect(within(slideGridItem).getByTestId("static-slide-thumbnail")).toHaveTextContent(
+      "Section 1",
+    );
+    expect(
+      within(slideGridItem).queryByTestId("display-window-thumbnail"),
+    ).not.toBeInTheDocument();
     const insertionTargets = within(slideGridItem).getAllByTestId(
       "media-slide-insert-target",
     );

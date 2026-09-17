@@ -3,6 +3,7 @@ import { FormattedTextDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import VerseDisplay from "./VerseDisplay";
+import { REFERENCE_WIDTH } from "../../constants";
 
 type DisplayStreamFormattedTextProps = {
   width: number;
@@ -10,15 +11,19 @@ type DisplayStreamFormattedTextProps = {
   prevFormattedTextDisplayInfo?: FormattedTextDisplayInfo;
   shouldAnimate?: boolean;
   isPrev?: boolean;
+  isStatic?: boolean;
 };
 
 const generateFormattedTextStyles = (
   width: number,
-  displayInfo?: FormattedTextDisplayInfo
+  displayInfo?: FormattedTextDisplayInfo,
+  isStatic = false,
 ): React.CSSProperties => ({
   backgroundColor: displayInfo?.backgroundColor || "#eb8934",
   color: displayInfo?.textColor || "#ffffff",
-  fontSize: `${(displayInfo?.fontSize || 1.5) * (width / 100)}vw`,
+  fontSize: isStatic
+    ? `${(displayInfo?.fontSize || 1.5) * (REFERENCE_WIDTH / 100)}px`
+    : `${(displayInfo?.fontSize || 1.5) * (width / 100)}vw`,
   padding: displayInfo?.text
     ? `${displayInfo?.paddingY}% ${displayInfo?.paddingX}%`
     : 0,
@@ -33,6 +38,7 @@ const DisplayStreamFormattedText = ({
   formattedTextDisplayInfo,
   prevFormattedTextDisplayInfo,
   isPrev = false,
+  isStatic = false,
 }: DisplayStreamFormattedTextProps) => {
   const formattedTextRef = useRef<HTMLDivElement | null>(null);
   const prevFormattedTextRef = useRef<HTMLDivElement | null>(null);
@@ -96,7 +102,11 @@ const DisplayStreamFormattedText = ({
           ref={formattedTextRef}
           className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
           style={{
-            ...generateFormattedTextStyles(width, formattedTextDisplayInfo),
+            ...generateFormattedTextStyles(
+              width,
+              formattedTextDisplayInfo,
+              isStatic,
+            ),
           }}
         >
           <p className="formatted-text-text">
@@ -110,7 +120,11 @@ const DisplayStreamFormattedText = ({
           ref={prevFormattedTextRef}
           className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
           style={{
-            ...generateFormattedTextStyles(width, prevFormattedTextDisplayInfo),
+            ...generateFormattedTextStyles(
+              width,
+              prevFormattedTextDisplayInfo,
+              isStatic,
+            ),
           }}
         >
           <p className="prev-formatted-text-text">

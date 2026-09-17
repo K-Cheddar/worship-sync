@@ -157,6 +157,51 @@ describe("HLSVideoPlayer", () => {
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
   });
 
+  it("does not warn when play is rejected after the source is replaced", async () => {
+    let rejectPlay: (error: Error) => void = () => undefined;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: jest.fn(
+        () => new Promise<void>((_resolve, reject) => (rejectPlay = reject)),
+      ),
+    });
+
+    const { rerender } = render(<HLSPlayer src="media-cache://old.mp4" />);
+    fireEvent.loadedMetadata(screen.getByTestId("hls-video-player"));
+    rerender(<HLSPlayer src="media-cache://new.mp4" />);
+
+    await act(async () => {
+      rejectPlay(new DOMException("superseded", "AbortError"));
+    });
+
+    expect(console.warn).not.toHaveBeenCalledWith(
+      "Error playing video",
+      expect.anything(),
+    );
+  });
+
+  it("still warns for an active-source playback failure", async () => {
+    let rejectPlay: (error: Error) => void = () => undefined;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: jest.fn(
+        () => new Promise<void>((_resolve, reject) => (rejectPlay = reject)),
+      ),
+    });
+
+    render(<HLSPlayer src="media-cache://active.mp4" />);
+    fireEvent.loadedMetadata(screen.getByTestId("hls-video-player"));
+
+    const error = new DOMException("blocked", "NotAllowedError");
+    await act(async () => {
+      rejectPlay(error);
+    });
+
+    expect(console.warn).toHaveBeenCalledWith("Error playing video", error);
+  });
+
   it("uses hls.js for m3u8 when supported and handles network/media fatal errors", () => {
     mockIsSupported.mockReturnValue(true);
     render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);

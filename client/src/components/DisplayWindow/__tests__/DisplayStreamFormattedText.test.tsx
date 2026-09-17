@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import DisplayStreamFormattedText from "../DisplayStreamFormattedText";
 
-const timelineMock = {
+const timelineMock: { fromTo: jest.Mock; clear: jest.Mock } = {
   fromTo: jest.fn(() => timelineMock),
   clear: jest.fn(),
 };

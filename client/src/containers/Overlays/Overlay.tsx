@@ -34,6 +34,8 @@ type OverlayProps = {
   handleDeleteOverlay: (overlayId: string) => void;
   /** Disables reorder and delete; selection and Send remain for view-only access. */
   readOnly?: boolean;
+  /** Present mode hides destructive delete controls without restricting live work. */
+  showDelete?: boolean;
 };
 
 const Overlay = ({
@@ -44,6 +46,7 @@ const Overlay = ({
   selectAndLoadOverlay,
   handleDeleteOverlay,
   readOnly = false,
+  showDelete = !readOnly,
 }: OverlayProps) => {
   const dispatch = useDispatch();
   // Every live stream this controller drives, not the first enabled one. The
@@ -273,12 +276,13 @@ const Overlay = ({
           </span>
         )}
       </Button>
-      {!readOnly && (
+      {showDelete && !readOnly && (
         <Button
           variant="tertiary"
           className="text-sm ml-auto"
           padding="px-2 py-1"
           svg={Trash2}
+          aria-label="Delete overlay"
           onClick={deleteOverlayHandler}
         />
       )}

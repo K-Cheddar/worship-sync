@@ -64,6 +64,9 @@ import {
   getLaneBackgroundMediaKey,
   resolveLaneBackgroundMedia,
 } from "./laneBackgroundMedia";
+import { markPresentationPerformance } from "../../utils/presentationPerformanceDebug";
+import { calculateReferenceScaleFactor } from "./referenceCanvas";
+import { resolveDisplayRenderProfile } from "./displayRenderProfile";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -383,6 +386,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const elementRef = useRef<HTMLDivElement | null>(null);
+    const displaySlideId = boxes[0]?.id;
+    const displayPayloadKey = `${displaySlideId ?? ""}:${time ?? ""}`;
+
+    useEffect(() => {
+      markPresentationPerformance("display-payload-received", {
+        outputId: outputId ?? displayType ?? "unknown",
+        windowRole: displayType ?? "unknown",
+        slideId: displaySlideId ?? null,
+        time: time ?? null,
+      });
+    }, [displayPayloadKey, displaySlideId, displayType, outputId, time]);
 
     // Handle both callback refs and object refs
     const setRef = (node: HTMLDivElement | null) => {
@@ -467,11 +481,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Use the smaller scale factor to ensure content fits within both constraints.
     // Always use transform scaling. Until we've measured the container, render at scale 0.
     const widthScale = actualWidthPx > 0 ? actualWidthPx / REFERENCE_WIDTH : 0;
-    const heightScale =
-      actualHeightPx > 0 ? actualHeightPx / REFERENCE_HEIGHT : 0;
     const scaleFactor =
       actualWidthPx > 0 && actualHeightPx > 0
-        ? Math.min(widthScale, heightScale)
+        ? calculateReferenceScaleFactor(actualWidthPx, actualHeightPx)
         : widthScale; // Fallback to width scale if height not measured yet
 
     // Components should use reference width for calculations
@@ -483,7 +495,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isMonitor = displayType === "monitor";
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
-    const isSlide = displayType === "slide";
     const localVideoTransitionKey = `${localVideoInput?.sourceId ?? ""}::${prevLocalVideoInput?.sourceId ?? ""
       }`;
     if (initialLocalVideoTransitionKeyRef.current === null) {
@@ -583,11 +594,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Slide thumbnails and the editor always show their background; the surfaces
     // that render to a room honour the display's own setting.
-    const supportsBackground =
-      displayType === "projector" ||
-      displayType === "monitor" ||
-      displayType === "slide" ||
-      displayType === "editor";
+    const displayRenderProfile = resolveDisplayRenderProfile(displayType, boxes);
+    const supportsBackground = displayRenderProfile.supportsBackground;
     // Room surfaces honour the display's own setting; thumbnails and the editor
     // always show their background.
     const isRoomSurface =
@@ -1279,6 +1287,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const laneMediaPlayback = useMemo<LaneMediaPlaybackOptions>(
       () => ({
+        outputId,
+        windowRole: displayType ?? "unknown",
         fileVideoAudioEnabled: localVideoFileAudioEnabled,
         volume: localVideoVolume,
         playbackRole: isEditor ? "preview" : "output",
@@ -1317,6 +1327,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         resolvedDisplaySettings.localVideoAudioEnabled,
         suspendVideoPlayback,
         videoPreloadRole,
+        outputId,
       ],
     );
 
@@ -1433,6 +1444,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             suspendPlayback={suspendVideoPlayback}
             mediaKey={isEditor ? videoMediaKey : undefined}
             playback={activeVideoPlayback}
+            outputId={outputId}
+            windowRole={displayType ?? "unknown"}
           />
         </div>
       ) : null;
@@ -1508,8 +1521,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 reportPaintReady,
                 laneMedia,
               ) => {
-                const laneHasWords = laneSnapshot.boxes.some((box) =>
-                  Boolean(box.words?.trim()),
+                const laneRenderProfile = resolveDisplayRenderProfile(
+                  displayType,
+                  laneSnapshot.boxes,
                 );
                 const laneFileVideoUrl =
                   laneSnapshot.backgroundMedia.kind === "fileVideo"
@@ -1532,9 +1546,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
                     brightness={
-                      isSlide && index === 0 && laneHasWords ? 30 : undefined
+                      index === 0
+                        ? laneRenderProfile.backgroundBrightness
+                        : undefined
                     }
-                    isSimpleFont={isSlide}
+                    isSimpleFont={laneRenderProfile.isSimpleFont}
                     onPaintReadyChange={(ready) =>
                       reportPaintReady(index, ready)
                     }

@@ -69,6 +69,7 @@ import { DBOverlayTemplates } from "../../types";
 import { createPortal } from "react-dom";
 import cn from "classnames";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 type OverlaysProps = {
   /** Combined controller mode moves the selected-overlay editor into a shared detail column. */
@@ -134,6 +135,8 @@ const Overlays = ({
   };
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateOverlays = !isViewOnlyAccess(access);
+  const { mode } = usePresentationControllerMode();
+  const canDeleteOverlays = canMutateOverlays && mode === "edit";
 
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
@@ -144,6 +147,11 @@ const Overlays = ({
     useState(false);
   const [isApplyingFormattingToAll, setIsApplyingFormattingToAll] =
     useState(false);
+  useEffect(() => {
+    if (mode === "present") {
+      setIsOverlayHistoryDrawerOpen(false);
+    }
+  }, [mode]);
   useEffect(() => {
     if (isTemplateDrawerOpen) {
       setIsStyleDrawerOpen(false);
@@ -499,7 +507,7 @@ const Overlays = ({
                 Overlays
               </h2>
               <div className="absolute right-0 flex items-center gap-2">
-                {canMutateOverlays && (
+                {canDeleteOverlays && (
                   <Button
                     variant="tertiary"
                     padding="px-2 py-1"
@@ -558,6 +566,7 @@ const Overlays = ({
                             selectAndLoadOverlay={selectAndLoadOverlay}
                             handleDeleteOverlay={handleDeleteOverlay}
                             readOnly={!canMutateOverlays}
+                            showDelete={canDeleteOverlays}
                           />
                         );
                       })}

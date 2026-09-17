@@ -128,6 +128,7 @@ import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
 import { withBootstrapTimeout } from "../utils/bootstrapTimeout";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
+import { markPresentationPerformance } from "../utils/presentationPerformanceDebug";
 import {
   isElectron,
   isPackagedElectronRenderer,
@@ -1984,6 +1985,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           firebaseDb,
           updatePath,
           (snapshot) => {
+            markPresentationPerformance("presentation-receiver-callback", {
+              outputId:
+                key === "projectorInfo"
+                  ? "projector"
+                  : key === "monitorInfo"
+                    ? "monitor"
+                    : key === "streamInfo"
+                      ? "stream"
+                      : key,
+              windowRole: key === "serviceTimes" ? "controller" : "receiver",
+              source: "firebase",
+            });
             if (!snapshot.exists()) {
               if (key === "serviceTimes") {
                 updateFromRemote({ serviceTimes: [] });
@@ -2014,6 +2027,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const applyStorageValue = (key: string | null, newValue: string | null) => {
       if (!key || newValue == null) return;
+      markPresentationPerformance("presentation-receiver-callback", {
+        outputId:
+          key === "projectorInfo"
+            ? "projector"
+            : key === "monitorInfo"
+              ? "monitor"
+              : key === "streamInfo"
+                ? "stream"
+                : key,
+        windowRole: "receiver",
+        source: "localStorage",
+      });
       const onValueKeys = Object.keys(onValueRef.current);
       if (key === "serviceTimes" && loginState === "success") return;
       if (!onValueKeys.some((e) => e === key)) return;

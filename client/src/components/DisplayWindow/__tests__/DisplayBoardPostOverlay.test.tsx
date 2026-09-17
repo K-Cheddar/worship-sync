@@ -92,11 +92,13 @@ describe("DisplayBoardPostOverlay", () => {
         onLocalKeepAliveStart={onLocalKeepAliveStart}
         boardPostStreamInfo={{
           author: "Current",
+          authorHexColor: "#e7e5e4",
           text: "Current post",
           duration: 5,
         }}
         prevBoardPostStreamInfo={{
           author: "Previous",
+          authorHexColor: "#e7e5e4",
           text: "Previous post",
           duration: 5,
         }}
@@ -125,6 +127,7 @@ describe("DisplayBoardPostOverlay", () => {
         width={50}
         boardPostStreamInfo={{
           author: "Alex",
+          authorHexColor: "#e7e5e4",
           text: "  Default styles  ",
         }}
       />,
@@ -143,6 +146,7 @@ describe("DisplayBoardPostOverlay", () => {
         onLocalKeepAliveStart={onLocalKeepAliveStart}
         boardPostStreamInfo={{
           author: "Empty",
+          authorHexColor: "#e7e5e4",
           text: "   ",
         }}
       />,

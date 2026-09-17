@@ -961,6 +961,7 @@ describe("BoardControllerContent", () => {
           postedAt: 15,
           receivedAt: 15,
           rawEventType: "5",
+          kind: "viewer_message",
           isHighlighted: false,
           hidden: false,
         },

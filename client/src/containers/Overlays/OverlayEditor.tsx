@@ -5,7 +5,9 @@ import Input from "../../components/Input/Input";
 import { OverlayFormatting, OverlayInfo, Option } from "../../types";
 import { SquarePen, Sparkles, Maximize2 } from "lucide-react";
 import Drawer from "../../components/Drawer";
-import StyleEditor from "../../components/StyleEditor";
+import StyleEditor, {
+  ParticipantPositionControl,
+} from "../../components/StyleEditor";
 import cn from "classnames";
 import {
   useCallback,
@@ -37,6 +39,7 @@ import {
 } from "../../utils/itemTypeMaps";
 import { RootState } from "../../store/store";
 import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
+import { MAX_QR_CODE_PAYLOAD_LENGTH } from "../../utils/qrCode";
 
 type OverlayEditorProps = {
   selectedOverlay: OverlayInfo;
@@ -87,6 +90,14 @@ const OverlayEditor = ({
       selectedOverlay,
       handleOverlayUpdate,
     );
+
+  const handleQrUrlChange = useCallback((value: string) => {
+    if (value.length > MAX_QR_CODE_PAYLOAD_LENGTH) {
+      showToast(`QR code URLs must be ${MAX_QR_CODE_PAYLOAD_LENGTH.toLocaleString()} characters or fewer.`, "error");
+      return;
+    }
+    patchDraft({ url: value });
+  }, [patchDraft, showToast]);
 
   const handleReloadRemote = useCallback(() => {
     const pendingOverlay = (store.getState() as RootState).undoable.present
@@ -296,7 +307,7 @@ const OverlayEditor = ({
             <HistorySuggestField
               label="URL"
               value={draft.url || ""}
-              onChange={(val) => patchDraft({ url: val })}
+              onChange={handleQrUrlChange}
               historyValues={historyValues("qr-code.url")}
               onRemoveHistoryValue={removeFromHistory("qr-code.url")}
               multiline={false}
@@ -506,7 +517,7 @@ const OverlayEditor = ({
               {...commonInputProps}
               label="URL"
               value={draft.url || ""}
-              onChange={(val) => patchDraft({ url: val })}
+              onChange={handleQrUrlChange}
               historyValues={historyValues("qr-code.url")}
               onRemoveHistoryValue={removeFromHistory("qr-code.url")}
               multiline={false}
@@ -572,6 +583,14 @@ const OverlayEditor = ({
           selectClassName="flex-1"
           labelClassName="w-20"
         />
+        {!isMobile && draft.type === "participant" && (
+          <ParticipantPositionControl
+            formatting={draft.formatting || {}}
+            onChange={handleFormattingChangeLocal}
+            name="participant-overlay-position-main"
+            inline
+          />
+        )}
         <div className="flex w-full flex-col gap-2">
           <div className="flex w-full gap-2">
             <Button

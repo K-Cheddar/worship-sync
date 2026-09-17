@@ -4,7 +4,7 @@ import { FloatingWindowZIndexProvider } from "./FloatingWindowZIndexContext";
 
 const renderWindow = (
   onClose = jest.fn(),
-  props: React.ComponentProps<typeof FloatingWindow> = {},
+  props: Partial<React.ComponentProps<typeof FloatingWindow>> = {},
 ) =>
   render(
     <FloatingWindowZIndexProvider>

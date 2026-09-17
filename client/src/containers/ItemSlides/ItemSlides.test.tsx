@@ -5,6 +5,9 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
+const mockOutlineScroller = jest.fn(({ cols }: { cols: number }) => (
+  <div data-testid="outline-scroller" data-cols={cols} />
+));
 const mockDndContext = jest.fn();
 const mockDndMonitor = jest.fn();
 let mockDndMonitorListener: {
@@ -18,6 +21,7 @@ let mockDndState: { active: unknown; over: unknown } = {
   over: null,
 };
 let mockState: any;
+const mockItemSlideProps: Array<{ onRenameSection?: unknown }> = [];
 
 const mockEnsureSlidesHaveMonitorBandFormatting = jest.fn((slides: any[]) =>
   slides.map((slide, index) => ({
@@ -99,9 +103,7 @@ jest.mock("../../utils/generalUtils", () => ({
 
 jest.mock("./OutlineItemSlidesScroller", () => ({
   __esModule: true,
-  default: ({ cols }: { cols: number }) => (
-    <div data-testid="outline-scroller" data-cols={cols} />
-  ),
+  default: (props: { cols: number }) => mockOutlineScroller(props),
 }));
 
 const mockNeighborDocs = new Map<string, unknown>();
@@ -150,15 +152,20 @@ jest.mock("./ItemSlide", () => ({
     index,
     slide,
     selectSlide,
+    onRenameSection,
   }: {
     index: number;
     slide: { name: string };
     selectSlide: (index: number) => void;
-  }) => (
-    <button type="button" onClick={() => selectSlide(index)}>
-      {slide.name}
-    </button>
-  ),
+    onRenameSection?: unknown;
+  }) => {
+    mockItemSlideProps.push({ onRenameSection });
+    return (
+      <button type="button" onClick={() => selectSlide(index)}>
+        {slide.name}
+      </button>
+    );
+  },
 }));
 
 const baseSlides = [
@@ -198,6 +205,7 @@ const mockControllerInfoValue = {
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockItemSlideProps.length = 0;
     mockDndMonitorListener = null;
     mockDndState = { active: null, over: null };
     mockNeighborDocs.clear();
@@ -944,6 +952,40 @@ describe("ItemSlides", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not schedule the delayed single-item slide mirror in continuous mode", () => {
+    jest.useFakeTimers();
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+    const view = render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+    mockOutlineScroller.mockClear();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      slides: [...baseSlides, { ...baseSlides[0], id: "slide-3" }],
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+    const rendersAfterUpdate = mockOutlineScroller.mock.calls.length;
+
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+
+    expect(mockOutlineScroller).toHaveBeenCalled();
+    expect(mockOutlineScroller.mock.calls.length).toBe(rendersAfterUpdate);
+    jest.useRealTimers();
+  });
+
   it("hides clear background in Present mode", () => {
     window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
 
@@ -960,6 +1002,7 @@ describe("ItemSlides", () => {
     expect(screen.queryByRole("button", { name: "Clear background" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(mockItemSlideProps.every(({ onRenameSection }) => !onRenameSection)).toBe(true);
   });
 
   it("shows clear background and delete in the main action bar without subset selection", () => {
@@ -980,6 +1023,7 @@ describe("ItemSlides", () => {
     expect(
       screen.queryByRole("button", { name: "Done" }),
     ).not.toBeInTheDocument();
+    expect(mockItemSlideProps.some(({ onRenameSection }) => Boolean(onRenameSection))).toBe(true);
   });
 
   it("clears the focused slide background without entering subset selection", () => {

@@ -11,14 +11,17 @@ import {
 import { overlaysSlice } from "../../store/overlaysSlice";
 
 jest.mock("@dnd-kit/sortable", () => ({
-  useSortable: () => ({
+  useSortable: jest.fn(() => ({
     attributes: {},
     listeners: {},
     setNodeRef: jest.fn(),
     transform: null,
     transition: null,
-  }),
+  })),
 }));
+
+const mockUseSortable = jest.requireMock("@dnd-kit/sortable")
+  .useSortable as jest.Mock;
 
 jest.mock("@gsap/react", () => ({
   useGSAP: () => { },
@@ -47,6 +50,7 @@ describe("Overlay send", () => {
   beforeEach(() => {
     selectAndLoadOverlay.mockReset();
     handleDeleteOverlay.mockReset();
+    mockUseSortable.mockClear();
   });
 
   it("dispatches updateParticipantOverlayInfo when Send is clicked", async () => {
@@ -117,6 +121,47 @@ describe("Overlay send", () => {
     expect(
       toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
     ).toBe("");
+  });
+
+  it("keeps reordering and Send available when Present mode hides Delete", async () => {
+    const user = userEvent.setup();
+    const store = createStore();
+    const overlay = {
+      id: "ov-present",
+      type: "participant" as const,
+      name: "Alex",
+      title: "Host",
+      event: "",
+      duration: 0,
+    };
+
+    render(
+      <Provider store={store}>
+        <ul>
+          <Overlay
+            overlay={overlay}
+            selectedId="ov-present"
+            isStreamTransmitting
+            initialList={[]}
+            selectAndLoadOverlay={selectAndLoadOverlay}
+            handleDeleteOverlay={handleDeleteOverlay}
+            showDelete={false}
+          />
+        </ul>
+      </Provider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Delete overlay" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(mockUseSortable).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: false }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
+    ).toBe("Alex");
   });
 
   it("dispatches updateStbOverlayInfo for stick-to-bottom overlays", async () => {

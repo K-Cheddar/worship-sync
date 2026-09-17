@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import DisplayStreamBible from "../DisplayStreamBible";
 
-const timelineMock = {
+const timelineMock: { fromTo: jest.Mock; clear: jest.Mock } = {
   fromTo: jest.fn(() => timelineMock),
   clear: jest.fn(),
 };
