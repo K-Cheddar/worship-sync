@@ -564,7 +564,7 @@ describe("preferencesSlice", () => {
           isMusic: false,
         }),
       );
-      expect(store.getState().preferences.bibleFontMode).toBe("combined");
+      expect(store.getState().preferences.bibleFontMode).toBe("fit");
     });
   });
 
@@ -708,7 +708,7 @@ describe("preferencesSlice", () => {
       store.dispatch(
         updatePreferencesFromRemote({
           _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-          mediaRouteFolders: { image: "folder-1" },
+          mediaRouteFolders: { "controller-item-image": "folder-1" },
         } as any),
       );
       expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe(
