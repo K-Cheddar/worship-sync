@@ -1,7 +1,10 @@
-import { Ban, Eye, EyeOff, Info } from "lucide-react";
-import type { ReactElement } from "react";
+import { Ban, Eye, EyeOff, Info, ScanLine } from "lucide-react";
+import { useState, type ReactElement } from "react";
 import Button from "../../../components/Button/Button";
+import Modal from "../../../components/Modal/Modal";
 import PopOver from "../../../components/PopOver/PopOver";
+import { DeviceQrScanner } from "../../../components/DeviceQrScanner/DeviceQrScanner";
+import { DevicePairingApproval } from "../../DevicePairingApprove";
 import {
   DisplayPairingForm,
   RecoveryEmailForm,
@@ -75,6 +78,7 @@ const DeviceDetailsPopover = ({
 );
 
 const AccountSetupPage = () => {
+  const [devicePairingRequestId, setDevicePairingRequestId] = useState<string | null>(null);
   const accountPage = useAccountPage();
   const {
     churchId,
@@ -108,6 +112,39 @@ const AccountSetupPage = () => {
 
   return (
     <div className="space-y-3">
+      <section className="flex flex-col gap-3 rounded-xl border border-gray-700 bg-gray-950/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Link a device</h3>
+          <p className="mt-1 text-sm text-gray-400">Scan the QR code shown on an unpaired workstation or display.</p>
+        </div>
+        <Button className="shrink-0 justify-center" variant="cta" svg={ScanLine} iconSize="sm" onClick={() => setDevicePairingRequestId("")}>
+          Scan device QR
+        </Button>
+      </section>
+      <Modal
+        isOpen={devicePairingRequestId !== null}
+        onClose={() => setDevicePairingRequestId(null)}
+        title={devicePairingRequestId ? "Approve device" : "Scan device QR code"}
+        size="sm"
+        contentPadding="p-4"
+        description="Scan an unpaired workstation or display QR code."
+      >
+        {devicePairingRequestId === "" && (
+          <DeviceQrScanner
+            onAccepted={setDevicePairingRequestId}
+            onClose={() => setDevicePairingRequestId(null)}
+          />
+        )}
+        {devicePairingRequestId && (
+          <DevicePairingApproval
+            requestId={devicePairingRequestId}
+            onApproved={() => {
+              setDevicePairingRequestId(null);
+              void refresh();
+            }}
+          />
+        )}
+      </Modal>
       <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-3">
         <h3 className="text-lg font-semibold">Shared workstations</h3>
         <p className="mt-1 text-sm text-gray-400">

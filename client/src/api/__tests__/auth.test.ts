@@ -26,7 +26,6 @@ jest.mock("../../utils/authStorage", () => ({
 // Imports follow jest.mock factories; module under test must load after mocks.
 // eslint-disable-next-line import/first -- see above
 import {
-  AuthApiError,
   getAuthBootstrap,
   logoutSession,
   removeChurchMember,
@@ -168,7 +167,7 @@ describe("api/auth", () => {
       id: "audio-current",
       key: "churches/church-1/songs/song-1/audio-current.mp3",
       fileName: "current.mp3",
-      contentType: "audio/mpeg",
+      contentType: "audio/mpeg" as const,
       sizeBytes: 3,
       uploadedAt: "2026-08-09T12:00:00.000Z",
     };
@@ -176,7 +175,7 @@ describe("api/auth", () => {
       id: "audio-pending",
       key: "pending/churches/church-1/songs/song-1/audio-pending.mp3",
       fileName: "replacement.mp3",
-      contentType: "audio/mpeg",
+      contentType: "audio/mpeg" as const,
       sizeBytes: 3,
     };
     (global.fetch as jest.Mock)
@@ -222,7 +221,7 @@ describe("api/auth", () => {
       id: "audio-current",
       key: "churches/church-1/songs/song-1/audio-current.mp3",
       fileName: "current.mp3",
-      contentType: "audio/mpeg",
+      contentType: "audio/mpeg" as const,
       sizeBytes: 3,
       uploadedAt: "2026-08-09T12:00:00.000Z",
     };
@@ -264,7 +263,8 @@ describe("api/auth", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+        json: () =>
+          Promise.resolve({ errorMessage: "Authentication required" }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -294,7 +294,8 @@ describe("api/auth", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+        json: () =>
+          Promise.resolve({ errorMessage: "Authentication required" }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -304,7 +305,7 @@ describe("api/auth", () => {
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
-        expect.objectContaining<AuthApiError>({
+        expect.objectContaining({
           message: "Authentication required",
           status: 401,
         }),
@@ -332,7 +333,7 @@ describe("api/auth", () => {
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
-        expect.objectContaining<AuthApiError>({ status: 401 }),
+        expect.objectContaining({ status: 401 }),
       );
     } finally {
       unsubscribeRecovery();
@@ -354,7 +355,8 @@ describe("api/auth", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+        json: () =>
+          Promise.resolve({ errorMessage: "Authentication required" }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -364,7 +366,7 @@ describe("api/auth", () => {
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
-        expect.objectContaining<AuthApiError>({ status: 401 }),
+        expect.objectContaining({ status: 401 }),
       );
     } finally {
       unsubscribeRecovery();
@@ -396,7 +398,7 @@ describe("api/auth", () => {
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
-        expect.objectContaining<AuthApiError>({
+        expect.objectContaining({
           message: "This action is not available",
           status: 401,
         }),
@@ -420,13 +422,14 @@ describe("api/auth", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+        json: () =>
+          Promise.resolve({ errorMessage: "Authentication required" }),
       })
       .mockRejectedValueOnce(new TypeError("network unavailable"));
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
-        expect.objectContaining<AuthApiError>({ status: 401 }),
+        expect.objectContaining({ status: 401 }),
       );
     } finally {
       unsubscribeRecovery();

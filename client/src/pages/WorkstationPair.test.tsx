@@ -8,6 +8,8 @@ import { setDisplayToken } from "../utils/authStorage";
 import * as authApi from "../api/auth";
 
 jest.mock("../api/auth", () => ({
+  startDevicePairingRequest: jest.fn(),
+  getDevicePairingRequestStatus: jest.fn(),
   redeemDisplayPairing: jest.fn(),
   redeemWorkstationPairing: jest.fn(),
 }));
@@ -22,6 +24,12 @@ describe("WorkstationPair", () => {
     sessionStorage.clear();
     (authApi.redeemWorkstationPairing as jest.Mock).mockReset();
     (authApi.redeemDisplayPairing as jest.Mock).mockReset();
+    (authApi.startDevicePairingRequest as jest.Mock).mockResolvedValue({
+      requestId: "request-1",
+      requestSecret: "secret-1",
+      approvalUrl: "https://www.worshipsync.net/#/device-pairing/approve/request-1",
+      pollIntervalMs: 1500,
+    });
   });
 
   it("clears a stale display token when web workstation pairing succeeds", async () => {
@@ -64,6 +72,7 @@ describe("WorkstationPair", () => {
       </GlobalInfoContext.Provider>
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Use a link code instead" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: /link code/i }),
       "ABC123"

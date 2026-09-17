@@ -51,7 +51,10 @@ import {
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
-import { createCanvaService } from "./server/canvaService.js";
+import {
+  createCanvaService,
+  normalizeMuxStaticRenditions,
+} from "./server/canvaService.js";
 import { createPlanningCenterService } from "./server/planningCenterService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
 import {
@@ -883,6 +886,9 @@ app.post("/api/auth/desktop/start", authHandlers.startDesktopAuth);
 app.post("/api/auth/desktop/complete", authHandlers.completeDesktopAuth);
 app.post("/api/auth/desktop/status", authHandlers.getDesktopAuthStatus);
 app.post("/api/auth/desktop/exchange", authHandlers.exchangeDesktopAuth);
+app.post("/api/device-pairing-requests/start", authHandlers.startDevicePairingRequest);
+app.post("/api/device-pairing-requests/status", authHandlers.getDevicePairingRequestStatus);
+app.get("/api/device-pairing-requests/:requestId", authHandlers.getDevicePairingRequest);
 app.post("/api/auth/resend-email-code", authHandlers.resendEmailCode);
 app.post("/api/auth/email-code-hint", authHandlers.getEmailCodeHint);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
@@ -1339,6 +1345,10 @@ app.get(
   "/api/churches/:churchId/service-plans/:planKey/public-snapshot",
   authHandlers.getServicePlanPublicSnapshot,
 );
+app.get(
+  "/api/churches/:churchId/service-plans/:planKey/viewer",
+  authHandlers.getServicePlanViewer,
+);
 app.post(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.saveServicePlan,
@@ -1435,6 +1445,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/workstation-pairings",
   authHandlers.createWorkstationPairing,
+);
+app.post(
+  "/api/churches/:churchId/device-pairing-requests/:requestId/approve",
+  authHandlers.approveDevicePairingRequest,
 );
 app.post(
   "/api/workstation-pairings/redeem",
@@ -2068,6 +2082,22 @@ app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
   }
 });
 
+app.post(
+  "/api/churches/:churchId/canva/resolve-design-link",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.resolveDesignLink({
+          url: req.body?.url,
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error resolving Canva design link:", error);
+    }
+  },
+);
+
 app.get("/api/churches/:churchId/canva/designs/:designId", async (req, res) => {
   try {
     res.json(
@@ -2085,18 +2115,57 @@ app.post(
   "/api/churches/:churchId/canva/imports",
   requireMutationCsrf,
   async (req, res) => {
+    let streamStarted = false;
+    let clientDisconnected = false;
+    res.on("close", () => {
+      if (!res.writableEnded) clientDisconnected = true;
+    });
+    res.on("error", () => {
+      clientDisconnected = true;
+    });
+    const writeProgress = (event) => {
+      if (clientDisconnected || res.writableEnded || res.destroyed) return;
+      if (!streamStarted) {
+        streamStarted = true;
+        res.status(200);
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+      }
+      try {
+        res.write(`${JSON.stringify(event)}\n`);
+      } catch {
+        clientDisconnected = true;
+      }
+    };
     try {
-      res.json(
-        await canvaService.importDesign({
-          churchId: req.params.churchId,
-          designId: req.body?.designId,
-          pages: req.body?.pages,
-          format: req.body?.format,
-          existingImportKeys: req.body?.existingImportKeys,
-        }),
-      );
+      const result = await canvaService.importDesign({
+        churchId: req.params.churchId,
+        designId: req.body?.designId,
+        pages: req.body?.pages,
+        format: req.body?.format,
+        mp4ImportMode: req.body?.mp4ImportMode,
+        existingImportKeys: req.body?.existingImportKeys,
+        onProgress: writeProgress,
+        isCancelled: () => clientDisconnected,
+      });
+      if (streamStarted) {
+        writeProgress({ type: "complete", result });
+        if (!clientDisconnected && !res.writableEnded) res.end();
+      } else {
+        res.json(result);
+      }
     } catch (error) {
-      respondCanvaError(res, "Error importing from Canva:", error);
+      if (streamStarted) {
+        writeProgress({
+          type: "error",
+          error:
+            error?.message || "Canva could not complete that import. Try again.",
+        });
+        if (!clientDisconnected && !res.writableEnded) res.end();
+      } else {
+        respondCanvaError(res, "Error importing from Canva:", error);
+      }
     }
   },
 );
@@ -3127,6 +3196,7 @@ app.get("/api/lrclib/get", async (req, res) => {
 
 app.get("/api/lrclib/search", async (req, res) => {
   const params = getLrclibRequestParams(req);
+  const localGeniusClient = req.query.localGenius === "true";
 
   if (!params.track_name) {
     return res.status(400).json({ error: "trackName is required" });
@@ -3135,8 +3205,8 @@ app.get("/api/lrclib/search", async (req, res) => {
   try {
     res.json(
       await searchAllLyricsTracks(params, {
-        includeGenius: !skipGeniusLyricsImport,
-        includeGeniusLyrics: req.query.localGenius !== "true",
+        includeGenius: !skipGeniusLyricsImport && !localGeniusClient,
+        includeGeniusLyrics: !localGeniusClient,
       }),
     );
   } catch (error) {
@@ -3296,17 +3366,7 @@ app.get("/api/mux/asset/:assetId", async (req, res) => {
     const { assetId } = req.params;
     const asset = await mux.video.assets.retrieve(assetId);
 
-    // Check static renditions status
-    // Ensure static_renditions is always an array
-    let staticRenditions = [];
-    if (asset.static_renditions) {
-      if (Array.isArray(asset.static_renditions)) {
-        staticRenditions = asset.static_renditions;
-      } else if (typeof asset.static_renditions === "object") {
-        // If it's an object, try to convert it to an array
-        staticRenditions = Object.values(asset.static_renditions);
-      }
-    }
+    const staticRenditions = normalizeMuxStaticRenditions(asset);
 
     const highestRendition = staticRenditions.find(
       (r) => r.resolution === "highest",

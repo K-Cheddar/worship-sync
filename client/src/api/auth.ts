@@ -41,6 +41,10 @@ import type {
   DesktopAuthProvider,
   DesktopAuthStartResponse,
   DesktopAuthStatusResponse,
+  DevicePairingKind,
+  DevicePairingRequestPreview,
+  DevicePairingRequestStartResponse,
+  DevicePairingRequestStatusResponse,
   DisplayDeviceClient,
   PairingClient,
   RedeemDisplayPairingResponse,
@@ -720,6 +724,39 @@ export const updateChurchIntegrations = async (
     method: "POST",
     body: JSON.stringify(integrations),
   });
+
+export const startDevicePairingRequest = async (body: {
+  kind: DevicePairingKind;
+  platformType?: "electron" | "web";
+}) =>
+  apiFetchWithoutAuthRecovery<DevicePairingRequestStartResponse>(
+    "api/device-pairing-requests/start",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const getDevicePairingRequestStatus = async (body: {
+  requestId: string;
+  requestSecret: string;
+}) =>
+  apiFetchWithoutAuthRecovery<DevicePairingRequestStatusResponse>(
+    "api/device-pairing-requests/status",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const getDevicePairingRequest = async (requestId: string) =>
+  apiFetch<{ success: boolean; request: DevicePairingRequestPreview }>(
+    `api/device-pairing-requests/${requestId}`,
+  );
+
+export const approveDevicePairingRequest = async (
+  churchId: string,
+  requestId: string,
+  body: JsonBody,
+) =>
+  apiFetch<{ success: boolean; request: Pick<DevicePairingRequestPreview, "requestId" | "kind" | "status"> }>(
+    `api/churches/${churchId}/device-pairing-requests/${requestId}/approve`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 
 export const updateCurrentServiceWorkspace = async (
   churchId: string,
@@ -1686,6 +1723,19 @@ export const getServicePlanPublicSnapshot = async (
     snapshot: PublicServiceFlowSnapshot | null;
   }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/public-snapshot`,
+    { method: "GET" },
+  );
+
+export const getServicePlanViewer = async (
+  churchId: string,
+  planKey: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    plan: ServicePlan | null;
+    snapshot: PublicServiceFlowSnapshot | null;
+  }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/viewer`,
     { method: "GET" },
   );
 

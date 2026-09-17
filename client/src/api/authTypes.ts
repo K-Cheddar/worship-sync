@@ -276,11 +276,6 @@ export type TeamRosterMember = {
   profileImagePublicId?: string;
   archivedAt?: string | null;
   /**
-   * When this schedule was last sent to the people on it. Set only by the send
-   * action, never by saving — building and telling people are separate acts.
-   */
-  sentAt?: string | null;
-  /**
    * Server-owned write stamp. Sent back as `expectedUpdatedAt` on the
    * self-service blockout write so a concurrent admin edit is rejected rather
    * than silently overwritten.
@@ -493,6 +488,11 @@ export type TeamScheduleSummary = {
   archivedAt?: string | null;
   /** Set by the server when the heavy per-cell maps were stripped. */
   assignmentsOmitted?: boolean;
+  /**
+   * When this schedule was last sent to the people on it. Set only by the send
+   * action, never by saving — building and telling people are separate acts.
+   */
+  sentAt?: string | null;
   /**
    * Cell counts kept alongside a summary so deletion-impact warnings stay exact
    * without the full assignment map. Present only on summaries.
@@ -758,4 +758,34 @@ export type DesktopAuthStatusResponse = {
   verificationEmail?: string | null;
   exchangeCode?: string | null;
   exchangeCodeExpiresAt?: string | null;
+};
+
+export type DevicePairingKind = "workstation" | "display";
+export type DevicePairingRequestStatus =
+  | "pending"
+  | "awaiting_exchange"
+  | "expired"
+  | "failed";
+export type DevicePairingRequestPreview = {
+  requestId: string;
+  kind: DevicePairingKind;
+  platformType: "electron" | "web" | null;
+  status: DevicePairingRequestStatus;
+  createdAt: string;
+  expiresAt: string;
+};
+export type DevicePairingRequestStartResponse = {
+  success: boolean;
+  requestId: string;
+  requestSecret: string;
+  approvalUrl: string;
+  status: DevicePairingRequestStatus;
+  expiresAt: string;
+  pollIntervalMs: number;
+};
+export type DevicePairingRequestStatusResponse = {
+  success: boolean;
+  status: DevicePairingRequestStatus;
+  expiresAt: string;
+  pairingToken?: string;
 };
