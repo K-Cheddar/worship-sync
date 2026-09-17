@@ -3,12 +3,14 @@ import { BibleDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import VerseDisplay from "./VerseDisplay";
+import { REFERENCE_WIDTH } from "../../constants";
 
 type DisplayStreamBibleProps = {
   width: number;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
+  isStatic?: boolean;
 };
 
 const DURATION = 0.35;
@@ -20,6 +22,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
       shouldAnimate = false,
       bibleDisplayInfo,
       prevBibleDisplayInfo,
+      isStatic = false,
     }: DisplayStreamBibleProps,
     containerRef
   ) => {
@@ -79,7 +82,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 borderTopLeftRadius: "5% 20%",
                 borderTopRightRadius: "5% 20%",
                 padding: "0.5% 4% 0.5%",
-                fontSize: `${width / 58}vw`,
+                fontSize: isStatic
+                  ? `${REFERENCE_WIDTH / 58}px`
+                  : `${width / 58}vw`,
               }}
             >
               {bibleDisplayInfo.title}
@@ -93,7 +98,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 borderTopRightRadius: "2.5% 20%",
                 borderBottomRightRadius: "2.5% 20%",
                 borderBottomLeftRadius: "2.5% 20%",
-                fontSize: `${width / 55}vw`,
+                fontSize: isStatic
+                  ? `${REFERENCE_WIDTH / 55}px`
+                  : `${width / 55}vw`,
               }}
             >
               {renderContent(bibleDisplayInfo.text)}
@@ -112,7 +119,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 borderTopLeftRadius: "5% 20%",
                 borderTopRightRadius: "5% 20%",
                 padding: "0.5% 4% 0.5%",
-                fontSize: `${width / 58}vw`,
+                fontSize: isStatic
+                  ? `${REFERENCE_WIDTH / 58}px`
+                  : `${width / 58}vw`,
               }}
             >
               {prevBibleDisplayInfo.title}
@@ -126,7 +135,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 borderTopRightRadius: "2.5% 20%",
                 borderBottomRightRadius: "2.5% 20%",
                 borderBottomLeftRadius: "2.5% 20%",
-                fontSize: `${width / 55}vw`,
+                fontSize: isStatic
+                  ? `${REFERENCE_WIDTH / 55}px`
+                  : `${width / 55}vw`,
               }}
             >
               {renderContent(prevBibleDisplayInfo.text)}

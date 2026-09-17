@@ -648,6 +648,7 @@ export const useCurrentServicePlanSource = () => {
         return sortControllerServicePlans([...withoutUpdated, summary]);
       });
       if (!isSelectedPlan) return;
+      if (!churchId) return;
       planRef.current = event.servicePlan;
       void getServicePlanAssignments(churchId, event.servicePlan.planKey)
         .then((result) =>

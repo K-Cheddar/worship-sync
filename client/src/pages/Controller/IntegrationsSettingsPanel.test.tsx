@@ -217,9 +217,9 @@ describe("IntegrationsSettingsPanel", () => {
     };
     isElectron.mockReturnValue(true);
     const openExternalUrl = jest.fn().mockResolvedValue(true);
-    (window as WindowWithTestElectron).electronAPI = {
+    window.electronAPI = {
       openExternalUrl,
-    };
+    } as unknown as ElectronAPI;
 
     render(
       <IntegrationsSettingsPanel

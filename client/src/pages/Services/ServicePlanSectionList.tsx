@@ -45,7 +45,6 @@ import {
   useServicePlanSensors,
 } from "./servicePlanDnd";
 import {
-  removeElement,
   removeSection,
   renameSection,
   reorderSections,
@@ -53,6 +52,7 @@ import {
 } from "./servicePlanDraftUtils";
 import {
   applyElementDurationSecondsChange,
+  applyElementRemoval,
   applyElementStartTimeChange,
   applyPlanAnchorStartTime,
 } from "./servicePlanTimingUtils";
@@ -782,7 +782,7 @@ const ServicePlanSectionList = ({
                   onSelectionChange?.({ sectionId: section.id, elementId });
                 }}
                 onRemoveElement={(elementId) =>
-                  onSectionsChange(removeElement(sections, section.id, elementId))
+                  onSectionsChange(applyElementRemoval(sections, elementId))
                 }
                 onUpdateElement={(elementId, changes, coalesceKey) =>
                   onSectionsChange(

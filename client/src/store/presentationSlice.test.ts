@@ -2857,7 +2857,7 @@ describe("presentationSlice", () => {
         id: "same-slide",
         type: "Media" as const,
         name: "Chorus",
-        boxes: [{ id: "b1", words: "Same lyric" }],
+        boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
       };
       const store = createStore({
         presentation: {
@@ -2879,7 +2879,7 @@ describe("presentationSlice", () => {
             name: "Chorus",
             slide: {
               ...liveSlide,
-              boxes: [{ id: "b1", words: "Same lyric" }],
+              boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
             },
             time: 200,
             displayType: "stream",
@@ -2901,7 +2901,7 @@ describe("presentationSlice", () => {
         id: "same-slide",
         type: "Media" as const,
         name: "Chorus",
-        boxes: [{ id: "b1", words: "Same lyric" }],
+        boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
       };
       const store = createStore();
       store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
@@ -2932,7 +2932,7 @@ describe("presentationSlice", () => {
           name: "Chorus",
           slide: {
             ...liveSlide,
-            boxes: [{ id: "b1", words: "Same lyric" }],
+            boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
           },
           displayType: "stream",
         } as never),
@@ -2949,7 +2949,7 @@ describe("presentationSlice", () => {
         id: "same-slide",
         type: "Media" as const,
         name: "Chorus",
-        boxes: [{ id: "b1", words: "Same lyric" }],
+        boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
       };
       const store = createStore({
         presentation: {
@@ -2971,7 +2971,7 @@ describe("presentationSlice", () => {
             name: "Chorus",
             slide: {
               ...liveSlide,
-              boxes: [{ id: "b1", words: "Same lyric" }],
+              boxes: [{ id: "b1", words: "Same lyric", width: 1920, height: 1080 }],
             },
             time: 200,
             displayType: "projector",

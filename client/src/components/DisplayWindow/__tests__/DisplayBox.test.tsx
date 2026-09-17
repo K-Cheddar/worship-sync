@@ -814,6 +814,32 @@ describe("DisplayBox", () => {
     );
   });
 
+  it("does not reuse a managed image after the background identity changes", () => {
+    const { rerender } = render(
+      <DisplayBox
+        box={{ ...baseBox, background: "blue.jpg" }}
+        width={100}
+        showBackground
+        index={0}
+        isTransitionManaged
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveAttribute("src", "blue.jpg");
+
+    rerender(
+      <DisplayBox
+        box={{ ...baseBox, words: "Song B", background: "red.jpg" }}
+        width={100}
+        showBackground
+        index={0}
+        isTransitionManaged
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveAttribute("src", "red.jpg");
+  });
+
   it("renders incoming background and text hidden before the fade-in starts", () => {
     render(
       <DisplayBox

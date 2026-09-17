@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import cn from "classnames";
 import {
   setOverlayControllerPanel,
   setOverlayCreditsSettingsDrawerOpen,
@@ -26,10 +25,43 @@ import { useGenerateCreditsFromOverlays } from "../../../hooks/useGenerateCredit
 import { scrollToolbarTabIntoViewIfNeeded } from "../../../utils/scrollToolbarTabIntoView";
 import GeneratedCreditsFloatingWindow from "../../../pages/CreditsEditor/GeneratedCreditsFloatingWindow";
 import { isViewOnlyAccess } from "../../../utils/accessTiers";
+import { usePresentationControllerMode } from "../../../context/presentationControllerMode";
 export type ToolbarOverlayProps = {
-  isLyricsEditorOpen: boolean;
   quickLinksDrawerOpen: boolean;
   onQuickLinksOpenChange: (open: boolean) => void;
+  toolbarRow?: "present" | "primary" | "secondary";
+};
+
+const CreditsToolbarControls = () => {
+  const { access } = useContext(GlobalInfoContext) || {};
+  const dispatch = useDispatch();
+  const generateCredits = useGenerateCreditsFromOverlays();
+
+  if (isViewOnlyAccess(access) || access === "music") return null;
+
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <ToolbarButton
+        svg={generateCredits.justGenerated ? Check : RefreshCcw}
+        onClick={() => generateCredits.generateFromOverlays()}
+        disabled={!generateCredits.hasOverlays || generateCredits.isGenerating}
+        isActive={generateCredits.justGenerated}
+      >
+        {generateCredits.isGenerating
+          ? "Generating..."
+          : generateCredits.justGenerated
+            ? "Generated."
+            : "Generate Credits"}
+      </ToolbarButton>
+      <ToolbarButton
+        svg={Settings}
+        onClick={() => dispatch(setOverlayCreditsSettingsDrawerOpen(true))}
+        aria-label="Credits settings"
+      >
+        Settings
+      </ToolbarButton>
+    </div>
+  );
 };
 
 /**
@@ -37,18 +69,20 @@ export type ToolbarOverlayProps = {
  * Generate-credits hook runs only when this subtree is mounted (overlay controller), not on the main controller.
  */
 const ToolbarOverlay = ({
-  isLyricsEditorOpen,
   quickLinksDrawerOpen,
   onQuickLinksOpenChange,
+  toolbarRow = "present",
 }: ToolbarOverlayProps) => {
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
+  const { mode } = usePresentationControllerMode();
+  const isEditMode = mode === "edit";
+  const showPrimaryRow = toolbarRow === "present" || toolbarRow === "primary";
+  const showSecondaryRow = toolbarRow === "present" || toolbarRow === "secondary";
 
   const overlayControllerPanel = useSelector(
     (state) => state.undoable.present.preferences.overlayControllerPanel,
   );
-
-  const generateCredits = useGenerateCreditsFromOverlays();
 
   const serviceOutline = useSelector(
     (state) => state.servicePlanningImport?.serviceOutline,
@@ -78,143 +112,101 @@ const ToolbarOverlay = ({
 
   return (
     <>
-      <div className="scrollbar-variable flex min-h-9 min-w-0 w-full overflow-x-auto px-1">
-        <div className="flex w-max flex-nowrap items-center gap-1 *:shrink-0">
-          <Outlines matchToolbarTabs className="shrink-0" />
+      {showPrimaryRow && <Outlines matchToolbarTabs className="shrink-0" />}
+
+      {showSecondaryRow && isEditMode &&
+        access === "full" && (
           <ToolbarButton
-            svg={PanelsTopLeft}
-            disabled={!serviceOutline}
-            onClick={() =>
-              dispatch(setServicePlanningFloatingWindowDismissed(false))
-            }
-            aria-label="Open service plan"
+            svg={RectangleEllipsis}
+            onClick={() => onQuickLinksOpenChange(true)}
+            isActive={quickLinksDrawerOpen}
           >
-            Open Service Plan
+            Quick Links
           </ToolbarButton>
-          {access === "full" &&
-            (overlayControllerPanel === "overlays" ||
-              overlayControllerPanel === "overlaysAndPosts") && (
-              <ToolbarButton
-                svg={RectangleEllipsis}
-                onClick={() => onQuickLinksOpenChange(true)}
-                isActive={quickLinksDrawerOpen}
-              >
-                Quick Links
-              </ToolbarButton>
-            )}
-          {!isViewOnlyAccess(access) &&
-            access !== "music" &&
-            overlayControllerPanel === "credits" && (
-              <div className="flex shrink-0 items-center gap-1">
-                <ToolbarButton
-                  svg={generateCredits.justGenerated ? Check : RefreshCcw}
-                  onClick={() => generateCredits.generateFromOverlays()}
-                  disabled={
-                    !generateCredits.hasOverlays || generateCredits.isGenerating
-                  }
-                  isActive={generateCredits.justGenerated}
-                >
-                  {generateCredits.isGenerating
-                    ? "Generating..."
-                    : generateCredits.justGenerated
-                      ? "Generated."
-                      : "Generate Credits"}
-                </ToolbarButton>
-                <ToolbarButton
-                  svg={Settings}
-                  onClick={() =>
-                    dispatch(setOverlayCreditsSettingsDrawerOpen(true))
-                  }
-                  aria-label="Credits settings"
-                >
-                  Settings
-                </ToolbarButton>
-              </div>
-            )}
-        </div>
-      </div>
-      <GeneratedCreditsFloatingWindow />
-      <hr className="sticky left-0 w-full border-t-2 border-gray-500" />
-      <div
-        className={cn(
-          "flex w-full flex-1 items-center gap-0 overflow-x-auto px-2 py-1 scrollbar-variable",
-          isLyricsEditorOpen && "hidden",
         )}
-      >
+      {showSecondaryRow && isEditMode && access === "full" && (
         <ToolbarButton
           ref={(el) => {
-            overlayPanelTabRefs.current.overlays = el;
+            overlayPanelTabRefs.current.displays = el;
           }}
-          svg={Layers}
-          onClick={() => dispatch(setOverlayControllerPanel("overlays"))}
-          isActive={overlayControllerPanel === "overlays"}
+          svg={MonitorCog}
+          onClick={() => dispatch(setOverlayControllerPanel("displays"))}
+          isActive={overlayControllerPanel === "displays"}
         >
-          Overlays
+          Displays
         </ToolbarButton>
-        {access === "full" && (
-          <>
-            <ToolbarButton
-              ref={(el) => {
-                overlayPanelTabRefs.current.boardPosts = el;
-              }}
-              svg={MessageSquare}
-              onClick={() => dispatch(setOverlayControllerPanel("boardPosts"))}
-              isActive={overlayControllerPanel === "boardPosts"}
-            >
-              Board Posts
-            </ToolbarButton>
-            <ToolbarButton
-              ref={(el) => {
-                overlayPanelTabRefs.current.overlaysAndPosts = el;
-              }}
-              className="hidden xl:flex"
-              svg={Columns3}
-              onClick={() =>
-                dispatch(setOverlayControllerPanel("overlaysAndPosts"))
-              }
-              isActive={overlayControllerPanel === "overlaysAndPosts"}
-            >
-              Overlays &amp; Posts
-            </ToolbarButton>
-          </>
-        )}
-        {!isViewOnlyAccess(access) && access !== "music" && (
+      )}
+      {showSecondaryRow && isEditMode && overlayControllerPanel === "credits" && (
+        <CreditsToolbarControls />
+      )}
+      {showPrimaryRow && <GeneratedCreditsFloatingWindow />}
+      {showPrimaryRow && <ToolbarButton
+        ref={(el) => {
+          overlayPanelTabRefs.current.overlays = el;
+        }}
+        svg={Layers}
+        onClick={() => dispatch(setOverlayControllerPanel("overlays"))}
+        isActive={overlayControllerPanel === "overlays"}
+      >
+        Overlays
+      </ToolbarButton>}
+      {showPrimaryRow && access === "full" && (
+        <>
           <ToolbarButton
             ref={(el) => {
-              overlayPanelTabRefs.current.credits = el;
+              overlayPanelTabRefs.current.boardPosts = el;
             }}
-            svg={ScrollText}
-            onClick={() => dispatch(setOverlayControllerPanel("credits"))}
-            isActive={overlayControllerPanel === "credits"}
+            svg={MessageSquare}
+            onClick={() => dispatch(setOverlayControllerPanel("boardPosts"))}
+            isActive={overlayControllerPanel === "boardPosts"}
           >
-            Credits Editor
+            Board Posts
           </ToolbarButton>
-        )}
-        {!isViewOnlyAccess(access) && (
           <ToolbarButton
             ref={(el) => {
-              overlayPanelTabRefs.current.serviceTimes = el;
+              overlayPanelTabRefs.current.overlaysAndPosts = el;
             }}
-            svg={Clock}
-            onClick={() => dispatch(setOverlayControllerPanel("serviceTimes"))}
-            isActive={overlayControllerPanel === "serviceTimes"}
+            className="hidden xl:flex"
+            svg={Columns3}
+            onClick={() => dispatch(setOverlayControllerPanel("overlaysAndPosts"))}
+            isActive={overlayControllerPanel === "overlaysAndPosts"}
           >
-            Service Times
+            Overlays &amp; Posts
           </ToolbarButton>
-        )}
-        {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              overlayPanelTabRefs.current.displays = el;
-            }}
-            svg={MonitorCog}
-            onClick={() => dispatch(setOverlayControllerPanel("displays"))}
-            isActive={overlayControllerPanel === "displays"}
-          >
-            Displays
-          </ToolbarButton>
-        )}
-      </div>
+        </>
+      )}
+      {showPrimaryRow && !isViewOnlyAccess(access) && access !== "music" && (
+        <ToolbarButton
+          ref={(el) => {
+            overlayPanelTabRefs.current.credits = el;
+          }}
+          svg={ScrollText}
+          onClick={() => dispatch(setOverlayControllerPanel("credits"))}
+          isActive={overlayControllerPanel === "credits"}
+        >
+          Credits Editor
+        </ToolbarButton>
+      )}
+      {showPrimaryRow && !isViewOnlyAccess(access) && (
+        <ToolbarButton
+          ref={(el) => {
+            overlayPanelTabRefs.current.serviceTimes = el;
+          }}
+          svg={Clock}
+          onClick={() => dispatch(setOverlayControllerPanel("serviceTimes"))}
+          isActive={overlayControllerPanel === "serviceTimes"}
+        >
+          Service Times
+        </ToolbarButton>
+      )}
+      {showPrimaryRow && <ToolbarButton
+        svg={PanelsTopLeft}
+        disabled={!serviceOutline}
+        onClick={() => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+        aria-label="Open service plan"
+      >
+        Open Service Plan
+      </ToolbarButton>}
     </>
   );
 };

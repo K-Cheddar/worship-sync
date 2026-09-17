@@ -114,6 +114,7 @@ const SECTION_BACK_LABELS: Record<TeamsSectionPath, string> = {
   [TEAMS_SECTION_PATHS.qualifications]: "Back to qualifications",
   [TEAMS_SECTION_PATHS.services]: "Back to services",
   [TEAMS_SECTION_PATHS.forms]: "Back to forms",
+  [TEAMS_SECTION_PATHS.microphones]: "Back to microphones",
 };
 
 export const readTeamsReturnTo = (state: unknown): TeamsReturnTo | null => {

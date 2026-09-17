@@ -19,6 +19,7 @@ type DisplayStreamTextProps = {
   referenceWidth?: number; // Reference width for pixel calculations (1920px)
   referenceHeight?: number; // Reference height for pixel calculations (1080px)
   shouldAnimate?: boolean;
+  isStatic?: boolean;
 };
 
 const DisplayStreamText = ({
@@ -31,6 +32,7 @@ const DisplayStreamText = ({
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
   shouldAnimate = false,
+  isStatic = false,
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>(null);
@@ -78,7 +80,8 @@ const DisplayStreamText = ({
 
   // Text shadow and outline sizes in pixels (will scale with transform)
   const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
-  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
+  const useReferenceWidth =
+    isStatic || width >= REFERENCE_WIDTH_VW * 0.5;
   const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
 
   // Convert all percentage values to pixels based on reference dimensions

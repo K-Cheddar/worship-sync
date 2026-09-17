@@ -2,6 +2,7 @@ import {
   applyDurationChange,
   applyElementDurationChange,
   applyElementDurationSecondsChange,
+  applyElementRemoval,
   applyElementStartTimeChange,
   applyPlanAnchorStartTime,
   applyStartTimeChange,
@@ -211,6 +212,29 @@ describe("section-aware wrappers", () => {
     expect(result[0].elements[0].durationMinutes).toBe(20);
     expect(result[0].elements[0].durationSeconds).toBe(1200);
     expect(result[1].elements[0].startTime).toBe("09:20");
+  });
+
+  it("removes an element and shifts later items to close the timing gap", () => {
+    const sections = applyPlanAnchorStartTime(
+      [
+        section("s1", [
+          { id: "a", durationMinutes: 10 },
+          { id: "b", durationMinutes: 20 },
+        ]),
+        section("s2", [{ id: "c", durationMinutes: 5 }]),
+      ],
+      "09:00",
+    );
+
+    const result = applyElementRemoval(sections, "b");
+
+    expect(result.flatMap((section) => section.elements).map((element) => ({
+      id: element.id,
+      startTime: element.startTime,
+    }))).toEqual([
+      { id: "a", startTime: "09:00" },
+      { id: "c", startTime: "09:10" },
+    ]);
   });
 
   it("returns the same sections when the element id can't be found", () => {

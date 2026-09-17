@@ -111,6 +111,7 @@ const PlanningCenterConnectComplete = lazyRoute(
   () => import("./pages/PlanningCenterConnectComplete"),
 );
 const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
+const DevicePairingApprove = lazyRoute(() => import("./pages/DevicePairingApprove"));
 const WorkstationOperator = lazyRoute(
   () => import("./pages/WorkstationOperator"),
 );
@@ -365,6 +366,10 @@ const AppRoutes = () => {
               <Route
                 path="/display/pair"
                 element={<WorkstationPair lockedPairType="display" />}
+              />
+              <Route
+                path="/device-pairing/approve/:requestId"
+                element={<AuthGate allowedKinds={["human"]}><DevicePairingApprove /></AuthGate>}
               />
               {/* The one Teams surface reachable with `teams: "none"`, so it is
               gated on being signed in rather than on a teams permission. */}

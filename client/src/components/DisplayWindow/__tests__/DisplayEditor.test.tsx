@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DisplayEditor from "../DisplayEditor";
-import type { Box } from "../../../types";
+import type { Box, MediaType } from "../../../types";
+import type { LocalImageResolution } from "../../../hooks/useLocalImageUrl";
 
 const mockShowToast = jest.fn();
 const mockUseCachedMediaUrl = jest.fn((url?: string) => url);
@@ -16,12 +17,14 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => mockUseCachedMediaUrl(url),
 }));
 
-const mockUseLocalImageUrl = jest.fn(() => ({
-  isLocalImage: false,
-  isOwner: false,
-  status: "not-local" as const,
-  url: undefined,
-}));
+const mockUseLocalImageUrl = jest.fn(
+  (..._args: any[]): LocalImageResolution => ({
+    isLocalImage: false,
+    isOwner: false,
+    status: "not-local",
+    url: undefined,
+  }),
+);
 
 jest.mock("../../../hooks/useLocalImageUrl", () => ({
   useLocalImageUrl: (...args: unknown[]) => mockUseLocalImageUrl(...args),
@@ -420,9 +423,19 @@ describe("DisplayEditor", () => {
           ...baseBox,
           background: "local-image://asset-1",
           mediaInfo: {
-            id: "asset-1",
+            path: "",
+            createdAt: "",
+            updatedAt: "",
+            format: "png",
+            height: 1080,
+            width: 1920,
+            name: "welcome.png",
+            publicId: "asset-1",
             type: "image",
+            id: "asset-1",
             background: "local-image://asset-1",
+            thumbnail: "",
+            source: "local",
             localImage: {
               id: "asset-1",
               ownerDeviceId: "device-1",
@@ -431,7 +444,7 @@ describe("DisplayEditor", () => {
               contentType: "image/png",
               storagePolicy: "local-only",
             },
-          },
+          } satisfies MediaType,
         }}
         width={960}
         index={0}
@@ -459,9 +472,19 @@ describe("DisplayEditor", () => {
           ...baseBox,
           background: "local-image://asset-1",
           mediaInfo: {
-            id: "asset-1",
+            path: "",
+            createdAt: "",
+            updatedAt: "",
+            format: "png",
+            height: 1080,
+            width: 1920,
+            name: "welcome.png",
+            publicId: "asset-1",
             type: "image",
+            id: "asset-1",
             background: "local-image://asset-1",
+            thumbnail: "",
+            source: "local",
             localImage: {
               id: "asset-1",
               ownerDeviceId: "other-device",
@@ -470,7 +493,7 @@ describe("DisplayEditor", () => {
               contentType: "image/png",
               storagePolicy: "local-only",
             },
-          },
+          } satisfies MediaType,
         }}
         width={960}
         index={0}

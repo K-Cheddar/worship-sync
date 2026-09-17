@@ -32,6 +32,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
         {
           sectionName: "Message",
           headingName: "Scripture",
+          sourceRowIndex: 0,
           elementType: "Scripture",
           title: "John 3:16-17 NIV",
           outlineItemType: "bible",
@@ -105,6 +106,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
       {
         sectionName: "Message",
         headingName: "Scripture",
+        sourceRowIndex: 0,
         elementType: "Song of Praise",
         title: "Amazing Grace",
         outlineItemType: "song",
@@ -137,6 +139,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
       {
         sectionName: "Special",
         headingName: null,
+        sourceRowIndex: 0,
         elementType: "Special Music",
         title: "Goodness of God",
         outlineItemType: "song",
@@ -167,6 +170,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     const candidate = {
       sectionName: "Worship",
       headingName: "Praise",
+      sourceRowIndex: 0,
       elementType: "Song of Praise",
       title: "You Deserve It",
       outlineItemType: "song" as const,
@@ -206,6 +210,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
       candidate: {
         sectionName: "Worship",
         headingName: "Praise",
+        sourceRowIndex: 0,
         elementType: "Song of Praise",
         title: "You Deserve It",
         outlineItemType: "song" as const,
@@ -264,6 +269,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
         candidate: {
           sectionName: "Special",
           headingName: null,
+          sourceRowIndex: 0,
           elementType: "Special Music",
           title: "Goodness of God",
           outlineItemType: "song",
@@ -315,6 +321,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
       candidate: {
         sectionName: "Message",
         headingName: "Scripture",
+        sourceRowIndex: 0,
         elementType: "Scripture",
         title: "John 3:16-17 NIV",
         outlineItemType: "bible" as const,

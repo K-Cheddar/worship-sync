@@ -11,6 +11,7 @@ let mockGenerateCredits: {
   justGenerated: boolean;
   hasOverlays: boolean;
 };
+let mockMode: "present" | "edit" = "edit";
 
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -49,6 +50,10 @@ jest.mock("./Outlines", () => ({
 
 jest.mock("../../../hooks/useGenerateCreditsFromOverlays", () => ({
   useGenerateCreditsFromOverlays: () => mockGenerateCredits,
+}));
+
+jest.mock("../../../context/presentationControllerMode", () => ({
+  usePresentationControllerMode: () => ({ mode: mockMode }),
 }));
 
 let mockState: {
@@ -91,7 +96,6 @@ const renderOverlay = ({
   return render(
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ToolbarOverlay
-        isLyricsEditorOpen={false}
         quickLinksDrawerOpen={false}
         onQuickLinksOpenChange={jest.fn()}
       />
@@ -102,6 +106,7 @@ const renderOverlay = ({
 describe("ToolbarOverlay", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMode = "edit";
   });
 
   it("shows Quick Links on overlays tab for full access", () => {
@@ -122,21 +127,25 @@ describe("ToolbarOverlay", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Generate Credits on credits tab and hides Quick Links", () => {
+  it("shows Generate Credits and Quick Links on credits tab", () => {
     renderOverlay({ access: "full", overlayPanel: "credits" });
     expect(
       screen.getByRole("button", { name: "Generate Credits" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Quick Links" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
   });
 
-  it("hides Quick Links and Generate Credits on service times tab", () => {
+  it("hides credits controls in present mode", () => {
+    mockMode = "present";
+    renderOverlay({ access: "full", overlayPanel: "credits" });
+
+    expect(screen.queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Credits settings" })).not.toBeInTheDocument();
+  });
+
+  it("hides Generate Credits on service times tab", () => {
     renderOverlay({ access: "full", overlayPanel: "serviceTimes" });
-    expect(
-      screen.queryByRole("button", { name: "Quick Links" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Generate Credits" }),
     ).not.toBeInTheDocument();
@@ -173,7 +182,6 @@ describe("ToolbarOverlay", () => {
     render(
       <GlobalInfoContext.Provider value={{ access: "full" } as any}>
         <ToolbarOverlay
-          isLyricsEditorOpen={false}
           quickLinksDrawerOpen={false}
           onQuickLinksOpenChange={jest.fn()}
         />

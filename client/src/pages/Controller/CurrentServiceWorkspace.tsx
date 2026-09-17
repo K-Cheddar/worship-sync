@@ -223,10 +223,10 @@ const ServiceHeading = ({
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-3">
-      <p className="min-w-0 truncate text-lg font-semibold">{name} · {label}</p>
+      <p className="min-w-0 truncate text-base font-semibold">{label}</p>
       <div
         className="shrink-0 rounded-md border border-white/20 bg-gray-950 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight"
-        style={{ color: displayService.color || "#ffffff" }}
+        style={{ color: isOvertime ? "#fbbf24" : displayService.color || "#ffffff" }}
         aria-label={`${label} ${timeText}`}
       >
         {timeText}

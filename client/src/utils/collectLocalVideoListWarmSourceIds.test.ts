@@ -89,8 +89,6 @@ describe("collectLocalVideoListWarmSourceIds", () => {
           type: "song",
           background: "",
           selectedArrangement: 0,
-          selectedSlide: 0,
-          selectedBox: 0,
           arrangements: [
             {
               id: "arr-1",
@@ -101,6 +99,7 @@ describe("collectLocalVideoListWarmSourceIds", () => {
             },
           ],
           slides: [],
+          shouldSendTo: { projector: true, monitor: true, stream: true },
         },
       ],
       [
@@ -112,8 +111,6 @@ describe("collectLocalVideoListWarmSourceIds", () => {
           type: "free",
           background: "",
           selectedArrangement: 0,
-          selectedSlide: 0,
-          selectedBox: 0,
           arrangements: [],
           slides: [
             camSlide("source-5", "s5"),
@@ -126,10 +123,13 @@ describe("collectLocalVideoListWarmSourceIds", () => {
                   words: "",
                   background: "local-video-input://source-6",
                   fontSize: 40,
+                  width: 1920,
+                  height: 1080,
                 },
               ],
             },
           ],
+          shouldSendTo: { projector: true, monitor: true, stream: true },
         },
       ],
     ]);
@@ -166,10 +166,9 @@ describe("collectLocalVideoListWarmSourceIds", () => {
           type: "free",
           background: "",
           selectedArrangement: 0,
-          selectedSlide: 0,
-          selectedBox: 0,
           arrangements: [],
           slides: [camSlide("source-stale")],
+          shouldSendTo: { projector: true, monitor: true, stream: true },
         },
       ],
     ]);

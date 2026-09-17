@@ -102,9 +102,7 @@ import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
-import {
-  resolveShowInMediaFolderId,
-} from "./resolveShowInMediaTarget";
+import { resolveShowInMediaFolderId } from "./resolveShowInMediaTarget";
 import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
@@ -131,7 +129,7 @@ export function useMediaLibraryController({
   const location = useLocation();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
-  const { showToast } = useToast();
+  const { showToast, updateToast } = useToast();
   const isPanelVariant = variant === "panel";
 
   const notifyMediaAction = useCallback(
@@ -183,6 +181,10 @@ export function useMediaLibraryController({
     isInitialized: mediaStoreInitialized,
     loadStatus: mediaLoadStatus,
   } = useSelector((state: RootState) => state.media);
+  const currentMediaListRef = useRef(list);
+  const currentMediaFoldersRef = useRef(folders);
+  currentMediaListRef.current = list;
+  currentMediaFoldersRef.current = folders;
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const isLoading = item.isLoading;
 
@@ -275,6 +277,9 @@ export function useMediaLibraryController({
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
   const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
   const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
+  const [pendingDeletionIds, setPendingDeletionIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [showProviderRetryModal, setShowProviderRetryModal] = useState(false);
   const [providerRetryRows, setProviderRetryRows] = useState<MediaType[]>([]);
   const [providerRetryBusy, setProviderRetryBusy] = useState(false);
@@ -323,7 +328,7 @@ export function useMediaLibraryController({
   const showNamesInPanelGrid = searchTerm.trim().length > 0;
   const parentForBrowseChildren =
     selectedLibraryFilter === null ||
-      selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
       ? null
       : selectedLibraryFilter;
   const childFolders = useMemo(
@@ -349,6 +354,7 @@ export function useMediaLibraryController({
 
   const filteredList = useMemo(() => {
     return list.filter((item) => {
+      if (pendingDeletionIds.has(item.id)) return false;
       const matchesSearch = item.name
         ?.toLowerCase()
         .includes(searchTerm.toLowerCase());
@@ -372,6 +378,7 @@ export function useMediaLibraryController({
     deviceId,
     list,
     originFilter,
+    pendingDeletionIds,
     searchTerm,
     selectedLibraryFilter,
     showOtherDeviceLocalMedia,
@@ -400,8 +407,7 @@ export function useMediaLibraryController({
   });
 
   const canDragMediaToSlides =
-    item.type === "free" &&
-    (access === "full" || access === "music");
+    item.type === "free" && (access === "full" || access === "music");
   const orderedSelectedMediaIds = useMemo(
     () =>
       list
@@ -660,13 +666,22 @@ export function useMediaLibraryController({
   ]);
 
   const handleCreateCustomItemFromMedia = useCallback(async () => {
-    const selectedMediaItems = list.filter((media) => selectedMediaIds.has(media.id));
-    if (!db || selectedMediaItems.length === 0 || !selectedMediaItems.every(mediaHasSendableContent)) return;
+    const selectedMediaItems = list.filter((media) =>
+      selectedMediaIds.has(media.id),
+    );
+    if (
+      !db ||
+      selectedMediaItems.length === 0 ||
+      !selectedMediaItems.every(mediaHasSendableContent)
+    )
+      return;
     const m = selectedMediaItems[0];
-    const displayName = selectedMediaItems.length === 1
-      ? mediaLibraryDisplayName(m)
-      : "Media presentation";
-    const isLiveInput = selectedMediaItems.length === 1 && isLocalVideoInputMedia(m);
+    const displayName =
+      selectedMediaItems.length === 1
+        ? mediaLibraryDisplayName(m)
+        : "Media presentation";
+    const isLiveInput =
+      selectedMediaItems.length === 1 && isLocalVideoInputMedia(m);
     try {
       const newItem = await createNewFreeForm({
         name: displayName,
@@ -679,14 +694,19 @@ export function useMediaLibraryController({
         brightness: defaultFreeFormBackgroundBrightness,
         overflow: defaultFreeFormFontMode,
         emptyBodyText: true,
-        slideDefs: selectedMediaItems.length > 1
-          ? selectedMediaItems.map((media, index) => ({
-            name: mediaLibraryDisplayName(media) || `Slide ${index + 1}`,
-            background: isLocalVideoInputMedia(media) ? "" : media.background,
-            mediaInfo: isLocalVideoInputMedia(media) ? undefined : media,
-            mediaSource: isLocalVideoInputMedia(media) ? media.localVideoInput : undefined,
-          }))
-          : undefined,
+        slideDefs:
+          selectedMediaItems.length > 1
+            ? selectedMediaItems.map((media, index) => ({
+                name: mediaLibraryDisplayName(media) || `Slide ${index + 1}`,
+                background: isLocalVideoInputMedia(media)
+                  ? ""
+                  : media.background,
+                mediaInfo: isLocalVideoInputMedia(media) ? undefined : media,
+                mediaSource: isLocalVideoInputMedia(media)
+                  ? media.localVideoInput
+                  : undefined,
+              }))
+            : undefined,
       });
       const listItem = {
         name: newItem.name,
@@ -730,8 +750,14 @@ export function useMediaLibraryController({
 
   const handleAddSlidesFromMedia = useCallback(() => {
     if (!itemSlideContext || item.type !== "free") return;
-    const selectedMediaItems = list.filter((media) => selectedMediaIds.has(media.id));
-    if (!selectedMediaItems.length || !selectedMediaItems.every(mediaHasSendableContent)) return;
+    const selectedMediaItems = list.filter((media) =>
+      selectedMediaIds.has(media.id),
+    );
+    if (
+      !selectedMediaItems.length ||
+      !selectedMediaItems.every(mediaHasSendableContent)
+    )
+      return;
     const slides = selectedMediaItems.map((media) =>
       createSlideFromMedia(media, {
         brightness: defaultFreeFormBackgroundBrightness,
@@ -794,16 +820,16 @@ export function useMediaLibraryController({
       },
       itemSlideContext,
       controllerFromSelectedMedia:
-      selectedMediaIds.size > 0
+        selectedMediaIds.size > 0
           ? {
-            isProjectorTransmitting,
-            sendTargetLabel: projectorTargetLabel,
-            onSendToProjector: handleSendSelectedMediaToProjector,
-            onCreateCustomItem: handleCreateCustomItemFromMedia,
-            onAddSlides: canDragMediaToSlides
-              ? handleAddSlidesFromMedia
-              : undefined,
-          }
+              isProjectorTransmitting,
+              sendTargetLabel: projectorTargetLabel,
+              onSendToProjector: handleSendSelectedMediaToProjector,
+              onCreateCustomItem: handleCreateCustomItemFromMedia,
+              onAddSlides: canDragMediaToSlides
+                ? handleAddSlidesFromMedia
+                : undefined,
+            }
           : undefined,
       notify: notifyMediaAction,
       onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
@@ -1212,11 +1238,127 @@ export function useMediaLibraryController({
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
-  const dismissDeleteModal = () => {
+  const dismissDeleteModal = useCallback(() => {
     setShowDeleteModal(false);
     setMediaToDelete(null);
     setIsDeletingMultiple(false);
-  };
+  }, []);
+
+  const finishOptimisticDeletion = useCallback(
+    async (
+      rows: MediaType[],
+      toastId: string,
+    ): Promise<{ succeeded: MediaType[]; failed: MediaType[] }> => {
+      if (!db || rows.length === 0) {
+        setPendingDeletionIds((current) => {
+          const next = new Set(current);
+          rows.forEach((row) => next.delete(row.id));
+          return next;
+        });
+        updateToast(toastId, {
+          message: "Media could not be deleted.",
+          variant: "error",
+          persist: false,
+          duration: 7000,
+        });
+        return { succeeded: [], failed: rows };
+      }
+
+      try {
+        const result = await removeMediaRowsAfterSweep(rows);
+        if (result.phase !== "ok") {
+          setPendingDeletionIds((current) => {
+            const next = new Set(current);
+            rows.forEach((row) => next.delete(row.id));
+            return next;
+          });
+          updateToast(toastId, {
+            message: "Media could not be deleted.",
+            variant: "error",
+            persist: false,
+            duration: 7000,
+          });
+          return { succeeded: [], failed: rows };
+        }
+
+        const failedIds = new Set(result.providerFailed.map((row) => row.id));
+        const succeeded = rows.filter((row) => !failedIds.has(row.id));
+        const failed = rows.filter((row) => failedIds.has(row.id));
+        const updatedList = currentMediaListRef.current.filter(
+          (item) => !succeeded.some((row) => row.id === item.id),
+        );
+        const currentFolders = currentMediaFoldersRef.current;
+
+        dispatch(
+          setMediaListAndFolders({
+            list: updatedList,
+            folders: currentFolders,
+          }),
+        );
+
+        const flushResult = await flushMediaLibraryDocToPouch(
+          db,
+          updatedList,
+          currentFolders,
+        );
+        if (!flushResult.ok) {
+          alertMediaLibraryFlushFailed(flushResult.error, "library");
+          // Keep the optimistic rows hidden while the local library is out of
+          // sync. This also prevents a stale remote echo from making a
+          // provider-deleted asset look available again during reconciliation.
+          updateToast(toastId, {
+            message:
+              "Media deletion was not saved. The items remain pending until the library can be reconciled.",
+            variant: "error",
+            persist: true,
+            showCloseButton: true,
+          });
+          if (failed.length > 0) {
+            setProviderRetryRows(failed);
+            setShowProviderRetryModal(true);
+          }
+          return { succeeded, failed };
+        }
+
+        setPendingDeletionIds((current) => {
+          const next = new Set(current);
+          rows.forEach((row) => next.delete(row.id));
+          return next;
+        });
+        if (failed.length > 0) {
+          setProviderRetryRows(failed);
+          setShowProviderRetryModal(true);
+        }
+
+        updateToast(toastId, {
+          message:
+            failed.length > 0
+              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted. ${failed.length} could not be deleted.`
+              : `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted`,
+          variant: failed.length > 0 ? "error" : "success",
+          persist: false,
+          duration: 7000,
+        });
+        if (succeeded.length > 0) dispatch(ActionCreators.clearHistory());
+        return { succeeded, failed };
+      } catch (error) {
+        console.error("Error deleting media:", error);
+        setPendingDeletionIds((current) => {
+          const next = new Set(current);
+          rows.forEach((row) => next.delete(row.id));
+          return next;
+        });
+        updateToast(toastId, {
+          message: "Media could not be deleted.",
+          variant: "error",
+          persist: false,
+          duration: 7000,
+        });
+        return { succeeded: [], failed: rows };
+      }
+    },
+    [db, dispatch, removeMediaRowsAfterSweep, updateToast],
+  );
 
   const handleConfirmDelete = async () => {
     if (deleteConfirmLockRef.current) return;
@@ -1224,38 +1366,31 @@ export function useMediaLibraryController({
     setIsDeleteInProgress(true);
     const deletingMultiple = isDeletingMultiple;
     const singleTarget = mediaToDelete;
+    const rows = deletingMultiple
+      ? list.filter((item) => selectedMediaIds.has(item.id))
+      : singleTarget
+        ? [singleTarget]
+        : [];
+    if (rows.length === 0) {
+      deleteConfirmLockRef.current = false;
+      setIsDeleteInProgress(false);
+      dismissDeleteModal();
+      return;
+    }
+    const itemLabel = rows.length === 1 ? "item" : "items";
+    const toastId = showToast({
+      message: `Deleting ${rows.length} ${itemLabel}...`,
+      variant: "info",
+      persist: true,
+    });
+    setPendingDeletionIds(
+      (current) => new Set([...current, ...rows.map((row) => row.id)]),
+    );
+    clearSelection();
     // Dismiss immediately so a long reference sweep cannot leave Confirm locked.
     dismissDeleteModal();
     try {
-      if (deletingMultiple) {
-        await handleDeleteAll();
-        return;
-      }
-
-      if (!db || !singleTarget) return;
-
-      try {
-        const result = await removeMediaRowsAfterSweep([singleTarget]);
-        if (result.phase !== "ok") return;
-        const updatedList = list.filter((item) => item.id !== singleTarget.id);
-        dispatch(setMediaListAndFolders({ list: updatedList, folders }));
-        clearSelection();
-        dispatch(ActionCreators.clearHistory());
-        const flushResult = await flushMediaLibraryDocToPouch(
-          db,
-          updatedList,
-          folders,
-        );
-        if (!flushResult.ok) {
-          alertMediaLibraryFlushFailed(flushResult.error, "library");
-        }
-        if (result.providerFailed.length > 0) {
-          setProviderRetryRows(result.providerFailed);
-          setShowProviderRetryModal(true);
-        }
-      } catch (error) {
-        console.error("Error deleting background:", error);
-      }
+      await finishOptimisticDeletion(rows, toastId);
     } finally {
       deleteConfirmLockRef.current = false;
       setIsDeletingMultiple(false);
@@ -1266,35 +1401,6 @@ export function useMediaLibraryController({
   const handleCancelDelete = () => {
     if (isDeleteInProgress) return;
     dismissDeleteModal();
-  };
-
-  const handleDeleteAll = async () => {
-    if (!db || selectedMediaIds.size === 0) return;
-
-    const itemsToDelete = list.filter((item) => selectedMediaIds.has(item.id));
-
-    try {
-      const result = await removeMediaRowsAfterSweep(itemsToDelete);
-      if (result.phase !== "ok") return;
-      const updatedList = list.filter((item) => !selectedMediaIds.has(item.id));
-      dispatch(setMediaListAndFolders({ list: updatedList, folders }));
-      clearSelection();
-      dispatch(ActionCreators.clearHistory());
-      const flushResult = await flushMediaLibraryDocToPouch(
-        db,
-        updatedList,
-        folders,
-      );
-      if (!flushResult.ok) {
-        alertMediaLibraryFlushFailed(flushResult.error, "library");
-      }
-      if (result.providerFailed.length > 0) {
-        setProviderRetryRows(result.providerFailed);
-        setShowProviderRetryModal(true);
-      }
-    } catch (error) {
-      console.error("Error deleting media:", error);
-    }
   };
 
   const addNewBackground = ({
@@ -1415,7 +1521,7 @@ export function useMediaLibraryController({
         );
       } catch {
         showToast(
-          "Pages were imported, but the multi-slide item could not be created. Try Create custom item from Media.",
+          "Canva media was imported, but the custom item could not be created. Try Create custom item from Media.",
           "error",
         );
       }
@@ -1481,6 +1587,7 @@ export function useMediaLibraryController({
     };
 
     dispatch(addItemToMediaList(newMedia));
+    return newMedia;
   };
 
   const refreshCanvaImage = useCallback(

@@ -416,8 +416,8 @@ describe("preferencesSlice", () => {
 
     it("setBibleFontMode", () => {
       const store = createStore();
-      store.dispatch(setBibleFontMode("combined"));
-      expect(store.getState().preferences.bibleFontMode).toBe("combined");
+      store.dispatch(setBibleFontMode("fit"));
+      expect(store.getState().preferences.bibleFontMode).toBe("fit");
     });
 
     it("setScrollbarWidth", () => {
@@ -499,17 +499,17 @@ describe("preferencesSlice", () => {
     it("sets a media route folder by key", () => {
       const store = createStore();
       store.dispatch(
-        setMediaRouteFolder({ key: "image", folderId: "folder-123" }),
+        setMediaRouteFolder({ key: "controller-item-image", folderId: "folder-123" }),
       );
-      expect(store.getState().preferences.mediaRouteFolders.image).toBe(
+      expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe(
         "folder-123",
       );
     });
 
     it("allows setting a folder to null (all media)", () => {
       const store = createStore();
-      store.dispatch(setMediaRouteFolder({ key: "image", folderId: null }));
-      expect(store.getState().preferences.mediaRouteFolders.image).toBeNull();
+      store.dispatch(setMediaRouteFolder({ key: "controller-item-image", folderId: null }));
+      expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBeNull();
     });
   });
 
@@ -560,11 +560,11 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(
         initiatePreferences({
-          preferences: { ...basePrefs, defaultBibleFontMode: "combined" },
+          preferences: { ...basePrefs, defaultBibleFontMode: "fit" },
           isMusic: false,
         }),
       );
-      expect(store.getState().preferences.bibleFontMode).toBe("combined");
+      expect(store.getState().preferences.bibleFontMode).toBe("fit");
     });
   });
 
@@ -708,10 +708,10 @@ describe("preferencesSlice", () => {
       store.dispatch(
         updatePreferencesFromRemote({
           _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-          mediaRouteFolders: { image: "folder-1" },
+          mediaRouteFolders: { "controller-item-image": "folder-1" },
         } as any),
       );
-      expect(store.getState().preferences.mediaRouteFolders.image).toBe(
+      expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe(
         "folder-1",
       );
     });

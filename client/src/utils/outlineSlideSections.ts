@@ -1,10 +1,10 @@
 import type {
-  Arrangment,
   DBItem,
   ItemSlideType,
   ItemState,
   ServiceItem,
   FormattedSection,
+  ShouldSendTo,
 } from "../types";
 import { getFormattedSections } from "./overflow";
 
@@ -32,6 +32,7 @@ export type OutlineSlideSection = {
   slides: ItemSlideType[];
   isActive: boolean;
   formattedSections?: FormattedSection[];
+  shouldSendTo?: ShouldSendTo;
 };
 
 export type OutlineVirtualRow =
@@ -46,9 +47,9 @@ export type OutlineVirtualRow =
       type: "tiles";
       listId: string;
       itemId: string;
-      isActive: boolean;
-      slides: ItemSlideType[];
       startIndex: number;
+      count: number;
+      firstSlideId?: string;
     }
   | {
       type: "empty";
@@ -62,9 +63,10 @@ type ActiveItemSlideSource = {
   name?: string;
   type?: string;
   slides?: ItemSlideType[];
-  arrangements?: Arrangment[];
+  arrangements?: { slides?: ItemSlideType[] }[];
   selectedArrangement?: number;
   formattedSections?: FormattedSection[];
+  shouldSendTo?: ShouldSendTo;
 };
 
 /**
@@ -158,6 +160,14 @@ export const buildOutlineSlideSections = (
   options: {
     activeItem: ActiveItemSlideSource;
     docsById: Map<string, DBItem>;
+    sectionCache?: Map<
+      string,
+      {
+        item: ServiceItem;
+        source: ActiveItemSlideSource | DBItem | undefined;
+        section: OutlineSlideSection;
+      }
+    >;
   },
 ): OutlineSlideSection[] =>
   items.map((item) => {
@@ -165,7 +175,12 @@ export const buildOutlineSlideSections = (
     const isActive =
       item.listId === options.activeItem.listId &&
       item._id === options.activeItem._id;
-    return {
+    const source = isActive ? options.activeItem : doc;
+    const cached = options.sectionCache?.get(item.listId);
+    if (cached?.item === item && cached.source === source) {
+      return cached.section;
+    }
+    const section = {
       listId: item.listId,
       itemId: item._id,
       name: isActive ? options.activeItem.name || item.name : item.name,
@@ -176,43 +191,112 @@ export const buildOutlineSlideSections = (
       formattedSections:
         (isActive ? options.activeItem.formattedSections : doc?.formattedSections) ??
         [],
+      shouldSendTo: isActive ? options.activeItem.shouldSendTo : doc?.shouldSendTo,
     };
+    options.sectionCache?.set(item.listId, { item, source, section });
+    return section;
   });
+
+export type OutlineVirtualRowIndex = {
+  rowIndexByListId: Map<string, number>;
+  rowIndexBySlideId: Map<string, number>;
+  rowIndexBySlideIndex: Map<string, number>;
+  tileRowsByListId: Map<
+    string,
+    { startIndex: number; count: number; rowIndex: number }[]
+  >;
+};
+
+export const getOutlineVirtualRowKey = (row: OutlineVirtualRow): string => {
+  if (row.type === "tiles") {
+    return `${row.listId}:tiles:${row.startIndex}`;
+  }
+  return `${row.listId}:${row.type}`;
+};
 
 export const buildOutlineVirtualRows = (
   sections: OutlineSlideSection[],
   cols: number,
+  rowCache?: Map<
+    string,
+    { section: OutlineSlideSection; cols: number; rows: OutlineVirtualRow[] }
+  >,
 ): OutlineVirtualRow[] => {
   const safeCols = Math.max(1, cols);
   const rows: OutlineVirtualRow[] = [];
   for (const section of sections) {
-    rows.push({
-      type: "sectionLabel",
-      listId: section.listId,
-      itemId: section.itemId,
-      name: section.name,
-      itemType: section.type,
-    });
+    const cached = rowCache?.get(section.listId);
+    if (cached?.section === section && cached.cols === safeCols) {
+      rows.push(...cached.rows);
+      continue;
+    }
+    const sectionRows: OutlineVirtualRow[] = [
+      {
+        type: "sectionLabel",
+        listId: section.listId,
+        itemId: section.itemId,
+        name: section.name,
+        itemType: section.type,
+      },
+    ];
     if (section.slides.length === 0) {
-      rows.push({
+      sectionRows.push({
         type: "empty",
         listId: section.listId,
         itemId: section.itemId,
       });
-      continue;
+    } else {
+      for (let i = 0; i < section.slides.length; i += safeCols) {
+        sectionRows.push({
+          type: "tiles",
+          listId: section.listId,
+          itemId: section.itemId,
+          startIndex: i,
+          count: Math.min(safeCols, section.slides.length - i),
+          firstSlideId: section.slides[i]?.id,
+        });
+      }
     }
-    for (let i = 0; i < section.slides.length; i += safeCols) {
-      rows.push({
-        type: "tiles",
-        listId: section.listId,
-        itemId: section.itemId,
-        isActive: section.isActive,
-        slides: section.slides.slice(i, i + safeCols),
-        startIndex: i,
-      });
-    }
+    rowCache?.set(section.listId, { section, cols: safeCols, rows: sectionRows });
+    rows.push(...sectionRows);
   }
   return rows;
+};
+
+export const buildOutlineVirtualRowIndex = (
+  rows: OutlineVirtualRow[],
+  sectionsByListId?: Map<string, OutlineSlideSection>,
+): OutlineVirtualRowIndex => {
+  const rowIndexByListId = new Map<string, number>();
+  const rowIndexBySlideId = new Map<string, number>();
+  const rowIndexBySlideIndex = new Map<string, number>();
+  const tileRowsByListId = new Map<
+    string,
+    { startIndex: number; count: number; rowIndex: number }[]
+  >();
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!rowIndexByListId.has(row.listId)) rowIndexByListId.set(row.listId, rowIndex);
+    if (row.type !== "tiles") continue;
+    const tileRows = tileRowsByListId.get(row.listId) ?? [];
+    tileRows.push({ startIndex: row.startIndex, count: row.count, rowIndex });
+    tileRowsByListId.set(row.listId, tileRows);
+    const slides = sectionsByListId?.get(row.listId)?.slides ?? [];
+    for (let offset = 0; offset < row.count; offset += 1) {
+      rowIndexBySlideIndex.set(
+        `${row.listId}:${row.startIndex + offset}`,
+        rowIndex,
+      );
+      const slideId = slides[row.startIndex + offset]?.id;
+      if (slideId) rowIndexBySlideId.set(`${row.listId}:${slideId}`, rowIndex);
+    }
+  }
+  return {
+    rowIndexByListId,
+    rowIndexBySlideId,
+    rowIndexBySlideIndex,
+    tileRowsByListId,
+  };
 };
 
 export const getPrefetchItemIds = (
@@ -253,6 +337,45 @@ export const getPinnedListIdFromRowOffsets = (
   return pinned;
 };
 
+export const getPinnedListIdFromVirtualItems = (
+  rows: Pick<OutlineVirtualRow, "listId">[],
+  virtualItems: Array<{ index: number; start: number; end?: number; size?: number }>,
+  scrollTop: number,
+  threshold = OUTLINE_PIN_THRESHOLD_PX,
+): string | undefined => {
+  let pinned: string | undefined;
+  for (const virtualItem of virtualItems) {
+    if (virtualItem.start <= scrollTop + threshold) {
+      pinned = rows[virtualItem.index]?.listId ?? pinned;
+    }
+    if (virtualItem.start > scrollTop + threshold) break;
+  }
+  return pinned;
+};
+
+export const captureOutlineScrollAnchorFromVirtualItems = (
+  rows: OutlineVirtualRow[],
+  virtualItems: Array<{ index: number; start: number; end?: number; size?: number }>,
+  scrollTop: number,
+): OutlineScrollAnchor | null => {
+  const item = virtualItems.find(
+    (virtualItem) =>
+      (virtualItem.end ?? virtualItem.start + (virtualItem.size ?? 0)) > scrollTop,
+  );
+  const row = item ? rows[item.index] : undefined;
+  if (!item || !row) return null;
+  const anchor: OutlineScrollAnchor = {
+    listId: row.listId,
+    rowType: row.type,
+    localOffset: Math.max(0, scrollTop - item.start),
+  };
+  if (row.type === "tiles") {
+    anchor.startIndex = row.startIndex;
+    if (row.firstSlideId) anchor.slideId = row.firstSlideId;
+  }
+  return anchor;
+};
+
 /**
  * Viewport anchor for continuous-mode scroll restoration. When remote updates
  * rebuild virtual rows, keep the same on-screen row rather than a raw scrollTop
@@ -272,6 +395,7 @@ export const captureOutlineScrollAnchor = (
   rows: OutlineVirtualRow[],
   getRowStart: (index: number) => number,
   scrollTop: number,
+  sectionsByListId?: Map<string, OutlineSlideSection>,
 ): OutlineScrollAnchor | null => {
   if (rows.length === 0) return null;
   let rowIndex = 0;
@@ -291,7 +415,9 @@ export const captureOutlineScrollAnchor = (
   };
   if (row.type === "tiles") {
     anchor.startIndex = row.startIndex;
-    const slideId = row.slides[0]?.id;
+    const slideId =
+      sectionsByListId?.get(row.listId)?.slides[row.startIndex]?.id ??
+      row.firstSlideId;
     if (slideId) anchor.slideId = slideId;
   }
   return anchor;
@@ -301,23 +427,20 @@ export const resolveOutlineScrollTopFromAnchor = (
   rows: OutlineVirtualRow[],
   getRowStart: (index: number) => number,
   anchor: OutlineScrollAnchor,
+  rowIndexIndex?: OutlineVirtualRowIndex,
 ): number | null => {
   let rowIndex = -1;
   if (anchor.rowType === "tiles" && anchor.slideId) {
-    rowIndex = rows.findIndex(
-      (row) =>
-        row.type === "tiles" &&
-        row.listId === anchor.listId &&
-        row.slides.some((slide) => slide.id === anchor.slideId),
-    );
+    rowIndex =
+      rowIndexIndex?.rowIndexBySlideId.get(
+        `${anchor.listId}:${anchor.slideId}`,
+      ) ?? -1;
   }
   if (rowIndex < 0 && anchor.rowType === "tiles" && anchor.startIndex != null) {
-    rowIndex = rows.findIndex(
-      (row) =>
-        row.type === "tiles" &&
-        row.listId === anchor.listId &&
-        row.startIndex === anchor.startIndex,
-    );
+    rowIndex =
+      rowIndexIndex?.rowIndexBySlideIndex.get(
+        `${anchor.listId}:${anchor.startIndex}`,
+      ) ?? -1;
   }
   if (rowIndex < 0) {
     rowIndex = rows.findIndex(
@@ -335,14 +458,17 @@ export const resolveOutlineScrollTopFromAnchor = (
  * Zoom rebuilds row packing and tile height, so restore from a frozen identity
  * rather than a live scrollTop that the browser may have clamped.
  *
- * Prefer the selected slide when it is on screen. Otherwise keep the first
- * visible row so browsing ahead is not yanked back to the live item.
+ * Prefer the selected slide whenever it can be resolved. When it was visible,
+ * retain its approximate row-center position; when it was not visible, the
+ * restore phase centers it so zooming cannot lose the selected slide.
  */
 export type OutlineZoomFocalPoint =
   | {
       kind: "selected";
       listId: string;
       slideIndex: number;
+      /** Row center relative to the viewport before the column reflow. */
+      viewportCenter?: number;
     }
   | {
       kind: "viewport";
@@ -357,6 +483,7 @@ export const captureOutlineZoomFocalPoint = (
   viewportHeight: number,
   selectedListId: string | undefined,
   selectedSlide: number,
+  sectionsByListId?: Map<string, OutlineSlideSection>,
 ): OutlineZoomFocalPoint | null => {
   if (rows.length === 0) return null;
 
@@ -368,18 +495,31 @@ export const captureOutlineZoomFocalPoint = (
     );
     if (rowIndex >= 0) {
       const start = getRowStart(rowIndex);
-      const end = start + getRowHeight(rowIndex);
-      if (start < scrollTop + viewportHeight && end > scrollTop) {
-        return {
-          kind: "selected",
-          listId: selectedListId,
-          slideIndex: selectedSlide,
-        };
-      }
+      const rowHeight = getRowHeight(rowIndex);
+      const end = start + rowHeight;
+      const rowCenter = start + rowHeight / 2 - scrollTop;
+      const isVisible =
+        start < scrollTop + viewportHeight &&
+        end > scrollTop &&
+        rowCenter >= 0 &&
+        rowCenter <= viewportHeight;
+      return {
+        kind: "selected",
+        listId: selectedListId,
+        slideIndex: selectedSlide,
+        ...(isVisible
+          ? { viewportCenter: rowCenter }
+          : {}),
+      };
     }
   }
 
-  const anchor = captureOutlineScrollAnchor(rows, getRowStart, scrollTop);
+  const anchor = captureOutlineScrollAnchor(
+    rows,
+    getRowStart,
+    scrollTop,
+    sectionsByListId,
+  );
   if (!anchor) return null;
   return { kind: "viewport", anchor: { ...anchor, localOffset: 0 } };
 };
@@ -392,18 +532,28 @@ export const findOutlineRowIndexForItem = (
   rows: OutlineVirtualRow[],
   listId: string,
   slideIndex?: number,
+  index?: OutlineVirtualRowIndex,
 ): number => {
   if (slideIndex != null && slideIndex >= 0) {
-    const tileIndex = rows.findIndex(
+    const indexedTileIndex = index?.rowIndexBySlideIndex.get(
+      `${listId}:${slideIndex}`,
+    );
+    if (indexedTileIndex != null) return indexedTileIndex;
+    const tileRows = index?.tileRowsByListId.get(listId);
+    const tileIndex = tileRows?.find(
+      (row) => slideIndex >= row.startIndex && slideIndex < row.startIndex + row.count,
+    )?.rowIndex ?? -1;
+    if (tileIndex >= 0) return tileIndex;
+    const fallbackTileIndex = rows.findIndex(
       (row) =>
         row.type === "tiles" &&
         row.listId === listId &&
         slideIndex >= row.startIndex &&
-        slideIndex < row.startIndex + row.slides.length,
+        slideIndex < row.startIndex + row.count,
     );
-    if (tileIndex >= 0) return tileIndex;
+    if (fallbackTileIndex >= 0) return fallbackTileIndex;
   }
-  return rows.findIndex(
+  return index?.rowIndexByListId.get(listId) ?? rows.findIndex(
     (row) => row.type === "sectionLabel" && row.listId === listId,
   );
 };

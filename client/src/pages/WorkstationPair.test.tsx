@@ -8,6 +8,9 @@ import { setDisplayToken } from "../utils/authStorage";
 import * as authApi from "../api/auth";
 
 jest.mock("../api/auth", () => ({
+  startDevicePairingRequest: jest.fn(),
+  getDevicePairingRequestStatus: jest.fn(),
+  exchangeDevicePairingRequest: jest.fn(),
   redeemDisplayPairing: jest.fn(),
   redeemWorkstationPairing: jest.fn(),
 }));
@@ -22,6 +25,40 @@ describe("WorkstationPair", () => {
     sessionStorage.clear();
     (authApi.redeemWorkstationPairing as jest.Mock).mockReset();
     (authApi.redeemDisplayPairing as jest.Mock).mockReset();
+    (authApi.getDevicePairingRequestStatus as jest.Mock).mockReset();
+    (authApi.exchangeDevicePairingRequest as jest.Mock).mockReset();
+    (authApi.startDevicePairingRequest as jest.Mock).mockResolvedValue({
+      requestId: "request-1",
+      requestSecret: "secret-1",
+      approvalUrl: "https://www.worshipsync.net/#/device-pairing/approve/request-1",
+      pollIntervalMs: 1500,
+    });
+  });
+
+  it("keeps the approved QR visible and offers retry when exchange fails", async () => {
+    (authApi.getDevicePairingRequestStatus as jest.Mock).mockResolvedValue({
+      success: true,
+      status: "awaiting_exchange",
+      expiresAt: "2026-04-08T00:10:00.000Z",
+    });
+    (authApi.exchangeDevicePairingRequest as jest.Mock).mockRejectedValue(new Error("network failure"));
+
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ sessionKind: null }) as any}>
+        <MemoryRouter initialEntries={["/workstation/pair"]}>
+          <WorkstationPair lockedPairType="workstation" />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not|network|try again/i);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Generate new QR" }).length).toBeGreaterThan(0);
+    expect(authApi.exchangeDevicePairingRequest).toHaveBeenCalledWith({
+      requestId: "request-1",
+      requestSecret: "secret-1",
+      platformType: "web",
+    });
   });
 
   it("clears a stale display token when web workstation pairing succeeds", async () => {
@@ -64,6 +101,7 @@ describe("WorkstationPair", () => {
       </GlobalInfoContext.Provider>
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Use a link code instead" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: /link code/i }),
       "ABC123"

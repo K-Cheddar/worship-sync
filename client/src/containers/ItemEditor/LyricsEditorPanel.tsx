@@ -117,11 +117,17 @@ const LyricsEditorPanel = ({
     type,
     arrangements,
     selectedArrangement,
-    hasRemoteUpdate,
-    hasPendingUpdate,
-    pendingRemoteItem,
     songMetadata,
   } = item;
+  const hasRemoteUpdate = isLibraryEditor
+    ? false
+    : Boolean(controllerItem.hasRemoteUpdate);
+  const hasPendingUpdate = isLibraryEditor
+    ? false
+    : Boolean(controllerItem.hasPendingUpdate);
+  const pendingRemoteItem = isLibraryEditor
+    ? undefined
+    : controllerItem.pendingRemoteItem;
   const isLyricsEditorOpen = isLibraryEditor ? true : controllerItem.isLyricsEditorOpen;
   const initialLocalArrangementsRef = useRef<Arrangment[] | null>(null);
   if (initialLocalArrangementsRef.current === null) {
@@ -945,9 +951,12 @@ const LyricsEditorPanel = ({
     };
 
     const formattedItem = formatSong({
+      ...controllerItem,
       ...item,
       arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
+      selectedSlide: controllerItem.selectedSlide,
+      selectedBox: controllerItem.selectedBox,
     });
 
     if (isLibraryEditor) {

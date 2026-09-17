@@ -39,6 +39,8 @@ type HLSPlayerProps = {
   mediaKey?: string;
   /** Live/output cue applied when this surface is following a send. */
   playback?: VideoBackgroundPlaybackCue;
+  outputId?: string;
+  windowRole?: string;
 };
 
 /** Re-seeking for less than this is invisible and only costs a decode stall. */
@@ -71,7 +73,7 @@ const elementState = (video: HTMLVideoElement) => ({
   errorCode: video.error?.code,
 });
 
-const startPlayback = (video: HTMLVideoElement) => {
+const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
   logVideoCue("play.before", elementState(video));
   video
     .play()
@@ -90,6 +92,13 @@ const startPlayback = (video: HTMLVideoElement) => {
         message: (e as Error)?.message,
         ...elementState(video),
       });
+      if (
+        (e as Error)?.name === "AbortError" &&
+        expectedSrc &&
+        video.src !== expectedSrc
+      ) {
+        return;
+      }
       console.warn("Error playing video", e);
     });
 };
@@ -116,6 +125,11 @@ const applyCueToVideo = (
   startPlayback(video);
 };
 
+const cueBelongsToMedia = (
+  cue: VideoBackgroundPlaybackCue | undefined,
+  mediaKey: string | undefined,
+) => !cue || !mediaKey || cue.mediaKey === mediaKey;
+
 const HLSPlayer = ({
   src,
   originalSrc,
@@ -130,6 +144,8 @@ const HLSPlayer = ({
   suspendPlayback = false,
   mediaKey,
   playback,
+  outputId,
+  windowRole,
 }: HLSPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -141,6 +157,8 @@ const HLSPlayer = ({
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
   playbackRoleRef.current = playbackRole;
+  const mediaKeyRef = useRef(mediaKey);
+  mediaKeyRef.current = mediaKey;
   const suspendPlaybackRef = useRef(suspendPlayback);
   suspendPlaybackRef.current = suspendPlayback;
   const onLoadedDataRef = useRef(onLoadedData);
@@ -261,6 +279,12 @@ const HLSPlayer = ({
     }
 
     const cue = playbackRef.current;
+    if (!cueBelongsToMedia(cue, mediaKeyRef.current)) {
+      // A stale cue for another clip must never seek or otherwise synchronize
+      // this element. The transition stage owns the primary identity check;
+      // this guards the player when props race at any other boundary.
+      return;
+    }
     if (!cue) {
       // A rate correction belongs only to the cue that requested it. Do not
       // let it leak into local preview playback after the cue is removed.
@@ -270,7 +294,7 @@ const HLSPlayer = ({
       syncedSrcRef.current = activeSrc;
       appliedGenerationRef.current = null;
       // Outputs start on their own; the editor preview waits for the operator.
-      if (playbackRoleRef.current !== "preview") startPlayback(video);
+      if (playbackRoleRef.current !== "preview") startPlayback(video, activeSrc);
       notifyPaintReadyRef.current(activeSrc);
       return;
     }
@@ -346,11 +370,12 @@ const HLSPlayer = ({
     video.playbackRate = 1;
     rateCorrectionStartedAtRef.current = null;
     const cue = playbackRef.current;
+    if (!cueBelongsToMedia(cue, mediaKeyRef.current)) return;
     video.currentTime = cue
       ? resolveVideoPlaybackPosition(cue, finiteDuration(video))
       : 0;
     if (cue?.paused) return;
-    startPlayback(video);
+    startPlayback(video, srcRef.current);
   }, []);
 
   const playNative = useCallback(
@@ -504,6 +529,7 @@ const HLSPlayer = ({
     if (video) video.playbackRate = 1;
     if (!video || !src) return;
 
+
     if (isHLSVideoSource(src)) {
       const stopHls = playHLS(video, src);
       return () => {
@@ -580,15 +606,20 @@ const HLSPlayer = ({
 
     syncPlayback();
     const cue = playbackRef.current;
-    if (video.paused && cue && !cue.paused) {
-      startPlayback(video);
+    if (
+      cueBelongsToMedia(cue, mediaKeyRef.current) &&
+      video.paused &&
+      cue &&
+      !cue.paused
+    ) {
+      startPlayback(video, srcRef.current);
     } else if (
       video.paused &&
       !cue &&
       playbackRoleRef.current !== "preview" &&
       readySrcRef.current === srcRef.current
     ) {
-      startPlayback(video);
+      startPlayback(video, srcRef.current);
     }
   }, [suspendPlayback, syncPlayback]);
 
@@ -611,6 +642,11 @@ const HLSPlayer = ({
         rateCorrectionStartedAtRef.current = null;
         return;
       }
+      if (!cueBelongsToMedia(cue, mediaKeyRef.current)) {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
+        return;
+      }
       if (syncedSrcRef.current !== srcRef.current) return;
       if (video.paused) {
         video.playbackRate = 1;
@@ -618,7 +654,7 @@ const HLSPlayer = ({
         // Recovers a resume whose play() was rejected or stalled.
         if (resumeRetries < MAX_RESUME_RETRIES) {
           resumeRetries += 1;
-          startPlayback(video);
+          startPlayback(video, srcRef.current);
         }
         return;
       }
@@ -727,7 +763,7 @@ const HLSPlayer = ({
       if (command.type === "play") {
         video.playbackRate = 1;
         rateCorrectionStartedAtRef.current = null;
-        startPlayback(video);
+        startPlayback(video, srcRef.current);
         return;
       }
       if (command.type === "pause") {
@@ -745,7 +781,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
       video.currentTime = 0;
-      startPlayback(video);
+      startPlayback(video, srcRef.current);
     };
 
     return subscribeVideoPreviewCommands(applyCommand);

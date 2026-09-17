@@ -120,6 +120,12 @@ const Toolbar = ({
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
 
+  useEffect(() => {
+    if (variant === "overlay" && mode === "present") {
+      setQuickLinksDrawerOpen(false);
+    }
+  }, [mode, variant]);
+
   const primaryToolbarTabRefs = useRef<
     Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
   >({});
@@ -335,7 +341,7 @@ const Toolbar = ({
     <>
       <div
         className={cn(
-          "flex w-full shrink-0 items-center overflow-x-auto px-2 scrollbar-variable",
+          "flex min-h-0 w-full flex-1 items-center overflow-x-auto px-2 scrollbar-variable",
           "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
           isLyricsEditorOpen && "hidden"
         )}
@@ -447,7 +453,9 @@ const Toolbar = ({
               data-testid="toolbar-primary-row"
             >
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable">
-                <Menu variant="default" />
+                <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
+                  <Menu variant="default" />
+                </div>
                 {modeToggle}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
@@ -468,27 +476,44 @@ const Toolbar = ({
           </div>
         </div>
       ) : (
-        <div className={className}>
-          <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-row justify-center">
-            <Menu variant="overlay" />
-            {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
-          </div>
-          <div
-            className={cn(
-              "scrollbar-variable flex-1 flex min-h-fit flex-col min-w-0",
-              isLyricsEditorOpen && "invisible"
-            )}
-          >
-            {variant === "overlay" ? (
+        <div className={cn(className, "flex items-stretch")}>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div
+              className="scrollbar-variable flex min-w-0 items-center gap-1 overflow-x-auto px-2"
+              data-testid="toolbar-primary-row"
+            >
+              <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
+                <Menu variant="overlay" />
+              </div>
+              {modeToggle}
+              {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
               <ToolbarOverlay
-                isLyricsEditorOpen={!!isLyricsEditorOpen}
+                toolbarRow={mode === "edit" ? "primary" : "present"}
                 quickLinksDrawerOpen={quickLinksDrawerOpen}
                 onQuickLinksOpenChange={setQuickLinksDrawerOpen}
               />
-            ) : null}
+            </div>
+            {mode === "edit" && (
+              <>
+                <div className="w-full border-t border-gray-600" />
+                <div
+                  className="scrollbar-variable flex min-w-0 items-center gap-1 overflow-x-auto px-2"
+                  data-testid="toolbar-secondary-row"
+                >
+                  <ToolbarOverlay
+                    toolbarRow="secondary"
+                    quickLinksDrawerOpen={quickLinksDrawerOpen}
+                    onQuickLinksOpenChange={setQuickLinksDrawerOpen}
+                  />
+                </div>
+              </>
+            )}
           </div>
-          <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
-            <UserSection />
+          <div
+            className="ml-auto flex shrink-0 items-center border-l-2 border-gray-500 px-2"
+            data-testid="toolbar-user-section"
+          >
+            <UserSection variant={mode === "present" ? "compact" : "default"} />
           </div>
         </div>
       )}

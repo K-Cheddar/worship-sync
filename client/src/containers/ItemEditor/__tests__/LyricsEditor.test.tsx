@@ -226,6 +226,7 @@ const renderWithToastContext = () =>
     <ToastContext.Provider
       value={{
         showToast: mockShowToast,
+        updateToast: jest.fn(),
         removeToast: mockRemoveToast,
       }}
     >
@@ -276,6 +277,8 @@ describe("LyricsEditor", () => {
       name: "Library Song",
       type: "song" as const,
       selectedArrangement: 0,
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
       arrangements: [
         {
           id: "arr-1",

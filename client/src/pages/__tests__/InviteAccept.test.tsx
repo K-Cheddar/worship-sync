@@ -118,7 +118,7 @@ describe("InviteAccept", () => {
     createHumanSessionMock.mockReset();
     getAuthBootstrapMock.mockReset();
     logoutSessionMock.mockReset();
-    logoutSessionMock.mockResolvedValue(undefined);
+    logoutSessionMock.mockResolvedValue({ success: true });
     createUserWithEmailAndPasswordMock.mockReset();
     signOutMock.mockClear();
     updateProfileMock.mockClear();
@@ -462,7 +462,7 @@ describe("InviteAccept", () => {
     acceptInviteMock.mockResolvedValue({ success: true });
     createHumanSessionMock.mockResolvedValue({
       success: true,
-      bootstrap: { authenticated: true },
+      bootstrap: { authenticated: true, sessionKind: "human" },
     });
     getAuthBootstrapMock.mockResolvedValue({
       authenticated: false,

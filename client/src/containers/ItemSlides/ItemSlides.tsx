@@ -97,7 +97,11 @@ import {
   resolveOutputDefaults,
   shouldSendNextSlideForOutput,
 } from "../../utils/displaySettings";
-import { ItemSlideType, Presentation as PresentationType } from "../../types";
+import {
+  ItemSlideType,
+  Presentation as PresentationType,
+  ShouldSendTo,
+} from "../../types";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import {
   buildLocalVideoInputPresentation,
@@ -138,6 +142,7 @@ import {
 } from "../../utils/outlineSlideSections";
 import MediaDragPreview from "../Media/MediaDragPreview";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
 
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
@@ -640,12 +645,18 @@ const ItemSlidesContent = () => {
   const renderedSlides = dragPreviewSlides ?? slidesToRender;
 
   useEffect(() => {
+    if (isCollapsedContinuous) {
+      // Continuous mode renders from its own outline document model. Keep the
+      // single-item mirror current without scheduling a delayed parent update.
+      setDebouncedSlides(slides);
+      return;
+    }
     const timeout = setTimeout(() => {
       setDebouncedSlides(slides);
     }, debounceTime.current);
 
     return () => clearTimeout(timeout);
-  }, [slides]);
+  }, [isCollapsedContinuous, slides]);
 
   const getBibleInfo = useCallback(
     (index: number) => {
@@ -666,15 +677,92 @@ const ItemSlidesContent = () => {
   const selectSlide = useCallback(
     (
       index: number,
-      options?: { preserveBackgroundTargetRangeAnchor?: boolean },
+      options?: {
+        preserveBackgroundTargetRangeAnchor?: boolean;
+        presentation?: {
+          slides: ItemSlideType[];
+          type: string;
+          name: string;
+          itemId: string;
+          listId: string;
+          timerId?: string;
+          shouldSendTo?: ShouldSendTo;
+        };
+        presentationOnly?: boolean;
+      },
     ) => {
-      if (!options?.preserveBackgroundTargetRangeAnchor) {
+      const presentationSlides = options?.presentation?.slides ?? slides;
+      const presentationType = options?.presentation?.type ?? type;
+      const presentationName = options?.presentation?.name ?? name;
+      const presentationItemId = options?.presentation?.itemId ?? _id;
+      const presentationListId = options?.presentation?.listId ?? listId;
+      const presentationShouldSendTo =
+        options?.presentation?.shouldSendTo ?? shouldSendTo;
+      const presentationSendTargets = options?.presentation
+        ? {
+            projector: getSendTargetIdsForType(
+              presentationShouldSendTo,
+              displayOutputs,
+              "projector",
+              controllerProfile,
+            ),
+            monitor: getSendTargetIdsForType(
+              presentationShouldSendTo,
+              displayOutputs,
+              "monitor",
+              controllerProfile,
+            ),
+            stream: getSendTargetIdsForType(
+              presentationShouldSendTo,
+              displayOutputs,
+              "stream",
+              controllerProfile,
+            ),
+          }
+        : sendTargets;
+      const presentationSendsToProjector = options?.presentation
+        ? shouldSendToType(
+            presentationShouldSendTo,
+            displayOutputs,
+            "projector",
+            controllerProfile,
+          )
+        : sendsToProjector;
+      const presentationSendsToMonitor = options?.presentation
+        ? shouldSendToType(
+            presentationShouldSendTo,
+            displayOutputs,
+            "monitor",
+            controllerProfile,
+          )
+        : sendsToMonitor;
+      const presentationSendsToStream = options?.presentation
+        ? shouldSendToType(
+            presentationShouldSendTo,
+            displayOutputs,
+            "stream",
+            controllerProfile,
+          )
+        : sendsToStream;
+      const getPresentationBibleInfo = (slideIndex: number) => {
+        const selected = presentationSlides[slideIndex];
+        const titleSlideText = presentationSlides[0]?.boxes[1]?.words?.trim();
+        const slideText = selected?.boxes[1]?.words?.trim();
+        return {
+          title: slideText ? titleSlideText || "" : "",
+          text: slideIndex > 0 ? slideText || "" : "",
+        };
+      };
+
+      if (
+        !options?.presentationOnly &&
+        !options?.preserveBackgroundTargetRangeAnchor
+      ) {
         dispatch(setBackgroundTargetRangeAnchorId(slides[index]?.id ?? null));
       }
       const prevSelected = selectedSlideRef.current;
-      dispatch(setSelectedSlide(index));
-      const slide = slides[index];
-
+      if (!options?.presentationOnly) dispatch(setSelectedSlide(index));
+      const slide = presentationSlides[index];
       if (slide?.mediaSource?.kind === "local-video-input") {
         const localVideoInput = buildLocalVideoInputPresentation(
           slide.mediaSource,
@@ -693,33 +781,33 @@ const ItemSlidesContent = () => {
         const presentation = {
           slide,
           type: "local-video-input",
-          name,
+          name: presentationName,
           slideIndex: index,
-          slideCount: slides.length,
+          slideCount: presentationSlides.length,
           localVideoInput,
         };
         const sendPresentation = () => {
-          if (sendsToProjector) {
+          if (presentationSendsToProjector) {
             dispatch(
               updateProjector(
                 withVideoPlayback(
                   {
                     ...presentation,
-                    outputIds: sendTargets.projector,
+                    outputIds: presentationSendTargets.projector,
                   },
                   outputSlots,
                 ),
               ),
             );
           }
-          if (sendsToMonitor) {
+          if (presentationSendsToMonitor) {
             dispatch(
               updateMonitor(
                 withVideoPlayback(
                   {
                     ...presentation,
-                    outputIds: sendTargets.monitor,
-                    itemId: _id,
+                    outputIds: presentationSendTargets.monitor,
+                    itemId: presentationItemId,
                     transitionDirection: "jump",
                   },
                   outputSlots,
@@ -727,13 +815,13 @@ const ItemSlidesContent = () => {
               ),
             );
           }
-          if (sendsToStream) {
+          if (presentationSendsToStream) {
             dispatch(
               updateStream(
                 withVideoPlayback(
                   {
                     ...presentation,
-                    outputIds: sendTargets.stream,
+                    outputIds: presentationSendTargets.stream,
                   },
                   outputSlots,
                 ),
@@ -786,14 +874,14 @@ const ItemSlidesContent = () => {
         return;
       }
 
-      if (sendsToStream) {
-        if (type === "bible") {
-          const { title, text } = getBibleInfo(index);
+      if (presentationSendsToStream) {
+        if (presentationType === "bible") {
+          const { title, text } = getPresentationBibleInfo(index);
           dispatch(
             updateBibleDisplayInfo({
               title,
               text,
-              outputIds: sendTargets.stream,
+              outputIds: presentationSendTargets.stream,
             }),
           );
         } else {
@@ -801,15 +889,15 @@ const ItemSlidesContent = () => {
             updateBibleDisplayInfo({
               title: "",
               text: "",
-              outputIds: sendTargets.stream,
+              outputIds: presentationSendTargets.stream,
             }),
           );
         }
 
-        if (type === "free") {
+        if (presentationType === "free") {
           dispatch(
             updateFormattedTextDisplayInfo({
-              outputIds: sendTargets.stream,
+              outputIds: presentationSendTargets.stream,
               text: slide.boxes[1]?.words || "",
               backgroundColor:
                 slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
@@ -831,18 +919,18 @@ const ItemSlidesContent = () => {
           );
         }
 
-        if (type !== "free" && type !== "bible") {
+        if (presentationType !== "free" && presentationType !== "bible") {
           dispatch(
             updateStream(
               withVideoPlayback(
                 {
                   outputIds: sendTargets.stream,
                   slide,
-                  type,
-                  name,
-                  timerId: timerInfo?.id,
+                  type: presentationType,
+                  name: presentationName,
+                  timerId: options?.presentation?.timerId ?? timerInfo?.id,
                   slideIndex: index,
-                  slideCount: slides.length,
+                  slideCount: presentationSlides.length,
                 },
                 outputSlots,
               ),
@@ -851,18 +939,18 @@ const ItemSlidesContent = () => {
         }
       }
 
-      if (sendsToProjector) {
+      if (presentationSendsToProjector) {
         dispatch(
           updateProjector(
             withVideoPlayback(
               {
-                outputIds: sendTargets.projector,
+                outputIds: presentationSendTargets.projector,
                 slide,
-                type,
-                name,
-                timerId: timerInfo?.id,
+                type: presentationType,
+                name: presentationName,
+                timerId: options?.presentation?.timerId ?? timerInfo?.id,
                 slideIndex: index,
-                slideCount: slides.length,
+                slideCount: presentationSlides.length,
               },
               outputSlots,
             ),
@@ -870,25 +958,35 @@ const ItemSlidesContent = () => {
         );
       }
 
-      if (type === "timer") {
-        dispatch(setMonitorTimerId(timerInfo?.id || null));
-      } else if (type === "service-time") {
+      if (presentationType === "timer") {
+        dispatch(
+          setMonitorTimerId(
+            options?.presentation?.timerId ?? timerInfo?.id ?? null,
+          ),
+        );
+      } else if (presentationType === "service-time") {
         dispatch(setMonitorTimerId(null));
       }
 
-      if (sendsToMonitor) {
+      if (presentationSendsToMonitor) {
         let transitionDirection: "next" | "prev" | "jump";
-        if (index === prevSelected + 1) transitionDirection = "next";
+        if (options?.presentation) transitionDirection = "jump";
+        else if (index === prevSelected + 1) transitionDirection = "next";
         else if (index === prevSelected - 1) transitionDirection = "prev";
         else transitionDirection = "jump";
-        const monitorSlide = monitorReadySlides[index] ?? slide;
+        const presentationMonitorSlides = options?.presentation
+          ? presentationType === "free" && monitorShowNextSlide
+            ? ensureSlidesHaveMonitorBandFormatting(presentationSlides)
+            : presentationSlides
+          : monitorReadySlides;
+        const monitorSlide = presentationMonitorSlides[index] ?? slide;
         const canShowNextSlide =
-          (type === "song" || type === "bible" || type === "free") &&
+          (presentationType === "song" || presentationType === "bible" || presentationType === "free") &&
           monitorShowNextSlide &&
-          index + 1 < slides.length &&
+          index + 1 < presentationSlides.length &&
           (slide?.boxes ?? []).every((box, i) => i === 0 || box.height <= 55);
         const nextSlideSlide = canShowNextSlide
-          ? (monitorReadySlides[index + 1] ?? slides[index + 1])
+          ? (presentationMonitorSlides[index + 1] ?? presentationSlides[index + 1])
           : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
@@ -909,19 +1007,19 @@ const ItemSlidesContent = () => {
           updateMonitor(
             withVideoPlayback(
               {
-                outputIds: sendTargets.monitor,
+                outputIds: presentationSendTargets.monitor,
                 slide: slideForMonitor,
-                type,
-                name,
-                timerId: timerInfo?.id,
-                itemId: _id,
-                listId,
+                type: presentationType,
+                name: presentationName,
+                timerId: options?.presentation?.timerId ?? timerInfo?.id,
+                itemId: presentationItemId,
+                listId: presentationListId,
                 slideIndex: index,
-                slideCount: slides.length,
+                slideCount: presentationSlides.length,
                 nextSlide: nextSlideForMonitor,
                 transitionDirection,
                 bibleInfoBox:
-                  type === "bible" && nextSlideForMonitor
+                  presentationType === "bible" && nextSlideForMonitor
                     ? (slide.boxes?.[2] ?? null)
                     : undefined,
               },
@@ -937,11 +1035,13 @@ const ItemSlidesContent = () => {
       sendsToProjector,
       sendsToMonitor,
       sendTargets,
+      displayOutputs,
+      controllerProfile,
+      shouldSendTo,
       monitorShowNextSlide,
       type,
       name,
       timerInfo?.id,
-      getBibleInfo,
       slides,
       _id,
       listId,
@@ -1228,6 +1328,11 @@ const ItemSlidesContent = () => {
       slidesScrollRef.current = node;
     },
     [setNodeRef],
+  );
+  const thumbnailScaleFactor = useStaticThumbnailScaleFactor(
+    slidesScrollRef,
+    size,
+    `${isCollapsedContinuous ? "continuous" : "single"}:${size}`,
   );
 
   useEffect(() => {
@@ -1838,10 +1943,11 @@ const ItemSlidesContent = () => {
             liveSlideIds={liveSlideIds}
             backgroundTargetSlideIds={backgroundTargetSlideIds}
             draggedSection={draggedSection}
-            onRenameSection={renameFreeSection}
+            onRenameSection={isPresentMode ? undefined : renameFreeSection}
             timers={timers}
             selectSlide={selectSlide}
             onSlideGridClick={onSlideGridClick}
+            thumbnailScaleFactor={thumbnailScaleFactor}
             onEnterBackgroundTargetSelectMode={
               canEdit && hasSlides
                 ? enterBackgroundTargetSelectModeFromSlide
@@ -1883,7 +1989,9 @@ const ItemSlidesContent = () => {
                   isMobile={isMobile || false}
                   draggedSection={draggedSection}
                   formattedSections={formattedSections}
-                  onRenameSection={renameFreeSection}
+                  onRenameSection={
+                    isPresentMode ? undefined : renameFreeSection
+                  }
                   isStreamFormat={shouldShowStreamFormat}
                   getBibleInfo={getBibleInfo}
                   borderWidth={sizeConfig.borderWidth}
@@ -1899,6 +2007,7 @@ const ItemSlidesContent = () => {
                       ? enterBackgroundTargetSelectModeFromSlide
                       : undefined
                   }
+                  thumbnailScaleFactor={thumbnailScaleFactor}
                 />
               </Fragment>
             ))}
@@ -1963,6 +2072,7 @@ const ItemSlidesContent = () => {
               mediaInsertEnabled={false}
               onSlideGridClick={() => undefined}
               isDragOverlay
+              thumbnailScaleFactor={thumbnailScaleFactor}
             />
           </div>
         ) : null}

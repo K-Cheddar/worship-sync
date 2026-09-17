@@ -1,7 +1,9 @@
 import { getApiBasePath } from "../utils/environment";
 import {
+  getImportableLyricsFromTrack,
   NormalizedLrclibTrack,
   normalizeLrclibTrack,
+  sortLyricsImportTracksBySource,
 } from "../utils/lrclib";
 
 export type LrclibImportQuery = {
@@ -30,13 +32,26 @@ const buildSearchParams = ({
   return params;
 };
 
+const hasLocalGeniusSearch = (): boolean =>
+  typeof window.electronAPI?.searchGeniusLyrics === "function";
+
+const debugLyricsImportTiming = (
+  phase: string,
+  startedAt: number,
+  details?: Record<string, unknown>,
+): void => {
+  if (!import.meta.env.DEV) return;
+
+  console.debug(`[lyrics-import] ${phase}: ${(performance.now() - startedAt).toFixed(0)}ms`, details);
+};
+
 const fetchLrclibEndpoint = async (
   endpoint: "get" | "search",
   query: LrclibImportQuery,
 ): Promise<Response> => {
   return fetch(
     `${getApiBasePath()}api/lrclib/${endpoint}?${buildSearchParams(query).toString()}${
-      endpoint === "search" && window.electronAPI ? "&localGenius=true" : ""
+      endpoint === "search" && hasLocalGeniusSearch() ? "&localGenius=true" : ""
     }`,
   );
 };
@@ -72,7 +87,7 @@ export const getLrclibTrack = async (
   return normalizeLrclibTrack(track);
 };
 
-export const searchLrclibTracks = async (
+const searchServerLyricsProviders = async (
   query: LrclibImportQuery,
 ): Promise<NormalizedLrclibTrack[]> => {
   const response = await fetchLrclibEndpoint("search", query);
@@ -83,6 +98,95 @@ export const searchLrclibTracks = async (
 
   const data = await response.json();
   return normalizeTrackList(data);
+};
+
+const searchGeniusLyricsLocally = async (
+  query: LrclibImportQuery,
+): Promise<NormalizedLrclibTrack[]> => {
+  if (!hasLocalGeniusSearch()) return [];
+
+  const data = await window.electronAPI!.searchGeniusLyrics(query);
+  return normalizeTrackList(data);
+};
+
+export const searchLrclibTracks = async (
+  query: LrclibImportQuery,
+): Promise<NormalizedLrclibTrack[]> => {
+  const startedAt = performance.now();
+  const useLocalGenius = hasLocalGeniusSearch();
+
+  const serverResultsPromise = searchServerLyricsProviders(query).then(
+    (results) => {
+      debugLyricsImportTiming("server lyrics providers", startedAt, {
+        resultCount: results.length,
+      });
+      return results;
+    },
+  );
+
+  if (!useLocalGenius) {
+    return serverResultsPromise.then((results) => {
+      debugLyricsImportTiming("total lyrics search", startedAt, {
+        resultCount: results.length,
+        useLocalGenius,
+      });
+      return results;
+    });
+  }
+
+  const geniusResultsPromise = searchGeniusLyricsLocally(query).then(
+    (results) => {
+      debugLyricsImportTiming("local Genius search", startedAt, {
+        resultCount: results.length,
+      });
+      return results;
+    },
+  );
+
+  const [serverResults, geniusResults] = await Promise.allSettled([
+    serverResultsPromise,
+    geniusResultsPromise,
+  ]);
+
+  const serverTracks =
+    serverResults.status === "fulfilled" ? serverResults.value : [];
+  const geniusTracks =
+    geniusResults.status === "fulfilled" ? geniusResults.value : [];
+
+  if (serverResults.status === "rejected" && geniusResults.status === "rejected") {
+    throw serverResults.reason;
+  }
+
+  const results = useLocalGenius
+    ? sortLyricsImportTracksBySource([...geniusTracks, ...serverTracks])
+    : serverTracks;
+
+  const hydrationStartedAt = performance.now();
+  const hydrationResults = await Promise.allSettled(
+    results.map(async (candidate) => {
+      if (
+        candidate.source !== "genius" ||
+        getImportableLyricsFromTrack(candidate)
+      ) {
+        return candidate;
+      }
+
+      return fetchGeniusLyricsLocally(candidate);
+    }),
+  );
+  const hydratedResults = hydrationResults.map((hydration, index) =>
+    hydration.status === "fulfilled" ? hydration.value : results[index],
+  );
+
+  debugLyricsImportTiming("local Genius page hydration", hydrationStartedAt, {
+    candidateCount: geniusTracks.length,
+  });
+
+  debugLyricsImportTiming("total lyrics search", startedAt, {
+    resultCount: hydratedResults.length,
+    useLocalGenius,
+  });
+  return hydratedResults;
 };
 
 const stripGeniusLyricsPreamble = (lyrics: string, title: string): string => {
@@ -125,7 +229,12 @@ const extractGeniusLyricsFromHtml = (html: string, title: string): string => {
 export const fetchGeniusLyricsLocally = async (
   track: NormalizedLrclibTrack,
 ): Promise<NormalizedLrclibTrack> => {
-  if (track.source !== "genius" || !track.geniusUrl || !window.electronAPI) {
+  const startedAt = performance.now();
+  if (
+    track.source !== "genius" ||
+    !track.geniusUrl ||
+    typeof window.electronAPI?.fetchGeniusLyrics !== "function"
+  ) {
     return track;
   }
 
@@ -142,6 +251,9 @@ export const fetchGeniusLyricsLocally = async (
     throw new Error(`Genius returned no lyrics (HTTP ${response.status}).`);
   }
 
+  debugLyricsImportTiming("local Genius page hydration", startedAt, {
+    geniusId: track.geniusId,
+  });
   return { ...track, plainLyrics };
 };
 

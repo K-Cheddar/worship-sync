@@ -16,7 +16,9 @@ import type { TeamsData } from "../types";
 const mockCreateTeamRosterMember = jest.fn();
 const mockUpdateTeamRosterMember = jest.fn();
 
-const mockInviteTeamRosterMember = jest.fn(async () => ({ success: true }));
+const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
+  success: true,
+}));
 
 jest.mock("../../../api/auth", () => ({
   archiveTeamRosterMember: jest.fn(),

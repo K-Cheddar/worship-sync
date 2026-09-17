@@ -63,9 +63,11 @@ describe("ScheduleEditForm", () => {
       guests: [{ guestId, name: "Jordan Avery" }],
     };
     const service: TeamService = {
+      id: "service-sunday",
       serviceId: "service-sunday",
       churchId: "church-1",
       name: "Sunday",
+      timerType: "countdown",
       reccurence: "one_time",
       dateTimeISO: "2026-07-05T10:00:00.000Z",
     };
@@ -141,9 +143,11 @@ describe("ScheduleEditForm", () => {
   it("fills the name from dates on create and clears the new draft", async () => {
     const user = userEvent.setup();
     const service: TeamService = {
+      id: "service-sunday",
       serviceId: "service-sunday",
       churchId: "church-1",
       name: "Sunday",
+      timerType: "countdown",
       reccurence: "weekly",
       dayOfWeek: 0,
       time: "10:00",
@@ -207,7 +211,7 @@ describe("ScheduleEditForm", () => {
     await user.click(screen.getByRole("button", { name: /Save schedule/i }));
 
     await waitFor(() => expect(createTeamSchedule).toHaveBeenCalledTimes(1));
-    expect(createTeamSchedule.mock.calls[0][1]).toEqual(
+    expect(jest.mocked(createTeamSchedule).mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({ name: "October 2026" }),
     );
     expect(onDraftClear).toHaveBeenCalledWith("new");
@@ -216,9 +220,11 @@ describe("ScheduleEditForm", () => {
 
   it("points operators to create a team when none exist", () => {
     const service: TeamService = {
+      id: "service-sunday",
       serviceId: "service-sunday",
       churchId: "church-1",
       name: "Sunday",
+      timerType: "countdown",
       reccurence: "weekly",
       dayOfWeek: 0,
       time: "10:00",

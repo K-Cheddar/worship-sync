@@ -4,7 +4,7 @@ import type { ContextType } from "react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import type { ServiceTime } from "../types";
-import type { ServicePlan } from "../types/servicePlan";
+import type { ServicePlan, ServicePlanSummary } from "../types/servicePlan";
 import {
   buildCurrentServiceViewerOptions,
   default as CurrentServiceViewer,
@@ -18,14 +18,12 @@ import { createMockGlobalContext } from "../test/mocks";
 import store from "../store/store";
 import { initiateServices } from "../store/serviceTimesSlice";
 import {
-  getServicePlan,
-  getServicePlanPublicSnapshot,
+  getServicePlanViewer,
   listServicePlans,
 } from "../api/auth";
 
 jest.mock("../api/auth", () => ({
-  getServicePlan: jest.fn(),
-  getServicePlanPublicSnapshot: jest.fn(),
+  getServicePlanViewer: jest.fn(),
   listServicePlans: jest.fn(),
 }));
 
@@ -138,8 +136,7 @@ describe("CurrentServiceViewer", () => {
   afterEach(() => {
     cleanup();
     store.dispatch(initiateServices([]));
-    jest.mocked(getServicePlan).mockReset();
-    jest.mocked(getServicePlanPublicSnapshot).mockReset();
+    jest.mocked(getServicePlanViewer).mockReset();
     jest.mocked(listServicePlans).mockReset();
     jest.restoreAllMocks();
     jest.useRealTimers();
@@ -173,16 +170,17 @@ describe("CurrentServiceViewer", () => {
       success: true,
       servicePlans: [summary(morningService)],
     });
-    jest.mocked(getServicePlan).mockResolvedValue({
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
-      servicePlan: plan,
+      plan,
+      snapshot: null,
     });
 
     renderViewer([morningService]);
 
     expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
-    expect(getServicePlan).toHaveBeenCalledWith(
+    expect(getServicePlanViewer).toHaveBeenCalledWith(
       "church-1",
       "svc-1@2026-09-13",
     );
@@ -196,13 +194,44 @@ describe("CurrentServiceViewer", () => {
       success: true,
       servicePlans: [],
     });
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan: null,
+      snapshot: null,
+    });
 
     renderViewer([morningService]);
 
     expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Back to Home/i })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /Choose a service/i })).toBeInTheDocument();
-    expect(getServicePlan).not.toHaveBeenCalled();
+    expect(getServicePlanViewer).toHaveBeenCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
+  });
+
+  it("renders the active service before a slow plan list completes", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    let resolveList: ((value: { success: true; servicePlans: ServicePlanSummary[] }) => void) | undefined;
+    jest.mocked(listServicePlans).mockReturnValue(
+      new Promise((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan,
+      snapshot: null,
+    });
+
+    renderViewer([morningService]);
+
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading service plans")).not.toBeInTheDocument();
+    resolveList?.({ success: true, servicePlans: [summary(morningService)] });
   });
 
   it("groups bounded manual choices as recent, today, and upcoming", () => {
@@ -274,9 +303,10 @@ describe("CurrentServiceViewer", () => {
       success: true,
       servicePlans: [summary(morningService), summary(tomorrowService)],
     });
-    jest.mocked(getServicePlan).mockImplementation(async (_churchId, planKey) => ({
+    jest.mocked(getServicePlanViewer).mockImplementation(async (_churchId, planKey) => ({
       success: true,
-      servicePlan: { ...plan, planKey, name: planKey },
+      plan: { ...plan, planKey, name: planKey },
+      snapshot: null,
     }));
     const user = userEvent.setup();
 
@@ -301,9 +331,10 @@ describe("CurrentServiceViewer", () => {
       success: true,
       servicePlans: [summary(morningService)],
     });
-    jest.mocked(getServicePlan).mockResolvedValue({
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
-      servicePlan: plan,
+      plan,
+      snapshot: null,
     });
     const setVisibility = (visibility: DocumentVisibilityState) => {
       Object.defineProperty(document, "visibilityState", {

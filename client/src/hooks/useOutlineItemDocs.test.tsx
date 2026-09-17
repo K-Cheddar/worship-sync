@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { useOutlineItemDocs } from "./useOutlineItemDocs";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import { upsertItemInAllDocs } from "../store/allDocsSlice";
+import { upsertItemsInAllDocs } from "../store/allDocsSlice";
 import type { DBItem } from "../types";
 import { createMockControllerContext, createMockPouchDB } from "../test/mocks";
 
@@ -90,6 +90,6 @@ describe("useOutlineItemDocs", () => {
         include_docs: true,
       });
     });
-    expect(mockDispatch).toHaveBeenCalledWith(upsertItemInAllDocs(fetched));
+    expect(mockDispatch).toHaveBeenCalledWith(upsertItemsInAllDocs([fetched]));
   });
 });

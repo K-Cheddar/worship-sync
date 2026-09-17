@@ -91,7 +91,6 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
   memberId,
   schedules,
   teams,
-  positionId,
   cellKey,
 }: {
   schedule: TeamSchedule | null | undefined;
@@ -99,6 +98,7 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
   memberId: string;
   schedules: TeamSchedule[];
   teams: TeamRecord[];
+  positionId?: string;
   cellKey?: string;
 }): ScheduleAssignmentConflict[] => {
   if (!schedule || !memberId) return [];

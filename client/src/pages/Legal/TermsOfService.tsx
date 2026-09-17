@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import LegalDocumentPage from "./LegalDocumentPage";
 
-const TERMS_EFFECTIVE_DATE = "August 12, 2026";
+const TERMS_EFFECTIVE_DATE = "September 16, 2026";
 
 const TermsOfService = () => {
   return (
@@ -105,8 +105,8 @@ const TermsOfService = () => {
           You and your Organization keep ownership of content you submit
           (slides, media, plans, messages, and similar materials). You grant
           WorshipSync a limited license to host, process, transmit, and display
-          that content only as needed to operate and improve the Service for
-          you.
+          that content solely as necessary to provide, secure, maintain, and
+          improve the Service.
         </p>
         <p>
           You are responsible for ensuring you have the rights to use songs,
@@ -120,6 +120,15 @@ const TermsOfService = () => {
           Optional integrations and linked services are governed by their own
           terms and privacy policies. WorshipSync is not responsible for
           third-party products you choose to connect.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="terms-feedback">
+        <h2 id="terms-feedback">Feedback</h2>
+        <p>
+          If you submit suggestions or other feedback about the Service, you
+          allow WorshipSync to use it without restriction or compensation to
+          you. This does not transfer ownership of your unrelated content.
         </p>
       </section>
 
@@ -168,7 +177,24 @@ const TermsOfService = () => {
           You may stop using the Service at any time. Organization admins may
           remove users from a workspace. We may suspend or end access if you
           violate these Terms, create risk, or if we discontinue the Service. We
-          will try to give reasonable notice when practical.
+          will try to give reasonable notice when practical. After an
+          Organization account is terminated or closed, access may end and
+          Organization data may later be deleted according to operational,
+          backup, retention, and legal requirements. Organizations should export
+          or otherwise retain critical information before ending use when
+          appropriate.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="terms-indemnity">
+        <h2 id="terms-indemnity">Indemnification</h2>
+        <p>
+          To the extent permitted by law, you agree to defend and hold harmless
+          WorshipSync from claims, losses, and reasonable costs arising from
+          your or your Organization&apos;s content, unlawful use of the Service,
+          infringement of third-party rights, or violation of these Terms. We
+          will provide reasonable notice of a claim and may participate in its
+          defense.
         </p>
       </section>
 
@@ -196,7 +222,9 @@ const TermsOfService = () => {
       <section className="space-y-3" aria-labelledby="terms-contact">
         <h2 id="terms-contact">Contact</h2>
         <p>
-          Questions about these Terms: visit{" "}
+          Questions about these Terms: email{" "}
+          <a href="mailto:support@worshipsync.net">support@worshipsync.net</a>{" "}
+          or visit{" "}
           <a
             href="https://worshipsync.net"
             target="_blank"

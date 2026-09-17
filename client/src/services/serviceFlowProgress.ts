@@ -40,13 +40,14 @@ export const getTimedServiceFlowItems = (
   service: PublicServiceFlow,
 ): TimedServiceFlowItem[] => {
   let startsAtMs = getServiceFlowTimelineStartMs(service);
-  const anchorItemIndex = service.live.mode === "anchored"
+  const live = service.live;
+  const anchorItemIndex = live.mode === "anchored"
     ? service.sections.flatMap((section) => section.items).findIndex(
-      (item) => item.id === service.live.currentItemId,
+      (item) => item.id === live.currentItemId,
     )
     : -1;
-  const anchorStartsAtMs = service.live.mode === "anchored"
-    ? Date.parse(service.live.startedAt)
+  const anchorStartsAtMs = live.mode === "anchored"
+    ? Date.parse(live.startedAt)
     : Number.NaN;
   let itemIndex = 0;
   return service.sections.flatMap((section) =>
@@ -133,7 +134,7 @@ export const getServiceFlowProgress = (
     items,
     isManual: false,
     isAdjusted:
-      service.live.mode === "anchored" &&
-      items.some((timed) => timed.item.id === service.live.currentItemId),
+      live.mode === "anchored" &&
+      items.some((timed) => timed.item.id === live.currentItemId),
   };
 };

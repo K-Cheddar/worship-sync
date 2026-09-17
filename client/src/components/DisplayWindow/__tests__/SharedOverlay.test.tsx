@@ -120,6 +120,22 @@ describe("SharedOverlay", () => {
 
     expect(screen.getByText("Scan this code")).toBeInTheDocument();
     expect(screen.getByTestId("overlay-qr-code")).toBeInTheDocument();
+    expect(screen.getByTestId("overlay-qr-code-quiet-zone")).toHaveClass("bg-white");
+    expect(screen.getByRole("img", { name: "QR code: Scan this code" })).toBeInTheDocument();
+  });
+
+  it("does not render an oversized QR payload", () => {
+    render(
+      <SharedOverlay
+        width={25}
+        styles={defaultQrCodeOverlayStyles}
+        overlayInfo={{ id: "q-overflow", type: "qr-code", url: `https://example.com/${"x".repeat(4000)}` }}
+        needsPadding
+        overlayType="qr-code"
+      />,
+    );
+
+    expect(screen.queryByTestId("overlay-qr-code")).not.toBeInTheDocument();
   });
 
   it("preserves STB text whitespace when rendering the previous overlay", () => {

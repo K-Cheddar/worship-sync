@@ -1,10 +1,15 @@
 import React, { useEffect } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import mediaCacheMapReducer from "../store/mediaCacheMapSlice";
+import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 
-const { useCachedMediaUrl, useCachedVideoUrl } = jest.requireActual(
+const {
+  clearMediaResolutionCacheForTests,
+  useCachedMediaUrl,
+  useCachedVideoUrl,
+} = jest.requireActual(
   "./useCachedMediaUrl",
 ) as typeof import("./useCachedMediaUrl");
 
@@ -40,6 +45,8 @@ const renderWithProvider = (ui: React.ReactElement) =>
 describe("useCachedMediaUrl hooks", () => {
   afterEach(() => {
     delete (window as { electronAPI?: unknown }).electronAPI;
+    store.dispatch(setMediaCacheMap({}));
+    clearMediaResolutionCacheForTests();
     jest.clearAllMocks();
   });
 
@@ -68,6 +75,104 @@ describe("useCachedMediaUrl hooks", () => {
       expect(screen.getByTestId("value")).toHaveTextContent("/cache/image.jpg"),
     );
     expect(onValue).toHaveBeenCalledWith("/cache/image.jpg");
+  });
+
+  it("deduplicates simultaneous lookups and serves later consumers synchronously", async () => {
+    let resolvePath: (value: string | null) => void = () => {};
+    const getLocalMediaPath = jest.fn().mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolvePath = resolve;
+        }),
+    );
+    (window as { electronAPI?: unknown }).electronAPI = { getLocalMediaPath };
+
+    const { container: firstContainer } = renderWithProvider(
+      <HookProbe
+        url="https://cdn.example.com/shared.jpg"
+        mode="media"
+        onValue={jest.fn()}
+      />,
+    );
+    renderWithProvider(
+      <HookProbe
+        url="https://cdn.example.com/shared.jpg"
+        mode="media"
+        onValue={jest.fn()}
+      />,
+    );
+
+    expect(getLocalMediaPath).toHaveBeenCalledTimes(1);
+    resolvePath("/cache/shared.jpg");
+    await waitFor(() =>
+      expect(within(firstContainer).getByTestId("value")).toHaveTextContent(
+        "/cache/shared.jpg",
+      ),
+    );
+
+    const { container: laterContainer } = renderWithProvider(
+      <HookProbe
+        url="https://cdn.example.com/shared.jpg"
+        mode="video"
+        onValue={jest.fn()}
+      />,
+    );
+    expect(within(laterContainer).getByTestId("value")).toHaveTextContent(
+      "/cache/shared.jpg",
+    );
+    expect(getLocalMediaPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps different URLs isolated in the shared resolution cache", async () => {
+    const getLocalMediaPath = jest
+      .fn()
+      .mockResolvedValueOnce("/cache/one.jpg")
+      .mockResolvedValueOnce("/cache/two.jpg");
+    (window as { electronAPI?: unknown }).electronAPI = { getLocalMediaPath };
+
+    const { container: firstContainer } = renderWithProvider(
+      <HookProbe
+        url="https://cdn.example.com/one.jpg"
+        mode="media"
+        onValue={jest.fn()}
+      />,
+    );
+    const { container: secondContainer } = renderWithProvider(
+      <HookProbe
+        url="https://cdn.example.com/two.jpg"
+        mode="media"
+        onValue={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(within(firstContainer).getByTestId("value")).toHaveTextContent(
+        "/cache/one.jpg",
+      ),
+    );
+    await waitFor(() =>
+      expect(within(secondContainer).getByTestId("value")).toHaveTextContent(
+        "/cache/two.jpg",
+      ),
+    );
+    expect(getLocalMediaPath).toHaveBeenNthCalledWith(1, "https://cdn.example.com/one.jpg");
+    expect(getLocalMediaPath).toHaveBeenNthCalledWith(2, "https://cdn.example.com/two.jpg");
+  });
+
+  it("prefers an existing Redux media cache entry without resolving through Electron", () => {
+    const url = "https://cdn.example.com/redux.jpg";
+    store.dispatch(setMediaCacheMap({ [url]: "media-cache://redux.jpg" }));
+    const getLocalMediaPath = jest.fn();
+    (window as { electronAPI?: unknown }).electronAPI = { getLocalMediaPath };
+
+    renderWithProvider(
+      <HookProbe url={url} mode="media" onValue={jest.fn()} />,
+    );
+
+    expect(screen.getByTestId("value")).toHaveTextContent(
+      "media-cache://redux.jpg",
+    );
+    expect(getLocalMediaPath).not.toHaveBeenCalled();
   });
 
   it("ignores stale async media results when url changes quickly", async () => {

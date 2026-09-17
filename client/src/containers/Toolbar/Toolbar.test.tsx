@@ -4,6 +4,7 @@ import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
+import type { ControllerConfigurationRoute } from "../../store/preferencesSlice";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
@@ -154,7 +155,7 @@ const renderToolbar = ({
 }: {
   access: "full" | "music" | "view";
   itemType: string;
-  lastControllerConfigurationRoute?: string;
+  lastControllerConfigurationRoute?: ControllerConfigurationRoute;
   variant?: "default" | "aux";
   workspaceMode?: "present" | "edit";
 }) => {
@@ -190,6 +191,7 @@ const renderToolbar = ({
 const renderToolbarOverlay = ({
   access,
   overlayPanel = "overlays",
+  workspaceMode = "edit",
 }: {
   access: "full" | "music" | "view";
   overlayPanel?:
@@ -198,7 +200,9 @@ const renderToolbarOverlay = ({
   | "overlaysAndPosts"
   | "credits"
   | "serviceTimes";
+  workspaceMode?: "present" | "edit";
 }) => {
+  localStorage.setItem("worshipsync_presentation_controller_mode", workspaceMode);
   mockState = {
     undoable: {
       present: {
@@ -217,7 +221,9 @@ const renderToolbarOverlay = ({
   return render(
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        <Toolbar className="toolbar" variant="overlay" />
+        <PresentationControllerModeProvider>
+          <Toolbar className="toolbar" variant="overlay" />
+        </PresentationControllerModeProvider>
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
@@ -474,6 +480,55 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps overlay live controls in a single Present-mode toolbar row", () => {
+    renderToolbarOverlay({ access: "full", workspaceMode: "present" });
+
+    const primaryRow = screen.getByTestId("toolbar-primary-row");
+    expect(screen.getAllByTestId("toolbar-primary-row")).toHaveLength(1);
+    expect(within(primaryRow).getByText("Menu")).toBeInTheDocument();
+    expect(within(primaryRow).getByRole("button", { name: "Present" })).toBeInTheDocument();
+    expect(within(primaryRow).getByText("Undo")).toBeInTheDocument();
+    expect(within(primaryRow).getByText("Outlines")).toBeInTheDocument();
+    expect(within(primaryRow).getByRole("button", { name: "Open Service Plan" })).toBeInTheDocument();
+    expect(within(primaryRow).getByRole("button", { name: "Overlays" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("toolbar-secondary-row")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quick Links" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Displays" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("compact-user")).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+
+    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
+    const secondaryRow = screen.getByTestId("toolbar-secondary-row");
+    expect(within(secondaryRow).getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
+    expect(within(secondaryRow).getByRole("button", { name: "Displays" })).toBeInTheDocument();
+    expect(within(secondaryRow).queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
+    expect(within(secondaryRow).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getByText("Undo")).toBeInTheDocument();
+    expect(screen.getByTestId("full-user")).toBeInTheDocument();
+  });
+
+  it("places credits controls in the second Edit-mode toolbar row", () => {
+    renderToolbarOverlay({
+      access: "full",
+      overlayPanel: "credits",
+      workspaceMode: "edit",
+    });
+
+    const secondaryRow = screen.getByTestId("toolbar-secondary-row");
+    const secondaryButtons = within(secondaryRow).getAllByRole("button");
+    expect(secondaryButtons[0]).toHaveTextContent("Quick Links");
+    expect(secondaryButtons[1]).toHaveTextContent("Displays");
+    expect(within(secondaryRow).getByRole("button", { name: "Generate Credits" })).toBeInTheDocument();
+    expect(within(secondaryRow).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("toolbar-primary-row")).queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("toolbar-primary-row")).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
   it("overlay variant hides Credits Editor and Service Times tabs for view access", () => {
     renderToolbarOverlay({ access: "view" });
 
@@ -530,15 +585,15 @@ describe("Toolbar", () => {
     );
   });
 
-  it("overlay variant shows Generate Credits instead of Quick Links on credits tab", () => {
+  it("overlay variant shows Generate Credits with Quick Links on credits tab", () => {
     renderToolbarOverlay({ access: "full", overlayPanel: "credits" });
 
     expect(
       screen.getByRole("button", { name: "Generate Credits" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Quick Links" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Quick Links" }),
+    ).toBeInTheDocument();
   });
 
   it("overlay variant shows Quick Links on overlays tab when full access", () => {
@@ -549,11 +604,11 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("overlay variant hides Quick Links on service times tab when full access", () => {
+  it("overlay variant keeps Quick Links on service times tab in Edit mode", () => {
     renderToolbarOverlay({ access: "full", overlayPanel: "serviceTimes" });
 
     expect(
-      screen.queryByRole("button", { name: "Quick Links" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Quick Links" }),
+    ).toBeInTheDocument();
   });
 });

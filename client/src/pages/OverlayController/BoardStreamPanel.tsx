@@ -66,6 +66,7 @@ const FIELD_CLASS = "text-sm flex gap-2 items-center w-full";
 const LABEL_CLASS = "w-24";
 
 type BoardStreamPanelData = {
+  aliasId: string;
   posts: DBBoardPost[];
   hasLoadedOnce: boolean;
   error: string;

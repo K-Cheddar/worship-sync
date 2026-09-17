@@ -37,6 +37,37 @@ export type CanvaImportedAsset =
   | { kind: "image"; data: mediaInfoType }
   | { kind: "video"; data: MuxUploadResult };
 
+export type CanvaMp4ImportMode = "combined" | "separate";
+
+export type CanvaPageImportStatus =
+  | "idle"
+  | "waiting"
+  | "exporting"
+  | "processing"
+  | "saving"
+  | "ready"
+  | "error";
+
+export type CanvaImportProgressEvent =
+  | { type: "started"; total: number; pages?: number[] }
+  | {
+      type: "page-progress";
+      page: number;
+      status: Exclude<CanvaPageImportStatus, "idle">;
+      exported?: boolean;
+      skipped?: boolean;
+      error?: string;
+    }
+  | { type: "finalizing" }
+  | { type: "complete"; result: CanvaImportResult }
+  | { type: "error"; error: string };
+
+export type CanvaImportResult = {
+  assets: CanvaImportedAsset[];
+  skippedCount: number;
+  revision: number;
+};
+
 type JsonInit = Omit<RequestInit, "body"> & {
   body?: Record<string, unknown>;
   timeoutMs?: number;
@@ -125,21 +156,93 @@ export const getCanvaDesign = (churchId: string, designId: string) =>
     `${base(churchId)}/designs/${encodeURIComponent(designId)}`,
   );
 
-export const importCanvaDesign = (
+export const resolveCanvaDesignLink = (churchId: string, url: string) =>
+  fetchJson<{ designId: string }>(`${base(churchId)}/resolve-design-link`, {
+    method: "POST",
+    body: { url },
+  });
+
+export const importCanvaDesign = async (
   churchId: string,
   request: {
     designId: string;
     pages: number[];
     format: "png" | "mp4";
+    mp4ImportMode?: CanvaMp4ImportMode;
     existingImportKeys: string[];
   },
-) =>
-  fetchJson<{
-    assets: CanvaImportedAsset[];
-    skippedCount: number;
-    revision: number;
-  }>(`${base(churchId)}/imports`, {
-    method: "POST",
-    body: request,
-    timeoutMs: 4 * 60 * 1000,
-  });
+  onProgress?: (event: CanvaImportProgressEvent) => void,
+  options: { signal?: AbortSignal } = {},
+): Promise<CanvaImportResult> => {
+  const controller = new AbortController();
+  const abortExternalRequest = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener("abort", abortExternalRequest, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), 8 * 60 * 1000);
+  const headers = new Headers();
+  headers.set("Accept", "application/x-ndjson, application/json");
+  headers.set("Content-Type", "application/json");
+  const csrf = getCsrfToken();
+  if (csrf) headers.set("x-csrf-token", csrf);
+  const humanToken = getHumanApiToken();
+  if (isPackagedElectronRenderer() && humanToken) {
+    headers.set("Authorization", `Bearer ${humanToken}`);
+  }
+  try {
+    const response = await fetch(`${getApiBasePath()}${base(churchId)}/imports`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(request),
+      credentials: "include",
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      throw new Error(
+        payload.error || "Canva could not complete that import. Try again.",
+      );
+    }
+    if (!contentType.includes("application/x-ndjson") || !response.body) {
+      const result = (await response.json()) as CanvaImportResult;
+      return result;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: CanvaImportResult | undefined;
+    const consume = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as CanvaImportProgressEvent;
+      if (event.type === "complete") result = event.result;
+      if (event.type === "error") throw new Error(event.error);
+      onProgress?.(event);
+    };
+    while (true) {
+      const chunk = await reader.read();
+      buffer += decoder.decode(chunk.value || new Uint8Array(), {
+        stream: !chunk.done,
+      });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      lines.forEach(consume);
+      if (chunk.done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+    if (!result) throw new Error("Canva did not finish the import. Try again.");
+    return result;
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw new Error("Canva import cancelled.");
+    }
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Canva took too long to complete the import. Try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abortExternalRequest);
+  }
+};

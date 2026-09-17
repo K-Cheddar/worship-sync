@@ -17,8 +17,7 @@ import Select from "../components/Select/Select";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useSelector } from "../hooks";
 import {
-  getServicePlan,
-  getServicePlanPublicSnapshot,
+  getServicePlanViewer,
   listServicePlans,
 } from "../api/auth";
 import type { TeamScheduleOccurrence } from "../api/authTypes";
@@ -239,6 +238,7 @@ const useCurrentServiceViewerData = (
   const [planError, setPlanError] = useState<string | null>(null);
   const [planErrorKey, setPlanErrorKey] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [viewerRefreshVersion, setViewerRefreshVersion] = useState(0);
   const planCacheRef = useRef(new Map<string, ServicePlan | null>());
   const activePlanKeyRef = useRef<string | null>(null);
   const listRequestIdRef = useRef(0);
@@ -253,11 +253,6 @@ const useCurrentServiceViewerData = (
 
   const activePlanKey = occurrence ? getServicePlanKey(occurrence) : null;
   activePlanKeyRef.current = activePlanKey;
-  const activePlanSummary = savedPlans.find(
-    (savedPlan) => savedPlan.planKey === activePlanKey,
-  );
-  const activePlanSummaryKey = activePlanSummary?.planKey;
-
   useEffect(() => {
     if (lastChurchIdRef.current === churchId) return;
     lastChurchIdRef.current = churchId;
@@ -310,6 +305,15 @@ const useCurrentServiceViewerData = (
     return request;
   }, [canViewServices, churchId]);
 
+  const refreshViewer = useCallback(() => {
+    setViewerRefreshVersion((version) => version + 1);
+  }, []);
+
+  const refreshAll = useCallback(() => {
+    void refresh();
+    refreshViewer();
+  }, [refresh, refreshViewer]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -322,20 +326,20 @@ const useCurrentServiceViewerData = (
   }, [activePlanKey, refresh]);
 
   const refreshOnReconnect = useCallback(() => {
-    void refresh();
-  }, [refresh]);
+    refreshAll();
+  }, [refreshAll]);
 
   useSyncOnReconnect(refreshOnReconnect);
 
   useEffect(() => {
     const refreshIfStale = () => {
       if (Date.now() - lastRefreshAtRef.current >= VIEWER_STALE_AFTER_MS) {
-        void refresh();
+        refreshAll();
       }
     };
     window.addEventListener("focus", refreshIfStale);
     return () => window.removeEventListener("focus", refreshIfStale);
-  }, [refresh]);
+  }, [refreshAll]);
 
   useEffect(() => {
     if (!refreshVersion) return;
@@ -344,15 +348,15 @@ const useCurrentServiceViewerData = (
       VIEWER_STALE_AFTER_MS - (Date.now() - lastRefreshAtRef.current),
     );
     const timeoutId = window.setTimeout(() => {
-      void refresh();
+      refreshAll();
     }, delay);
     return () => window.clearTimeout(timeoutId);
-  }, [refresh, refreshVersion]);
+  }, [refreshAll, refreshVersion]);
 
   const handleStreamEvent = useCallback(
     (event: TeamsStreamEvent) => {
       if (event.type === "connected") {
-        if (hasConnectedRef.current) void refresh();
+        if (hasConnectedRef.current) refreshAll();
         hasConnectedRef.current = true;
         return;
       }
@@ -387,6 +391,7 @@ const useCurrentServiceViewerData = (
           setPublicSnapshot(null);
           setRefreshVersion((version) => version + 1);
           setIsLoadingPlan(true);
+          refreshViewer();
           setPlanError(null);
           setPlanErrorKey(null);
         }
@@ -410,14 +415,14 @@ const useCurrentServiceViewerData = (
         }
       }
     },
-    [refresh],
+    [refreshAll, refreshViewer],
   );
 
   useTeamsLiveSync(canViewTeams ? churchId : null, handleStreamEvent);
 
   useEffect(() => {
     const requestId = ++detailRequestIdRef.current;
-    if (!churchId || !activePlanKey || !activePlanSummaryKey) {
+    if (!churchId || !activePlanKey) {
       setPlan(null);
       setPublicSnapshot(null);
       setPlanError(null);
@@ -433,21 +438,12 @@ const useCurrentServiceViewerData = (
     setPlanErrorKey(null);
     setIsLoadingPlan(cachedPlan === undefined || canViewTeams);
 
-    getServicePlan(churchId, activePlanKey)
-      .then(async (response) => {
+    getServicePlanViewer(churchId, activePlanKey)
+      .then((response) => {
         if (requestId !== detailRequestIdRef.current) return;
-        planCacheRef.current.set(activePlanKey, response.servicePlan);
-        setPlan(response.servicePlan);
-        if (canViewTeams && response.servicePlan) {
-          const detailedResponse = await getServicePlanPublicSnapshot(
-            churchId,
-            activePlanKey,
-          ).catch(() => null);
-          if (requestId !== detailRequestIdRef.current) return;
-          setPublicSnapshot(detailedResponse?.snapshot ?? null);
-        } else {
-          setPublicSnapshot(null);
-        }
+        planCacheRef.current.set(activePlanKey, response.plan);
+        setPlan(response.plan);
+        setPublicSnapshot(response.snapshot);
         setPlanError(null);
         setPlanErrorKey(null);
       })
@@ -461,10 +457,9 @@ const useCurrentServiceViewerData = (
       });
   }, [
     activePlanKey,
-    activePlanSummaryKey,
     canViewTeams,
     churchId,
-    refreshVersion,
+    viewerRefreshVersion,
   ]);
 
   return {
@@ -624,9 +619,7 @@ const CurrentServiceViewer = () => {
   }
 
   const isLoadingService =
-    !data.plansLoaded ||
-    (!hasPlanContent && data.isLoadingPlans) ||
-    data.isLoadingPlan;
+    selection.occurrence ? data.isLoadingPlan : !data.plansLoaded;
 
   if (isLoadingService) {
     return (

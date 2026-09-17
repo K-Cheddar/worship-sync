@@ -54,6 +54,7 @@
     "hls.js": "^1.6.16",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
+    "jsqr": "^1.4.0",
     "lucide-react": "^1.8.0",
     "pdfjs-dist": "^5.7.284",
     "postcss": "^8.5.9",

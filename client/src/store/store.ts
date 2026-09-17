@@ -521,7 +521,6 @@ const createPresentationUpdate = (state: RootState) => {
 };
 
 type PresentationUpdate = ReturnType<typeof createPresentationUpdate>;
-
 const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
@@ -861,6 +860,7 @@ const excludedActions: string[] = [
   allDocsSlice.actions.updateAllSongDocs.toString(),
   allDocsSlice.actions.updateAllTimerDocs.toString(),
   allDocsSlice.actions.upsertItemInAllDocs.toString(),
+  allDocsSlice.actions.upsertItemsInAllDocs.toString(),
   allItemsSlice.actions.initiateAllItemsList.toString(),
   overlayTemplatesSlice.actions.initiateTemplates.toString(),
   overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
@@ -2537,10 +2537,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    await syncPresentationSnapshot(listenerApi.getState() as RootState, action.type);
   },
 });
 

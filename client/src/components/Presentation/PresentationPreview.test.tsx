@@ -113,6 +113,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -134,6 +135,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -157,6 +159,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -180,6 +183,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Monitor"
+        outputId="monitor"
         info={{ ...basePresentation, displayType: "monitor" }}
         prevInfo={{ ...basePresentation, displayType: "monitor" }}
         isTransmitting={false}
@@ -201,6 +205,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -222,6 +227,7 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -244,6 +250,7 @@ describe("PresentationPreview", () => {
     const { rerender } = render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
@@ -274,6 +281,7 @@ describe("PresentationPreview", () => {
     rerender(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={nextInfo}
         prevInfo={basePresentation}
         isTransmitting={false}

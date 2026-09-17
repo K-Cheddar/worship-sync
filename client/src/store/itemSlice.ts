@@ -667,7 +667,7 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
         ? { mediaSource: args.mediaSource }
         : args.mediaInfo?.localVideoInput
           ? { mediaSource: args.mediaInfo.localVideoInput }
-          : { mediaSource: null as const };
+          : { mediaSource: null };
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
@@ -740,7 +740,7 @@ export const updateSlideBackground = createAsyncThunk(
         ? { mediaSource: args.mediaSource }
         : args.mediaInfo?.localVideoInput
           ? { mediaSource: args.mediaInfo.localVideoInput }
-          : { mediaSource: null as const };
+          : { mediaSource: null };
 
     const applySlide = (slide: ItemSlideType): ItemSlideType => {
       const nextBoxes = slide.boxes.map((box, index) => {
@@ -916,7 +916,7 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
     const patch = {
       background: "",
       mediaInfo: undefined as MediaType | undefined,
-      mediaSource: null as const,
+      mediaSource: null,
     };
 
     const arrangementSlides =

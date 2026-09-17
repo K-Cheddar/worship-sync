@@ -289,6 +289,9 @@ describe("OutlineItemSlidesScroller", () => {
       "Song Two",
     );
     expect(screen.getByRole("button", { name: "Song 2 A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Song 2 A" })).toHaveStyle({
+      borderWidth: "2px",
+    });
     expect(screen.queryByText("Section")).not.toBeInTheDocument();
   });
 
@@ -385,7 +388,7 @@ describe("OutlineItemSlidesScroller", () => {
     expect(keepElementInView).not.toHaveBeenCalled();
   });
 
-  it("keeps the visible row when zooming while the selected slide is off screen", () => {
+  it("restores an off-screen selected slide when zooming", () => {
     const { rerenderWithCols } = renderScroller(0);
     const root = screen.getByTestId("scroll-root");
 
@@ -398,13 +401,37 @@ describe("OutlineItemSlidesScroller", () => {
     root.scrollTop = 160;
     rerenderWithCols(1);
 
-    // cols=1: l-1 label + 4 tiles, then l-2 label (5) + tiles (6)
-    expect(root.scrollTop).toBe(240);
+    // The selected slide is in the first tile row after the repack, so zoom
+    // restores that row instead of preserving the deep viewport offset.
+    expect(root.scrollTop).toBe(0);
     expect(mockDispatch).not.toHaveBeenCalled();
-    expect(mockScrollToIndex).not.toHaveBeenCalledWith(
+    expect(mockScrollToIndex).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ align: "center" }),
     );
+  });
+
+  it("lets the newest rapid zoom change own selected-slide restoration", () => {
+    const { rerenderWithCols } = renderScroller(2, 4);
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+
+    rerenderWithCols(2);
+    rerenderWithCols(6);
+    rerenderWithCols(1);
+    rerenderWithCols(5);
+
+    const selectedRestoreCalls = mockScrollToIndex.mock.calls.filter(
+      ([, options]) =>
+        (options as { align?: string } | undefined)?.align === "center",
+    );
+    expect(selectedRestoreCalls.at(-1)).toEqual([
+      1,
+      { align: "center", behavior: "auto" },
+    ]);
   });
 
   it("scrolls back to the selected slide when the current outline item is re-clicked", () => {
@@ -473,6 +500,15 @@ describe("OutlineItemSlidesScroller", () => {
       ),
     );
     expect(mockOnSlideGridClick).not.toHaveBeenCalled();
+    expect(mockSelectSlide).toHaveBeenCalledTimes(1);
+    expect(mockSelectSlide).toHaveBeenCalledWith(0, {
+      presentationOnly: true,
+      presentation: expect.objectContaining({
+        slides: [expect.objectContaining({ id: "s2a" })],
+        itemId: "song-2",
+        listId: "l-2",
+      }),
+    });
 
     mockState.undoable.present.item = {
       ...mockState.undoable.present.item,
@@ -506,6 +542,6 @@ describe("OutlineItemSlidesScroller", () => {
       </div>,
     );
 
-    expect(mockSelectSlide).toHaveBeenCalledWith(0);
+    expect(mockSelectSlide).toHaveBeenCalledTimes(1);
   });
 });

@@ -56,6 +56,7 @@ const buildCellProps = (
   allMembers: [],
   duplicateFirstNames: new Set<string>(),
   canEdit: true,
+  occurrenceDate: occ.startsAt,
 });
 
 const renderView = (
@@ -90,7 +91,7 @@ const renderView = (
             const required = columns.filter(
               (col) => col.slot < (req[col.positionId] ?? 0),
             ).length;
-            return [id, { filled: 0, required }];
+            return [id, { filled: 0, required, accepted: 0, declined: 0 }];
           }),
         )
       }

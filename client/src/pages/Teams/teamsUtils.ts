@@ -94,7 +94,7 @@ export const sortIntakeFormsByStartDate = (
       a.name.localeCompare(b.name),
   );
 
-export const sortTeamsDataKey = <K extends TeamsDataKey>(
+export const sortTeamsDataKey = <K extends keyof TeamsData>(
   key: K,
   items: TeamsData[K],
 ): TeamsData[K] => {
@@ -1085,7 +1085,9 @@ export const isServiceActive = (
   now: Date = new Date(),
 ) => isActive(service) && !isServicePastEnd(service, now);
 
-export const formatServiceTiming = (service?: TeamService | null) => {
+export const formatServiceTiming = (
+  service?: TeamService | ServiceTime | null,
+) => {
   if (!service) return "";
   if (service.reccurence === "one_time")
     return formatOneTime(service.dateTimeISO);

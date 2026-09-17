@@ -24,6 +24,7 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { OVERLAY_CONTROLLER_ID } from "../../utils/controllerProfiles";
 import BoardSyncProvider from "../../boards/BoardSyncContext";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const OverlayControllerContent = () => {
   const dispatch = useDispatch();
@@ -228,7 +229,9 @@ const OverlayControllerContent = () => {
 
 const OverlayController = () => (
   <BoardSyncProvider>
-    <OverlayControllerContent />
+    <PresentationControllerModeProvider>
+      <OverlayControllerContent />
+    </PresentationControllerModeProvider>
   </BoardSyncProvider>
 );
 

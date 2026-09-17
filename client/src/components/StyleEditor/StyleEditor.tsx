@@ -8,7 +8,7 @@ import ColorField from "../ColorField/ColorField";
 import Toggle from "../Toggle/Toggle";
 import cn from "classnames";
 
-type ParticipantOverlayPosition = "left" | "center" | "right";
+export type ParticipantOverlayPosition = "left" | "center" | "right";
 
 const POSITION_OPTIONS: {
   value: ParticipantOverlayPosition;
@@ -52,6 +52,120 @@ const POSITION_OPTIONS: {
       ),
     },
   ];
+
+interface ParticipantPositionControlProps {
+  formatting: OverlayFormatting;
+  onChange: (formatting: OverlayFormatting) => void;
+  name?: string;
+  inline?: boolean;
+}
+
+export const ParticipantPositionControl: React.FC<ParticipantPositionControlProps> = ({
+  formatting,
+  onChange,
+  name = "participant-overlay-position",
+  inline = false,
+}) => {
+  const participantPosition =
+    (formatting.participantOverlayPosition ?? "left") as ParticipantOverlayPosition;
+
+  const setParticipantPosition = (position: ParticipantOverlayPosition) => {
+    const updates: Partial<OverlayFormatting> = {
+      participantOverlayPosition: position,
+    };
+    const children = formatting.children || [];
+    const defaultBorderColor =
+      formatting.borderColor ?? formatting.borderLeftColor ?? formatting.borderRightColor ?? "#15803d";
+    const accentByPosition = {
+      left: {
+        width: formatting.borderLeftWidth ?? 5,
+        color: formatting.borderLeftColor ?? defaultBorderColor,
+      },
+      right: {
+        width: formatting.borderRightWidth ?? 5,
+        color: formatting.borderRightColor ?? defaultBorderColor,
+      },
+      center: {
+        width: formatting.borderBottomWidth ?? 2,
+        color: formatting.borderBottomColor ?? defaultBorderColor,
+      },
+    } as const;
+    const { width: accentWidth, color: accentColor } =
+      accentByPosition[participantPosition];
+    const updateChild = (c: OverlayChild, textAlign: "left" | "right" | "center") => ({
+      ...c,
+      textAlign,
+      width: 100,
+    });
+    if (position === "left") {
+      updates.left = 2;
+      updates.right = 0;
+      updates.borderLeftWidth = accentWidth ?? 5;
+      updates.borderLeftColor = accentColor;
+      updates.borderRightWidth = 0;
+      updates.borderBottomWidth = 0;
+      updates.textAlign = "left";
+      updates.children = children.map((c) => updateChild(c, "left"));
+    } else if (position === "center") {
+      updates.left = undefined;
+      updates.right = undefined;
+      updates.borderLeftWidth = 0;
+      updates.borderRightWidth = 0;
+      updates.borderBottomWidth = accentWidth ?? 2;
+      updates.borderBottomColor = accentColor;
+      updates.textAlign = "center";
+      updates.children = children.map((c) => updateChild(c, "center"));
+    } else {
+      updates.left = undefined;
+      updates.right = 2;
+      updates.borderRightWidth = accentWidth ?? 5;
+      updates.borderRightColor = accentColor;
+      updates.borderLeftWidth = 0;
+      updates.borderBottomWidth = 0;
+      updates.textAlign = "right";
+      updates.children = children.map((c) => updateChild(c, "right"));
+    }
+    onChange({ ...formatting, ...updates });
+  };
+
+  const controls = (
+    <div className={cn("flex flex-wrap gap-3", inline && "flex-1 justify-center")}>
+        {POSITION_OPTIONS.map(({ value, label, Illustration }) => (
+          <label
+            key={value}
+            className={cn(
+              "flex flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 p-2 transition-colors",
+              participantPosition === value
+                ? "border-cyan-500 bg-cyan-500/10"
+                : "border-gray-600 hover:border-gray-500"
+            )}
+          >
+            <input
+              type="radio"
+              name={name}
+              value={value}
+              checked={participantPosition === value}
+              onChange={() => setParticipantPosition(value)}
+              className="sr-only"
+            />
+            <Illustration />
+            <span className="text-xs text-white font-medium">{label}</span>
+          </label>
+        ))}
+    </div>
+  );
+
+  if (inline) {
+    return (
+      <div className="flex w-full items-center gap-2">
+        <h3 className="w-20 shrink-0 text-sm font-medium text-white">Position:</h3>
+        {controls}
+      </div>
+    );
+  }
+
+  return <Section title="Position" shouldShow>{controls}</Section>;
+};
 
 interface StyleEditorProps {
   formatting: OverlayFormatting;
@@ -712,68 +826,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
 
   const children = formatting.children || [];
 
-  const participantPosition =
-    (formatting.participantOverlayPosition ?? "left") as ParticipantOverlayPosition;
-
-  const setParticipantPosition = (position: ParticipantOverlayPosition) => {
-    const updates: Partial<OverlayFormatting> = {
-      participantOverlayPosition: position,
-    };
-    const children = formatting.children || [];
-    const defaultBorderColor =
-      formatting.borderColor ?? formatting.borderLeftColor ?? formatting.borderRightColor ?? "#15803d";
-    const accentByPosition = {
-      left: {
-        width: formatting.borderLeftWidth ?? 5,
-        color: formatting.borderLeftColor ?? defaultBorderColor,
-      },
-      right: {
-        width: formatting.borderRightWidth ?? 5,
-        color: formatting.borderRightColor ?? defaultBorderColor,
-      },
-      center: {
-        width: formatting.borderBottomWidth ?? 2,
-        color: formatting.borderBottomColor ?? defaultBorderColor,
-      },
-    } as const;
-    const { width: accentWidth, color: accentColor } =
-      accentByPosition[participantPosition];
-    const updateChild = (c: OverlayChild, textAlign: "left" | "right" | "center") => ({
-      ...c,
-      textAlign,
-      width: 100,
-    });
-    if (position === "left") {
-      updates.left = 2;
-      updates.right = 0;
-      updates.borderLeftWidth = accentWidth ?? 5;
-      updates.borderLeftColor = accentColor;
-      updates.borderRightWidth = 0;
-      updates.borderBottomWidth = 0;
-      updates.textAlign = "left";
-      updates.children = children.map((c) => updateChild(c, "left"));
-    } else if (position === "center") {
-      updates.left = undefined;
-      updates.right = undefined;
-      updates.borderLeftWidth = 0;
-      updates.borderRightWidth = 0;
-      updates.borderBottomWidth = accentWidth ?? 2;
-      updates.borderBottomColor = accentColor;
-      updates.textAlign = "center";
-      updates.children = children.map((c) => updateChild(c, "center"));
-    } else {
-      updates.left = undefined;
-      updates.right = 2;
-      updates.borderRightWidth = accentWidth ?? 5;
-      updates.borderRightColor = accentColor;
-      updates.borderLeftWidth = 0;
-      updates.borderBottomWidth = 0;
-      updates.textAlign = "right";
-      updates.children = children.map((c) => updateChild(c, "right"));
-    }
-    onChange({ ...formatting, ...updates });
-  };
-
   return (
     <div className={cn("space-y-6 h-full scrollbar-variable", className)}>
       <Toggle
@@ -783,32 +835,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
       />
 
       {overlayType === "participant" && (
-        <Section title="Position" shouldShow={true}>
-          <div className="flex flex-wrap gap-3">
-            {POSITION_OPTIONS.map(({ value, label, Illustration }) => (
-              <label
-                key={value}
-                className={cn(
-                  "flex flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 p-2 transition-colors",
-                  participantPosition === value
-                    ? "border-cyan-500 bg-cyan-500/10"
-                    : "border-gray-600 hover:border-gray-500"
-                )}
-              >
-                <input
-                  type="radio"
-                  name="participant-overlay-position"
-                  value={value}
-                  checked={participantPosition === value}
-                  onChange={() => setParticipantPosition(value)}
-                  className="sr-only"
-                />
-                <Illustration />
-                <span className="text-xs text-white font-medium">{label}</span>
-              </label>
-            ))}
-          </div>
-        </Section>
+        <ParticipantPositionControl formatting={formatting} onChange={onChange} />
       )}
 
       {renderSection(

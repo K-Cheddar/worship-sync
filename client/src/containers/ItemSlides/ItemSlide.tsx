@@ -1,5 +1,3 @@
-import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
-
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { ItemSlideType, TimerInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
@@ -18,6 +16,7 @@ import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import { useDroppable } from "@dnd-kit/core";
 import { type SlideDragData, type SlideInsertData } from "../../utils/presentationDnd";
+import StaticSlideThumbnail from "./StaticSlideThumbnail";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -56,6 +55,7 @@ type ItemSlideProps = {
   formattedSections?: FormattedSection[];
   onRenameSection?: (sectionNum: number, name: string) => void;
   isDragOverlay?: boolean;
+  thumbnailScaleFactor?: number;
 };
 
 const MediaSlideInsertTarget = ({
@@ -114,6 +114,7 @@ const ItemSlide = ({
   formattedSections = [],
   onRenameSection,
   isDragOverlay = false,
+  thumbnailScaleFactor = 0,
 }: ItemSlideProps) => {
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
@@ -405,34 +406,14 @@ const ItemSlide = ({
             </button>
           ) : null}
         </h4>
-        <DisplayWindow
-          showBorder
-          boxes={
-            isStreamFormat && (itemType === "free" || itemType === "bible")
-              ? []
-              : slide.boxes
-          }
-          displayType={isStreamFormat ? "stream" : "slide"}
+        <StaticSlideThumbnail
+          slide={slide}
+          itemType={itemType}
+          isStreamFormat={isStreamFormat}
           timerInfo={timerInfo}
-          bibleDisplayInfo={
+          scaleFactor={thumbnailScaleFactor}
+          bibleInfo={
             itemType === "bible" ? getBibleInfo(index) : undefined
-          }
-          formattedTextDisplayInfo={
-            itemType === "free"
-              ? {
-                text: slide.boxes[1]?.words?.trim() || "",
-                backgroundColor:
-                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-                textColor:
-                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-                isBold: slide.formattedTextDisplayInfo?.isBold || false,
-                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-                align: slide.formattedTextDisplayInfo?.align || "left",
-              }
-              : undefined
           }
         />
         {slide.mediaSource?.kind === "local-video-input" ? (

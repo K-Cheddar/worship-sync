@@ -21,6 +21,7 @@ const makeSongCandidate = (
   overlayReady: false,
   outlineAlreadyPresent: false,
   ...overrides,
+  sourceRowIndex: overrides.sourceRowIndex ?? 0,
 });
 
 describe("dedupeOutlineCandidatesForPreview", () => {

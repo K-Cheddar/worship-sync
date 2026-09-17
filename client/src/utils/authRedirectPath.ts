@@ -25,7 +25,7 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
 
 // `/aux-controller/<id>` is a dynamic operator surface (same tier as `/controller`).
 // Omitting it sent booth restarts to the presentation controller after operator entry.
-const AUTH_REDIRECT_PREFIXES = ["/controller", "/aux-controller", "/boards/"];
+const AUTH_REDIRECT_PREFIXES = ["/controller", "/aux-controller", "/boards/", "/device-pairing/approve/"];
 
 /** Limit redirect query strings (deep links, filters) without allowing unbounded payloads. */
 const AUTH_REDIRECT_MAX_SEARCH_LENGTH = 8192;

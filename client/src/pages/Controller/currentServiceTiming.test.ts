@@ -56,7 +56,6 @@ const planSection = (
   id,
   name: id,
   elements: elements.map((element) => ({
-    id: element.id,
     type: "free",
     title: EMPTY_RICH_TEXT,
     ...element,
@@ -313,6 +312,56 @@ describe("resolveCurrentServiceTimingState", () => {
         nowMs: localAt(2026, 7, 26, 9, 30),
       }),
     ).toEqual({ type: "service-ending", targetMs: localAt(2026, 7, 26, 10) });
+  });
+
+  it("moves the service end to the anchored live timeline", () => {
+    const anchoredAt = localAt(2026, 7, 26, 9, 30);
+    const anchoredPlan = plan(startsAtMs, [
+      planSection("service", [
+        { id: "item", startTime: "09:00", durationMinutes: 60 },
+        { id: "closing", startTime: "10:00", durationMinutes: 30 },
+      ]),
+    ], {
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "item",
+        startedAt: new Date(anchoredAt).toISOString(),
+      },
+    });
+
+    expect(
+      stateAt({
+        selectedOccurrence: selected,
+        services: [service()],
+        timingPlan: anchoredPlan,
+        nowMs: anchoredAt,
+      }),
+    ).toEqual({
+      type: "service-ending",
+      targetMs: localAt(2026, 7, 26, 11),
+    });
+  });
+
+  it("does not move the service end for a manually pinned live item", () => {
+    const manualPlan = plan(startsAtMs, [
+      planSection("service", [
+        { id: "item", startTime: "09:00", durationMinutes: 60 },
+      ]),
+    ], {
+      publicLive: { mode: "manual", currentElementId: "item" },
+    });
+
+    expect(
+      stateAt({
+        selectedOccurrence: selected,
+        services: [service()],
+        timingPlan: manualPlan,
+        nowMs: localAt(2026, 7, 26, 9, 30),
+      }),
+    ).toEqual({
+      type: "service-ending",
+      targetMs: localAt(2026, 7, 26, 10),
+    });
   });
 
   it("switches to overtime at the exact end and derives elapsed time absolutely", () => {

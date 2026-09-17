@@ -123,7 +123,7 @@ export class MediaCacheManager {
    */
   private convertMuxUrlToMp4(url: string): string | null {
     if (url.includes("stream.mux.com")) {
-      const playbackIdMatch = url.match(/stream\.mux\.com\/([a-zA-Z0-9]+)/);
+      const playbackIdMatch = url.match(/stream\.mux\.com\/([^/?]+)/);
       if (playbackIdMatch) {
         const playbackId = playbackIdMatch[1];
         return `https://stream.mux.com/${playbackId}/highest.mp4`;
@@ -397,9 +397,10 @@ export class MediaCacheManager {
       const mediaCacheUrl = `media-cache://${filename}`;
       map[cacheKey] = mediaCacheUrl;
       if (this.isMuxUrl(cacheKey)) {
-        const playbackIdMatch = cacheKey.match(/stream\.mux\.com\/([a-zA-Z0-9]+)/);
+        const playbackIdMatch = cacheKey.match(/stream\.mux\.com\/([^/?]+)/);
         if (playbackIdMatch) {
           const playbackId = playbackIdMatch[1];
+          map[`https://stream.mux.com/${playbackId}.m3u8`] = mediaCacheUrl;
           map[`https://stream.mux.com/${playbackId}/master.m3u8`] = mediaCacheUrl;
         }
       }

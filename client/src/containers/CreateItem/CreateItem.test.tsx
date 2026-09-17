@@ -35,7 +35,10 @@ import {
   createNewSong,
   createNewTimer,
 } from "../../utils/itemUtil";
-import { resolveLrclibImport } from "../../api/lrclib";
+import {
+  fetchGeniusLyricsLocally,
+  resolveLrclibImport,
+} from "../../api/lrclib";
 import generateRandomId from "../../utils/generateRandomId";
 
 jest.mock("../../utils/itemUtil", () => {
@@ -68,6 +71,9 @@ const mockedCreateNewTimer = createNewTimer as jest.MockedFunction<
 >;
 const mockedResolveLrclibImport = resolveLrclibImport as jest.MockedFunction<
   typeof resolveLrclibImport
+>;
+const mockedFetchGeniusLyricsLocally = fetchGeniusLyricsLocally as jest.MockedFunction<
+  typeof fetchGeniusLyricsLocally
 >;
 const mockedGenerateRandomId = jest.mocked(generateRandomId);
 
@@ -217,6 +223,7 @@ describe("CreateItem", () => {
     mockedCreateNewFreeForm.mockReset();
     mockedCreateNewTimer.mockReset();
     mockedResolveLrclibImport.mockReset();
+    mockedFetchGeniusLyricsLocally.mockReset();
     let n = 0;
     mockedGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
   });
@@ -392,6 +399,7 @@ describe("CreateItem", () => {
         timerType: "countdown",
         lyricsImportCandidates: [],
         lyricsImportError: "",
+        hasUserSelectedType: true,
       },
     });
 
@@ -628,6 +636,62 @@ describe("CreateItem", () => {
         "Verse 1\nLine one\nLine two\nBridge\nFinal line",
       );
     });
+  });
+
+  it("keeps successful Genius candidates when another local page hydration fails", async () => {
+    const successfulCandidate = {
+      source: "genius" as const,
+      geniusId: 31,
+      geniusUrl: "https://genius.com/successful-song-lyrics",
+      trackName: "Successful Song",
+      artistName: "Example Artist",
+      plainLyrics: null,
+      syncedLyrics: null,
+    };
+    const failedCandidate = {
+      source: "genius" as const,
+      geniusId: 32,
+      geniusUrl: "https://genius.com/failed-song-lyrics",
+      trackName: "Failed Song",
+      artistName: "Example Artist",
+      plainLyrics: null,
+      syncedLyrics: null,
+    };
+    mockedResolveLrclibImport.mockResolvedValue({
+      match: null,
+      candidates: [successfulCandidate, failedCandidate],
+    });
+    mockedFetchGeniusLyricsLocally
+      .mockResolvedValueOnce({
+        ...successfulCandidate,
+        plainLyrics: "Successful lyrics",
+      })
+      .mockRejectedValueOnce(new Error("Genius page unavailable"));
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Example Song",
+      },
+    });
+
+    renderCreateItem({ store });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Successful Song")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Failed Song")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Use Lyrics" })).toHaveLength(2);
+    expect(store.getState().createItem.lyricsImportCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          geniusId: 31,
+          plainLyrics: "Successful lyrics",
+        }),
+        expect.objectContaining({ geniusId: 32, plainLyrics: null }),
+      ]),
+    );
   });
 
   it("keeps the draft after adding an existing item to the outline", () => {

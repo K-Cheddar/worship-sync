@@ -4597,6 +4597,16 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(viewerRead.payload.servicePlan.publicTokenHash, undefined);
   assert.equal(viewerRead.payload.publicUrls, undefined);
 
+  const viewerPayload = await callHandler(authHandlers.getServicePlanViewer, {
+    context: viewerContext,
+    params: { planKey },
+  });
+  assert.equal(viewerPayload.statusCode, 200);
+  assert.equal(viewerPayload.payload.plan.name, "Sunday Service");
+  assert.equal(viewerPayload.payload.snapshot.service.title, "Sunday Service");
+  assert.equal(viewerPayload.payload.snapshot.service.sections.length > 0, true);
+  assert.equal(viewerPayload.payload.plan.publicLinkToken, undefined);
+
   // An editor still gets the links back so "copy share link" keeps working.
   const editorRead = await callHandler(authHandlers.getServicePlan, {
     context,

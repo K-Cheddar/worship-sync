@@ -252,13 +252,18 @@ describe("mirror controls on an auxiliary controller", () => {
         // ActiveControllerProvider switches outline scope; keep a shim so that
         // write does not throw in this focused transmit-handler suite.
         undoable: (
-          state = {
+          state: {
+            present: {
+              preferences: ReturnType<typeof preferencesSlice.getInitialState>;
+              itemLists: ReturnType<typeof itemListsReducer>;
+            };
+          } = {
             present: {
               preferences: preferencesSlice.getInitialState(),
               itemLists: itemListsReducer(undefined, { type: "@@init" }),
             },
           },
-          action,
+          action: { type: string },
         ) => ({
           present: {
             preferences: state.present.preferences,

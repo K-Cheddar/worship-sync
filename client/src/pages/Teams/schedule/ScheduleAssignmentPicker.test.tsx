@@ -18,6 +18,7 @@ const PickerHarness = ({
   members,
   getAssignmentActionIssues,
   onAssignmentAction,
+  onClose,
 }: {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
@@ -29,6 +30,7 @@ const PickerHarness = ({
   members: TeamRosterMember[];
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   onAssignmentAction?: jest.Mock;
+  onClose?: jest.Mock;
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   return (
@@ -54,6 +56,7 @@ const PickerHarness = ({
         getAssignmentActionIssues={getAssignmentActionIssues}
         onSelectMember={jest.fn()}
         onAssignmentAction={onAssignmentAction}
+        onClose={onClose}
         onAssignGuest={onAssignGuest}
         onEditGuest={onEditGuest}
       />
@@ -72,6 +75,7 @@ const renderPicker = ({
   members = [],
   getAssignmentActionIssues,
   onAssignmentAction,
+  onClose = jest.fn(),
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -83,6 +87,7 @@ const renderPicker = ({
   members?: TeamRosterMember[];
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   onAssignmentAction?: jest.Mock;
+  onClose?: jest.Mock;
 } = {}) => {
   render(
     <PickerHarness
@@ -96,10 +101,19 @@ const renderPicker = ({
       members={members}
       getAssignmentActionIssues={getAssignmentActionIssues}
       onAssignmentAction={onAssignmentAction}
+      onClose={onClose}
     />,
   );
-  return { onAssignGuest, onEditGuest };
+  return { onAssignGuest, onEditGuest, onClose };
 };
+
+it("closes when the close button is pressed", () => {
+  const { onClose } = renderPicker();
+
+  fireEvent.mouseDown(screen.getByRole("button", { name: "Close assignee picker" }));
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
 
 describe("ScheduleAssignmentPicker guests", () => {
   it("collects optional guest details and assigns without creating a member", async () => {
@@ -263,5 +277,48 @@ describe("ScheduleAssignmentPicker occupied slots", () => {
     fireEvent.mouseDown(screen.getByRole("option", { name: "Taylor" }));
 
     expect(onAssignmentAction).toHaveBeenCalledWith("member-2", "shadow");
+  });
+
+  it("returns to the full member list when the active slot becomes empty", () => {
+    const SlotChangeHarness = () => {
+      const [currentPrimaryMemberId, setCurrentPrimaryMemberId] = useState("member-1");
+      const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => setCurrentPrimaryMemberId("")}
+          >
+            Select empty slot
+          </button>
+          <button ref={setAnchorEl} type="button">Assignment anchor</button>
+          <ScheduleAssignmentPicker
+            open
+            anchorEl={anchorEl}
+            label="Sunday Camera"
+            positionId="camera"
+            positionName="Camera"
+            members={[member]}
+            assignmentQuery=""
+            onAssignmentQueryChange={jest.fn()}
+            currentPrimaryMemberId={currentPrimaryMemberId}
+            currentAssigneeLabel={currentPrimaryMemberId ? "Morgan" : "Empty"}
+            hasCurrentAssignee={Boolean(currentPrimaryMemberId)}
+            getIssue={() => ""}
+            getAssignmentActionIssues={getAssignmentActionIssues}
+            onSelectMember={jest.fn()}
+            onAssignmentAction={jest.fn()}
+          />
+        </>
+      );
+    };
+
+    render(<SlotChangeHarness />);
+    expect(screen.getByRole("menuitem", { name: "Find a sub" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select empty slot" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Find a sub" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Taylor" })).toBeInTheDocument();
   });
 });

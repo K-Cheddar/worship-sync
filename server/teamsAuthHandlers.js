@@ -8432,6 +8432,40 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async getServicePlanViewer(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        const reader = await requireServicePlansView(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const servicePlan = await getDoc(
+          COLLECTIONS.servicePlans,
+          buildServicePlanDocId(churchId, planKey),
+        );
+        if (!servicePlan || servicePlan.churchId !== churchId) {
+          return res.json({ success: true, plan: null, snapshot: null });
+        }
+
+        const plan = withoutServicePlanAssignments(servicePlan, reader);
+        const snapshot =
+          hasTeamsPlanAccess(reader) &&
+          servicePlan.published &&
+          servicePlan.publicLinkToken
+            ? await buildPublicServicePlan({
+                plan: servicePlan,
+                viewMode: "team",
+                token: servicePlan.publicLinkToken,
+              })
+            : null;
+        return res.json({ success: true, plan, snapshot });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load this service viewer.",
+        );
+      }
+    },
+
     async getServicePlanAssignments(req, res) {
       try {
         const churchId = req.params.churchId;
