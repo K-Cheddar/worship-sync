@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { RefreshCw, ScanLine, X } from "lucide-react";
 import Button from "../Button/Button";
-import { parseDevicePairingApprovalUrl } from "../../utils/devicePairingQr";
+import {
+  getDevicePairingApprovalUrlParseError,
+  parseDevicePairingApprovalUrl,
+} from "../../utils/devicePairingQr";
 
 type ScannerStatus = "loading" | "ready" | "unavailable" | "denied";
 
@@ -37,6 +40,12 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     (value: string) => {
       const parsed = parseDevicePairingApprovalUrl(value);
       if (!parsed) {
+        if (import.meta.env.DEV) {
+          console.debug(
+            "Rejected device-pairing QR URL:",
+            getDevicePairingApprovalUrlParseError(value),
+          );
+        }
         setInvalid(true);
         return;
       }

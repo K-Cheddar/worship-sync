@@ -37,6 +37,7 @@ test("sanitizeInviteForClient removes tokenHash but keeps inviteLink", () => {
   const out = sanitizeInviteForClient({
     inviteId: "inv_1",
     tokenHash: "hashed",
+    pendingResendToken: "encrypted-token",
     inviteLink: "https://example.com/#/invite?token=x",
   });
   assert.deepEqual(out, {

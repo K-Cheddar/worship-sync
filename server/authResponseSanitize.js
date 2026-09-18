@@ -17,7 +17,7 @@ export const sanitizeDisplayDeviceForClient = (device) => {
 
 export const sanitizeInviteForClient = (invite) => {
   if (!invite || typeof invite !== "object") return invite;
-  const { tokenHash, ...rest } = invite;
+  const { tokenHash, pendingResendToken, ...rest } = invite;
   return rest;
 };
 

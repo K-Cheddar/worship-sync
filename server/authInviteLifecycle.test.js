@@ -261,11 +261,13 @@ test("revoked invites cannot be resent", { skip: authRuntimeInfo.hasFirestore },
   assert.equal(res.statusCode, 400);
 });
 
-test("email send failure preserves the existing invite token and expiration", { skip: authRuntimeInfo.hasFirestore }, async () => {
+test("email send failure leaves the committed replacement token retryable", { skip: authRuntimeInfo.hasFirestore }, async () => {
   const req = { session: {} };
   const churchId = "invite_lifecycle_send_failure_church";
   const oldToken = "invite-send-failure-old-token";
   const oldExpiresAt = new Date(Date.now() + 86400000).toISOString();
+  const deliveryTokens = [];
+  let deliveryAttempts = 0;
   const { humanApiToken } = await seedActiveHumanBearerForServerTests({
     req,
     userId: "invite_lifecycle_send_failure_admin",
@@ -279,8 +281,15 @@ test("email send failure preserves the existing invite token and expiration", { 
     token: oldToken,
     expiresAt: oldExpiresAt,
   });
-  setSendEmailForServerTests(async () => {
-    throw new Error("delivery failed");
+  setSendEmailForServerTests(async (payload) => {
+    const token = decodeURIComponent(
+      `${payload.textBody} ${payload.htmlBody}`.match(
+        /invite\?token=([^&\s"')]+)/,
+      )[1],
+    );
+    deliveryTokens.push(token);
+    deliveryAttempts += 1;
+    if (deliveryAttempts === 1) throw new Error("delivery failed");
   });
   try {
     const res = createRes();
@@ -297,6 +306,35 @@ test("email send failure preserves the existing invite token and expiration", { 
     );
     assert.equal(res.statusCode, 500);
 
+    const oldPreviewRes = createRes();
+    await authHandlers.getInvitePreview(
+      createReq({ query: { token: oldToken } }),
+      oldPreviewRes,
+    );
+    assert.equal(oldPreviewRes.statusCode, 404);
+
+    const replacementPreviewRes = createRes();
+    await authHandlers.getInvitePreview(
+      createReq({ query: { token: deliveryTokens[0] } }),
+      replacementPreviewRes,
+    );
+    assert.equal(replacementPreviewRes.statusCode, 200);
+
+    const retryRes = createRes();
+    await authHandlers.resendChurchInvite(
+      createReq({
+        params: { churchId, inviteId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+      }),
+      retryRes,
+    );
+    assert.equal(retryRes.statusCode, 200);
+    assert.deepEqual(deliveryTokens, [deliveryTokens[0], deliveryTokens[0]]);
+
     const listRes = createRes();
     await authHandlers.listChurchInvites(
       createReq({
@@ -306,14 +344,7 @@ test("email send failure preserves the existing invite token and expiration", { 
       listRes,
     );
     assert.equal(listRes.payload.invites[0].status, "pending");
-    assert.equal(listRes.payload.invites[0].expiresAt, oldExpiresAt);
-
-    const previewRes = createRes();
-    await authHandlers.getInvitePreview(
-      createReq({ query: { token: oldToken } }),
-      previewRes,
-    );
-    assert.equal(previewRes.statusCode, 200);
+    assert.notEqual(listRes.payload.invites[0].expiresAt, oldExpiresAt);
   } finally {
     setSendEmailForServerTests(null);
   }

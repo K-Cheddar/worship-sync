@@ -473,6 +473,14 @@ const resendClient =
 
 const sessionCookieName = "worshipsync_sid";
 const sessionSecret = process.env.AUTH_SESSION_SECRET;
+const inviteTokenEncryptionKey = crypto
+  .createHash("sha256")
+  .update(
+    process.env.AUTH_INVITE_TOKEN_ENCRYPTION_KEY ||
+      sessionSecret ||
+      "dev-auth-secret",
+  )
+  .digest();
 
 if (process.env.NODE_ENV === "production" && !sessionSecret) {
   throw new Error("AUTH_SESSION_SECRET must be set in production.");
@@ -1263,6 +1271,41 @@ const queryDocs = async (
     .slice(0, limit);
 };
 
+const encryptPendingInviteToken = (token) => {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(
+    "aes-256-gcm",
+    inviteTokenEncryptionKey,
+    iv,
+  );
+  const encrypted = Buffer.concat([
+    cipher.update(String(token), "utf8"),
+    cipher.final(),
+  ]);
+  return `v1.${iv.toString("base64url")}.${cipher
+    .getAuthTag()
+    .toString("base64url")}.${encrypted.toString("base64url")}`;
+};
+
+const decryptPendingInviteToken = (value) => {
+  const [version, iv, tag, encrypted] = String(value || "").split(".");
+  if (version !== "v1" || !iv || !tag || !encrypted) return null;
+  try {
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      inviteTokenEncryptionKey,
+      Buffer.from(iv, "base64url"),
+    );
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([
+      decipher.update(Buffer.from(encrypted, "base64url")),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch {
+    return null;
+  }
+};
+
 const findOutstandingInvite = (invites, churchId, email) =>
   invites.find(
     (invite) =>
@@ -1361,6 +1404,7 @@ const updateInviteForResend = async ({
   churchId,
   inviteId,
   patch,
+  expectedTokenHash,
 }) => {
   const db = requireFirestore();
   if (db) {
@@ -1371,6 +1415,9 @@ const updateInviteForResend = async ({
       const current = { id: snapshot.id, ...snapshot.data() };
       if (current.churchId !== churchId) {
         throw httpError(404, "Invite not found.");
+      }
+      if (expectedTokenHash && current.tokenHash !== expectedTokenHash) {
+        throw httpError(409, "This invite changed while the resend was starting.");
       }
       if (current.status === "accepted" || current.acceptedAt) {
         throw httpError(400, "Accepted invites cannot be resent.");
@@ -1390,6 +1437,9 @@ const updateInviteForResend = async ({
   if (!current || current.churchId !== churchId) {
     throw httpError(404, "Invite not found.");
   }
+  if (expectedTokenHash && current.tokenHash !== expectedTokenHash) {
+    throw httpError(409, "This invite changed while the resend was starting.");
+  }
   if (current.status === "accepted" || current.acceptedAt) {
     throw httpError(400, "Accepted invites cannot be resent.");
   }
@@ -1402,6 +1452,40 @@ const updateInviteForResend = async ({
   const updated = { ...current, ...patch };
   collectionMap[COLLECTIONS.invites].set(inviteId, updated);
   return { id: inviteId, ...updated };
+};
+
+const clearPendingInviteToken = async ({
+  churchId,
+  inviteId,
+  tokenHash,
+}) => {
+  const db = requireFirestore();
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+      const snapshot = await transaction.get(inviteRef);
+      if (!snapshot.exists) return;
+      const current = snapshot.data();
+      if (
+        current.churchId === churchId &&
+        current.tokenHash === tokenHash
+      ) {
+        transaction.update(inviteRef, { pendingResendToken: null });
+      }
+    });
+    return;
+  }
+
+  const current = collectionMap[COLLECTIONS.invites].get(inviteId);
+  if (
+    current?.churchId === churchId &&
+    current.tokenHash === tokenHash
+  ) {
+    collectionMap[COLLECTIONS.invites].set(inviteId, {
+      ...current,
+      pendingResendToken: null,
+    });
+  }
 };
 
 const addSecurityEvent = async (event) => {
@@ -7238,13 +7322,24 @@ export const authHandlers = {
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
-      const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
+      const pendingToken = decryptPendingInviteToken(invite.pendingResendToken);
+      const canReusePendingToken =
+        pendingToken &&
+        invite.pendingResendToken &&
+        invite.tokenHash === hashValue(pendingToken) &&
+        !isInviteExpired(invite);
+      const rawToken = canReusePendingToken
+        ? pendingToken
+        : `${createNumericCode()}-${crypto.randomUUID()}`;
       const sentAt = nowIso();
       const invitePatch = {
         status: "pending",
         tokenHash: hashValue(rawToken),
-        expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+        expiresAt: canReusePendingToken
+          ? invite.expiresAt
+          : new Date(Date.now() + INVITE_TTL_MS).toISOString(),
         lastSentAt: sentAt,
+        pendingResendToken: encryptPendingInviteToken(rawToken),
       };
       const church = await getChurchById(req.params.churchId);
       if (!church) {
@@ -7254,6 +7349,14 @@ export const authHandlers = {
       const churchName = churchNameTrimmed || "your church";
       const inviteEmail = await renderInviteEmail(buildInviteUrl(rawToken), {
         churchName,
+      });
+      // Commit before delivery: the provider may accept the message even if a
+      // later Firestore write fails, so no post-delivery commit may be needed.
+      const refreshedInvite = await updateInviteForResend({
+        churchId: req.params.churchId,
+        inviteId,
+        patch: invitePatch,
+        expectedTokenHash: invite.tokenHash,
       });
       await sendEmail({
         to: invite.email,
@@ -7267,14 +7370,18 @@ export const authHandlers = {
           role: invite.role,
         },
       });
-      // Keep the existing token authoritative until the replacement email is
-      // accepted by the delivery provider. The transaction below then makes
-      // the new token and refreshed expiration authoritative together.
-      const refreshedInvite = await updateInviteForResend({
-        churchId: req.params.churchId,
-        inviteId,
-        patch: invitePatch,
-      });
+      try {
+        await clearPendingInviteToken({
+          churchId: req.params.churchId,
+          inviteId,
+          tokenHash: invitePatch.tokenHash,
+        });
+      } catch (error) {
+        logAuthEvent("warn", "invite_resend.pending_token_cleanup_failed", {
+          inviteId,
+          message: error.message,
+        });
+      }
       await addSecurityEvent({
         type: "invite_resent",
         churchId: req.params.churchId,
