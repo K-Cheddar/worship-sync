@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { VideoBackgroundPlaybackCue } from "../../../types";
 import LaneFullFrameMedia from "../LaneFullFrameMedia";
 
@@ -71,5 +71,31 @@ describe("LaneFullFrameMedia", () => {
       "data-playback-position",
       "17",
     );
+  });
+
+  it("reports a loaded fallback as lane-ready before the live video paints", () => {
+    const visualReady = jest.fn();
+    const liveReady = jest.fn();
+    const media = {
+      kind: "fileVideo" as const,
+      mediaKey: "remote:video-b",
+      originalSrc: "https://cdn.example.com/video-b.mp4",
+      fallbackSrc: "https://cdn.example.com/video-b.jpg",
+      videoBox: { id: "video-b", width: 100, height: 100, words: "" },
+    };
+
+    render(
+      <LaneFullFrameMedia
+        media={media}
+        isPrevious={false}
+        onPaintReadyChange={visualReady}
+        onLivePaintReadyChange={liveReady}
+      />,
+    );
+
+    fireEvent.load(screen.getByTestId("file-video-fallback"));
+
+    expect(visualReady).toHaveBeenLastCalledWith(true);
+    expect(liveReady).toHaveBeenLastCalledWith(false);
   });
 });

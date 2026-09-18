@@ -1644,6 +1644,7 @@ export const presentationSlice = createSlice({
           time: t,
         };
         stream.info.type = "bible";
+        stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
         stream.info.slide = null;
         stream.info.time = t;
       }
@@ -1736,6 +1737,7 @@ export const presentationSlice = createSlice({
           time: t,
         };
         stream.info.type = "free";
+        stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
         stream.info.slide = null;
         stream.info.time = t;
       }

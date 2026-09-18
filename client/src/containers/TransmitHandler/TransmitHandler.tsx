@@ -33,7 +33,7 @@ import BoardMonitorPreview from "./BoardMonitorPreview";
 import { useResolvedBoardDisplayAlias } from "../../boards/useResolvedBoardDisplayAlias";
 import {
   isPushOutputType,
-  supportsBoardTakeover,
+  getBoardCapableOutputs,
 } from "../../utils/displayOutputs";
 import { getQuickLinksForOutput } from "../../utils/quickLinksForOutput";
 import { QuickLinkType } from "../../types";
@@ -170,10 +170,17 @@ const TransmitHandler = ({
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
-  // Any full-frame display can host the board now, so find whichever one has it.
+  const supportsDiscussionBoard = controllerProfile.type === "presentation";
+  const boardCapableOutputs = useMemo(
+    () => getBoardCapableOutputs(ownedOutputs),
+    [ownedOutputs],
+  );
+
+  // Only the Presentation controller may discover or control its board hosts.
   const boardHostOutputId = useSelector((state) => {
-    for (const slot of Object.values(selectOutputSlots(state))) {
-      if (supportsBoardTakeover(slot.type) && slot.boardAliasId) return slot.id;
+    const outputSlots = selectOutputSlots(state);
+    for (const output of boardCapableOutputs) {
+      if (outputSlots[output.id]?.boardAliasId) return output.id;
     }
     return "";
   });
@@ -212,7 +219,8 @@ const TransmitHandler = ({
   // tile shows even on a device that has never opened the board. Collapsed by
   // default so it stays out of the way until needed.
   const boardAliasId = useResolvedBoardDisplayAlias({
-    enabled: !readOnly && variant === "default" && showMonitor,
+    enabled:
+      supportsDiscussionBoard && !readOnly && variant === "default" && showMonitor,
   });
   // A board that's already live on the monitor must always keep its section (and
   // its "off" switch) rendered, even if the inputs that normally reveal it — a
@@ -221,6 +229,7 @@ const TransmitHandler = ({
   // stays on the monitor, leaving no way to remove it.
   const isBoardLiveOnMonitor = boardHostOutputId !== "";
   const showBoardSection =
+    supportsDiscussionBoard &&
     !readOnly &&
     variant === "default" &&
     (isBoardLiveOnMonitor || (showMonitor && Boolean(boardAliasId)));
@@ -282,6 +291,7 @@ const TransmitHandler = ({
           <div className="pb-2 pr-2">
             <BoardMonitorPreview
               aliasId={boardAliasId}
+              boardCapableOutputs={boardCapableOutputs}
               isOpen={isBoardSectionOpen}
               isMobile={isMobile}
               previewScale={previewScale}

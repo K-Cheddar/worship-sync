@@ -10,14 +10,13 @@ import {
   setDisplayBoardAliasId,
   selectOutputSlots,
 } from "../../store/presentationSlice";
-import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
-import {
-  getBoardCapableOutputs,
-  resolveBoardTakeoverOutputId,
-} from "../../utils/displayOutputs";
+import { resolveBoardTakeoverOutputId } from "../../utils/displayOutputs";
+import type { DisplayOutput } from "../../utils/displayOutputs";
 import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
+  /** Board-capable outputs already narrowed to the active controller. */
+  boardCapableOutputs: DisplayOutput[];
   /**
    * The discussion board this tile targets, resolved by the parent (this device's
    * remembered board if any, otherwise the church's first board). May be empty
@@ -48,17 +47,13 @@ type BoardMonitorPreviewProps = {
  */
 const BoardMonitorPreview = ({
   aliasId,
+  boardCapableOutputs,
   isOpen,
   isMobile = false,
   previewScale = 1,
   fillWidth = false,
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
-  const displayOutputs = useSelector(selectDisplayOutputs);
-  const boardCapableOutputs = useMemo(
-    () => getBoardCapableOutputs(displayOutputs),
-    [displayOutputs],
-  );
   const outputSlots = useSelector(selectOutputSlots);
   // The display already showing a board wins, so the control always describes
   // what is actually up rather than the Displays-page preference alone.
@@ -70,7 +65,7 @@ const BoardMonitorPreview = ({
     [boardCapableOutputs, outputSlots],
   );
   const targetOutputId = resolveBoardTakeoverOutputId(
-    displayOutputs,
+    boardCapableOutputs,
     liveBoardOutputId,
   );
   const targetOutputName =

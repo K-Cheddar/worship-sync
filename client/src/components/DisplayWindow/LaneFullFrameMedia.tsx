@@ -4,6 +4,7 @@ import type {
   VideoBackgroundPlaybackCue,
 } from "../../types";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import HLSPlayer from "./HLSVideoPlayer";
 import LocalVideoInputView from "./LocalVideoInputView";
 import type { LaneBackgroundMedia } from "./laneBackgroundMedia";
@@ -13,6 +14,8 @@ type LaneFullFrameMediaProps = {
   /** Outgoing/demoted lane: keep frames, never audible. */
   isPrevious: boolean;
   onPaintReadyChange: (ready: boolean) => void;
+  /** Reports when the actual file-video surface can replace its fallback. */
+  onLivePaintReadyChange?: (ready: boolean) => void;
   fileVideoAudioEnabled?: boolean;
   volume?: number;
   playbackRole?: "preview" | "output";
@@ -47,6 +50,7 @@ const LaneFullFrameMedia = ({
   media,
   isPrevious,
   onPaintReadyChange,
+  onLivePaintReadyChange,
   fileVideoAudioEnabled = false,
   volume = 1,
   playbackRole = "output",
@@ -82,6 +86,18 @@ const LaneFullFrameMedia = ({
     () => fileOriginalSrc ?? "",
   );
   const [fileVideoPaintReady, setFileVideoPaintReady] = useState(false);
+  const localVideoThumbnail = useLocalVideoFileUrl(
+    fileVideoBox?.mediaInfo?.localVideoFile,
+    "thumbnail",
+  );
+  const fallbackSrc =
+    localVideoThumbnail.url ||
+    (media.kind === "fileVideo" ? media.fallbackSrc : undefined);
+  const [fallbackPaintReady, setFallbackPaintReady] = useState(false);
+
+  useEffect(() => {
+    setFallbackPaintReady(false);
+  }, [fallbackSrc]);
 
   if (
     mediaKind === "fileVideo" &&
@@ -122,19 +138,23 @@ const LaneFullFrameMedia = ({
       return;
     }
     if (mediaKind === "fileVideo") {
-      onPaintReadyChange(Boolean(frozenResolvedSrc) && fileVideoPaintReady);
+      const liveReady = Boolean(frozenResolvedSrc) && fileVideoPaintReady;
+      onLivePaintReadyChange?.(liveReady);
+      onPaintReadyChange(Boolean(fallbackSrc && fallbackPaintReady) || liveReady);
     }
   }, [
+    fallbackPaintReady,
+    fallbackSrc,
     fileVideoPaintReady,
     frozenResolvedSrc,
     mediaKind,
     onPaintReadyChange,
+    onLivePaintReadyChange,
   ]);
 
   if (mediaKind === "none") return null;
 
   if (mediaKind === "fileVideo" && fileOriginalSrc && fileVideoBox) {
-    if (!frozenResolvedSrc) return null;
     return (
       <div
         className="pointer-events-none absolute inset-0"
@@ -143,25 +163,45 @@ const LaneFullFrameMedia = ({
         }
         data-media-key={fileMediaKey}
         data-paint-ready={fileVideoPaintReady ? "true" : "false"}
+        data-fallback-ready={fallbackPaintReady ? "true" : "false"}
       >
-        <HLSPlayer
-          src={frozenResolvedSrc}
-          originalSrc={fileOriginalSrc}
-          onLoadedData={() => setFileVideoPaintReady(true)}
-          onError={() => setFileVideoPaintReady(false)}
-          videoBox={fileVideoBox}
-          muted={isPrevious || !fileVideoAudioEnabled}
-          volume={volume}
-          playbackRole={isEditor ? "preview" : playbackRole}
-          preloadRole={preloadRole ?? (isEditor ? "preview" : playbackRole)}
-          suspendPlayback={suspendPlayback}
-          mediaKey={fileMediaKey}
-          // Keep the outgoing cue attached to the same player while it fades
-          // out. Changing lane role must not make the video lose its position.
-          playback={playback}
-          outputId={outputId}
-          windowRole={windowRole}
-        />
+        {fallbackSrc && (
+          <img
+            src={fallbackSrc}
+            alt=""
+            aria-hidden
+            data-testid="file-video-fallback"
+            className={`absolute inset-0 h-full w-full transition-opacity duration-150 ${
+              fileVideoBox.shouldKeepAspectRatio ? "object-contain" : "object-cover"
+            }`}
+            style={{
+              opacity: fileVideoPaintReady ? 0 : 1,
+              filter: fileVideoBox.brightness
+                ? `brightness(${fileVideoBox.brightness}%)`
+                : undefined,
+            }}
+            onLoad={() => setFallbackPaintReady(true)}
+            onError={() => setFallbackPaintReady(false)}
+          />
+        )}
+        {frozenResolvedSrc && (
+          <HLSPlayer
+            src={frozenResolvedSrc}
+            originalSrc={fileOriginalSrc}
+            onLoadedData={() => setFileVideoPaintReady(true)}
+            onError={() => setFileVideoPaintReady(false)}
+            videoBox={fileVideoBox}
+            muted={isPrevious || !fileVideoAudioEnabled}
+            volume={volume}
+            playbackRole={isEditor ? "preview" : playbackRole}
+            preloadRole={preloadRole ?? (isEditor ? "preview" : playbackRole)}
+            suspendPlayback={suspendPlayback}
+            mediaKey={fileMediaKey}
+            playback={playback}
+            outputId={outputId}
+            windowRole={windowRole}
+          />
+        )}
       </div>
     );
   }

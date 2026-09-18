@@ -367,4 +367,27 @@ describe("mirror controls on an auxiliary controller", () => {
       screen.queryByRole("button", { name: /Mirror/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("does not show the Presentation board takeover on an auxiliary controller", () => {
+    const store = createAuxStore();
+    store.dispatch(
+      syncOutputSlots([
+        { id: "projector", type: "projector" },
+        { id: "out_lobby", type: "projector" },
+        { id: "monitor", type: "monitor", boardAliasId: "live-board" },
+        { id: "stream", type: "stream" },
+      ]),
+    );
+
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    expect(screen.queryByText("Discussion Board")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("preview-Board")).not.toBeInTheDocument();
+  });
 });

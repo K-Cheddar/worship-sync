@@ -1,20 +1,55 @@
 import { render, screen, within } from "@testing-library/react";
 import type { Box } from "../../../types";
 import MonitorView from "../MonitorView";
+import type {
+  DisplayBoxTransitionSnapshot,
+  LaneRenderMediaOptions,
+} from "../DisplayBoxTransitionStage";
+
+let mockLiveVideoPaintReady = false;
+
+jest.mock("../DisplayBoxTransitionStage", () => ({
+  __esModule: true,
+  getDisplayBoxesLayerKey: (boxes: Box[]) => JSON.stringify(boxes),
+  default: ({
+    snapshot,
+    renderLane,
+  }: {
+    snapshot: DisplayBoxTransitionSnapshot;
+    renderLane: (
+      snapshot: DisplayBoxTransitionSnapshot,
+      isPrevious: boolean,
+      reportBoxPaintReady: (index: number, ready: boolean) => void,
+      laneMedia: LaneRenderMediaOptions,
+    ) => React.ReactNode;
+  }) => (
+    <div data-testid="mock-monitor-transition-stage">
+      {renderLane(snapshot, false, () => undefined, {
+        fullFramePaintReady: true,
+        liveVideoPaintReady: mockLiveVideoPaintReady,
+        paintBackground: true,
+        paintForeground: true,
+      })}
+    </div>
+  ),
+}));
 
 jest.mock("../DisplayBox", () => ({
   __esModule: true,
   default: ({
     box,
     isPrev,
+    isWindowVideoLoaded,
   }: {
     box: Box;
     isPrev?: boolean;
+    isWindowVideoLoaded?: boolean;
   }) => (
     <div
       data-testid={isPrev ? "monitor-prev-box" : "monitor-current-box"}
       data-box-id={box.id}
       data-words={box.words ?? ""}
+      data-video-loaded={isWindowVideoLoaded ? "true" : "false"}
     />
   ),
 }));
@@ -111,6 +146,67 @@ describe("MonitorView", () => {
     );
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("uses live video readiness before hiding a file-video fallback", () => {
+    const videoBox: Box = {
+      ...baseBox,
+      mediaInfo: {
+        type: "video",
+        background: "https://stream.mux.com/playbackId123",
+        placeholderImage: "https://cdn.example.com/poster.jpg",
+      },
+    };
+    const backgroundMedia = {
+      kind: "fileVideo" as const,
+      mediaKey: "remote:video-1",
+      originalSrc: videoBox.mediaInfo!.background!,
+      videoBox,
+    };
+
+    const { rerender } = render(
+      <MonitorView
+        boxes={[videoBox]}
+        prevBoxes={[]}
+        showBackground
+        shouldAnimate
+        effectiveWidth={50}
+        scaleFactor={1}
+        effectiveShowClock={false}
+        effectiveShowTimer={false}
+        clockFontSize={16}
+        timerFontSize={16}
+        backgroundMedia={backgroundMedia}
+      />,
+    );
+
+    expect(screen.getByTestId("monitor-current-box")).toHaveAttribute(
+      "data-video-loaded",
+      "false",
+    );
+
+    mockLiveVideoPaintReady = true;
+    rerender(
+      <MonitorView
+        boxes={[videoBox]}
+        prevBoxes={[]}
+        showBackground
+        shouldAnimate
+        effectiveWidth={50}
+        scaleFactor={1}
+        effectiveShowClock={false}
+        effectiveShowTimer={false}
+        clockFontSize={16}
+        timerFontSize={16}
+        backgroundMedia={backgroundMedia}
+      />,
+    );
+
+    expect(screen.getByTestId("monitor-current-box")).toHaveAttribute(
+      "data-video-loaded",
+      "true",
+    );
+    mockLiveVideoPaintReady = false;
   });
 
   describe("background in the next-slide band layout", () => {

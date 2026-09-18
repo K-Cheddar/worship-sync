@@ -1,4 +1,5 @@
 import type { Box, LocalVideoInputPresentation } from "../../types";
+import { getImageFromVideoUrl } from "../../utils/generalUtils";
 import { getVideoBackgroundMediaKey } from "../../utils/videoBackgroundPlayback";
 
 export type LaneBackgroundMedia =
@@ -8,6 +9,7 @@ export type LaneBackgroundMedia =
       mediaKey: string;
       originalSrc: string;
       videoBox: Box;
+      fallbackSrc?: string;
     }
   | {
       kind: "localVideo";
@@ -132,5 +134,23 @@ export const resolveLaneBackgroundMedia = ({
     mediaKey,
     originalSrc,
     videoBox,
+    fallbackSrc:
+      videoBox.mediaInfo.placeholderImage || videoBox.mediaInfo.thumbnail ||
+      getVideoFallbackImage(videoBox.mediaInfo.background),
   };
+};
+
+const getVideoFallbackImage = (url: string): string | undefined => {
+  if (!url) return undefined;
+  if (
+    url.includes("stream.mux.com") ||
+    url.includes("portable-media/video/upload")
+  ) {
+    // Full-frame displays use a 1920x1080 stage. A 960x540 poster is large
+    // enough for that stage while keeping fallback requests bounded.
+    return (
+      getImageFromVideoUrl(url, { width: 960, height: 540 }) || undefined
+    );
+  }
+  return undefined;
 };

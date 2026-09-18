@@ -8,6 +8,7 @@ import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
 
 let mockTimelineComplete: (() => void) | undefined;
 let mockMediaReady = true;
+let mockLiveMediaReady = true;
 const playbackCuesByMedia = new Map<string, string[]>();
 const mockTimeline = {
   addLabel: jest.fn(),
@@ -33,10 +34,12 @@ jest.mock("../LaneFullFrameMedia", () => ({
   __esModule: true,
   default: function MockLaneFullFrameMedia({
     onPaintReadyChange,
+    onLivePaintReadyChange,
     media,
     playback,
   }: {
     onPaintReadyChange: (ready: boolean) => void;
+    onLivePaintReadyChange?: (ready: boolean) => void;
     media: { kind: string; mediaKey?: string; input?: { sourceId: string } };
     playback?: { mediaKey?: string; generation?: number; positionSeconds?: number };
   }) {
@@ -47,7 +50,8 @@ jest.mock("../LaneFullFrameMedia", () => ({
     }
     useEffect(() => {
       onPaintReadyChange(mockMediaReady);
-    }, [onPaintReadyChange]);
+      onLivePaintReadyChange?.(mockLiveMediaReady);
+    }, [onLivePaintReadyChange, onPaintReadyChange]);
     const id =
       media.kind === "fileVideo"
         ? media.mediaKey
@@ -132,7 +136,54 @@ describe("DisplayBoxTransitionStage", () => {
     jest.clearAllMocks();
     mockTimelineComplete = undefined;
     mockMediaReady = true;
+    mockLiveMediaReady = true;
     playbackCuesByMedia.clear();
+  });
+
+  it("starts a different file-video transition from its fallback before live paint readiness", () => {
+    mockMediaReady = true;
+    mockLiveMediaReady = false;
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "fallback-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:fallback-a",
+        originalSrc: "https://cdn.example.com/a.mp4",
+        fallbackSrc: "https://cdn.example.com/a.jpg",
+      },
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "fallback-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:fallback-b",
+        originalSrc: "https://cdn.example.com/b.mp4",
+        fallbackSrc: "https://cdn.example.com/b.jpg",
+      },
+    };
+
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(mockTimelineComplete).toBeDefined();
   });
 
   it("keeps the outgoing video cue while the incoming video prepares", () => {
