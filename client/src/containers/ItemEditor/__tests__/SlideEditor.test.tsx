@@ -727,7 +727,7 @@ describe("SlideEditor", () => {
     expect(displayWindowCapture.videoPlayback).toEqual(liveCue);
   });
 
-  it("keeps the editor preview off the live cue when the selected slide is not on air", () => {
+  it("keeps the editor preview video playing before the selected slide is on air", () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -800,9 +800,15 @@ describe("SlideEditor", () => {
 
     expect(screen.getByTestId("display-window")).toHaveAttribute(
       "data-has-video-playback",
-      "false",
+      "true",
     );
-    expect(displayWindowCapture.videoPlayback).toBeUndefined();
+    expect(displayWindowCapture.videoPlayback).toEqual(
+      expect.objectContaining({
+        mediaKey: "remote:video-1",
+        positionSeconds: 0,
+        paused: false,
+      }),
+    );
   });
 
   it("renders box tools panel when toolbar section is box-tools", () => {

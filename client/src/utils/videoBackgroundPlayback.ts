@@ -415,7 +415,19 @@ export const resolveEditorPreviewVideoPlayback = (
       ) === mediaKey
     );
   });
-  if (!isSelectedSlideLive) return undefined;
+  if (!isSelectedSlideLive) {
+    // The editor owns a real DisplayWindow even before transmit. Keep its
+    // local preview playing from the beginning; a live output cue below still
+    // takes precedence once this slide is on air.
+    return {
+      mediaKey,
+      positionSeconds: 0,
+      paused: false,
+      atServerMs: serverNow(),
+      generation: 0,
+      applySeek: false,
+    };
+  }
 
   return resolveSyncedVideoPlayback(outputs, mediaKey);
 };

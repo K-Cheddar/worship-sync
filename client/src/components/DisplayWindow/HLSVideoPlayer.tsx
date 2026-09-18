@@ -332,8 +332,9 @@ const HLSPlayer = ({
       if (syncedSrcRef.current === activeSrc) return;
       syncedSrcRef.current = activeSrc;
       appliedGenerationRef.current = null;
-      // Outputs start on their own; the editor preview waits for the operator.
-      if (playbackRoleRef.current !== "preview") startPlayback(video, activeSrc);
+      // A visible preview is a real display surface, so it must keep playing
+      // before transmit. Outputs and previews share the same no-cue behavior.
+      startPlayback(video, activeSrc);
       notifyPaintReadyRef.current(activeSrc);
       return;
     }

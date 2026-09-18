@@ -6,11 +6,6 @@ const mockUseDroppable = jest.fn((_options?: unknown) => ({
   setNodeRef: jest.fn(),
 }));
 
-jest.mock("../../components/DisplayWindow/DisplayWindow", () => ({
-  __esModule: true,
-  default: () => <div data-testid="display-window-thumbnail" />,
-}));
-
 jest.mock("./StaticSlideThumbnail", () => ({
   __esModule: true,
   default: ({ slide }: { slide: { name: string } }) => (
@@ -59,6 +54,53 @@ describe("ItemSlide media insertion zones", () => {
   beforeEach(() => {
     mockUseDroppable.mockClear();
   });
+
+  it.each([false, true])(
+    "keeps a %s slide thumbnail static, including its video background",
+    (isLive) => {
+      render(
+        <ul>
+          <ItemSlide
+            slide={{
+              ...slide,
+              boxes: [
+                {
+                  id: "video",
+                  width: 100,
+                  height: 100,
+                  words: "",
+                  mediaInfo: {
+                    type: "video",
+                    background: "video.mp4",
+                    placeholderImage: "poster.jpg",
+                  },
+                },
+              ],
+            } as never}
+            index={0}
+            selectSlide={jest.fn()}
+            isSelected
+            size={3}
+            itemType="song"
+            isMobile={false}
+            draggedSection={null}
+            isLive={isLive}
+            isStreamFormat={false}
+            getBibleInfo={() => ({ title: "", text: "" })}
+            borderWidth="1px"
+            hSize="text-sm"
+            onSlideGridClick={jest.fn()}
+          />
+        </ul>,
+      );
+
+      expect(screen.getByTestId("static-slide-thumbnail")).toBeInTheDocument();
+      expect(screen.queryByRole("video")).not.toBeInTheDocument();
+      expect(screen.queryAllByLabelText("Live on output")).toHaveLength(
+        isLive ? 1 : 0,
+      );
+    },
+  );
 
   it("keeps auxiliary insertion targets positioned inside the existing slide grid item", () => {
     render(

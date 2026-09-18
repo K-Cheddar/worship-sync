@@ -491,7 +491,7 @@ describe("videoBackgroundPlayback", () => {
       ).toEqual(liveCue);
     });
 
-    it("returns undefined when the selected slide is not on air", () => {
+    it("starts a local preview cue when the selected slide is not on air", () => {
       const selected = slideWithVideo(videoMedia());
       const other = { ...selected, id: "slide-2" };
       expect(
@@ -504,7 +504,14 @@ describe("videoBackgroundPlayback", () => {
           },
           selected,
         ),
-      ).toBeUndefined();
+      ).toEqual(
+        expect.objectContaining({
+          mediaKey: "remote:video-1",
+          positionSeconds: 0,
+          paused: false,
+          generation: 0,
+        }),
+      );
     });
 
     it("picks the newest matching cue across transmitting outputs", () => {

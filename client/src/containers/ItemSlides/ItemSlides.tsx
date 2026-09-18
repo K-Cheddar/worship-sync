@@ -924,7 +924,7 @@ const ItemSlidesContent = () => {
         } else {
           dispatch(
             updateFormattedTextDisplayInfo({
-              outputIds: sendTargets.stream,
+              outputIds: presentationSendTargets.stream,
               text: "",
             }),
           );
@@ -935,7 +935,7 @@ const ItemSlidesContent = () => {
             updateStream(
               withVideoPlayback(
                 {
-                  outputIds: sendTargets.stream,
+                  outputIds: presentationSendTargets.stream,
                   slide,
                   type: presentationType,
                   name: presentationName,
