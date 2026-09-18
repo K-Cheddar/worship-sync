@@ -36,7 +36,9 @@ import {
   createWorkstationPairing,
   sendPairingCodeEmail,
   updateChurchBranding,
+  updateChurchInviteAccess,
   updateRecoveryEmail,
+  AuthApiError,
 } from "../../api/auth";
 import type {
   ChurchBrandColor,
@@ -45,6 +47,7 @@ import type {
 } from "../../api/authTypes";
 import {
   getInviteAccessSummaryLabel,
+  inviteAccessDraftFromInvite,
   inviteAccessOptions,
   resolveInviteAccessPayload,
 } from "../Account/accountInviteAccess";
@@ -483,10 +486,14 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     inviteAccessDraft,
     openInviteDraftAccessSheet,
     resetInviteAccessDraft,
+    resendInvite,
   } = useAccountPage();
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteEmailError, setInviteEmailError] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [existingInvite, setExistingInvite] = useState<
+    Parameters<typeof resendInvite>[0] | null
+  >(null);
   const accessSummary = getInviteAccessSummaryLabel(inviteAccessDraft);
 
   const handleSend = useCallback(async () => {
@@ -510,6 +517,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
         permissions: invitePayload.permissions,
       });
       setInviteEmail("");
+      setExistingInvite(null);
       resetInviteAccessDraft();
       await onInvited();
       showToast(
@@ -517,6 +525,18 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
         "success",
       );
     } catch (error) {
+      const existingInvite =
+        error instanceof AuthApiError &&
+        typeof error.details === "object" &&
+        error.details !== null &&
+        "existingInvite" in error.details
+          ? (error.details as { existingInvite?: Parameters<typeof resendInvite>[0] })
+              .existingInvite
+          : null;
+      if (existingInvite) {
+        setExistingInvite(existingInvite);
+        return;
+      }
       showApiError(
         error,
         formatAccountError(error, "Could not complete that. Try again."),
@@ -534,12 +554,103 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     showToast,
   ]);
 
+  const resendExistingInvite = useCallback(async () => {
+    if (!existingInvite) return;
+    setIsSending(true);
+    try {
+      const resent = await resendInvite(existingInvite);
+      if (!resent) return;
+      setInviteEmail("");
+      setExistingInvite(null);
+      resetInviteAccessDraft();
+      await onInvited();
+    } catch (error) {
+      showApiError(
+        error,
+        formatAccountError(error, "Could not finish resending the invitation. Try again."),
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }, [
+    existingInvite,
+    onInvited,
+    resetInviteAccessDraft,
+    resendInvite,
+    showApiError,
+  ]);
+
+  const updateAndResendExistingInvite = useCallback(async () => {
+    if (!existingInvite) return;
+    setIsSending(true);
+    try {
+      await updateChurchInviteAccess(
+        churchId,
+        existingInvite.inviteId,
+        resolveInviteAccessPayload(inviteAccessDraft),
+      );
+      const resent = await resendInvite(existingInvite);
+      if (!resent) return;
+      setInviteEmail("");
+      setExistingInvite(null);
+      resetInviteAccessDraft();
+      await onInvited();
+    } catch (error) {
+      showApiError(
+        error,
+        formatAccountError(error, "Could not update and resend the invitation. Try again."),
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }, [
+    churchId,
+    existingInvite,
+    inviteAccessDraft,
+    onInvited,
+    resetInviteAccessDraft,
+    resendInvite,
+    showApiError,
+  ]);
+
   return (
     <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
       <h3 className="text-lg font-semibold">Invite people</h3>
       <p className="mt-1 text-sm text-gray-400">
         Send an email invite, configure access, then send.
       </p>
+      {existingInvite && (
+        <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
+          <p>
+            An invitation already exists for {existingInvite.email}. It has{" "}
+            {getInviteAccessSummaryLabel(
+              inviteAccessDraftFromInvite(existingInvite),
+            )}{" "}
+            access.
+          </p>
+          <p className="mt-1 text-amber-200/80">
+            Choose whether to keep that access or replace it with the access selected below before sending a new link.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="tertiary"
+              disabled={isSending}
+              onClick={() => void resendExistingInvite()}
+            >
+              Resend with existing access
+            </Button>
+            <Button
+              type="button"
+              variant="cta"
+              disabled={isSending}
+              onClick={() => void updateAndResendExistingInvite()}
+            >
+              Update access and resend
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="mt-4 space-y-4">
         <div className="flex flex-row flex-wrap items-end gap-3">
           <div className="min-w-0 flex-1 basis-[min(100%,14rem)] md:flex-2 md:basis-0">
@@ -552,6 +663,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
               onChange={(value) => {
                 setInviteEmail(String(value));
                 setInviteEmailError("");
+                setExistingInvite(null);
               }}
             />
           </div>

@@ -30,6 +30,7 @@ import {
   logoutSession,
   removeChurchMember,
   revokeTrustedDevice,
+  resendChurchInvite,
   uploadSongAudio,
   updateChurchMemberAccess,
 } from "../auth";
@@ -140,6 +141,18 @@ describe("api/auth", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "include",
+      }),
+    );
+  });
+
+  it("posts church invite resends to the invite-specific endpoint", async () => {
+    await resendChurchInvite("church-1", "invite-7");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/invites/invite-7/resend",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({}),
       }),
     );
   });

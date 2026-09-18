@@ -1408,12 +1408,20 @@ app.get(
 );
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.post(
+  "/api/churches/:churchId/invites/:inviteId/resend",
+  authHandlers.resendChurchInvite,
+);
+app.post(
   "/api/churches/:churchId/invites/:inviteId/access",
   authHandlers.updateInviteAccess,
 );
 app.post(
   "/api/churches/:churchId/invites/:inviteId/revoke",
   authHandlers.revokeChurchInvite,
+);
+app.delete(
+  "/api/churches/:churchId/invites/:inviteId",
+  authHandlers.removeExpiredChurchInvite,
 );
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);

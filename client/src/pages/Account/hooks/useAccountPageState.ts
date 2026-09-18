@@ -8,8 +8,10 @@ import {
   listWorkstations,
   makeAdmin,
   removeChurchMember,
+  removeExpiredChurchInvite,
   removeAdmin,
   requestAdminAccess,
+  resendChurchInvite,
   revokeChurchInvite,
   revokeDisplayDevice,
   revokeTrustedDevice,
@@ -116,6 +118,9 @@ export const useAccountPageState = () => {
     useState<AccountDestructiveConfirm | null>(null);
   const [destructiveConfirmRunning, setDestructiveConfirmRunning] =
     useState(false);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(
+    null,
+  );
 
   const toolbarLogos = useMemo(
     () => resolveChurchToolbarLogoUrls(context?.churchBranding),
@@ -293,6 +298,15 @@ export const useAccountPageState = () => {
             "The invite link will stop working. You can send a new invite later if you need to.",
           confirmText: "Revoke invite",
         };
+      case "removeExpiredInvite":
+        return {
+          title: "Remove expired invite",
+          message: "Remove the expired invite for",
+          itemName: destructiveConfirm.invite.email,
+          warningMessage:
+            "The expired invite record and its unusable link will be deleted.",
+          confirmText: "Remove invite",
+        };
     }
   }, [destructiveConfirm]);
 
@@ -343,6 +357,11 @@ export const useAccountPageState = () => {
           showStatus("Invite revoked.");
           await refresh();
           break;
+        case "removeExpiredInvite":
+          await removeExpiredChurchInvite(churchId, c.invite.inviteId);
+          showStatus("Expired invite removed.");
+          await refresh();
+          break;
       }
       setDestructiveConfirm(null);
     } catch (error) {
@@ -362,6 +381,28 @@ export const useAccountPageState = () => {
     showRevokedWorkstations,
     showRevokedDisplays,
   ]);
+
+  const resendInvite = useCallback(
+    async (invite: InviteRecord) => {
+      if (resendingInviteId) return;
+      setResendingInviteId(invite.inviteId);
+      try {
+        const response = await resendChurchInvite(churchId, invite.inviteId);
+        await refresh();
+        showStatus(`Invitation resent to ${response.invite.email}.`);
+        return response.invite;
+      } catch (error) {
+        showError(
+          error,
+          formatAccountError(error, "Could not resend the invitation. Try again."),
+        );
+        return null;
+      } finally {
+        setResendingInviteId(null);
+      }
+    },
+    [churchId, refresh, resendingInviteId, showError, showStatus],
+  );
 
   const myUserId = context?.userId ?? "";
 
@@ -489,6 +530,7 @@ export const useAccountPageState = () => {
     memberActionLoading,
     destructiveConfirm,
     destructiveConfirmRunning,
+    resendingInviteId,
     destructiveModalProps,
     accessSheetTarget,
     inviteAccessDraft,
@@ -503,6 +545,7 @@ export const useAccountPageState = () => {
     setDestructiveConfirm,
     setWorkstationPairingResetSignal,
     setDisplayPairingResetSignal,
+    resendInvite,
     setMemberAccessDrafts,
     setMemberTeamsAccessDrafts,
     setMemberServicesAccessDrafts,

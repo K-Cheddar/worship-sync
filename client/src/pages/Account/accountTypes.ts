@@ -81,6 +81,7 @@ export type InviteRecord = {
   permissions?: MemberPermissions;
   status: string;
   createdAt?: string;
+  lastSentAt?: string;
   expiresAt?: string;
 };
 
@@ -117,5 +118,9 @@ export type AccountDestructiveConfirm =
     }
   | {
       kind: "revokeInvite";
+      invite: InviteRecord;
+    }
+  | {
+      kind: "removeExpiredInvite";
       invite: InviteRecord;
     };
