@@ -8,13 +8,21 @@ const {
   authRuntimeInfo,
   seedActiveHumanBearerForServerTests,
   seedPendingInviteForServerTests,
+  setSendEmailForServerTests,
 } = await import("../authService.js");
 
-const createReq = ({ params = {}, headers = {}, session = {}, body = {} } = {}) => ({
+const createReq = ({
+  params = {},
+  headers = {},
+  session = {},
+  body = {},
+  query = {},
+} = {}) => ({
   params,
   headers,
   session,
   body,
+  query,
 });
 
 const createRes = () => ({
@@ -28,6 +36,100 @@ const createRes = () => ({
     this.payload = payload;
     return this;
   },
+});
+
+const previewInvite = async (token) => {
+  const res = createRes();
+  await authHandlers.getInvitePreview(createReq({ query: { token } }), res);
+  return res;
+};
+
+test("getInvitePreview accepts a pending invite with time remaining", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const { token, churchName } = await seedPendingInviteForServerTests({
+    churchId: "invite_preview_pending_church",
+    email: "preview-pending@example.com",
+    token: "preview-pending-token",
+  });
+  const res = await previewInvite(token);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.churchName, churchName);
+});
+
+test("getInvitePreview rejects a pending invite after effective expiration", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const { token } = await seedPendingInviteForServerTests({
+    churchId: "invite_preview_time_expired_church",
+    email: "preview-time-expired@example.com",
+    token: "preview-time-expired-token",
+    expiresAt: new Date(Date.now() - 1000).toISOString(),
+  });
+  const res = await previewInvite(token);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.payload.errorMessage, "This invite has expired.");
+});
+
+test("getInvitePreview rejects an invite persisted as expired", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const { token } = await seedPendingInviteForServerTests({
+    churchId: "invite_preview_persisted_expired_church",
+    email: "preview-persisted-expired@example.com",
+    token: "preview-persisted-expired-token",
+    status: "expired",
+  });
+  const res = await previewInvite(token);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.payload.errorMessage, "This invite has expired.");
+});
+
+test("getInvitePreview preserves revoked invite behavior", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const { token } = await seedPendingInviteForServerTests({
+    churchId: "invite_preview_revoked_church",
+    email: "preview-revoked@example.com",
+    token: "preview-revoked-token",
+    status: "revoked",
+  });
+  const res = await previewInvite(token);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.payload.errorMessage, "This invite was revoked.");
+});
+
+test("a successful resend produces a valid invite preview again", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_preview_resend_church";
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_preview_resend_admin",
+    email: "preview-resend-admin@example.com",
+    churchId,
+  });
+  const { inviteId } = await seedPendingInviteForServerTests({
+    churchId,
+    email: "preview-resend@example.com",
+    expiresAt: new Date(Date.now() - 1000).toISOString(),
+  });
+  let sentEmail;
+  setSendEmailForServerTests(async (payload) => {
+    sentEmail = payload;
+  });
+  try {
+    const resendRes = createRes();
+    await authHandlers.resendChurchInvite(
+      createReq({
+        params: { churchId, inviteId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+      }),
+      resendRes,
+    );
+    assert.equal(resendRes.statusCode, 200);
+    const tokenMatch = sentEmail?.textBody?.match(/\/invite\?token=([A-Za-z0-9_-]+)/);
+    assert.ok(tokenMatch, "resend email should contain the replacement invite token");
+    const previewRes = await previewInvite(decodeURIComponent(tokenMatch[1]));
+    assert.equal(previewRes.statusCode, 200);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("listChurchInvites exposes a stale pending invite as expired", { skip: authRuntimeInfo.hasFirestore }, async () => {
@@ -125,6 +227,165 @@ test("accepted invites cannot be resent", { skip: authRuntimeInfo.hasFirestore }
     },
   }), res);
   assert.equal(res.statusCode, 400);
+});
+
+test("revoked invites cannot be resent", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_lifecycle_revoked_church";
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_lifecycle_revoked_admin",
+    email: "revoked-admin@example.com",
+    churchId,
+  });
+  await seedPendingInviteForServerTests({
+    churchId,
+    inviteId: "invite_revoked_record",
+    email: "revoked@example.com",
+    status: "revoked",
+  });
+  const res = createRes();
+  await authHandlers.resendChurchInvite(
+    createReq({
+      params: { churchId, inviteId: "invite_revoked_record" },
+      session: req.session,
+      headers: {
+        authorization: `Bearer ${humanApiToken}`,
+        "x-csrf-token": req.session.csrfToken,
+      },
+    }),
+    res,
+  );
+  assert.equal(res.statusCode, 400);
+});
+
+test("email send failure preserves the existing invite token and expiration", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_lifecycle_send_failure_church";
+  const oldToken = "invite-send-failure-old-token";
+  const oldExpiresAt = new Date(Date.now() + 86400000).toISOString();
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_lifecycle_send_failure_admin",
+    email: "send-failure-admin@example.com",
+    churchId,
+  });
+  const { inviteId } = await seedPendingInviteForServerTests({
+    churchId,
+    inviteId: "invite_send_failure_record",
+    email: "send-failure@example.com",
+    token: oldToken,
+    expiresAt: oldExpiresAt,
+  });
+  setSendEmailForServerTests(async () => {
+    throw new Error("delivery failed");
+  });
+  try {
+    const res = createRes();
+    await authHandlers.resendChurchInvite(
+      createReq({
+        params: { churchId, inviteId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 500);
+
+    const listRes = createRes();
+    await authHandlers.listChurchInvites(
+      createReq({
+        params: { churchId },
+        headers: { authorization: `Bearer ${humanApiToken}` },
+      }),
+      listRes,
+    );
+    assert.equal(listRes.payload.invites[0].status, "pending");
+    assert.equal(listRes.payload.invites[0].expiresAt, oldExpiresAt);
+
+    const previewRes = createRes();
+    await authHandlers.getInvitePreview(
+      createReq({ query: { token: oldToken } }),
+      previewRes,
+    );
+    assert.equal(previewRes.statusCode, 200);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
+});
+
+test("successful resend replaces expiration and invalidates the old token", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_lifecycle_success_church";
+  const oldToken = "invite-success-old-token";
+  const oldExpiresAt = new Date(Date.now() + 3600000).toISOString();
+  const sentEmails = [];
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_lifecycle_success_admin",
+    email: "success-admin@example.com",
+    churchId,
+  });
+  const { inviteId } = await seedPendingInviteForServerTests({
+    churchId,
+    inviteId: "invite_success_record",
+    email: "success@example.com",
+    token: oldToken,
+    expiresAt: oldExpiresAt,
+  });
+  setSendEmailForServerTests(async (payload) => {
+    sentEmails.push(payload);
+  });
+  try {
+    const res = createRes();
+    await authHandlers.resendChurchInvite(
+      createReq({
+        params: { churchId, inviteId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(sentEmails.length, 1);
+
+    const newToken = decodeURIComponent(
+      `${sentEmails[0].textBody} ${sentEmails[0].htmlBody}`.match(
+        /invite\?token=([^&\s"')]+)/,
+      )[1],
+    );
+    const listRes = createRes();
+    await authHandlers.listChurchInvites(
+      createReq({
+        params: { churchId },
+        headers: { authorization: `Bearer ${humanApiToken}` },
+      }),
+      listRes,
+    );
+    assert.equal(listRes.payload.invites[0].status, "pending");
+    assert.notEqual(listRes.payload.invites[0].expiresAt, oldExpiresAt);
+
+    const oldPreviewRes = createRes();
+    await authHandlers.getInvitePreview(
+      createReq({ query: { token: oldToken } }),
+      oldPreviewRes,
+    );
+    assert.equal(oldPreviewRes.statusCode, 404);
+    const newPreviewRes = createRes();
+    await authHandlers.getInvitePreview(
+      createReq({ query: { token: newToken } }),
+      newPreviewRes,
+    );
+    assert.equal(newPreviewRes.statusCode, 200);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("concurrent invite creation returns one conflict for the same email", { skip: authRuntimeInfo.hasFirestore }, async () => {

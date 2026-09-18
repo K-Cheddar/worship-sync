@@ -19,6 +19,7 @@ const mockServerNow = serverNow as jest.Mock;
 
 const mockIsSupported = jest.fn(() => false);
 const mockInstances: any[] = [];
+let frameCallbacks: Array<() => void> = [];
 
 jest.mock("hls.js", () => {
   class MockHls {
@@ -70,6 +71,10 @@ describe("HLSVideoPlayer", () => {
     HTMLMediaElement.prototype,
     "currentTime",
   );
+  const originalRequestVideoFrameCallbackDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLVideoElement.prototype,
+    "requestVideoFrameCallback",
+  );
 
   /** Overrides `paused`, returning a restore fn — jsdom keeps it read-only. */
   const stubPaused = (value: boolean) => {
@@ -93,6 +98,7 @@ describe("HLSVideoPlayer", () => {
     resetVideoBackgroundPlaybackForTests();
     mockServerNow.mockReturnValue(1_000_000);
     mockInstances.length = 0;
+    frameCallbacks = [];
     jest.spyOn(console, "error").mockImplementation(() => {});
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.spyOn(console, "log").mockImplementation(() => {});
@@ -112,6 +118,14 @@ describe("HLSVideoPlayer", () => {
       writable: true,
       value: jest.fn(() => ""),
     });
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      writable: true,
+      value: jest.fn((callback: () => void) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      }),
+    });
   });
 
   afterAll(() => {
@@ -130,6 +144,18 @@ describe("HLSVideoPlayer", () => {
       writable: true,
       value: originalCanPlayType,
     });
+    if (originalRequestVideoFrameCallbackDescriptor) {
+      Object.defineProperty(
+        HTMLVideoElement.prototype,
+        "requestVideoFrameCallback",
+        originalRequestVideoFrameCallbackDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(
+        HTMLVideoElement.prototype,
+        "requestVideoFrameCallback",
+      );
+    }
   });
 
   afterEach(() => {
@@ -320,7 +346,10 @@ describe("HLSVideoPlayer", () => {
     });
     fireEvent.loadedMetadata(video);
 
-    expect(onLoadedData).toHaveBeenCalled();
+    expect(onLoadedData).not.toHaveBeenCalled();
+    const presentedFrame = frameCallbacks.shift();
+    act(() => presentedFrame?.());
+    expect(onLoadedData).toHaveBeenCalledTimes(1);
     fireEvent.error(video);
     expect(onError).toHaveBeenCalled();
   });
@@ -363,6 +392,8 @@ describe("HLSVideoPlayer", () => {
 
     seeking = false;
     fireEvent.seeked(video);
+    const presentedFrame = frameCallbacks.shift();
+    act(() => presentedFrame?.());
     expect(onLoadedData).toHaveBeenCalledTimes(1);
   });
 
@@ -408,7 +439,24 @@ describe("HLSVideoPlayer", () => {
     expect(onLoadedData).not.toHaveBeenCalled();
 
     fireEvent.loadedMetadata(video);
+    const staleFrame = frameCallbacks.shift();
+    act(() => staleFrame?.());
+    const currentFrame = frameCallbacks.shift();
+    act(() => currentFrame?.());
     expect(onLoadedData).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the video hidden until the presented-frame callback", () => {
+    const { rerender } = render(
+      <HLSPlayer src="https://cdn.example.com/video.mp4" paintReady={false} />,
+    );
+    const video = screen.getByTestId("hls-video-player");
+
+    expect(video).toHaveStyle({ visibility: "hidden" });
+    rerender(
+      <HLSPlayer src="https://cdn.example.com/video.mp4" paintReady />,
+    );
+    expect(video).toHaveStyle({ visibility: "visible" });
   });
 
   it("seeks and pauses when a playback cue is present on metadata load", () => {

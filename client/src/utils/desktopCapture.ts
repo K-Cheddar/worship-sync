@@ -36,7 +36,7 @@ const normalizeWindowTitleTokens = (title: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .split(/\s+/)
-    .filter((token) => token && !/^\d+$/.test(token));
+    .filter(Boolean);
 
 const hasSameNormalizedWindowTitle = (left: string, right: string) =>
   normalizeWindowTitleTokens(left).join(" ") ===
@@ -54,6 +54,7 @@ export const findSafeElectronWindowSource = (
   sources: DesktopCaptureSource[],
 ) => {
   const savedTokens = normalizeWindowTitleTokens(savedName);
+  const savedNumericTokens = savedTokens.filter((token) => /^\d+$/.test(token));
   if (savedTokens.length === 0) return undefined;
 
   const candidates = sources
@@ -62,17 +63,24 @@ export const findSafeElectronWindowSource = (
       const candidateTokens = normalizeWindowTitleTokens(source.name);
       const savedSet = new Set(savedTokens);
       const candidateSet = new Set(candidateTokens);
+      const candidateNumericTokens = candidateTokens.filter((token) =>
+        /^\d+$/.test(token),
+      );
       const overlap = [...savedSet].filter((token) => candidateSet.has(token));
       const coverage = overlap.length / savedSet.size;
       const candidateCoverage = overlap.length / candidateSet.size;
       const exact = hasSameNormalizedWindowTitle(savedName, source.name);
+      const sameNumericTokens =
+        savedNumericTokens.slice().sort().join(" ") ===
+        candidateNumericTokens.slice().sort().join(" ");
       const canFuzzyMatch =
         savedSet.size >= 3 &&
         candidateSet.size >= 3 &&
         savedSet.size === candidateSet.size &&
         overlap.length >= 3 &&
         coverage >= 0.8 &&
-        candidateCoverage >= 0.8;
+        candidateCoverage >= 0.8 &&
+        sameNumericTokens;
       return {
         source,
         score: exact ? 1 : coverage * 0.7 + candidateCoverage * 0.3,

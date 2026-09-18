@@ -186,6 +186,28 @@ describe("desktopCapture", () => {
       ).toBeUndefined();
     });
 
+    it("does not match a different numbered window, including as the only candidate", () => {
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:1:0", name: "Announcements 2 - Canva", kind: "window" },
+        ]),
+      ).toBeUndefined();
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:2:0", name: "Announcements 2 - Canva", kind: "window" },
+          { id: "window:3:0", name: "Spotify", kind: "window" },
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("matches punctuation and case differences without changing numeric identity", () => {
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:1:0", name: " announcements 1 | CANVA ", kind: "window" },
+        ])?.id,
+      ).toBe("window:1:0");
+    });
+
     it("requires bidirectional near-equivalence for fuzzy recovery", () => {
       expect(
         findSafeElectronWindowSource("Sunday Lyrics - Worship - Canva - Live", [

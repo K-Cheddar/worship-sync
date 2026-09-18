@@ -781,6 +781,7 @@ const DisplayBoxTransitionStage = ({
     hostsContent: boolean;
     mediaKey: string;
     fullFramePaintReady: boolean;
+    liveVideoPaintReady: boolean;
     mediaOpacity: number | undefined;
     contentOpacity: number | undefined;
     needsStillHold: boolean;

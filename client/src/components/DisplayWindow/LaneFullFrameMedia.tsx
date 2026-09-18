@@ -188,6 +188,7 @@ const LaneFullFrameMedia = ({
           <HLSPlayer
             src={frozenResolvedSrc}
             originalSrc={fileOriginalSrc}
+            paintReady={fileVideoPaintReady}
             onLoadedData={() => setFileVideoPaintReady(true)}
             onError={() => setFileVideoPaintReady(false)}
             videoBox={fileVideoBox}

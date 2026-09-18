@@ -865,17 +865,27 @@ const createEmailTags = (tags = {}) =>
     .filter(({ name, value }) => name.length > 0 && value.length > 0)
     .slice(0, 10);
 
-const sendEmail = async ({
-  to,
-  subject,
-  textBody,
-  htmlBody,
-  tags = {},
-  replyTo,
-  fromEmail,
-} = {}) => {
+let sendEmailForServerTests = null;
+
+const sendEmail = async (payload = {}) => {
+  if (
+    process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+    typeof sendEmailForServerTests === "function"
+  ) {
+    return sendEmailForServerTests(payload);
+  }
+
+  const {
+    to,
+    subject,
+    textBody,
+    htmlBody,
+    tags = {},
+    replyTo,
+    fromEmail,
+  } = payload;
   if (resendClient && resendFromEmail) {
-    const payload = {
+    const resendPayload = {
       from: fromEmail || resendNotificationFromEmail || resendFromEmail,
       to: [to],
       subject,
@@ -885,9 +895,9 @@ const sendEmail = async ({
     };
     const normalizedReplyTo = String(replyTo || "").trim();
     if (normalizedReplyTo) {
-      payload.reply_to = normalizedReplyTo;
+      resendPayload.reply_to = normalizedReplyTo;
     }
-    const response = await resendClient.emails.send(payload);
+    const response = await resendClient.emails.send(resendPayload);
     if (response.error) {
       throw new Error(response.error.message || "Could not send email.");
     }
@@ -2416,6 +2426,24 @@ export const setVerifyIdTokenForServerTests = (fn) => {
     );
   }
   verifyIdTokenForServerTests = typeof fn === "function" ? fn : null;
+};
+
+/**
+ * Injects a sendEmail stand-in for in-memory server tests.
+ * Pass null to clear. Refuses when Firestore is configured.
+ */
+export const setSendEmailForServerTests = (fn) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setSendEmailForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setSendEmailForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  sendEmailForServerTests = typeof fn === "function" ? fn : null;
 };
 
 const upsertProfileFromVerifiedToken = async (
@@ -6617,6 +6645,9 @@ export const authHandlers = {
       if (invite.status === "revoked") {
         throw httpError(400, "This invite was revoked.");
       }
+      if (invite.status === "expired" || isInviteExpired(invite)) {
+        throw httpError(400, "This invite has expired.");
+      }
       const church = await getChurchById(invite.churchId);
       const churchName =
         (church && church.name && String(church.name).trim()) || "your church";
@@ -7142,11 +7173,6 @@ export const authHandlers = {
       const inviteEmail = await renderInviteEmail(buildInviteUrl(rawToken), {
         churchName,
       });
-      const refreshedInvite = await updateInviteForResend({
-        churchId: req.params.churchId,
-        inviteId,
-        patch: invitePatch,
-      });
       await sendEmail({
         to: invite.email,
         subject: `${churchNameTrimmed || "Your church"} invites you to join WorshipSync`,
@@ -7158,6 +7184,14 @@ export const authHandlers = {
           inviteId,
           role: invite.role,
         },
+      });
+      // Keep the existing token authoritative until the replacement email is
+      // accepted by the delivery provider. The transaction below then makes
+      // the new token and refreshed expiration authoritative together.
+      const refreshedInvite = await updateInviteForResend({
+        churchId: req.params.churchId,
+        inviteId,
+        patch: invitePatch,
       });
       await addSecurityEvent({
         type: "invite_resent",

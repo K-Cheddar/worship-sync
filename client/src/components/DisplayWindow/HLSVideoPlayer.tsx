@@ -27,6 +27,8 @@ type HLSPlayerProps = {
   className?: string;
   onLoadedData?: () => void;
   onError?: () => void;
+  /** Keep the video out of the composite until its first safe frame is presented. */
+  paintReady?: boolean;
   videoBox?: Box;
   muted?: boolean;
   volume?: number;
@@ -136,6 +138,7 @@ const HLSPlayer = ({
   className,
   onLoadedData,
   onError,
+  paintReady = true,
   videoBox,
   muted = true,
   volume = 1,
@@ -167,14 +170,14 @@ const HLSPlayer = ({
   const readySrcRef = useRef<string | null>(null);
   /** Src the current cue was actually applied against. */
   const syncedSrcRef = useRef<string | null>(null);
-  /** Src for which DisplayWindow may already hide the poster still. */
+  /** Src for which DisplayWindow may already show the live video. */
   const paintReadySrcRef = useRef<string | null>(null);
   const appliedGenerationRef = useRef<number | null>(null);
   /** Local deadline for a persistent rate correction; never synced. */
   const rateCorrectionStartedAtRef = useRef<number | null>(null);
   /** A seek computed before the duration landed could not wrap a looping cue. */
   const appliedWithoutDurationRef = useRef(false);
-  /** Invalidates in-flight seeked/loadeddata waits across rapid source swaps. */
+  /** Invalidates in-flight readiness waits across rapid source swaps. */
   const paintReadyWaitGenerationRef = useRef(0);
   const paintReadyDisposersRef = useRef<Array<() => void>>([]);
 
@@ -184,9 +187,10 @@ const HLSPlayer = ({
   }, []);
 
   /**
-   * Tell the display layer it is safe to drop the poster. Wait out an in-flight
-   * cue seek and for HAVE_CURRENT_DATA so Electron does not flash black between
-   * cached clips.
+   * Tell the display layer it is safe to drop the poster. HAVE_CURRENT_DATA is
+   * only a decode/data signal, so when available we wait for Chromium's
+   * presented-frame callback. The animation-frame fallback is the best signal
+   * available in older browsers and keeps the data/seek guards in place.
    */
   const notifyPaintReady = useCallback(
     (videoSrc: string) => {
@@ -220,19 +224,15 @@ const HLSPlayer = ({
         video.addEventListener(eventName, handler);
       };
 
-      const finish = () => {
+      const markPresented = () => {
         if (isStale()) return;
-        // Cue seeks can start after loadeddata; always recheck before declaring.
+        if (!video) return;
         if (video.seeking) {
           waitForEvent("seeked", finish);
           return;
         }
         if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
           waitForEvent("loadeddata", finish);
-          return;
-        }
-        if (video.seeking) {
-          waitForEvent("seeked", finish);
           return;
         }
         paintReadySrcRef.current = videoSrc;
@@ -243,6 +243,45 @@ const HLSPlayer = ({
         });
         onLoadedDataRef.current?.();
       };
+
+      function finish() {
+        if (isStale()) return;
+        if (!video) return;
+        // Cue seeks can start after loadeddata; always recheck before declaring.
+        if (video.seeking) {
+          waitForEvent("seeked", finish);
+          return;
+        }
+        if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
+          waitForEvent("loadeddata", finish);
+          return;
+        }
+
+        const videoWithFrameCallback = video as HTMLVideoElement & {
+          requestVideoFrameCallback?: (callback: () => void) => number;
+          cancelVideoFrameCallback?: (handle: number) => void;
+        };
+        if (videoWithFrameCallback.requestVideoFrameCallback) {
+          const handle = videoWithFrameCallback.requestVideoFrameCallback(
+            markPresented,
+          );
+          paintReadyDisposersRef.current.push(() =>
+            videoWithFrameCallback.cancelVideoFrameCallback?.(handle),
+          );
+          return;
+        }
+
+        // Older Electron/browser engines have no rVFC. Two animation frames
+        // give layout/compositing a chance to present the decoded frame.
+        let frame = 0;
+        const firstFrame = () => {
+          frame = window.requestAnimationFrame(markPresented);
+        };
+        frame = window.requestAnimationFrame(firstFrame);
+        paintReadyDisposersRef.current.push(() =>
+          window.cancelAnimationFrame(frame),
+        );
+      }
 
       finish();
     },
@@ -804,6 +843,7 @@ const HLSPlayer = ({
         filter: videoBox?.brightness
           ? `brightness(${videoBox.brightness}%)`
           : "",
+        visibility: paintReady ? "visible" : "hidden",
       }}
       autoPlay={false}
       muted={muted}
