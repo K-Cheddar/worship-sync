@@ -8,6 +8,8 @@ const {
   authRuntimeInfo,
   seedActiveHumanBearerForServerTests,
   seedPendingInviteForServerTests,
+  seedRosterMemberForServerTests,
+  getRosterMemberForServerTests,
   setSendEmailForServerTests,
 } = await import("../authService.js");
 
@@ -317,6 +319,91 @@ test("email send failure preserves the existing invite token and expiration", { 
   }
 });
 
+test("initial invite delivery failure removes the provisional invite and roster metadata", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_lifecycle_initial_failure_church";
+  const memberId = "invite_initial_failure_member";
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_initial_failure_admin",
+    email: "initial-failure-admin@example.com",
+    churchId,
+  });
+  await seedRosterMemberForServerTests({ memberId, churchId });
+  setSendEmailForServerTests(async () => {
+    throw new Error("delivery failed");
+  });
+  try {
+    const res = createRes();
+    await authHandlers.createInvite(
+      createReq({
+        params: { churchId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+        body: { email: "initial-failure@example.com", memberId },
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 500);
+
+    const listRes = createRes();
+    await authHandlers.listChurchInvites(
+      createReq({
+        params: { churchId },
+        headers: { authorization: `Bearer ${humanApiToken}` },
+      }),
+      listRes,
+    );
+    assert.deepEqual(listRes.payload.invites, []);
+    assert.equal(
+      (await getRosterMemberForServerTests(memberId)).invitedAt,
+      undefined,
+    );
+  } finally {
+    setSendEmailForServerTests(null);
+  }
+});
+
+test("successful initial invite persists sent state and roster metadata", { skip: authRuntimeInfo.hasFirestore }, async () => {
+  const req = { session: {} };
+  const churchId = "invite_lifecycle_initial_success_church";
+  const memberId = "invite_initial_success_member";
+  const sentEmails = [];
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req,
+    userId: "invite_initial_success_admin",
+    email: "initial-success-admin@example.com",
+    churchId,
+  });
+  await seedRosterMemberForServerTests({ memberId, churchId });
+  setSendEmailForServerTests(async (payload) => sentEmails.push(payload));
+  try {
+    const res = createRes();
+    await authHandlers.createInvite(
+      createReq({
+        params: { churchId },
+        session: req.session,
+        headers: {
+          authorization: `Bearer ${humanApiToken}`,
+          "x-csrf-token": req.session.csrfToken,
+        },
+        body: { email: "initial-success@example.com", memberId },
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(sentEmails.length, 1);
+    assert.equal(res.payload.invite.status, "pending");
+    assert.ok(res.payload.invite.lastSentAt);
+    assert.ok((await getRosterMemberForServerTests(memberId)).invitedAt);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
+});
+
 test("successful resend replaces expiration and invalidates the old token", { skip: authRuntimeInfo.hasFirestore }, async () => {
   const req = { session: {} };
   const churchId = "invite_lifecycle_success_church";
@@ -408,15 +495,20 @@ test("concurrent invite creation returns one conflict for the same email", { ski
       body: { email: "duplicate-invite@example.com" },
     });
   const responses = [createRes(), createRes()];
-  await Promise.all(
-    responses.map((res) => authHandlers.createInvite(request(), res)),
-  );
-  assert.deepEqual(
-    responses.map((res) => res.statusCode).sort((a, b) => a - b),
-    [200, 409],
-  );
-  const conflict = responses.find((res) => res.statusCode === 409);
-  assert.equal(conflict.payload.existingInvite.email, "duplicate-invite@example.com");
+  setSendEmailForServerTests(async () => {});
+  try {
+    await Promise.all(
+      responses.map((res) => authHandlers.createInvite(request(), res)),
+    );
+    assert.deepEqual(
+      responses.map((res) => res.statusCode).sort((a, b) => a - b),
+      [200, 409],
+    );
+    const conflict = responses.find((res) => res.statusCode === 409);
+    assert.equal(conflict.payload.existingInvite.email, "duplicate-invite@example.com");
+  } finally {
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("expired invite recovery returns the existing invite without burning create attempts", { skip: authRuntimeInfo.hasFirestore }, async () => {

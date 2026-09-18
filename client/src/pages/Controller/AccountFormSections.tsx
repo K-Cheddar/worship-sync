@@ -584,13 +584,17 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     if (!existingInvite) return;
     setIsSending(true);
     try {
-      await updateChurchInviteAccess(
+      const updated = await updateChurchInviteAccess(
         churchId,
         existingInvite.inviteId,
         resolveInviteAccessPayload(inviteAccessDraft),
       );
-      const resent = await resendInvite(existingInvite);
-      if (!resent) return;
+      setExistingInvite(updated.invite);
+      const resent = await resendInvite(updated.invite);
+      if (!resent) {
+        await onInvited();
+        return;
+      }
       setInviteEmail("");
       setExistingInvite(null);
       resetInviteAccessDraft();

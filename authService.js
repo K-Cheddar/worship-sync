@@ -1328,6 +1328,35 @@ const createInviteIfAvailable = async (invite) => {
   return null;
 };
 
+const deleteUnsentInvite = async ({ churchId, inviteId, tokenHash }) => {
+  const db = requireFirestore();
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+      const snapshot = await transaction.get(inviteRef);
+      if (!snapshot.exists) return;
+      const current = snapshot.data();
+      if (
+        current.churchId === churchId &&
+        current.status === "pending" &&
+        current.tokenHash === tokenHash
+      ) {
+        transaction.delete(inviteRef);
+      }
+    });
+    return;
+  }
+
+  const current = collectionMap[COLLECTIONS.invites].get(inviteId);
+  if (
+    current?.churchId === churchId &&
+    current.status === "pending" &&
+    current.tokenHash === tokenHash
+  ) {
+    collectionMap[COLLECTIONS.invites].delete(inviteId);
+  }
+};
+
 const updateInviteForResend = async ({
   churchId,
   inviteId,
@@ -4293,6 +4322,43 @@ export const seedPendingInviteForServerTests = async ({
   return { inviteId, token, churchId, email: normalizedEmail, churchName };
 };
 
+export const seedRosterMemberForServerTests = async ({
+  memberId = createId("member"),
+  churchId = "church_roster_seed_test",
+  userId = "",
+  invitedAt,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedRosterMemberForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedRosterMemberForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const member = {
+    memberId,
+    churchId,
+    userId,
+    ...(invitedAt ? { invitedAt } : {}),
+  };
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, member, {
+    merge: false,
+  });
+  return member;
+};
+
+export const getRosterMemberForServerTests = async (memberId) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "getRosterMemberForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  return getDoc(COLLECTIONS.teamRosterMembers, memberId);
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -6341,6 +6407,8 @@ export const authHandlers = {
 
   ...teamsAuthHandlers,
   async createInvite(req, res) {
+    let reservedInvite = null;
+    let emailSent = false;
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
@@ -6447,17 +6515,7 @@ export const authHandlers = {
         error.existingInvite = sanitizeInviteWithEffectiveStatus(existingInvite);
         throw error;
       }
-      if (memberId) {
-        // Recorded so the roster can show an invite is outstanding. Without it
-        // an admin gets no evidence one was sent and would keep re-sending.
-        // Cleared on unlink; superseded by `userId` once accepted.
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          memberId,
-          { invitedAt: nowIso() },
-          { merge: true },
-        );
-      }
+      reservedInvite = invite;
       const church = await getChurchById(req.params.churchId);
       if (!church) {
         throw httpError(404, "Church not found");
@@ -6479,6 +6537,16 @@ export const authHandlers = {
           role,
         },
       });
+      emailSent = true;
+      if (memberId) {
+        // Do not make the roster look invited when initial delivery failed.
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          { invitedAt: nowIso() },
+          { merge: true },
+        );
+      }
       await addSecurityEvent({
         type: "invite_created",
         churchId: req.params.churchId,
@@ -6494,6 +6562,20 @@ export const authHandlers = {
         }),
       });
     } catch (error) {
+      if (reservedInvite && !emailSent) {
+        try {
+          await deleteUnsentInvite({
+            churchId: reservedInvite.churchId,
+            inviteId: reservedInvite.inviteId,
+            tokenHash: reservedInvite.tokenHash,
+          });
+        } catch (cleanupError) {
+          logAuthEvent("error", "invite_create.cleanup_failed", {
+            inviteId: reservedInvite.inviteId,
+            message: cleanupError.message,
+          });
+        }
+      }
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
