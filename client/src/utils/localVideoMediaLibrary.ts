@@ -99,7 +99,7 @@ export const sendLocalVideoInputWithWarmCapture = async (args: {
   sourceId: string;
   captureKind: LocalVideoInputMediaSource["captureKind"];
   send: () => void;
-  onError: (message: string) => void;
+  onError: (message: string, error?: unknown) => void;
 }): Promise<void> => {
   const binding = resolveLocalVideoInputBinding(args.sourceId);
   if (!binding) {
@@ -136,6 +136,9 @@ export const sendLocalVideoInputWithWarmCapture = async (args: {
       args.send();
       return;
     }
-    args.onError(getLocalVideoSourceErrorMessage(error, args.captureKind));
+    args.onError(
+      getLocalVideoSourceErrorMessage(error, args.captureKind),
+      error,
+    );
   }
 };

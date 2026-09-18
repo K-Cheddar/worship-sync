@@ -1,6 +1,9 @@
 import { REFERENCE_HEIGHT, REFERENCE_WIDTH } from "../../constants";
 import { calculateReferenceScaleFactor } from "../../components/DisplayWindow/referenceCanvas";
-import { calculateStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
+import {
+  calculateStaticThumbnailScaleFactor,
+  measureStaticThumbnailScaleFactor,
+} from "./staticThumbnailGeometry";
 
 describe("calculateStaticThumbnailScaleFactor", () => {
   it("derives the tile scale from shared grid geometry", () => {
@@ -47,5 +50,20 @@ describe("calculateStaticThumbnailScaleFactor", () => {
         columns: 1,
       }),
     ).toBe(0.5);
+  });
+
+  it("uses the rendered thumbnail viewport when one is mounted", () => {
+    const container = document.createElement("div");
+    const thumbnail = document.createElement("div");
+    thumbnail.dataset.testid = "static-slide-thumbnail";
+    Object.defineProperties(thumbnail, {
+      clientWidth: { configurable: true, value: 940 },
+      clientHeight: { configurable: true, value: 520 },
+    });
+    container.append(thumbnail);
+
+    expect(measureStaticThumbnailScaleFactor(container, 3)).toBe(
+      calculateReferenceScaleFactor(940, 520),
+    );
   });
 });

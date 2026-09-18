@@ -3,6 +3,8 @@ import ItemSlides, { ItemSlidesDndContext } from "./ItemSlides";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { ToastContext } from "../../context/toastContext";
+import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
 
 const mockDispatch = jest.fn();
 const mockOutlineScroller = jest.fn(({ cols }: { cols: number }) => (
@@ -22,6 +24,9 @@ let mockDndState: { active: unknown; over: unknown } = {
 };
 let mockState: any;
 const mockItemSlideProps: Array<{ onRenameSection?: unknown }> = [];
+const mockAcquireWarmLocalVideoCaptureWithBusyRetry = jest.fn();
+const mockReleaseWarmLocalVideoCapture = jest.fn().mockResolvedValue(undefined);
+
 
 const mockEnsureSlidesHaveMonitorBandFormatting = jest.fn((slides: any[]) =>
   slides.map((slide, index) => ({
@@ -153,17 +158,37 @@ jest.mock("./ItemSlide", () => ({
     slide,
     selectSlide,
     onRenameSection,
+    thumbnailScaleFactor,
   }: {
     index: number;
     slide: { name: string };
     selectSlide: (index: number) => void;
     onRenameSection?: unknown;
+    thumbnailScaleFactor?: number;
   }) => {
     mockItemSlideProps.push({ onRenameSection });
     return (
-      <button type="button" onClick={() => selectSlide(index)}>
-        {slide.name}
-      </button>
+      <>
+        <button type="button" onClick={() => selectSlide(index)}>
+          {slide.name}
+        </button>
+        <div
+          data-testid="static-slide-thumbnail"
+          ref={(element) => {
+            if (element) {
+              Object.defineProperties(element, {
+                clientWidth: { configurable: true, value: 940 },
+                clientHeight: { configurable: true, value: 520 },
+              });
+            }
+          }}
+        >
+          <div
+            data-testid="static-slide-reference-canvas"
+            style={{ transform: `scale(${thumbnailScaleFactor ?? 0})` }}
+          />
+        </div>
+      </>
     );
   },
 }));
@@ -205,6 +230,14 @@ const mockControllerInfoValue = {
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAcquireWarmLocalVideoCaptureWithBusyRetry.mockReset();
+    mockReleaseWarmLocalVideoCapture.mockReset().mockResolvedValue(undefined);
+    jest
+      .spyOn(localVideoCapturePool, "acquireWarmLocalVideoCaptureWithBusyRetry")
+      .mockImplementation(mockAcquireWarmLocalVideoCaptureWithBusyRetry);
+    jest
+      .spyOn(localVideoCapturePool, "releaseWarmLocalVideoCapture")
+      .mockImplementation(mockReleaseWarmLocalVideoCapture);
     mockItemSlideProps.length = 0;
     mockDndMonitorListener = null;
     mockDndState = { active: null, over: null };
@@ -335,6 +368,120 @@ describe("ItemSlides", () => {
       </GlobalInfoContext.Provider>,
     );
   };
+
+  const renderWithToast = (showToast: jest.Mock) =>
+    render(
+      <ToastContext.Provider
+        value={{
+          showToast,
+          updateToast: jest.fn(),
+          removeToast: jest.fn(),
+        }}
+      >
+        <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+          <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+            <ItemSlides />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ToastContext.Provider>,
+    );
+
+  const setWindowShareSlide = () => {
+    localStorage.setItem(
+      "worshipsync_local_video_inputs",
+      JSON.stringify([
+        {
+          sourceId: "local_video_1",
+          deviceId: "window:11:0",
+          deviceLabel: "Lyrics - Notepad",
+          captureKind: "window",
+          displaySourceName: "Lyrics - Notepad",
+        },
+      ]),
+    );
+    mockState.undoable.present.item.slides = [
+      {
+        ...baseSlides[0],
+        mediaSource: {
+          kind: "local-video-input",
+          sourceId: "local_video_1",
+          label: "Lyrics - Notepad",
+          captureKind: "window",
+        },
+      },
+    ];
+  };
+
+  it("signals a missing window source without dispatching an unsafe output", async () => {
+    setWindowShareSlide();
+    const missingError = new Error("missing");
+    missingError.name = "DesktopCaptureSourceMissingError";
+    mockAcquireWarmLocalVideoCaptureWithBusyRetry.mockRejectedValue(
+      missingError,
+    );
+    const showToast = jest.fn();
+
+    renderWithToast(showToast);
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+    await act(async () => undefined);
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.stringContaining("Use Edit in the slide details"),
+      "warning",
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "presentation/updateProjector" }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "presentation/updateMonitor" }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "presentation/updateStream" }),
+    );
+  });
+
+  it("continues to toast non-missing local-video errors", async () => {
+    setWindowShareSlide();
+    mockAcquireWarmLocalVideoCaptureWithBusyRetry.mockRejectedValue(
+      new Error("capture failed"),
+    );
+    const showToast = jest.fn();
+
+    renderWithToast(showToast);
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+    await act(async () => undefined);
+
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), "warning");
+  });
+
+  it("measures thumbnails when the loaded slide grid mounts", () => {
+    mockState.undoable.present.item.isLoading = true;
+    const view = renderAncestorItemSlides();
+
+    expect(screen.getByRole("status", { name: "Loading slides" })).toBeInTheDocument();
+    expect(screen.queryByTestId("static-slide-reference-canvas")).not.toBeInTheDocument();
+
+    mockState.undoable.present.item.isLoading = false;
+    view.rerender(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(
+      screen.getAllByTestId("static-slide-reference-canvas"),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          style: expect.objectContaining({
+            transform: `scale(${Math.min(940 / 1920, 520 / 1080)})`,
+          }),
+        }),
+      ]),
+    );
+  });
 
   const dropMediaAt = async (
     index: number,

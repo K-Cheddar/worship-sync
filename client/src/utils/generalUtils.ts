@@ -312,14 +312,17 @@ export const checkMediaType = (mediaUrl?: string) => {
   return "image";
 };
 
-export const getImageFromVideoUrl = (videoUrl?: string) => {
+export const getImageFromVideoUrl = (
+  videoUrl?: string,
+  size: { width: number; height: number } = { width: 250, height: 141 },
+) => {
   if (!videoUrl) return "";
   
   // Handle Mux URLs
   if (videoUrl.includes("stream.mux.com")) {
     const playbackIdMatch = videoUrl.match(/stream\.mux\.com\/([a-zA-Z0-9]+)/);
     if (playbackIdMatch) {
-      return `https://image.mux.com/${playbackIdMatch[1]}/thumbnail.png?width=250&height=141&fit_mode=pad&time=1`;
+      return `https://image.mux.com/${playbackIdMatch[1]}/thumbnail.png?width=${size.width}&height=${size.height}&fit_mode=pad&time=1`;
     }
   }
   

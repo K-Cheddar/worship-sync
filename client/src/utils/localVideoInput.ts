@@ -376,6 +376,10 @@ export const isLocalVideoDeviceBusyError = (error: unknown) => {
   return name === "NotReadableError" || name === "AbortError";
 };
 
+export const isDesktopCaptureSourceMissingError = (error: unknown) =>
+  error instanceof Error &&
+  error.name === "DesktopCaptureSourceMissingError";
+
 /** Desktop shares fail for different reasons than a cable, so guide differently. */
 export const getDesktopCaptureErrorMessage = (
   error: unknown,

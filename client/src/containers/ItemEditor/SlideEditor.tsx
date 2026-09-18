@@ -82,6 +82,7 @@ import {
 } from "../../components/ItemDetailsModal/ItemDetailsModal";
 import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
 import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
+import { useActiveControllerProfile } from "../../context/activeController";
 import {
   Popover,
   PopoverContent,
@@ -186,6 +187,11 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     (state: RootState) => state.undoable.present.preferences
   );
   const isPresentMode = presentationMode === "present";
+  const activeControllerProfile = useActiveControllerProfile();
+  const canRelinkVideoInputInPresentMode =
+    canEdit &&
+    (activeControllerProfile.type === "aux-presentation" ||
+      activeControllerProfile.type === "presentation");
 
   const [isItemDetailsModalOpen, setIsItemDetailsModalOpen] = useState(false);
   const [isSongDetailsDrawerOpen, setIsSongDetailsDrawerOpen] = useState(false);
@@ -1359,7 +1365,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           <LocalVideoInputDetails
             className="w-full"
             source={selectedSlideMediaSource}
-            canEdit={false}
+            canEdit={canRelinkVideoInputInPresentMode}
+            onEdit={() => setIsVideoInputRelinkOpen(true)}
           />
         );
       }
@@ -1425,6 +1432,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     selectedSlide,
     selectedSlideMediaSource,
     isPresentMode,
+    canRelinkVideoInputInPresentMode,
   ]);
 
   const editorWrapperStyle = {
@@ -1436,7 +1444,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   const mainEditorContent = (
     <>
       {showEditorSkeleton ? (
-        <SlideEditorSkeleton />
+        <SlideEditorSkeleton mode={presentationMode} />
       ) : !isEmpty ? (
         <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
           {leftColumnContent ? <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
