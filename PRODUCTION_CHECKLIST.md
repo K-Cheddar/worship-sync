@@ -45,7 +45,7 @@ Edit `client/src/utils/environment.ts` line 49 to use your production API URL in
 
 Before enabling the new auth flow in production:
 - Set `AUTH_SESSION_SECRET`
-- Set `AUTH_APP_BASE_URL` (used as the primary CORS origin in production when `NODE_ENV` is not `development`; the server derives the browser origin from this URL)
+- Set `AUTH_APP_BASE_URL` to the deployed app URL, including its intended hostname (`https://worshipsync.net` or `https://www.worshipsync.net`). It is used to build device-pairing approval URLs and as the primary CORS origin in production when `NODE_ENV` is not `development`.
 - Set `AUTH_ALLOWED_ORIGINS` to the exact browser origins allowed to use cookie auth
 - **API availability**: Sign-in, session bootstrap, and Firebase custom tokens require a reachable API. If the server is down or misconfigured, clients cannot authenticate or load shared realtime data. This is expected; there is no fully offline authenticated mode.
 - Set `RESEND_API_KEY`

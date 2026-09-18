@@ -7255,6 +7255,13 @@ export const authHandlers = {
       const inviteEmail = await renderInviteEmail(buildInviteUrl(rawToken), {
         churchName,
       });
+      // Commit before delivery: the provider may accept the message even if a
+      // later Firestore write fails, so no post-delivery commit may be needed.
+      const refreshedInvite = await updateInviteForResend({
+        churchId: req.params.churchId,
+        inviteId,
+        patch: invitePatch,
+      });
       await sendEmail({
         to: invite.email,
         subject: `${churchNameTrimmed || "Your church"} invites you to join WorshipSync`,
@@ -7266,14 +7273,6 @@ export const authHandlers = {
           inviteId,
           role: invite.role,
         },
-      });
-      // Keep the existing token authoritative until the replacement email is
-      // accepted by the delivery provider. The transaction below then makes
-      // the new token and refreshed expiration authoritative together.
-      const refreshedInvite = await updateInviteForResend({
-        churchId: req.params.churchId,
-        inviteId,
-        patch: invitePatch,
       });
       await addSecurityEvent({
         type: "invite_resent",
