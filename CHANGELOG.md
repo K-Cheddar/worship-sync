@@ -1,3 +1,10 @@
+## [2.36.1](https://github.com/K-Cheddar/worship-sync/compare/v2.36.0...v2.36.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* Correct qr code scanning ([f20a65a](https://github.com/K-Cheddar/worship-sync/commit/f20a65adf664389265fae0f8a40a6ed0f8731de5))
+
 # [2.36.0](https://github.com/K-Cheddar/worship-sync/compare/v2.35.0...v2.36.0) (2026-09-18)
 
 
