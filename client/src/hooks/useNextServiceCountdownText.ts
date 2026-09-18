@@ -3,8 +3,9 @@ import { formatTime } from "../components/DisplayWindow/TimerDisplay";
 import { serverNow } from "../utils/serverTime";
 
 const listeners = new Set<() => void>();
-/** Browser `window.setTimeout` returns a number; Node’s does not. */
-let tickerTimeoutId: number | null = null;
+/** Browser timer handles are numbers; Node’s timer handles are objects. */
+let tickerIntervalId: number | null = null;
+export const COUNTDOWN_TICK_MS = 250;
 
 /**
  * Whole seconds remaining until `targetIso`, from an absolute clock.
@@ -16,19 +17,10 @@ export const getRemainingSecondsFromTarget = (
 ): number =>
   Math.max(0, Math.floor((new Date(targetIso).getTime() - nowMs) / 1000));
 
-/**
- * Delay until the next whole-second boundary on the given clock.
- * Aligns wakeups to real-time second flips instead of a free-running interval.
- */
-export const getNextCountdownDelayMs = (nowMs: number): number => {
-  const msIntoSecond = ((nowMs % 1000) + 1000) % 1000;
-  return msIntoSecond === 0 ? 1000 : 1000 - msIntoSecond;
-};
-
 const clearCountdownScheduler = () => {
-  if (tickerTimeoutId !== null) {
-    window.clearTimeout(tickerTimeoutId);
-    tickerTimeoutId = null;
+  if (tickerIntervalId !== null) {
+    window.clearInterval(tickerIntervalId);
+    tickerIntervalId = null;
   }
 };
 
@@ -36,19 +28,14 @@ const scheduleCountdownTick = () => {
   clearCountdownScheduler();
   if (listeners.size === 0) return;
 
-  const delayMs = getNextCountdownDelayMs(serverNow());
-  tickerTimeoutId = window.setTimeout(() => {
-    tickerTimeoutId = null;
-    // Recompute subscribers from absolute time — late/throttled callbacks
-    // self-correct and never accumulate drift from a local counter.
+  tickerIntervalId = window.setInterval(() => {
+    // Consumers recompute from absolute time — late callbacks self-correct
+    // and never accumulate drift from a local counter.
     listeners.forEach((notify) => notify());
-    if (listeners.size > 0) {
-      scheduleCountdownTick();
-    }
-  }, delayMs);
+  }, COUNTDOWN_TICK_MS);
 };
 
-/** Shared second-boundary ticker for next-service countdown UIs. */
+/** Shared cadence ticker for next-service countdown UIs. */
 export const subscribeCountdownTicker = (
   listener: () => void,
 ): (() => void) => {
@@ -90,7 +77,12 @@ export const useNextServiceCountdownText = (
     }
 
     const update = () => {
-      setRemainingSeconds(getRemainingSeconds(targetIso));
+      const nextRemainingSeconds = getRemainingSeconds(targetIso);
+      setRemainingSeconds((currentRemainingSeconds) =>
+        currentRemainingSeconds === nextRemainingSeconds
+          ? currentRemainingSeconds
+          : nextRemainingSeconds,
+      );
     };
 
     update();

@@ -28,6 +28,67 @@ export type DesktopCaptureSource = {
   thumbnailDataUrl?: string;
 };
 
+const normalizeWindowTitleTokens = (title: string) =>
+  title
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[–—|:]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token && !/^\d+$/.test(token));
+
+const hasSameNormalizedWindowTitle = (left: string, right: string) =>
+  normalizeWindowTitleTokens(left).join(" ") ===
+  normalizeWindowTitleTokens(right).join(" ");
+
+/**
+ * Returns a replacement only when its meaningful title tokens are a strong,
+ * unique match. Fuzzy recovery requires an equal-sized token set: an added
+ * title prefix/suffix is a different window identity, even when every saved
+ * token is present. Short generic titles are only recoverable when they are
+ * exactly equivalent after normalization.
+ */
+export const findSafeElectronWindowSource = (
+  savedName: string,
+  sources: DesktopCaptureSource[],
+) => {
+  const savedTokens = normalizeWindowTitleTokens(savedName);
+  if (savedTokens.length === 0) return undefined;
+
+  const candidates = sources
+    .filter((source) => source.kind === "window")
+    .map((source) => {
+      const candidateTokens = normalizeWindowTitleTokens(source.name);
+      const savedSet = new Set(savedTokens);
+      const candidateSet = new Set(candidateTokens);
+      const overlap = [...savedSet].filter((token) => candidateSet.has(token));
+      const coverage = overlap.length / savedSet.size;
+      const candidateCoverage = overlap.length / candidateSet.size;
+      const exact = hasSameNormalizedWindowTitle(savedName, source.name);
+      const canFuzzyMatch =
+        savedSet.size >= 3 &&
+        candidateSet.size >= 3 &&
+        savedSet.size === candidateSet.size &&
+        overlap.length >= 3 &&
+        coverage >= 0.8 &&
+        candidateCoverage >= 0.8;
+      return {
+        source,
+        score: exact ? 1 : coverage * 0.7 + candidateCoverage * 0.3,
+        strong: exact || canFuzzyMatch,
+      };
+    })
+    .filter((candidate) => candidate.strong)
+    .sort((left, right) => right.score - left.score);
+
+  const best = candidates[0];
+  if (!best) return undefined;
+  const nextBest = candidates[1];
+  if (nextBest && best.score - nextBest.score < 0.15) return undefined;
+  return best.source;
+};
+
 export class DesktopCaptureShareEndedError extends Error {
   constructor(captureKind: LocalVideoCaptureKind = "screen") {
     super(`This ${captureKind} share is no longer running.`);
@@ -208,26 +269,38 @@ const resolveElectronSourceId = async (binding: LocalVideoInputBinding) => {
   if (sources.some((source) => source.id === binding.deviceId)) {
     return binding.deviceId;
   }
-  const renamed = binding.displaySourceName
+  const exactName = binding.displaySourceName
     ? sources.find(
         (source) =>
           source.kind === captureKind &&
           source.name === binding.displaySourceName,
       )
     : undefined;
-  if (!renamed) throw new DesktopCaptureSourceMissingError(captureKind);
-  bindLocalVideoInput(
-    binding.sourceId,
-    renamed.id,
-    binding.deviceLabel,
-    binding.audioDeviceId,
-    binding.audioDeviceLabel,
-    {
-      captureKind,
-      displaySourceName: renamed.name,
-      systemAudio: binding.systemAudio,
-    },
-  );
+  const renamed =
+    exactName ||
+    (captureKind === "window" && binding.displaySourceName
+      ? findSafeElectronWindowSource(binding.displaySourceName, sources)
+      : undefined);
+  if (!renamed || renamed.kind !== captureKind) {
+    throw new DesktopCaptureSourceMissingError(captureKind);
+  }
+  // A fuzzy title is safe enough for this capture attempt, but not enough to
+  // replace the operator's saved identity. Explicit picker relinking remains
+  // the confirmation point for that durable change.
+  if (hasSameNormalizedWindowTitle(binding.displaySourceName ?? "", renamed.name)) {
+    bindLocalVideoInput(
+      binding.sourceId,
+      renamed.id,
+      binding.deviceLabel,
+      binding.audioDeviceId,
+      binding.audioDeviceLabel,
+      {
+        captureKind,
+        displaySourceName: renamed.name,
+        systemAudio: binding.systemAudio,
+      },
+    );
+  }
   return renamed.id;
 };
 
