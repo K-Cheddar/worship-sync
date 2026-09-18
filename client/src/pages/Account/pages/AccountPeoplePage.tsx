@@ -1,7 +1,7 @@
 import {
   Ban,
-  Info,
   MoreHorizontal,
+  Send,
   ShieldPlus,
   UserRoundCog,
 } from "lucide-react";
@@ -12,26 +12,72 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../components/ui/DropdownMenu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../../../components/ui/Popover";
 import { InvitePeopleForm } from "../../Controller/AccountFormSections";
 import { useAccountPage } from "../AccountPageContext";
 import { AccountPeoplePageSkeleton } from "../accountPageSkeletons";
 import { cn } from "@/utils/cnHelper";
 import { alternatingAdminListRowBg } from "../../../utils/listRowStripes";
 import MemberAccessSheet from "../components/MemberAccessSheet";
-import { formatMemberTeamsAccessSummary } from "../accountTeamsAccess";
-import { formatMemberServicesAccessSummary } from "../accountServicesAccess";
 import { formatMemberAccessLabel } from "../accountUtils";
 
-const peopleTableHeaderClassName =
-  "hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-3 px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr]";
+const formatInviteUnit = (value: number, unit: string) =>
+  `${value} ${unit}${value === 1 ? "" : "s"}`;
 
-const peopleTableRowClassName =
-  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-3 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr]";
+const formatInviteUntil = (expiresAt?: string) => {
+  const remainingMs = new Date(expiresAt || 0).getTime() - Date.now();
+  if (remainingMs <= 0) return "today";
+  if (remainingMs < 86400000) {
+    const remainingHours = Math.max(1, Math.ceil(remainingMs / 3600000));
+    return `in ${formatInviteUnit(remainingHours, "hour")}`;
+  }
+  const today = new Date();
+  const expiryDate = new Date(expiresAt || 0);
+  const calendarDays = Math.max(
+    1,
+    Math.round(
+      (new Date(
+        expiryDate.getFullYear(),
+        expiryDate.getMonth(),
+        expiryDate.getDate(),
+      ).getTime() -
+        new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) /
+        86400000,
+    ),
+  );
+  if (calendarDays === 1) return "tomorrow";
+  return `in ${formatInviteUnit(calendarDays, "day")}`;
+};
+
+const formatInviteAge = (expiresAt?: string) => {
+  const elapsedDays = Math.max(
+    1,
+    Math.floor((Date.now() - new Date(expiresAt || 0).getTime()) / 86400000),
+  );
+  if (elapsedDays === 1) return "yesterday";
+  return `${formatInviteUnit(elapsedDays, "day")} ago`;
+};
+
+const peopleTableHeaderBaseClassName =
+  "hidden items-center gap-x-3 px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 md:grid";
+
+const invitationTableHeaderClassName = cn(
+  peopleTableHeaderBaseClassName,
+  "md:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_4.5rem] lg:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_minmax(11rem,1fr)_4.5rem]",
+);
+
+const invitationTableRowClassName =
+  "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 md:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_4.5rem] lg:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_minmax(11rem,1fr)_4.5rem]";
+
+const memberTableHeaderClassName = cn(
+  peopleTableHeaderBaseClassName,
+  "md:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_4.5rem]",
+);
+
+const memberTableRowClassName =
+  "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 md:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_4.5rem]";
+
+const peopleOverflowButtonClassName =
+  "h-10 w-10 shrink-0 items-center justify-center p-2";
 
 const AccountPeoplePage = () => {
   const accountPage = useAccountPage();
@@ -42,14 +88,13 @@ const AccountPeoplePage = () => {
     refresh,
     sortedInvites,
     sortedMembers,
-    teams,
     destructiveConfirm,
     destructiveConfirmRunning,
     setDestructiveConfirm,
-    toTeamsAccessOption,
-    getEditableTeamScopeIds,
     openMemberAccessSheet,
     openInviteAccessSheet,
+    resendInvite,
+    resendingInviteId,
   } = accountPage;
 
   if (loading) {
@@ -61,43 +106,37 @@ const AccountPeoplePage = () => {
       <InvitePeopleForm churchId={churchId} onInvited={refresh} />
 
       <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
-        <h3 className="text-lg font-semibold">Pending invites</h3>
+        <h3 className="text-lg font-semibold">Invitations</h3>
         <p className="mt-1 text-sm text-gray-400">
-          Waiting to be accepted. Unused invites expire on their own. You can
-          edit access or revoke an invite if the link should stop working.
+          Active invitations can be accepted until they expire. Resend an
+          expired invitation to send a fresh working link.
         </p>
         <div className="mt-4 space-y-0">
           {sortedInvites.length > 0 && (
-            <div className={peopleTableHeaderClassName}>
+            <div className={invitationTableHeaderClassName}>
               <span className="justify-self-start">Invite</span>
-              <span className="justify-self-start">Access</span>
-              <span className="justify-self-start">Info</span>
-              <span className="justify-self-end text-right">Actions</span>
+              <span className="w-full text-left">Access</span>
+              <span className="hidden justify-self-start lg:block">Status</span>
+              <span className="w-full text-right">Actions</span>
             </div>
           )}
           {sortedInvites.length === 0 && (
-            <p className="text-sm text-gray-300">No pending invites yet.</p>
+            <p className="text-sm text-gray-300">No invitations yet.</p>
           )}
           {sortedInvites.map((invite, inviteIndex) => {
             const accessLabel =
               invite.role === "admin"
                 ? "Admin"
                 : formatMemberAccessLabel(invite.appAccess);
-            const teamsAccessSummary = formatMemberTeamsAccessSummary(
-              toTeamsAccessOption(invite.permissions, invite.role),
-              getEditableTeamScopeIds(invite.permissions),
-              teams,
-            );
-            const servicesAccessSummary = formatMemberServicesAccessSummary(
-              invite.permissions,
-              invite.role,
-            );
-            const expiresLabel = invite.expiresAt
-              ? new Date(invite.expiresAt).toLocaleString()
-              : "Unknown";
-            const createdLabel = invite.createdAt
-              ? new Date(invite.createdAt).toLocaleString()
-              : "Unknown";
+            const isExpired =
+              invite.status === "expired" ||
+              (invite.status === "pending" &&
+                Boolean(invite.expiresAt) &&
+                new Date(invite.expiresAt || 0).getTime() <= Date.now());
+            const lifecycleLabel = isExpired
+              ? `Expired ${formatInviteAge(invite.expiresAt)}`
+              : `Pending · Expires ${formatInviteUntil(invite.expiresAt)}`;
+            const isResending = resendingInviteId === invite.inviteId;
             const isRevokeInviteConfirming =
               destructiveConfirmRunning &&
               destructiveConfirm?.kind === "revokeInvite" &&
@@ -111,59 +150,36 @@ const AccountPeoplePage = () => {
                   alternatingAdminListRowBg(inviteIndex),
                 )}
               >
-                <div className={peopleTableRowClassName}>
-                  <p className="min-w-0 justify-self-start truncate text-sm font-semibold">
-                    {invite.email}
-                  </p>
-                  <div className="min-w-0 justify-self-start pr-1 text-left max-md:max-w-[8rem]">
+                <div className={invitationTableRowClassName}>
+                  <div className="min-w-0">
+                    <p className="min-w-0 truncate text-sm font-semibold">
+                      {invite.email}
+                    </p>
+                    <p
+                      className={cn(
+                        "min-w-0 truncate text-xs lg:hidden",
+                        isExpired ? "text-amber-300" : "text-gray-400",
+                      )}
+                    >
+                      {lifecycleLabel}
+                    </p>
+                  </div>
+                  <div className="hidden min-w-0 w-full pr-1 text-left md:block">
                     <p className="min-w-0 truncate text-sm text-gray-300">
                       {accessLabel}
                     </p>
                   </div>
-                  <div className="justify-self-start">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          svg={Info}
-                          iconSize="sm"
-                          aria-label={`Show details for invite to ${invite.email}`}
-                          title="Show invite details"
-                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                        />
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
-                      >
-                        <p className="font-semibold text-white">Invite details</p>
-                        <dl className="mt-2 space-y-1">
-                          <div>
-                            <dt className="inline text-gray-400">Access: </dt>
-                            <dd className="inline">{accessLabel}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Teams: </dt>
-                            <dd className="inline">{teamsAccessSummary}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Services: </dt>
-                            <dd className="inline">{servicesAccessSummary}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Sent: </dt>
-                            <dd className="inline">{createdLabel}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Expires: </dt>
-                            <dd className="inline">{expiresLabel}</dd>
-                          </div>
-                        </dl>
-                      </PopoverContent>
-                    </Popover>
+                  <div className="hidden min-w-0 justify-self-start lg:block">
+                    <span
+                      className={cn(
+                        "truncate text-xs",
+                        isExpired ? "text-amber-300" : "text-gray-400",
+                      )}
+                    >
+                      {lifecycleLabel}
+                    </span>
                   </div>
-                  <div className="flex justify-self-end">
+                  <div className="flex w-full justify-end">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -173,8 +189,8 @@ const AccountPeoplePage = () => {
                           iconSize="sm"
                           aria-label={`Actions for invite to ${invite.email}`}
                           title="Invite actions"
-                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                          disabled={destructiveConfirmRunning}
+                          className={peopleOverflowButtonClassName}
+                          disabled={destructiveConfirmRunning || isResending}
                         />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
@@ -185,20 +201,44 @@ const AccountPeoplePage = () => {
                           Edit access
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          variant="destructive"
-                          disabled={
-                            destructiveConfirmRunning || isRevokeInviteConfirming
-                          }
-                          onSelect={() =>
-                            setDestructiveConfirm({
-                              kind: "revokeInvite",
-                              invite,
-                            })
-                          }
+                          disabled={isResending}
+                          onSelect={() => void resendInvite(invite)}
                         >
-                          <Ban />
-                          Revoke invite
+                          <Send />
+                          Resend invitation
                         </DropdownMenuItem>
+                        {!isExpired ? (
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={
+                              destructiveConfirmRunning ||
+                              isRevokeInviteConfirming
+                            }
+                            onSelect={() =>
+                              setDestructiveConfirm({
+                                kind: "revokeInvite",
+                                invite,
+                              })
+                            }
+                          >
+                            <Ban />
+                            Revoke invitation
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={destructiveConfirmRunning}
+                            onSelect={() =>
+                              setDestructiveConfirm({
+                                kind: "removeExpiredInvite",
+                                invite,
+                              })
+                            }
+                          >
+                            <Ban />
+                            Remove expired invitation
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -217,11 +257,10 @@ const AccountPeoplePage = () => {
         </p>
         <div className="mt-4 space-y-0">
           {sortedMembers.length > 0 && (
-            <div className={peopleTableHeaderClassName}>
+            <div className={memberTableHeaderClassName}>
               <span className="justify-self-start">Member</span>
-              <span className="justify-self-start">Access</span>
-              <span className="justify-self-start">Info</span>
-              <span className="justify-self-end text-right">Actions</span>
+              <span className="w-full text-left">Access</span>
+              <span className="w-full text-right">Actions</span>
             </div>
           )}
           {sortedMembers.length === 0 && (
@@ -229,30 +268,14 @@ const AccountPeoplePage = () => {
           )}
           {sortedMembers.map((member, memberIndex) => {
             const memberUser = member.user;
-            const memberEmail =
-              memberUser?.primaryEmail || memberUser?.email || "";
             const memberLabel =
-              memberUser?.displayName || memberEmail || "Unknown user";
+              memberUser?.displayName ||
+              memberUser?.primaryEmail ||
+              memberUser?.email ||
+              "Unknown user";
             const isSelf = memberUser?.uid === context?.userId;
             const isAdminMember = member.role === "admin";
             const targetUserId = memberUser?.uid || member.userId;
-            const currentTeamsAccess = toTeamsAccessOption(
-              member.permissions,
-              member.role,
-            );
-            const currentTeamScopeIds = getEditableTeamScopeIds(
-              member.permissions,
-            );
-            const teamsAccessSummary = formatMemberTeamsAccessSummary(
-              currentTeamsAccess,
-              currentTeamScopeIds,
-              teams,
-            );
-            const servicesAccessSummary = formatMemberServicesAccessSummary(
-              member.permissions,
-              member.role,
-            );
-
             return (
               <div
                 key={member.membershipId}
@@ -263,16 +286,32 @@ const AccountPeoplePage = () => {
                     : alternatingAdminListRowBg(memberIndex),
                 )}
               >
-                <div className={peopleTableRowClassName}>
-                  <p className="flex min-w-0 items-center gap-2 justify-self-start truncate text-sm font-semibold">
-                    <span className="truncate">{memberLabel}</span>
-                    {isSelf && (
-                      <span className="shrink-0 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-xs font-medium text-cyan-200">
-                        You
-                      </span>
-                    )}
-                  </p>
-                  <div className="min-w-0 justify-self-start pr-1 text-left max-md:max-w-[8rem]">
+                <div className={memberTableRowClassName}>
+                  <div className="min-w-0">
+                    <p className="flex min-w-0 items-center gap-2 truncate text-sm font-semibold">
+                      <span className="min-w-0 truncate">{memberLabel}</span>
+                      {isSelf && (
+                        <span className="shrink-0 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-xs font-medium text-cyan-200">
+                          You
+                        </span>
+                      )}
+                    </p>
+                    <p
+                      className={cn(
+                        "min-w-0 truncate text-xs md:hidden",
+                        isSelf ? "text-cyan-100/90" : "text-gray-400",
+                      )}
+                    >
+                      {isAdminMember ? "Admin" : "Member"} ·{" "}
+                      {formatMemberAccessLabel(member.appAccess)}
+                    </p>
+                    {memberUser?.primaryEmail || memberUser?.email ? (
+                      <p className="min-w-0 truncate text-xs text-gray-400">
+                        {memberUser.primaryEmail || memberUser.email}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="hidden min-w-0 w-full pr-1 text-left md:block">
                     <p
                       className={cn(
                         "min-w-0 truncate text-sm",
@@ -283,72 +322,7 @@ const AccountPeoplePage = () => {
                       {formatMemberAccessLabel(member.appAccess)}
                     </p>
                   </div>
-                  <div className="justify-self-start">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          svg={Info}
-                          iconSize="sm"
-                          aria-label={`Show details for ${memberLabel}`}
-                          title="Show member details"
-                          className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
-                        />
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="w-[min(24rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-sm text-gray-200"
-                      >
-                        <p className="font-semibold text-white">Member details</p>
-                        <dl className="mt-2 space-y-1">
-                          <div>
-                            <dt className="inline text-gray-400">Access: </dt>
-                            <dd className="inline">
-                              {isAdminMember ? "Admin" : "Member"} |{" "}
-                              {formatMemberAccessLabel(member.appAccess)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Teams: </dt>
-                            <dd className="inline">{teamsAccessSummary}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-gray-400">Services: </dt>
-                            <dd className="inline">{servicesAccessSummary}</dd>
-                          </div>
-                          {memberEmail ? (
-                            <div>
-                              <dt className="inline text-gray-400">Email: </dt>
-                              <dd className="inline break-all">{memberEmail}</dd>
-                            </div>
-                          ) : null}
-                          {Array.isArray(memberUser?.linkedMethods) &&
-                            memberUser.linkedMethods.length > 0 ? (
-                            <div>
-                              <dt className="inline text-gray-400">
-                                Sign-in methods:{" "}
-                              </dt>
-                              <dd className="inline">
-                                {memberUser.linkedMethods.join(", ")}
-                              </dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                        {isAdminMember && !isSelf ? (
-                          <p className="mt-2 text-xs text-gray-400">
-                            Admins keep full access while they are admins.
-                          </p>
-                        ) : null}
-                        {isSelf ? (
-                          <p className="mt-2 text-xs text-cyan-200/75">
-                            You can’t edit or remove your own membership here.
-                          </p>
-                        ) : null}
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <div className="flex justify-self-end">
+                  <div className="flex w-full justify-end">
                     {!isSelf && targetUserId ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -359,7 +333,7 @@ const AccountPeoplePage = () => {
                             iconSize="sm"
                             aria-label={`Actions for ${memberLabel}`}
                             title="Member actions"
-                            className="min-h-0 min-w-0 shrink-0 p-1 max-md:min-h-0"
+                            className={peopleOverflowButtonClassName}
                             disabled={destructiveConfirmRunning}
                           />
                         </DropdownMenuTrigger>

@@ -179,6 +179,15 @@ const createNumericCode = () => crypto.randomInt(100000, 1000000).toString();
 const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("hex");
+const isInviteExpired = (invite, now = Date.now()) =>
+  Boolean(invite?.expiresAt) && new Date(invite.expiresAt).getTime() <= now;
+const sanitizeInviteWithEffectiveStatus = (invite, now = Date.now()) =>
+  sanitizeInviteForClient({
+    ...invite,
+    ...(invite.status === "pending" && isInviteExpired(invite, now)
+      ? { status: "expired" }
+      : {}),
+  });
 // "member" is the narrowest tier: a volunteer who can see their own schedule
 // and nothing else. Strictly narrower than "view" — see client accessTiers.ts.
 const APP_ACCESS_VALUES = new Set(["full", "music", "view", "member"]);
@@ -856,17 +865,27 @@ const createEmailTags = (tags = {}) =>
     .filter(({ name, value }) => name.length > 0 && value.length > 0)
     .slice(0, 10);
 
-const sendEmail = async ({
-  to,
-  subject,
-  textBody,
-  htmlBody,
-  tags = {},
-  replyTo,
-  fromEmail,
-} = {}) => {
+let sendEmailForServerTests = null;
+
+const sendEmail = async (payload = {}) => {
+  if (
+    process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+    typeof sendEmailForServerTests === "function"
+  ) {
+    return sendEmailForServerTests(payload);
+  }
+
+  const {
+    to,
+    subject,
+    textBody,
+    htmlBody,
+    tags = {},
+    replyTo,
+    fromEmail,
+  } = payload;
   if (resendClient && resendFromEmail) {
-    const payload = {
+    const resendPayload = {
       from: fromEmail || resendNotificationFromEmail || resendFromEmail,
       to: [to],
       subject,
@@ -876,9 +895,9 @@ const sendEmail = async ({
     };
     const normalizedReplyTo = String(replyTo || "").trim();
     if (normalizedReplyTo) {
-      payload.reply_to = normalizedReplyTo;
+      resendPayload.reply_to = normalizedReplyTo;
     }
-    const response = await resendClient.emails.send(payload);
+    const response = await resendClient.emails.send(resendPayload);
     if (response.error) {
       throw new Error(response.error.message || "Could not send email.");
     }
@@ -1242,6 +1261,147 @@ const queryDocs = async (
       }),
     )
     .slice(0, limit);
+};
+
+const findOutstandingInvite = (invites, churchId, email) =>
+  invites.find(
+    (invite) =>
+      invite.churchId === churchId &&
+      invite.email === email &&
+      (invite.status === "pending" || invite.status === "expired") &&
+      !invite.acceptedAt,
+  ) || null;
+
+const findOutstandingInviteByEmail = async (churchId, email) => {
+  const db = requireFirestore();
+  if (db) {
+    const snapshot = await db
+      .collection(COLLECTIONS.invites)
+      .where("churchId", "==", churchId)
+      .get();
+    return findOutstandingInvite(
+      snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+      churchId,
+      email,
+    );
+  }
+
+  return findOutstandingInvite(
+    Array.from(collectionMap[COLLECTIONS.invites].values()),
+    churchId,
+    email,
+  );
+};
+
+const createInviteIfAvailable = async (invite) => {
+  const db = requireFirestore();
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(
+        db
+          .collection(COLLECTIONS.invites)
+          .where("churchId", "==", invite.churchId),
+      );
+      const existingInvite = findOutstandingInvite(
+        snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+        invite.churchId,
+        invite.email,
+      );
+      if (existingInvite) return existingInvite;
+      transaction.create(
+        db.collection(COLLECTIONS.invites).doc(invite.inviteId),
+        invite,
+      );
+      return null;
+    });
+  }
+
+  const existingInvite = findOutstandingInvite(
+    Array.from(collectionMap[COLLECTIONS.invites].values()),
+    invite.churchId,
+    invite.email,
+  );
+  if (existingInvite) {
+    return existingInvite;
+  }
+  collectionMap[COLLECTIONS.invites].set(invite.inviteId, invite);
+  return null;
+};
+
+const deleteUnsentInvite = async ({ churchId, inviteId, tokenHash }) => {
+  const db = requireFirestore();
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+      const snapshot = await transaction.get(inviteRef);
+      if (!snapshot.exists) return;
+      const current = snapshot.data();
+      if (
+        current.churchId === churchId &&
+        current.status === "pending" &&
+        current.tokenHash === tokenHash
+      ) {
+        transaction.delete(inviteRef);
+      }
+    });
+    return;
+  }
+
+  const current = collectionMap[COLLECTIONS.invites].get(inviteId);
+  if (
+    current?.churchId === churchId &&
+    current.status === "pending" &&
+    current.tokenHash === tokenHash
+  ) {
+    collectionMap[COLLECTIONS.invites].delete(inviteId);
+  }
+};
+
+const updateInviteForResend = async ({
+  churchId,
+  inviteId,
+  patch,
+}) => {
+  const db = requireFirestore();
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+      const snapshot = await transaction.get(inviteRef);
+      if (!snapshot.exists) throw httpError(404, "Invite not found.");
+      const current = { id: snapshot.id, ...snapshot.data() };
+      if (current.churchId !== churchId) {
+        throw httpError(404, "Invite not found.");
+      }
+      if (current.status === "accepted" || current.acceptedAt) {
+        throw httpError(400, "Accepted invites cannot be resent.");
+      }
+      if (current.status === "revoked") {
+        throw httpError(400, "Revoked invites cannot be resent.");
+      }
+      if (current.status !== "pending" && !isInviteExpired(current)) {
+        throw httpError(400, "Only active or expired invites can be resent.");
+      }
+      transaction.update(inviteRef, patch);
+      return { ...current, ...patch };
+    });
+  }
+
+  const current = collectionMap[COLLECTIONS.invites].get(inviteId);
+  if (!current || current.churchId !== churchId) {
+    throw httpError(404, "Invite not found.");
+  }
+  if (current.status === "accepted" || current.acceptedAt) {
+    throw httpError(400, "Accepted invites cannot be resent.");
+  }
+  if (current.status === "revoked") {
+    throw httpError(400, "Revoked invites cannot be resent.");
+  }
+  if (current.status !== "pending" && !isInviteExpired(current)) {
+    throw httpError(400, "Only active or expired invites can be resent.");
+  }
+  const updated = { ...current, ...patch };
+  collectionMap[COLLECTIONS.invites].set(inviteId, updated);
+  return { id: inviteId, ...updated };
 };
 
 const addSecurityEvent = async (event) => {
@@ -2295,6 +2455,24 @@ export const setVerifyIdTokenForServerTests = (fn) => {
     );
   }
   verifyIdTokenForServerTests = typeof fn === "function" ? fn : null;
+};
+
+/**
+ * Injects a sendEmail stand-in for in-memory server tests.
+ * Pass null to clear. Refuses when Firestore is configured.
+ */
+export const setSendEmailForServerTests = (fn) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setSendEmailForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setSendEmailForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  sendEmailForServerTests = typeof fn === "function" ? fn : null;
 };
 
 const upsertProfileFromVerifiedToken = async (
@@ -4092,6 +4270,8 @@ export const seedPendingInviteForServerTests = async ({
   expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString(),
   createdByUid = "user_invite_seed",
   permissions,
+  status = "pending",
+  acceptedAt = null,
 } = {}) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
@@ -4131,15 +4311,52 @@ export const seedPendingInviteForServerTests = async ({
     role,
     appAccess,
     permissions: normalizeMembershipPermissions(permissions, role),
-    status: "pending",
+    status,
     tokenHash: hashValue(token),
     expiresAt,
     createdAt: nowIso(),
-    acceptedAt: null,
+    acceptedAt,
     createdByUid,
   };
   await setDoc(COLLECTIONS.invites, inviteId, invite, { merge: false });
   return { inviteId, token, churchId, email: normalizedEmail, churchName };
+};
+
+export const seedRosterMemberForServerTests = async ({
+  memberId = createId("member"),
+  churchId = "church_roster_seed_test",
+  userId = "",
+  invitedAt,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedRosterMemberForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedRosterMemberForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const member = {
+    memberId,
+    churchId,
+    userId,
+    ...(invitedAt ? { invitedAt } : {}),
+  };
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, member, {
+    merge: false,
+  });
+  return member;
+};
+
+export const getRosterMemberForServerTests = async (memberId) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "getRosterMemberForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  return getDoc(COLLECTIONS.teamRosterMembers, memberId);
 };
 
 /**
@@ -6036,16 +6253,16 @@ export const authHandlers = {
         { limit: 200 },
       );
       const pendingInvites = invites
-        .filter((invite) => invite.status === "pending")
+        .filter((invite) => invite.status === "pending" || invite.status === "expired")
         .sort(
           (a, b) =>
-            new Date(b.createdAt || 0).getTime() -
-            new Date(a.createdAt || 0).getTime(),
+            new Date(b.lastSentAt || b.createdAt || 0).getTime() -
+            new Date(a.lastSentAt || a.createdAt || 0).getTime(),
         );
       return res.json({
         success: true,
         invites: pendingInvites.map((invite) =>
-          sanitizeInviteForClient(invite),
+          sanitizeInviteWithEffectiveStatus(invite),
         ),
       });
     } catch (error) {
@@ -6190,6 +6407,8 @@ export const authHandlers = {
 
   ...teamsAuthHandlers,
   async createInvite(req, res) {
+    let reservedInvite = null;
+    let emailSent = false;
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
@@ -6243,6 +6462,22 @@ export const authHandlers = {
           }
         }
       }
+      const existingInviteBeforeQuota = await findOutstandingInviteByEmail(
+        req.params.churchId,
+        email,
+      );
+      if (existingInviteBeforeQuota) {
+        const error = httpError(
+          409,
+          isInviteExpired(existingInviteBeforeQuota)
+            ? `The previous invitation for ${email} expired.`
+            : `An invitation for ${email} already exists.`,
+        );
+        error.existingInvite = sanitizeInviteWithEffectiveStatus(
+          existingInviteBeforeQuota,
+        );
+        throw error;
+      }
       enforceRateLimit({
         scope: "invite-create",
         key: `${req.params.churchId}:${admin.user.uid}`,
@@ -6265,21 +6500,22 @@ export const authHandlers = {
         tokenHash: hashValue(rawToken),
         expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
         createdAt: nowIso(),
+        lastSentAt: nowIso(),
         acceptedAt: null,
         createdByUid: admin.user.uid,
       };
-      await setDoc(COLLECTIONS.invites, inviteId, invite);
-      if (memberId) {
-        // Recorded so the roster can show an invite is outstanding. Without it
-        // an admin gets no evidence one was sent and would keep re-sending.
-        // Cleared on unlink; superseded by `userId` once accepted.
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          memberId,
-          { invitedAt: nowIso() },
-          { merge: true },
+      const existingInvite = await createInviteIfAvailable(invite);
+      if (existingInvite) {
+        const error = httpError(
+          409,
+          isInviteExpired(existingInvite)
+            ? `The previous invitation for ${email} expired.`
+            : `An invitation for ${email} already exists.`,
         );
+        error.existingInvite = sanitizeInviteWithEffectiveStatus(existingInvite);
+        throw error;
       }
+      reservedInvite = invite;
       const church = await getChurchById(req.params.churchId);
       if (!church) {
         throw httpError(404, "Church not found");
@@ -6301,6 +6537,16 @@ export const authHandlers = {
           role,
         },
       });
+      emailSent = true;
+      if (memberId) {
+        // Do not make the roster look invited when initial delivery failed.
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          { invitedAt: nowIso() },
+          { merge: true },
+        );
+      }
       await addSecurityEvent({
         type: "invite_created",
         churchId: req.params.churchId,
@@ -6316,9 +6562,24 @@ export const authHandlers = {
         }),
       });
     } catch (error) {
+      if (reservedInvite && !emailSent) {
+        try {
+          await deleteUnsentInvite({
+            churchId: reservedInvite.churchId,
+            inviteId: reservedInvite.inviteId,
+            tokenHash: reservedInvite.tokenHash,
+          });
+        } catch (cleanupError) {
+          logAuthEvent("error", "invite_create.cleanup_failed", {
+            inviteId: reservedInvite.inviteId,
+            message: cleanupError.message,
+          });
+        }
+      }
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
       });
     }
   },
@@ -6335,7 +6596,10 @@ export const authHandlers = {
       if (!invite || invite.churchId !== req.params.churchId) {
         throw httpError(404, "Invite not found.");
       }
-      if (invite.status !== "pending") {
+      if (
+        invite.status !== "pending" &&
+        !(invite.status === "expired" || isInviteExpired(invite))
+      ) {
         throw httpError(400, "Only pending invites can be updated.");
       }
       const { role, appAccess, permissions } =
@@ -6411,6 +6675,38 @@ export const authHandlers = {
     }
   },
 
+  async removeExpiredChurchInvite(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const inviteId = String(req.params.inviteId || "").trim();
+      const invite = await getDoc(COLLECTIONS.invites, inviteId);
+      if (!invite || invite.churchId !== req.params.churchId) {
+        throw httpError(404, "Invite not found.");
+      }
+      if (
+        invite.status !== "expired" &&
+        !(invite.status === "pending" && isInviteExpired(invite))
+      ) {
+        throw httpError(400, "Only expired invites can be removed.");
+      }
+      await deleteDoc(COLLECTIONS.invites, inviteId);
+      await addSecurityEvent({
+        type: "invite_expired_removed",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        inviteId,
+        email: invite.email || null,
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not remove this expired invite",
+      });
+    }
+  },
+
   async getInvitePreview(req, res) {
     try {
       enforceRateLimit({
@@ -6430,6 +6726,9 @@ export const authHandlers = {
       }
       if (invite.status === "revoked") {
         throw httpError(400, "This invite was revoked.");
+      }
+      if (invite.status === "expired" || isInviteExpired(invite)) {
+        throw httpError(400, "This invite has expired.");
       }
       const church = await getChurchById(invite.churchId);
       const churchName =
@@ -6907,6 +7206,91 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+      });
+    }
+  },
+
+  async resendChurchInvite(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const inviteId = String(req.params.inviteId || "").trim();
+      if (!inviteId) {
+        throw httpError(400, "Invite id is required.");
+      }
+      const invite = await getDoc(COLLECTIONS.invites, inviteId);
+      if (!invite || invite.churchId !== req.params.churchId) {
+        throw httpError(404, "Invite not found.");
+      }
+      if (invite.status === "accepted" || invite.acceptedAt) {
+        throw httpError(400, "Accepted invites cannot be resent.");
+      }
+      if (invite.status === "revoked") {
+        throw httpError(400, "Revoked invites cannot be resent.");
+      }
+      if (invite.status !== "pending" && !isInviteExpired(invite)) {
+        throw httpError(400, "Only active or expired invites can be resent.");
+      }
+      enforceRateLimit({
+        scope: "invite-resend",
+        key: `${req.params.churchId}:${invite.email}`,
+        limit: 5,
+        windowMs: 60 * 60 * 1000,
+        blockMs: 60 * 60 * 1000,
+      });
+      const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
+      const sentAt = nowIso();
+      const invitePatch = {
+        status: "pending",
+        tokenHash: hashValue(rawToken),
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+        lastSentAt: sentAt,
+      };
+      const church = await getChurchById(req.params.churchId);
+      if (!church) {
+        throw httpError(404, "Church not found");
+      }
+      const churchNameTrimmed = church.name ? String(church.name).trim() : "";
+      const churchName = churchNameTrimmed || "your church";
+      const inviteEmail = await renderInviteEmail(buildInviteUrl(rawToken), {
+        churchName,
+      });
+      await sendEmail({
+        to: invite.email,
+        subject: `${churchNameTrimmed || "Your church"} invites you to join WorshipSync`,
+        textBody: inviteEmail.text,
+        htmlBody: inviteEmail.html,
+        tags: {
+          category: "church_invite",
+          churchId: req.params.churchId,
+          inviteId,
+          role: invite.role,
+        },
+      });
+      // Keep the existing token authoritative until the replacement email is
+      // accepted by the delivery provider. The transaction below then makes
+      // the new token and refreshed expiration authoritative together.
+      const refreshedInvite = await updateInviteForResend({
+        churchId: req.params.churchId,
+        inviteId,
+        patch: invitePatch,
+      });
+      await addSecurityEvent({
+        type: "invite_resent",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        inviteId,
+        email: invite.email || null,
+      });
+      return res.json({
+        success: true,
+        invite: sanitizeInviteWithEffectiveStatus(refreshedInvite),
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
       });
     }
   },

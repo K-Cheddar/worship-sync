@@ -1,5 +1,6 @@
 import {
   DesktopCaptureShareEndedError,
+  findSafeElectronWindowSource,
   hasBrowserDesktopShare,
   keepBrowserDesktopShare,
   listDesktopCaptureSources,
@@ -133,6 +134,153 @@ describe("desktopCapture", () => {
           displaySourceName: "Lyrics - Notepad",
         }),
       );
+    });
+
+    it("recovers a uniquely renamed window with normalized title tokens", async () => {
+      useElectron();
+      const windowBinding = {
+        ...screenBinding,
+        deviceId: "window:11:0",
+        deviceLabel: "Lyrics - Notepad",
+        captureKind: "window" as const,
+        displaySourceName: "Lyrics - Notepad",
+      };
+      getDesktopCaptureSources.mockResolvedValue([
+        { id: "window:99:0", name: "  LYRICS |  Notepad  " },
+        { id: "window:20:0", name: "Calculator" },
+      ]);
+      const { stream } = createStream();
+      getUserMedia.mockResolvedValue(stream);
+
+      await openDesktopCapture(windowBinding);
+
+      expect(getUserMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          video: {
+            mandatory: expect.objectContaining({
+              chromeMediaSourceId: "window:99:0",
+            }),
+          },
+        }),
+      );
+      expect(resolveLocalVideoInputBinding("source-1")).toEqual(
+        expect.objectContaining({
+          deviceId: "window:99:0",
+          displaySourceName: "LYRICS |  Notepad",
+        }),
+      );
+    });
+
+    it("recovers a unique related title but rejects tied candidates", () => {
+      expect(
+        findSafeElectronWindowSource("2026 Sabbath Announcements - Canva", [
+          { id: "window:1:0", name: "2026 Sabbath Announcements | Canva", kind: "window" },
+          { id: "window:2:0", name: "Spotify", kind: "window" },
+        ])?.id,
+      ).toBe("window:1:0");
+      expect(
+        findSafeElectronWindowSource("Announcements - Canva", [
+          { id: "window:1:0", name: "Announcements - Canva (1)", kind: "window" },
+          { id: "window:2:0", name: "Announcements - Canva (2)", kind: "window" },
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("does not match a different numbered window, including as the only candidate", () => {
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:1:0", name: "Announcements 2 - Canva", kind: "window" },
+        ]),
+      ).toBeUndefined();
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:2:0", name: "Announcements 2 - Canva", kind: "window" },
+          { id: "window:3:0", name: "Spotify", kind: "window" },
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("matches punctuation and case differences without changing numeric identity", () => {
+      expect(
+        findSafeElectronWindowSource("Announcements 1 - Canva", [
+          { id: "window:1:0", name: " announcements 1 | CANVA ", kind: "window" },
+        ])?.id,
+      ).toBe("window:1:0");
+    });
+
+    it("requires bidirectional near-equivalence for fuzzy recovery", () => {
+      expect(
+        findSafeElectronWindowSource("Sunday Lyrics - Worship - Canva - Live", [
+          {
+            id: "window:1:0",
+            name: "Sunday Lyrics - Worship - Canva - Main",
+            kind: "window",
+          },
+        ])?.id,
+      ).toBe("window:1:0");
+      expect(
+        findSafeElectronWindowSource("Lyrics - Notepad", [
+          { id: "window:2:0", name: "Weekly Lyrics - Notepad", kind: "window" },
+        ]),
+      ).toBeUndefined();
+      expect(
+        findSafeElectronWindowSource("Google Chrome", [
+          { id: "window:3:0", name: "YouTube - Google Chrome", kind: "window" },
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("does not fuzzy-recover short generic app titles", () => {
+      expect(
+        findSafeElectronWindowSource("Project App", [
+          { id: "window:1:0", name: "Project Tool", kind: "window" },
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("does not persist a fuzzy recovery as the saved source identity", async () => {
+      useElectron();
+      const windowBinding = {
+        ...screenBinding,
+        deviceId: "window:11:0",
+        captureKind: "window" as const,
+        displaySourceName: "Sunday Lyrics - Worship - Canva - Live",
+      };
+      localStorage.setItem(
+        "worshipsync_local_video_inputs",
+        JSON.stringify([windowBinding]),
+      );
+      getDesktopCaptureSources.mockResolvedValue([
+        {
+          id: "window:99:0",
+          name: "Sunday Lyrics - Worship - Canva - Main",
+        },
+      ]);
+      const { stream } = createStream();
+      getUserMedia.mockResolvedValue(stream);
+
+      await openDesktopCapture(windowBinding);
+
+      expect(resolveLocalVideoInputBinding("source-1")).toEqual(
+        expect.objectContaining({
+          deviceId: "window:11:0",
+          displaySourceName: "Sunday Lyrics - Worship - Canva - Live",
+        }),
+      );
+    });
+
+    it("does not auto-select generic or unrelated windows", () => {
+      expect(
+        findSafeElectronWindowSource("Google Chrome", [
+          { id: "window:1:0", name: "YouTube - Google Chrome", kind: "window" },
+          { id: "window:2:0", name: "Gmail - Google Chrome", kind: "window" },
+        ]),
+      ).toBeUndefined();
+      expect(
+        findSafeElectronWindowSource("Lyrics - Notepad", [
+          { id: "window:3:0", name: "Another app", kind: "window" },
+        ]),
+      ).toBeUndefined();
     });
 
     it("reports a closed window instead of capturing something else", async () => {

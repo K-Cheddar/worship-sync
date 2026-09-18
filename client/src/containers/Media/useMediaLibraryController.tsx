@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { Cable, ExternalLink, Folder, MonitorUp } from "lucide-react";
+import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -21,7 +22,10 @@ import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { deleteLocalImage } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
-import { isDesktopCaptureKind } from "../../utils/localVideoInput";
+import {
+  isDesktopCaptureKind,
+  isDesktopCaptureSourceMissingError,
+} from "../../utils/localVideoInput";
 import {
   buildLocalVideoInputSendPresentation,
   isLocalVideoInputMedia,
@@ -129,7 +133,7 @@ export function useMediaLibraryController({
   const location = useLocation();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
-  const { showToast, updateToast } = useToast();
+  const { showToast, updateToast, removeToast } = useToast();
   const isPanelVariant = variant === "panel";
 
   const notifyMediaAction = useCallback(
@@ -630,7 +634,32 @@ export function useMediaLibraryController({
             "success",
           );
         },
-        onError: (message) => showToast(message, "warning"),
+        onError: (message, error) => {
+          if (!isDesktopCaptureSourceMissingError(error)) {
+            showToast(message, "warning");
+            return;
+          }
+          const shareTarget =
+            m.localVideoInput?.captureKind === "window" ? "window" : "screen";
+          showToast({
+            message: `This ${shareTarget} share is unavailable on this computer.`,
+            variant: "warning",
+            duration: 15000,
+            children: (toastId) => (
+              <Button
+                type="button"
+                variant="secondary"
+                className="mx-auto mt-2 text-xs"
+                onClick={() => {
+                  removeToast(toastId);
+                  onRelinkVideoInput?.(m);
+                }}
+              >
+                Choose share again
+              </Button>
+            ),
+          });
+        },
       });
       return;
     }
@@ -663,6 +692,8 @@ export function useMediaLibraryController({
     defaultFreeFormFontMode,
     dispatch,
     showToast,
+    removeToast,
+    onRelinkVideoInput,
   ]);
 
   const handleCreateCustomItemFromMedia = useCallback(async () => {

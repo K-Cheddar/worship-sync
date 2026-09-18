@@ -544,4 +544,67 @@ describe("OutlineItemSlidesScroller", () => {
 
     expect(mockSelectSlide).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps rapid cross-item clicks on their own presentation intents", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const renderUi = () => (
+      <div
+        ref={(node) => {
+          scrollRef.current = node;
+        }}
+        data-testid="scroll-root"
+        style={{ height: 80, overflow: "auto" }}
+      >
+        <OutlineItemSlidesScroller
+          scrollRef={scrollRef}
+          cols={2}
+          size={2}
+          sizeConfig={sizeConfig}
+          isMobile={false}
+          isStreamFormat={false}
+          canEdit
+          selectedSlide={0}
+          liveSlideIds={new Set()}
+          backgroundTargetSlideIds={[]}
+          draggedSection={null}
+          timers={[]}
+          selectSlide={mockSelectSlide}
+          onSlideGridClick={mockOnSlideGridClick}
+        />
+      </div>
+    );
+    const { rerender } = render(renderUi());
+
+    fireEvent.click(screen.getByRole("button", { name: "Song 2 A" }));
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+    };
+    rerender(renderUi());
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Song 1 B" })[0],
+    );
+
+    expect(mockOnSlideGridClick).not.toHaveBeenCalled();
+    expect(mockSelectSlide).toHaveBeenCalledTimes(2);
+    expect(mockSelectSlide.mock.calls.map(([index, options]) => ({
+      index,
+      itemId: options.presentation.itemId,
+      slideId: options.presentation.slides[index].id,
+    }))).toEqual([
+      { index: 0, itemId: "song-2", slideId: "s2a" },
+      { index: 1, itemId: "song-1", slideId: "s1b" },
+    ]);
+    expect(mockDispatch).toHaveBeenLastCalledWith(
+      setActiveItem(
+        expect.objectContaining({
+          _id: "song-1",
+          listId: "l-1",
+          selectedSlide: 1,
+        }),
+      ),
+    );
+  });
 });

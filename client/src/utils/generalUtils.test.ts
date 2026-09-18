@@ -73,6 +73,18 @@ describe("generalUtils", () => {
       expect(result).toContain("image.mux.com");
       expect(result).toContain("playbackId123");
       expect(result).toContain("thumbnail.png");
+      expect(result).toContain("width=250");
+      expect(result).toContain("height=141");
+    });
+
+    it("supports a display-sized Mux thumbnail", () => {
+      const result = getImageFromVideoUrl(
+        "https://stream.mux.com/playbackId123",
+        { width: 960, height: 540 },
+      );
+
+      expect(result).toContain("width=960");
+      expect(result).toContain("height=540");
     });
 
     it("returns PNG variant for Cloudinary-style URL", () => {

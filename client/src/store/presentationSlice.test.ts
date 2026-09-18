@@ -2042,6 +2042,97 @@ describe("presentationSlice", () => {
       expect(state.time).toBeGreaterThan(10);
     });
 
+    it("consumes the outgoing stream slide across successive Bible updates", () => {
+      const oldSong = {
+        id: "old-song",
+        type: "Media" as const,
+        name: "Old song",
+        boxes: [
+          { id: "lyrics", width: 1920, height: 1080, words: "OLD SONG LYRICS" },
+        ],
+      };
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          type: "song",
+          name: "Old song",
+          slide: oldSong,
+          displayType: "stream",
+        } as never),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "John 3:16",
+          text: "Bible verse 1",
+        }),
+      );
+      let state = legacy(store.getState().presentation);
+      expect(state.streamInfo.slide).toBeNull();
+      expect(state.prevStreamInfo.slide?.boxes?.[0]?.words).toBe(
+        "OLD SONG LYRICS",
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "John 3:17",
+          text: "Bible verse 2",
+        }),
+      );
+      state = legacy(store.getState().presentation);
+      expect(state.streamInfo.slide).toBeNull();
+      expect(state.prevStreamInfo.slide).toBeNull();
+      expect(state.prevStreamInfo.bibleDisplayInfo?.text).toBe("Bible verse 1");
+      expect(state.streamInfo.bibleDisplayInfo?.text).toBe("Bible verse 2");
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "John 3:18",
+          text: "Bible verse 3",
+        }),
+      );
+      expect(legacy(store.getState().presentation).prevStreamInfo.slide).toBeNull();
+    });
+
+    it("consumes the outgoing stream slide across successive formatted-text updates", () => {
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          type: "song",
+          name: "Old song",
+          slide: {
+            id: "old-song",
+            type: "Media" as const,
+            name: "Old song",
+            boxes: [{ id: "lyrics", words: "OLD SONG LYRICS" }],
+          },
+          displayType: "stream",
+        } as never),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfo({
+          text: "Formatted text 1",
+        }),
+      );
+      let state = legacy(store.getState().presentation);
+      expect(state.streamInfo.slide).toBeNull();
+      expect(state.prevStreamInfo.slide?.boxes?.[0]?.words).toBe(
+        "OLD SONG LYRICS",
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfo({
+          text: "Formatted text 2",
+        }),
+      );
+      state = legacy(store.getState().presentation);
+      expect(state.streamInfo.slide).toBeNull();
+      expect(state.prevStreamInfo.slide).toBeNull();
+    });
+
     it("updateBibleDisplayInfo moves live formatted text to prev and clears stream slot for exit", () => {
       const store = createStore({
         presentation: {

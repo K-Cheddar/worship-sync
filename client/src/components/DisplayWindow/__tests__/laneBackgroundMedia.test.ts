@@ -61,6 +61,56 @@ describe("laneBackgroundMedia", () => {
     );
   });
 
+  it("uses the thumbnail when the placeholder is empty", () => {
+    const media = resolveLaneBackgroundMedia({
+      boxes: [
+        {
+          ...videoBox,
+          mediaInfo: {
+            ...videoBox.mediaInfo,
+            placeholderImage: "",
+            thumbnail: "https://cdn.example/clip-thumbnail.jpg",
+          } as NonNullable<Box["mediaInfo"]>,
+        },
+      ],
+      showBackground: true,
+      shouldPlayVideo: true,
+    });
+
+    expect(media).toEqual(
+      expect.objectContaining({
+        kind: "fileVideo",
+        fallbackSrc: "https://cdn.example/clip-thumbnail.jpg",
+      }),
+    );
+  });
+
+  it("builds a display-sized fallback through the shared video image helper", () => {
+    const media = resolveLaneBackgroundMedia({
+      boxes: [
+        {
+          ...videoBox,
+          mediaInfo: {
+            ...videoBox.mediaInfo,
+            background: "https://stream.mux.com/playbackId123",
+            placeholderImage: "",
+            thumbnail: "",
+          } as NonNullable<Box["mediaInfo"]>,
+        },
+      ],
+      showBackground: true,
+      shouldPlayVideo: true,
+    });
+
+    expect(media).toEqual(
+      expect.objectContaining({
+        kind: "fileVideo",
+        fallbackSrc:
+          "https://image.mux.com/playbackId123/thumbnail.png?width=960&height=540&fit_mode=pad&time=1",
+      }),
+    );
+  });
+
   it("returns none for image-only slides", () => {
     const media = resolveLaneBackgroundMedia({
       boxes: [imageBox],

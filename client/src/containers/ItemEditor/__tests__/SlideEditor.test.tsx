@@ -6,6 +6,7 @@ import { PresentationControllerModeProvider } from "../../../context/presentatio
 
 const mockDispatch = jest.fn();
 let mockState: any;
+let mockActiveControllerType = "presentation";
 
 const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
   type: "item/setIsLyricsEditorOpen",
@@ -44,6 +45,10 @@ jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
   useCurrentItem: () => mockState.undoable.present.item,
+}));
+
+jest.mock("../../../context/activeController", () => ({
+  useActiveControllerProfile: () => ({ type: mockActiveControllerType }),
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
@@ -230,16 +235,20 @@ jest.mock("../../../components/LocalVideoInputDetails/LocalVideoInputDetails", (
   __esModule: true,
   default: ({
     source,
+    canEdit,
     onEdit,
   }: {
     source: { label: string };
-    onEdit: () => void;
+    canEdit: boolean;
+    onEdit?: () => void;
   }) => (
     <div data-testid="local-video-input-details">
       <span>{source.label}</span>
-      <button type="button" onClick={onEdit}>
-        Edit
-      </button>
+      {canEdit ? (
+        <button type="button" onClick={onEdit}>
+          Edit
+        </button>
+      ) : null}
     </div>
   ),
 }));
@@ -386,6 +395,7 @@ const renderWithToastContext = () =>
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockActiveControllerType = "presentation";
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
     displayWindowCapture.onChange = null;
@@ -410,6 +420,42 @@ describe("SlideEditor", () => {
 
     expect(displayWindowCapture.className).toContain("lg:max-h-[42vh]");
     expect(displayWindowCapture.showBorder).toBeUndefined();
+  });
+
+  it("uses a preview-only Present skeleton with Present sizing while loading", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: { isLoading: true },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+
+    expect(screen.getByTestId("slide-editor-skeleton")).toBeInTheDocument();
+    expect(screen.queryByTestId("slide-editor-skeleton-text-column")).not.toBeInTheDocument();
+    const preview = screen.getByTestId("slide-editor-skeleton-preview");
+    expect(preview.className).toContain("lg:max-h-[36vh]");
+    expect(preview.className).toContain("max-lg:max-h-[30vh]");
+  });
+
+  it("keeps the Edit skeleton text column and Edit sizing while loading", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: { isLoading: true },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="edit" />);
+
+    expect(screen.getByTestId("slide-editor-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("slide-editor-skeleton-text-column")).toBeInTheDocument();
+    const preview = screen.getByTestId("slide-editor-skeleton-preview");
+    expect(preview.className).toContain("lg:max-h-[42vh]");
+    expect(preview.className).toContain("max-lg:max-h-[30vh]");
   });
 
   it("renders empty state when no slide is selected", () => {
@@ -457,6 +503,70 @@ describe("SlideEditor", () => {
     expect(
       screen.getByLabelText("Video input: Booth camera"),
     ).toBeInTheDocument();
+  });
+
+  it("lets an auxiliary controller relink a video input in present mode", () => {
+    mockActiveControllerType = "aux-presentation";
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Window share",
+                mediaSource: {
+                  kind: "local-video-input",
+                  sourceId: "local_video_1",
+                  label: "Window share",
+                  captureKind: "window",
+                },
+                boxes: [
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("lets the main Presentation controller relink a video input in present mode", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Window share",
+                mediaSource: {
+                  kind: "local-video-input",
+                  sourceId: "local_video_1",
+                  label: "Window share",
+                  captureKind: "window",
+                },
+                boxes: [
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByTestId("local-video-input-picker")).toBeInTheDocument();
   });
 
   it("shows video input details left of the preview instead of section text", () => {
@@ -617,7 +727,7 @@ describe("SlideEditor", () => {
     expect(displayWindowCapture.videoPlayback).toEqual(liveCue);
   });
 
-  it("keeps the editor preview off the live cue when the selected slide is not on air", () => {
+  it("keeps the editor preview video playing before the selected slide is on air", () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -690,9 +800,15 @@ describe("SlideEditor", () => {
 
     expect(screen.getByTestId("display-window")).toHaveAttribute(
       "data-has-video-playback",
-      "false",
+      "true",
     );
-    expect(displayWindowCapture.videoPlayback).toBeUndefined();
+    expect(displayWindowCapture.videoPlayback).toEqual(
+      expect.objectContaining({
+        mediaKey: "remote:video-1",
+        positionSeconds: 0,
+        paused: false,
+      }),
+    );
   });
 
   it("renders box tools panel when toolbar section is box-tools", () => {

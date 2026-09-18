@@ -4,6 +4,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BoardMonitorPreview from "./BoardMonitorPreview";
 import { setDisplayBoardAliasId } from "../../store/presentationSlice";
+import type { DisplayOutput } from "../../utils/displayOutputs";
+
+const BOARD_CAPABLE_OUTPUTS: DisplayOutput[] = [
+  { id: "monitor", type: "monitor", name: "Monitor", order: 0, enabled: true },
+];
 
 const mockState = {
   presentation: fromLegacyPresentationShape({
@@ -48,7 +53,15 @@ jest.mock("../../boards/ScaledBoardPreview", () => ({
 
 const renderPreview = (
   props: Partial<ComponentProps<typeof BoardMonitorPreview>> = {},
-) => render(<BoardMonitorPreview aliasId="local-board" isOpen {...props} />);
+) =>
+  render(
+    <BoardMonitorPreview
+      aliasId="local-board"
+      boardCapableOutputs={BOARD_CAPABLE_OUTPUTS}
+      isOpen
+      {...props}
+    />,
+  );
 
 describe("BoardMonitorPreview", () => {
   beforeEach(() => {
@@ -187,6 +200,23 @@ describe("BoardMonitorPreview", () => {
     expect(fontScaleHook).toHaveBeenCalledWith("local-board", {
       enabled: false,
     });
+  });
+
+  it("only targets the controller-approved board outputs", async () => {
+    mockState.presentation.outputs.monitor.boardAliasId = "monitor-board";
+
+    renderPreview({
+      boardCapableOutputs: [
+        { id: "projector", type: "projector", name: "Projector", order: 0, enabled: true },
+      ],
+    });
+
+    expect(screen.getByRole("switch", { name: /On Projector/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("switch"));
+
+    expect(dispatch).toHaveBeenCalledWith(
+      setDisplayBoardAliasId({ aliasId: "local-board", outputIds: ["projector"] }),
+    );
   });
 
   it("adjusts the presentation text size from the control", async () => {

@@ -195,6 +195,7 @@ export type ChurchInviteRow = {
   status: string;
   expiresAt: string;
   createdAt: string;
+  lastSentAt?: string;
   inviteLink?: string;
 };
 

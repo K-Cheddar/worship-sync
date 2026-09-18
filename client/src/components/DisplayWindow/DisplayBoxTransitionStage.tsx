@@ -71,6 +71,8 @@ export type LaneMediaPlaybackOptions = {
 
 export type LaneRenderMediaOptions = {
   fullFramePaintReady: boolean;
+  /** Actual live video has painted and may replace its fallback image. */
+  liveVideoPaintReady: boolean;
   /** Still/box backgrounds. False when the stage already paints them. */
   paintBackground: boolean;
   /** Lyrics/text/timer foreground. False for the non-fading still hold layer. */
@@ -192,6 +194,9 @@ const DisplayBoxTransitionStage = ({
     Record<LaneId, { key: string; readyIndexes: number[] } | null>
   >({ a: null, b: null });
   const [mediaPaintReadiness, setMediaPaintReadiness] = useState<
+    Record<LaneId, { mediaKey: string; ready: boolean } | null>
+  >({ a: null, b: null });
+  const [mediaLivePaintReadiness, setMediaLivePaintReadiness] = useState<
     Record<LaneId, { mediaKey: string; ready: boolean } | null>
   >({ a: null, b: null });
   const laneSnapshotsRef = useRef<
@@ -457,6 +462,19 @@ const DisplayBoxTransitionStage = ({
           ...current,
           [laneId]: { mediaKey, ready },
         };
+      });
+    },
+    [],
+  );
+
+  const reportMediaLivePaintReady = useCallback(
+    (laneId: LaneId, mediaKey: string, ready: boolean) => {
+      const laneSnapshot = laneSnapshotsRef.current[laneId];
+      if (!laneSnapshot || getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia) !== mediaKey) return;
+      setMediaLivePaintReadiness((current) => {
+        const laneState = current[laneId];
+        if (laneState?.mediaKey === mediaKey && laneState.ready === ready) return current;
+        return { ...current, [laneId]: { mediaKey, ready } };
       });
     },
     [],
@@ -763,6 +781,7 @@ const DisplayBoxTransitionStage = ({
     hostsContent: boolean;
     mediaKey: string;
     fullFramePaintReady: boolean;
+    liveVideoPaintReady: boolean;
     mediaOpacity: number | undefined;
     contentOpacity: number | undefined;
     needsStillHold: boolean;
@@ -807,6 +826,11 @@ const DisplayBoxTransitionStage = ({
       isContentMode ||
       mediaKey === "none" ||
       (mediaState?.mediaKey === mediaKey && mediaState.ready);
+    const liveMediaState = mediaLivePaintReadiness[laneId];
+    const liveVideoPaintReady =
+      mediaKey !== "none" &&
+      liveMediaState?.mediaKey === mediaKey &&
+      liveMediaState.ready;
 
     let mediaOpacity: number | undefined;
     let contentOpacity: number | undefined;
@@ -851,6 +875,7 @@ const DisplayBoxTransitionStage = ({
         hostsContent,
         mediaKey,
         fullFramePaintReady,
+        liveVideoPaintReady,
         mediaOpacity,
         contentOpacity,
         needsStillHold,
@@ -918,6 +943,9 @@ const DisplayBoxTransitionStage = ({
                   onPaintReadyChange={(ready) =>
                     reportMediaPaintReady(laneId, mediaKey, ready)
                   }
+                  onLivePaintReadyChange={(ready) =>
+                    reportMediaLivePaintReady(laneId, mediaKey, ready)
+                  }
                   fileVideoAudioEnabled={mediaPlayback?.fileVideoAudioEnabled}
                   volume={mediaPlayback?.volume}
                   playbackRole={mediaPlayback?.playbackRole}
@@ -945,6 +973,7 @@ const DisplayBoxTransitionStage = ({
                       ),
                     {
                       fullFramePaintReady: true,
+                      liveVideoPaintReady: true,
                       paintBackground: true,
                       paintForeground: false,
                     },
@@ -970,6 +999,7 @@ const DisplayBoxTransitionStage = ({
             hostsContent,
             mediaKey,
             fullFramePaintReady,
+            liveVideoPaintReady,
             contentOpacity,
             needsStillHold,
             paintBackground,
@@ -1016,6 +1046,7 @@ const DisplayBoxTransitionStage = ({
                       ),
                     {
                       fullFramePaintReady,
+                      liveVideoPaintReady,
                       paintBackground: paintBackground && !needsStillHold,
                       paintForeground: true,
                     },

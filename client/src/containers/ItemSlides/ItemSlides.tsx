@@ -106,6 +106,7 @@ import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import {
   buildLocalVideoInputPresentation,
   getLocalVideoSourceErrorMessage,
+  isDesktopCaptureSourceMissingError,
   isDesktopCaptureKind,
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
@@ -772,7 +773,7 @@ const ItemSlidesContent = () => {
         if (!localVideoInput) {
           showToast?.(
             isDesktopCaptureKind(slide.mediaSource.captureKind)
-              ? `Share ${slide.mediaSource.label} again on this computer, then try again.`
+              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
               : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
             "warning",
           );
@@ -831,7 +832,15 @@ const ItemSlidesContent = () => {
         };
         const localVideoSourceId = slide.mediaSource.sourceId;
         const binding = resolveLocalVideoInputBinding(localVideoSourceId);
-        if (!binding) return;
+        if (!binding) {
+          showToast?.(
+            isDesktopCaptureKind(slide.mediaSource.captureKind)
+              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+              : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            "warning",
+          );
+          return;
+        }
         const transmitConsumerId = `slide-transmit:${localVideoSourceId}:${generateRandomId()}`;
         const releaseTransmitCapture = () => {
           window.setTimeout(() => {
@@ -864,10 +873,12 @@ const ItemSlidesContent = () => {
               return;
             }
             showToast?.(
-              getLocalVideoSourceErrorMessage(
-                error,
-                slide.mediaSource?.captureKind,
-              ),
+              isDesktopCaptureSourceMissingError(error)
+                ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+                : getLocalVideoSourceErrorMessage(
+                    error,
+                    slide.mediaSource?.captureKind,
+                  ),
               "warning",
             );
           });
@@ -913,7 +924,7 @@ const ItemSlidesContent = () => {
         } else {
           dispatch(
             updateFormattedTextDisplayInfo({
-              outputIds: sendTargets.stream,
+              outputIds: presentationSendTargets.stream,
               text: "",
             }),
           );
@@ -924,7 +935,7 @@ const ItemSlidesContent = () => {
             updateStream(
               withVideoPlayback(
                 {
-                  outputIds: sendTargets.stream,
+                  outputIds: presentationSendTargets.stream,
                   slide,
                   type: presentationType,
                   name: presentationName,
@@ -1322,15 +1333,19 @@ const ItemSlidesContent = () => {
     disabled: !canInsertMedia || isCollapsedContinuous,
   });
   const slidesScrollRef = useRef<HTMLElement | null>(null);
+  const [slidesContainer, setSlidesContainer] = useState<HTMLElement | null>(
+    null,
+  );
   const setSlidesContainerRef = useCallback(
     (node: HTMLElement | null) => {
       setNodeRef(node);
       slidesScrollRef.current = node;
+      setSlidesContainer(node);
     },
     [setNodeRef],
   );
   const thumbnailScaleFactor = useStaticThumbnailScaleFactor(
-    slidesScrollRef,
+    slidesContainer,
     size,
     `${isCollapsedContinuous ? "continuous" : "single"}:${size}`,
   );

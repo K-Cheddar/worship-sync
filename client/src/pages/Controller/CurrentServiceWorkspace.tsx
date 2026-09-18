@@ -153,7 +153,7 @@ type ServiceHeadingProps = {
 
 const useCurrentServiceClockMs = (): number => {
   // An offset change rerenders immediately; the shared ticker keeps the leaf
-  // moving once per second. Both paths derive the value from serverDate rather
+  // moving at a 250 ms cadence. Both paths derive the value from serverDate rather
   // than incrementing a local countdown.
   useSyncExternalStore(
     subscribeServerTimeOffset,

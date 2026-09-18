@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useLayoutEffect, useState } from "react";
 import { REFERENCE_HEIGHT, REFERENCE_WIDTH } from "../../constants";
 import { calculateReferenceScaleFactor } from "../../components/DisplayWindow/referenceCanvas";
 
@@ -49,6 +49,18 @@ const measureStaticThumbnailScaleFactor = (
   container: HTMLElement,
   columns: number,
 ) => {
+  const representativeThumbnail =
+    container.querySelector<HTMLElement>(
+      '[data-testid="static-slide-thumbnail"]',
+    );
+
+  if (representativeThumbnail) {
+    return calculateReferenceScaleFactor(
+      representativeThumbnail.clientWidth,
+      representativeThumbnail.clientHeight,
+    );
+  }
+
   const containerStyle = window.getComputedStyle(container);
   const grid = getGridElement(container);
   if (!grid) return 0;
@@ -58,41 +70,29 @@ const measureStaticThumbnailScaleFactor = (
     parsePixels(containerStyle.paddingLeft) +
     parsePixels(containerStyle.paddingRight);
   const columnGap = parsePixels(gridStyle.columnGap);
-  const representativeThumbnail =
-    container.querySelector<HTMLElement>(
-      '[data-testid="static-slide-thumbnail"]',
-    );
-  const representativeTile = representativeThumbnail?.parentElement;
-  const tileStyle = representativeTile
-    ? window.getComputedStyle(representativeTile)
-    : undefined;
-  const horizontalBorder = tileStyle
-    ? parsePixels(tileStyle.borderLeftWidth) +
-      parsePixels(tileStyle.borderRightWidth)
-    : 0;
 
   return calculateStaticThumbnailScaleFactor({
     containerWidth: container.clientWidth,
     columns,
     columnGap,
     horizontalPadding,
-    horizontalBorder,
   });
 };
+
+export { measureStaticThumbnailScaleFactor };
 
 /**
  * One geometry observer per item grid/scroller. Individual thumbnails remain
  * purely presentational and never measure themselves.
  */
 export const useStaticThumbnailScaleFactor = (
-  containerRef: RefObject<HTMLElement | null>,
+  container: HTMLElement | null,
   columns: number,
   layoutKey: string,
 ) => {
   const [scaleFactor, setScaleFactor] = useState(0);
 
   useLayoutEffect(() => {
-    const container = containerRef.current;
     if (!container) return;
 
     let retryFrame: number | null = null;
@@ -129,11 +129,15 @@ export const useStaticThumbnailScaleFactor = (
 
     const observer = new ResizeObserver(update);
     observer.observe(container);
+    const representativeThumbnail = container.querySelector<HTMLElement>(
+      '[data-testid="static-slide-thumbnail"]',
+    );
+    if (representativeThumbnail) observer.observe(representativeThumbnail);
     return () => {
       observer.disconnect();
       if (retryFrame != null) window.cancelAnimationFrame(retryFrame);
     };
-  }, [columns, containerRef, layoutKey]);
+  }, [columns, container, layoutKey]);
 
   return scaleFactor;
 };

@@ -1967,6 +1967,26 @@ export const revokeChurchInvite = async (churchId: string, inviteId: string) =>
     },
   );
 
+export const removeExpiredChurchInvite = async (
+  churchId: string,
+  inviteId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/invites/${encodeURIComponent(inviteId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+
+export const resendChurchInvite = async (churchId: string, inviteId: string) =>
+  apiFetch<{ success: boolean; invite: ChurchInviteRow }>(
+    `api/churches/${churchId}/invites/${encodeURIComponent(inviteId)}/resend`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
 export const fetchInvitePreview = async (token: string) =>
   apiFetch<{ success: boolean; churchName?: string }>(
     `api/invites/preview?${new URLSearchParams({ token }).toString()}`,
