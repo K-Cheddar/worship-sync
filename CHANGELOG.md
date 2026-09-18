@@ -1,3 +1,17 @@
+# [2.36.0](https://github.com/K-Cheddar/worship-sync/compare/v2.35.0...v2.36.0) (2026-09-18)
+
+
+### Bug Fixes
+
+* **client:** harden countdown and window capture recovery ([542ea70](https://github.com/K-Cheddar/worship-sync/commit/542ea70c383af263a2c6758ee7a34ad56d56bdf0))
+* **display:** preserve media readiness across outputs ([e0cd591](https://github.com/K-Cheddar/worship-sync/commit/e0cd5914215a6553c50bff739b8f5c11e60647bc))
+
+
+### Features
+
+* **auth:** improve church invite lifecycle ([5a49de8](https://github.com/K-Cheddar/worship-sync/commit/5a49de80f8dba12f8052f9b8850be7fbcc755ac3))
+* **editor:** improve slide and local media workflows ([1d96e2b](https://github.com/K-Cheddar/worship-sync/commit/1d96e2b9c4866c5283e9a2ad622a58dc6bcbd1f9))
+
 # [2.35.0](https://github.com/K-Cheddar/worship-sync/compare/v2.34.0...v2.35.0) (2026-09-17)
 
 
