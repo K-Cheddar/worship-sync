@@ -17,6 +17,7 @@ type MessageListener = (event: MessageEvent<unknown>) => void;
 
 class FakeBroadcastChannel {
   static channels: FakeBroadcastChannel[] = [];
+  static messages: unknown[] = [];
   listeners = new Set<MessageListener>();
 
   constructor(public name: string) {
@@ -28,6 +29,7 @@ class FakeBroadcastChannel {
   }
 
   postMessage(message: unknown) {
+    FakeBroadcastChannel.messages.push(message);
     FakeBroadcastChannel.channels
       .filter((channel) => channel !== this && channel.name === this.name)
       .forEach((channel) => {
@@ -153,6 +155,7 @@ describe("localVideoRealtimeRelay", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     FakeBroadcastChannel.channels = [];
+    FakeBroadcastChannel.messages = [];
     FakeVideoEncoder.instances = [];
     FakeVideoDecoder.instances = [];
     nextVideoFrame = undefined;
@@ -630,6 +633,81 @@ describe("localVideoRealtimeRelay", () => {
     stopPublisher();
   });
 
+  it("does not clear recovery protection after one lucky output frame", async () => {
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      videoWidth: { configurable: true, value: 1_920 },
+      videoHeight: { configurable: true, value: 1_080 },
+    });
+    const onFallback = jest.fn();
+    const stream = {
+      getAudioTracks: () => [],
+      getVideoTracks: () => [{ getSettings: () => ({ frameRate: 30 }) }],
+    } as unknown as MediaStream;
+    const stopPublisher = publishLocalVideoRealtime("source-recovery-window", video, stream);
+    const subscription = subscribeLocalVideoRealtime(
+      "source-recovery-window",
+      document.createElement("canvas"),
+      { onFallback },
+    );
+
+    await waitFor(() => expect(nextVideoFrame).toBeDefined());
+    nextVideoFrame?.(1_000, { mediaTime: 1 } as VideoFrameCallbackMetadata);
+    await waitFor(() => expect(FakeVideoDecoder.instances).toHaveLength(1));
+    FakeVideoDecoder.instances[0].fail();
+    await waitFor(() => expect(FakeVideoDecoder.instances).toHaveLength(2));
+
+    jest.useFakeTimers();
+    nextVideoFrame?.(1_017, { mediaTime: 1.017 } as VideoFrameCallbackMetadata);
+    FakeVideoDecoder.instances[1].fail();
+    await Promise.resolve();
+    expect(FakeVideoDecoder.instances).toHaveLength(2);
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+
+    subscription.stop();
+    stopPublisher();
+  });
+
+  it("allows an isolated decoder failure after the stability window", async () => {
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      videoWidth: { configurable: true, value: 1_920 },
+      videoHeight: { configurable: true, value: 1_080 },
+    });
+    const onFallback = jest.fn();
+    const stream = {
+      getAudioTracks: () => [],
+      getVideoTracks: () => [{ getSettings: () => ({ frameRate: 30 }) }],
+    } as unknown as MediaStream;
+    const stopPublisher = publishLocalVideoRealtime("source-recovery-stable", video, stream);
+    const subscription = subscribeLocalVideoRealtime(
+      "source-recovery-stable",
+      document.createElement("canvas"),
+      { onFallback },
+    );
+
+    await waitFor(() => expect(nextVideoFrame).toBeDefined());
+    nextVideoFrame?.(1_000, { mediaTime: 1 } as VideoFrameCallbackMetadata);
+    await waitFor(() => expect(FakeVideoDecoder.instances).toHaveLength(1));
+    FakeVideoDecoder.instances[0].fail();
+    await waitFor(() => expect(FakeVideoDecoder.instances).toHaveLength(2));
+
+    jest.useFakeTimers();
+    nextVideoFrame?.(1_017, { mediaTime: 1.017 } as VideoFrameCallbackMetadata);
+    jest.advanceTimersByTime(1_001);
+    nextVideoFrame?.(2_018, { mediaTime: 2.018 } as VideoFrameCallbackMetadata);
+    FakeVideoDecoder.instances[1].fail();
+    await waitFor(() => expect(FakeVideoDecoder.instances).toHaveLength(3));
+    expect(onFallback).not.toHaveBeenCalled();
+    jest.useRealTimers();
+
+    subscription.stop();
+    stopPublisher();
+  });
+
   it("drops a pressured keyframe and accepts a fresh keyframe without rebuilding", async () => {
     const video = document.createElement("video");
     Object.defineProperties(video, {
@@ -662,15 +740,32 @@ describe("localVideoRealtimeRelay", () => {
     );
     expect(FakeVideoDecoder.instances).toHaveLength(1);
 
-    FakeVideoDecoder.instances[0].decodeQueueSize = 0;
+    await Promise.resolve();
     nextVideoFrame?.(3_100, { mediaTime: 3.1 } as VideoFrameCallbackMetadata);
     await waitFor(() =>
-      expect(FakeVideoDecoder.instances[0].decode).toHaveBeenCalledTimes(2),
+      expect(
+        [...(__getLocalVideoDiagnosticsForTests().get("source-keyframe")?.views.values() ?? [])][0]
+          ?.decoder.droppedForLatency,
+      ).toBe(2),
     );
+    FakeVideoDecoder.instances[0].decodeQueueSize = 0;
+    nextVideoFrame?.(4_100, { mediaTime: 4.1 } as VideoFrameCallbackMetadata);
+    await waitFor(() =>
+      expect(
+        FakeBroadcastChannel.messages.filter(
+          (message) =>
+            (message as { type?: string }).type === "request-key-frame",
+        ),
+      ).toHaveLength(3),
+    );
+    await Promise.resolve();
+    nextVideoFrame?.(5_100, { mediaTime: 5.1 } as VideoFrameCallbackMetadata);
+    await Promise.resolve();
+    expect(FakeVideoDecoder.instances[0].decode).toHaveBeenCalledTimes(2);
     const view = [
       ...(__getLocalVideoDiagnosticsForTests().get("source-keyframe")?.views.values() ?? []),
     ][0];
-    expect(view?.decoder.droppedForLatency).toBe(1);
+    expect(view?.decoder.droppedForLatency).toBe(3);
     expect(view?.decoder.hardResets).toBeUndefined();
 
     subscription.stop();

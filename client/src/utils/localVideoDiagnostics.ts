@@ -45,6 +45,9 @@ type DiagnosticView = {
   outputId?: string;
   windowRole?: string;
   path: LocalVideoDiagnosticPath;
+  fallbackFrom?: LocalVideoDiagnosticPath;
+  fallbackReason?: string;
+  fallbackAt?: string;
   previewWarm?: boolean;
   startedAt?: number;
   firstFrameMs?: number;
@@ -290,6 +293,9 @@ const report = () => {
       role: view.windowRole ?? "unknown",
       outputId: view.outputId ?? "",
       path: view.path,
+      fallbackFrom: view.fallbackFrom ?? "",
+      fallbackReason: view.fallbackReason ?? "",
+      fallbackAt: view.fallbackAt ?? "",
       previewWarm: view.previewWarm ?? false,
       firstFrame: view.firstFrameMs === undefined ? "pending" : `${view.firstFrameMs}ms`,
       canvas: view.canvasSize ?? "",
@@ -476,8 +482,10 @@ export const recordLocalVideoDecoder = (
       [
         "submitted",
         "resets",
+        "hardResets",
         "frames",
         "chunks",
+        "droppedForLatency",
         "skippedKeyframe",
         "keyframeWaits",
         "keyframeWaitMs",

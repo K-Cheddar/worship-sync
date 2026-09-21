@@ -480,6 +480,7 @@ export const subscribeLocalVideoRealtime = (
   let activeDecoderInstanceId: string | undefined;
   let waitingForFreshKeyFrame = false;
   let freshKeyFrameRequested = false;
+  let recoveryKeyFrameDropped = false;
   let lastHardDecoderRecoveryAt: number | undefined;
   let keyFrameWaitStartedAt: number | undefined;
   let audioContext: AudioContext | undefined;
@@ -558,6 +559,7 @@ export const subscribeLocalVideoRealtime = (
     beginKeyFrameWait();
     waitingForFreshKeyFrame = false;
     freshKeyFrameRequested = false;
+    recoveryKeyFrameDropped = false;
     return previousInstanceId;
   };
 
@@ -597,7 +599,13 @@ export const subscribeLocalVideoRealtime = (
               firstFrameWaitingSince = 0;
               options.onStarted?.();
             }
-            lastHardDecoderRecoveryAt = undefined;
+            if (
+              lastHardDecoderRecoveryAt !== undefined &&
+              Date.now() - lastHardDecoderRecoveryAt >=
+                DECODER_RECOVERY_COOLDOWN_MS
+            ) {
+              lastHardDecoderRecoveryAt = undefined;
+            }
           } finally {
             frame.close();
           }
@@ -762,10 +770,25 @@ export const subscribeLocalVideoRealtime = (
         waitingForKeyFrame = true;
         beginKeyFrameWait();
         waitingForFreshKeyFrame = true;
+        if (chunk.type === "key" && freshKeyFrameRequested) {
+          recoveryKeyFrameDropped = true;
+        }
         if (!freshKeyFrameRequested) {
           freshKeyFrameRequested = true;
           requestKeyFrame();
         }
+        return;
+      }
+      if (waitingForFreshKeyFrame && recoveryKeyFrameDropped) {
+        // The keyframe requested during pressure was shed too. Request one
+        // replacement as soon as the queue is usable, then wait for it before
+        // accepting any delta or a keyframe from the pressured period.
+        freshKeyFrameRequested = true;
+        recoveryKeyFrameDropped = false;
+        requestKeyFrame();
+        recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+          droppedForLatency: 1,
+        });
         return;
       }
       if (waitingForKeyFrame && chunk.type !== "key") {
@@ -795,6 +818,7 @@ export const subscribeLocalVideoRealtime = (
         waitingForKeyFrame = false;
         waitingForFreshKeyFrame = false;
         freshKeyFrameRequested = false;
+        recoveryKeyFrameDropped = false;
         finishKeyFrameWait();
         recordLocalVideoDecoder(sourceId, diagnosticViewId, { submitted: 1 });
       } catch {

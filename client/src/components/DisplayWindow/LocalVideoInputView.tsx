@@ -240,14 +240,23 @@ const LocalVideoInputView = ({
         qualitySubscription?.updateTargetSize(target.width, target.height);
       }
     };
-    const subscribeBufferedRelay = () => {
+    const subscribeBufferedRelay = (fallbackReason?: string) => {
       if (!active || stopBufferedRelay) return;
       setIsRealtimeActive(false);
-      startLocalVideoView(input.sourceId, diagnosticViewId, {
-        outputId,
-        windowRole,
-        path: "BUFFERED_MSE",
-      });
+      if (fallbackReason) {
+        updateLocalVideoView(input.sourceId, diagnosticViewId, {
+          path: "BUFFERED_MSE",
+          fallbackFrom: "REALTIME_WEBCODECS",
+          fallbackReason,
+          fallbackAt: new Date().toISOString(),
+        });
+      } else {
+        startLocalVideoView(input.sourceId, diagnosticViewId, {
+          outputId,
+          windowRole,
+          path: "BUFFERED_MSE",
+        });
+      }
       stopBufferedRelay = subscribeLocalVideoMedia(input.sourceId, video, {
         includeAudio: playAudioRef.current,
         onStarted: () => {
@@ -258,6 +267,33 @@ const LocalVideoInputView = ({
         onError: setErrorDetail,
         onStopped: () => setIsDirectReady(false),
       });
+      if (
+        localVideoDiagnosticsEnabled() &&
+        "requestVideoFrameCallback" in video
+      ) {
+        const trackBufferedFrame = () => {
+          if (!active || !stopBufferedRelay) return;
+          markLocalVideoViewFrame(
+            input.sourceId,
+            diagnosticViewId,
+            `${video.videoWidth}x${video.videoHeight}`,
+          );
+          bufferedFrameCallbackId = (
+            video as HTMLVideoElement & {
+              requestVideoFrameCallback: (
+                callback: VideoFrameRequestCallback,
+              ) => number;
+            }
+          ).requestVideoFrameCallback(trackBufferedFrame);
+        };
+        bufferedFrameCallbackId = (
+          video as HTMLVideoElement & {
+            requestVideoFrameCallback: (
+              callback: VideoFrameRequestCallback,
+            ) => number;
+          }
+        ).requestVideoFrameCallback(trackBufferedFrame);
+      }
     };
 
     if (canUseRealtimeRelay && realtimeCanvasRef.current) {
@@ -267,20 +303,6 @@ const LocalVideoInputView = ({
         windowRole,
         path: "REALTIME_WEBCODECS",
       });
-      if (
-        localVideoDiagnosticsEnabled() &&
-        "requestVideoFrameCallback" in video
-      ) {
-        const trackBufferedFrame = () => {
-          markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
-          bufferedFrameCallbackId = (
-            video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
-          ).requestVideoFrameCallback(trackBufferedFrame);
-        };
-        bufferedFrameCallbackId = (
-          video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
-        ).requestVideoFrameCallback(trackBufferedFrame);
-      }
       const realtimeSubscription = subscribeLocalVideoRealtime(
         input.sourceId,
         realtimeCanvasRef.current,
@@ -298,7 +320,7 @@ const LocalVideoInputView = ({
             realtimeSubscriptionRef.current?.stop();
             realtimeSubscriptionRef.current = undefined;
             setIsDirectReady(false);
-            subscribeBufferedRelay();
+            subscribeBufferedRelay("REALTIME_UNHEALTHY");
           },
           diagnosticViewId,
         },

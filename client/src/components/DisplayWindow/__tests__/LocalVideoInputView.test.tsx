@@ -21,6 +21,11 @@ import {
 import { subscribeLocalVideoCaptureQuality } from "../../../utils/localVideoCaptureQualityRelay";
 import { supportsDirectElectronDesktopCapture } from "../../../utils/desktopCapture";
 import { applyLocalVideoCaptureProfile } from "../../../utils/localVideoQuality";
+import {
+  __getLocalVideoDiagnosticsForTests,
+  __resetLocalVideoDiagnosticsForTests,
+  recordLocalVideoDecoder,
+} from "../../../utils/localVideoDiagnostics";
 
 jest.mock("../../../utils/authStorage", () => ({
   getOrCreateDeviceId: jest.fn(() => "local-device"),
@@ -141,6 +146,11 @@ describe("LocalVideoInputView", () => {
       configurable: true,
       value: jest.fn(),
     });
+  });
+
+  afterEach(() => {
+    __resetLocalVideoDiagnosticsForTests();
+    localStorage.removeItem("worshipsync_local_video_debug");
   });
 
   it("attaches the warm capture and releases its view lease on unmount", async () => {
@@ -512,6 +522,50 @@ describe("LocalVideoInputView", () => {
       screen.getByLabelText("USB Capture"),
       expect.objectContaining({ onError: expect.any(Function) }),
     );
+  });
+
+  it("preserves realtime diagnostics when switching to the buffered relay", () => {
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+    mockSupportsRealtime.mockReturnValue(true);
+    let onFallback: (() => void) | undefined;
+    mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
+      onFallback = options?.onFallback;
+      return {
+        stop: jest.fn(),
+        setVolume: jest.fn(),
+        setAudioEnabled: jest.fn(),
+      };
+    });
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled={false}
+        receiveHighQuality
+      />,
+    );
+    const source = __getLocalVideoDiagnosticsForTests().get("source-1");
+    const viewId = [...(source?.views.keys() ?? [])][0];
+    const view = source?.views.get(viewId);
+    expect(viewId).toBeDefined();
+    recordLocalVideoDecoder("source-1", viewId ?? "", {
+      frames: 7,
+    });
+
+    act(() => onFallback?.());
+
+    const fallbackView = [
+      ...(__getLocalVideoDiagnosticsForTests().get("source-1")?.views.values() ?? []),
+    ][0];
+    expect(fallbackView).toBe(view);
+    expect(fallbackView).toEqual(
+      expect.objectContaining({
+        path: "BUFFERED_MSE",
+        fallbackFrom: "REALTIME_WEBCODECS",
+        fallbackReason: "REALTIME_UNHEALTHY",
+      }),
+    );
+    expect(fallbackView?.decoder.frames).toBe(7);
   });
 
   it("keeps audience errors off the projector surface", () => {

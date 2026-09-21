@@ -196,27 +196,77 @@ describe("localVideoDiagnostics", () => {
     expect(source?.views.has("editor-view")).toBe(true);
   });
 
-  it("keeps latency shedding separate from hard decoder resets", () => {
+  it("accumulates decoder event counters while keeping queue high water as a max", () => {
     localStorage.setItem("worshipsync_local_video_debug", "true");
     startLocalVideoView("camera-1", "projector-view", {
       path: "REALTIME_WEBCODECS",
     });
     recordLocalVideoDecoder("camera-1", "projector-view", {
+      submitted: 2,
+      chunks: 3,
+      frames: 2,
       droppedForLatency: 4,
       hardResets: 1,
       keyframeWaits: 1,
       keyframeWaitMs: 250,
+      queueMax: 5,
+    });
+    recordLocalVideoDecoder("camera-1", "projector-view", {
+      submitted: 1,
+      chunks: 2,
+      frames: 1,
+      droppedForLatency: 2,
+      hardResets: 2,
+      keyframeWaits: 1,
+      keyframeWaitMs: 125,
+      queueMax: 3,
     });
 
     const view = __getLocalVideoDiagnosticsForTests()
       .get("camera-1")
       ?.views.get("projector-view");
-    expect(view?.decoder.droppedForLatency).toBe(4);
-    expect(view?.decoder.hardResets).toBe(1);
-    expect(view?.decoderInterval.droppedForLatency).toBe(4);
-    expect(view?.decoderInterval.hardResets).toBe(1);
-    expect(view?.decoder.keyframeWaits).toBe(1);
-    expect(view?.decoder.keyframeWaitMs).toBe(250);
+    expect(view?.decoder).toEqual(
+      expect.objectContaining({
+        submitted: 3,
+        chunks: 5,
+        frames: 3,
+        droppedForLatency: 6,
+        hardResets: 3,
+        keyframeWaits: 2,
+        keyframeWaitMs: 375,
+        queueMax: 5,
+      }),
+    );
+    expect(view?.decoderInterval).toEqual(view?.decoder);
+  });
+
+  it("resets decoder interval counters without resetting cumulative totals", async () => {
+    jest.useFakeTimers();
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+    startLocalVideoView("camera-1", "projector-view", {
+      path: "REALTIME_WEBCODECS",
+    });
+    recordLocalVideoDecoder("camera-1", "projector-view", {
+      hardResets: 2,
+      droppedForLatency: 3,
+      queueMax: 4,
+    });
+
+    jest.advanceTimersByTime(1_000);
+    await Promise.resolve();
+
+    const view = __getLocalVideoDiagnosticsForTests()
+      .get("camera-1")
+      ?.views.get("projector-view");
+    expect(view?.decoderInterval).toEqual({});
+    expect(view?.decoder).toEqual(
+      expect.objectContaining({
+        hardResets: 2,
+        droppedForLatency: 3,
+        queueMax: 4,
+      }),
+    );
+    jest.useRealTimers();
   });
 
   it("keeps preview warming separate from the active realtime path", () => {
