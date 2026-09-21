@@ -1,16 +1,10 @@
-import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "node:crypto";
+import {
+  buildR2CopySource,
+  createR2ObjectStorage,
+} from "./storage/r2ObjectStorage.js";
 
 export const SONG_AUDIO_MAX_BYTES = 50 * 1024 * 1024;
-const SIGNED_URL_TTL_SECONDS = 15 * 60;
 const SUPPORTED_MP3_CONTENT_TYPES = new Set([
   "audio/mpeg",
   "audio/mp3",
@@ -144,17 +138,14 @@ export const getSongAudioStorageConfig = (env = process.env) => {
   };
 };
 
-const contentDisposition = (fileName, disposition) => {
-  const fallbackName = fileName.replace(/[^a-zA-Z0-9._ -]/g, "_");
-  const encodedName = encodeURIComponent(fileName);
-  return `${disposition}; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`;
-};
-
 // R2 requires a leading slash, and the key portion of x-amz-copy-source must
 // be URL-encoded. This also preserves literal sequences such as "%20" in our
 // encoded path segments instead of letting R2 interpret them as spaces.
 export const buildSongAudioCopySource = (bucket, key) =>
-  `/${requireNonEmptyString(bucket, "Bucket")}/${encodeURIComponent(requireNonEmptyString(key, "Storage key"))}`;
+  buildR2CopySource(
+    requireNonEmptyString(bucket, "Bucket"),
+    requireNonEmptyString(key, "Storage key"),
+  );
 
 /**
  * Private R2 storage for original song MP3s. The returned metadata is safe to
@@ -163,21 +154,15 @@ export const buildSongAudioCopySource = (bucket, key) =>
 export const createSongAudioStorage = ({
   env = process.env,
   s3Client,
-  signUrl = getSignedUrl,
+  signUrl,
 } = {}) => {
   const config = getSongAudioStorageConfig(env);
-  const client =
-    s3Client ||
-    new S3Client({
-      region: "auto",
-      endpoint: config.endpoint,
-      // Path-style hosts are `{accountId}.r2.cloudflarestorage.com`, which
-      // Electron CSP can allowlist as `https://*.r2.cloudflarestorage.com`.
-      // Virtual-hosted URLs nest the bucket as a second subdomain and do not
-      // match that single-level wildcard.
-      forcePathStyle: true,
-      credentials: config.credentials,
-    });
+  const objectStorage = createR2ObjectStorage({
+    env,
+    bucket: config.bucket,
+    s3Client,
+    ...(signUrl ? { signUrl } : {}),
+  });
 
   const createUpload = async ({ churchId, songId, upload }) => {
     const { fileName, contentType, sizeBytes } = validateSongAudioUpload(
@@ -190,25 +175,16 @@ export const createSongAudioStorage = ({
       songId,
       audioId: id,
     });
-    const uploadUrl = await signUrl(
-      client,
-      new PutObjectCommand({
-        Bucket: config.bucket,
-        Key: key,
-        ContentType: contentType,
-        // Content-Length becomes a SigV4 signed header. R2 rejects a PUT whose
-        // actual body length differs from the validated upload intent.
-        ContentLength: sizeBytes,
-      }),
-      { expiresIn: SIGNED_URL_TTL_SECONDS },
-    );
+    const { uploadUrl, expiresAt } = await objectStorage.createSignedUpload({
+      key,
+      contentType,
+      sizeBytes,
+    });
 
     return {
       audio: { id, key, fileName, contentType, sizeBytes },
       uploadUrl,
-      expiresAt: new Date(
-        Date.now() + SIGNED_URL_TTL_SECONDS * 1000,
-      ).toISOString(),
+      expiresAt,
     };
   };
 
@@ -241,9 +217,7 @@ export const createSongAudioStorage = ({
     let sizeBytes;
     let contentType;
     try {
-      const head = await client.send(
-        new HeadObjectCommand({ Bucket: config.bucket, Key: pendingKey }),
-      );
+      const head = await objectStorage.head({ key: pendingKey });
       sizeBytes = Number(head.ContentLength);
       contentType = normalizeContentType(head.ContentType);
       const maxBytes = readMaxBytes(env);
@@ -259,9 +233,7 @@ export const createSongAudioStorage = ({
       }
     } catch (error) {
       try {
-        await client.send(
-          new DeleteObjectCommand({ Bucket: config.bucket, Key: pendingKey }),
-        );
+        await objectStorage.delete({ key: pendingKey });
       } catch (cleanupError) {
         console.error(
           "Error cleaning rejected song audio upload:",
@@ -277,19 +249,13 @@ export const createSongAudioStorage = ({
       newAudioId: id,
       previousAudio,
     });
-    await client.send(
-      new CopyObjectCommand({
-        Bucket: config.bucket,
-        CopySource: buildSongAudioCopySource(config.bucket, pendingKey),
-        Key: target.key,
-        ContentType: contentType,
-        MetadataDirective: "REPLACE",
-      }),
-    );
+    await objectStorage.copy({
+      sourceKey: pendingKey,
+      targetKey: target.key,
+      contentType,
+    });
     try {
-      await client.send(
-        new DeleteObjectCommand({ Bucket: config.bucket, Key: pendingKey }),
-      );
+      await objectStorage.delete({ key: pendingKey });
     } catch (cleanupError) {
       console.error("Error cleaning completed song audio upload:", cleanupError);
     }
@@ -327,14 +293,11 @@ export const createSongAudioStorage = ({
       newAudioId: id,
       previousAudio,
     });
-    await client.send(
-      new PutObjectCommand({
-        Bucket: config.bucket,
-        Key: target.key,
-        ContentType: contentType,
-        Body: bytes,
-      }),
-    );
+    await objectStorage.put({
+      key: target.key,
+      contentType,
+      body: bytes,
+    });
     return {
       id: target.id,
       key: target.key,
@@ -356,25 +319,12 @@ export const createSongAudioStorage = ({
     }
     const responseDisposition =
       disposition === "attachment" ? "attachment" : "inline";
-    const url = await signUrl(
-      client,
-      new GetObjectCommand({
-        Bucket: config.bucket,
-        Key: key,
-        ResponseContentType: "audio/mpeg",
-        ResponseContentDisposition: contentDisposition(
-          fileName,
-          responseDisposition,
-        ),
-      }),
-      { expiresIn: SIGNED_URL_TTL_SECONDS },
-    );
-    return {
-      url,
-      expiresAt: new Date(
-        Date.now() + SIGNED_URL_TTL_SECONDS * 1000,
-      ).toISOString(),
-    };
+    return objectStorage.createSignedRead({
+      key,
+      contentType: "audio/mpeg",
+      fileName,
+      disposition: responseDisposition,
+    });
   };
 
   const remove = async ({ churchId, songId, audio }) => {
@@ -385,9 +335,7 @@ export const createSongAudioStorage = ({
         "That audio file does not belong to this song.",
       );
     }
-    await client.send(
-      new DeleteObjectCommand({ Bucket: config.bucket, Key: key }),
-    );
+    await objectStorage.delete({ key });
   };
 
   return {

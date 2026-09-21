@@ -223,3 +223,32 @@ test("assertSongAudioChurchAccess enforces church match", () => {
   assert.equal(badRes.statusCode, 403);
   assert.match(String(badRes.payload?.error || ""), /church is not available/i);
 });
+
+test("church resource browsing allows human read-only sessions but excludes workstations", async () => {
+  const { requireChurchResourceViewAccess, requireChurchResourceEditAccess } =
+    createAppSessionGuards({ resolveRequestBootstrap: async () => ({}) });
+
+  const humanView = await runMiddleware(requireChurchResourceViewAccess, {
+    appSession: { sessionKind: "human", access: "view" },
+  });
+  assert.equal(humanView.nextCalled, true);
+
+  const workstation = await runMiddleware(requireChurchResourceViewAccess, {
+    appSession: { sessionKind: "workstation", access: "full" },
+  });
+  assert.equal(workstation.nextCalled, false);
+  assert.equal(workstation.res.statusCode, 403);
+
+  const music = await runMiddleware(requireChurchResourceViewAccess, {
+    appSession: { sessionKind: "human", access: "music" },
+  });
+  assert.equal(music.nextCalled, true);
+
+  for (const access of ["view", "music"]) {
+    const readOnlyEdit = await runMiddleware(requireChurchResourceEditAccess, {
+      appSession: { sessionKind: "human", access },
+    });
+    assert.equal(readOnlyEdit.nextCalled, false);
+    assert.equal(readOnlyEdit.res.statusCode, 403);
+  }
+});

@@ -84,6 +84,36 @@ export const createAppSessionGuards = ({
     return true;
   };
 
+  // Phase-one church resources use the existing app access tiers. Human
+  // full/music/view sessions may browse/read; only full app access may mutate.
+  // A paired workstation is intentionally not a library browser merely
+  // because it belongs to this church.
+  const requireChurchResourceViewAccess = (req, res, next) => {
+    if (
+      req.appSession?.sessionKind !== "human" ||
+      (req.appSession?.access !== "full" &&
+        req.appSession?.access !== "music" &&
+        req.appSession?.access !== "view")
+    ) {
+      return res.status(403).json({
+        error: "Church resource access is not available for this session.",
+      });
+    }
+    next();
+  };
+
+  const requireChurchResourceEditAccess = (req, res, next) => {
+    if (
+      req.appSession?.sessionKind !== "human" ||
+      req.appSession?.access !== "full"
+    ) {
+      return res.status(403).json({
+        error: "Full access is required to manage church resources.",
+      });
+    }
+    next();
+  };
+
   return {
     requireAppSession,
     requireMutationCsrf,
@@ -91,5 +121,7 @@ export const createAppSessionGuards = ({
     requireChurchAdmin,
     requireSongAudioEditAccess,
     assertSongAudioChurchAccess,
+    requireChurchResourceViewAccess,
+    requireChurchResourceEditAccess,
   };
 };
