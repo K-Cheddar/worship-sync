@@ -945,8 +945,12 @@ const ServicePlanEditor = ({
   const isMountedRef = useRef(true);
   const resumeReconciliationInFlightRef = useRef<Promise<void> | null>(null);
 
-  useEffect(() => () => {
-    isMountedRef.current = false;
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const applyRemoteServicePlan = useCallback(

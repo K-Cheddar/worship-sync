@@ -30,7 +30,7 @@ const isLocalDevHost = (hostname: string): boolean => {
  */
 export const assertAllowedOpenExternalUrl = (
   raw: string,
-  options: { isDev: boolean },
+  options: { isDev: boolean; allowArbitraryHttps?: boolean },
 ): void => {
   const trimmed = String(raw || "").trim();
   if (!trimmed) {
@@ -60,6 +60,8 @@ export const assertAllowedOpenExternalUrl = (
     }
     return;
   }
+
+  if (options.allowArbitraryHttps) return;
 
   if (!parseAllowedHosts().has(host)) {
     throw new Error(

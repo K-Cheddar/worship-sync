@@ -13,6 +13,7 @@ const env = {
   R2_ACCOUNT_ID: "account",
   R2_ACCESS_KEY_ID: "key",
   R2_SECRET_ACCESS_KEY: "secret",
+  R2_BUCKET: "worshipsync-audio",
   R2_RESOURCES_BUCKET: "worshipsync-resources",
 };
 
@@ -38,6 +39,20 @@ test("ChurchResource validation accepts supported types and Office extension fal
     () => validateChurchResourceUpload({ fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: CHURCH_RESOURCE_MAX_BYTES + 1 }, env),
     ChurchResourceInputError,
   );
+});
+test("ChurchResource storage fails closed instead of falling back to the SongAudio bucket", () => {
+  let commandCount = 0;
+  assert.throws(
+    () => createChurchResourceStorage({
+      env: {
+        ...env,
+        R2_RESOURCES_BUCKET: "",
+      },
+      s3Client: { send: async () => { commandCount += 1; } },
+    }),
+    /R2_RESOURCES_BUCKET/,
+  );
+  assert.equal(commandCount, 0);
 });
 test("ChurchResource storage uses the resources bucket, scoped keys, and promotion flow", async () => {
   const commands = [];

@@ -10,12 +10,21 @@ import {
   panelShellClassName,
   teamsCreatePanelFormClassName,
   teamsCreatePanelFormOpenMobileClassName,
-  teamsCreatePanelListClosedClassName,
-  teamsCreatePanelListOpenClassName,
+  teamsCreatePanelListClassName,
+  teamsCreatePanelMobileViewActiveClassName,
+  teamsCreatePanelMobileViewClassName,
+  teamsCreatePanelMobileViewClosedClassName,
+  teamsCreatePanelMobileViewExitLeftClassName,
+  teamsCreatePanelMobileViewExitRightClassName,
+  teamsCreatePanelMobileViewOpenClassName,
+  teamsCreatePanelMobileViewTransitionClassName,
   teamsCreatePanelOpenMobileClassName,
   teamsCreatePanelRowClassName,
+  teamsCreatePanelRowClosedClassName,
+  teamsCreatePanelRowOpenClassName,
   teamsPanelMaxHeightClassName,
 } from "./teamsStyles";
+import { useTeamsNarrowViewport } from "./hooks/useTeamsNarrowViewport";
 
 type CreatePanelProps = {
   /** Whether the create/edit form is revealed. */
@@ -63,8 +72,8 @@ type CreatePanelProps = {
 /**
  * Gates a manager's create/edit form behind a button. The list sits in a
  * centered, limited-width column; the create/edit form panel sits to
- * the right of the list on large screens. The form panel animates its width on
- * entry/exit.
+ * the right of the list on large screens. The desktop row coordinates the
+ * list and side-panel columns while the panel contents fade on close.
  */
 const CreatePanel = ({
   open,
@@ -90,12 +99,27 @@ const CreatePanel = ({
 }: CreatePanelProps) => {
   const formPanelRef = useRef<HTMLDivElement>(null);
   const asidePanelRef = useRef<HTMLDivElement>(null);
-  const formOpenOnMobile = open;
-  const asideOpenOnMobile = asideOpen;
+  const isNarrowViewport = useTeamsNarrowViewport();
   const panelOpenOnMobile = open || asideOpen;
-  const listHiddenOnMobile = formOpenOnMobile || asideOpenOnMobile;
-  const listSharesSpace = open || asideOpen;
   const useScrollableList = scrollableList;
+  const listInactiveOnMobile = isNarrowViewport && panelOpenOnMobile;
+  const panelGridTemplateColumns = [
+    "minmax(0, 1fr)",
+    asideOpen ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
+    open ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
+  ].join(" ");
+  const panelLayoutTransitionClassName = panelOpenOnMobile
+    ? teamsCreatePanelRowOpenClassName
+    : teamsCreatePanelRowClosedClassName;
+
+  const panelContentVisibilityClassName = (isOpen: boolean) =>
+    isOpen
+      ? "opacity-100 transition-none"
+      : "opacity-0 transition-opacity duration-[120ms] ease-out motion-reduce:transition-none";
+  const mobileViewTransitionDurationClassName = (isOpen: boolean) =>
+    isOpen
+      ? teamsCreatePanelMobileViewOpenClassName
+      : teamsCreatePanelMobileViewClosedClassName;
 
   useEffect(() => {
     if (!open) return;
@@ -126,16 +150,24 @@ const CreatePanel = ({
       <div
         className={cn(
           teamsCreatePanelRowClassName,
+          panelLayoutTransitionClassName,
           panelOpenOnMobile && teamsCreatePanelOpenMobileClassName,
         )}
+        data-testid="teams-create-panel-row"
+        style={{ gridTemplateColumns: panelGridTemplateColumns }}
       >
         <div
+          data-testid="teams-create-panel-list"
+          inert={listInactiveOnMobile}
           className={cn(
             "flex w-full min-w-0 min-h-0 flex-1 flex-col",
-            listSharesSpace
-              ? teamsCreatePanelListOpenClassName
-              : teamsCreatePanelListClosedClassName,
-            listHiddenOnMobile && "max-lg:hidden",
+            teamsCreatePanelListClassName,
+            teamsCreatePanelMobileViewClassName,
+            teamsCreatePanelMobileViewTransitionClassName,
+            mobileViewTransitionDurationClassName(panelOpenOnMobile),
+            panelOpenOnMobile
+              ? teamsCreatePanelMobileViewExitLeftClassName
+              : teamsCreatePanelMobileViewActiveClassName,
           )}
         >
           <section
@@ -183,21 +215,30 @@ const CreatePanel = ({
           role="region"
           aria-label={asideTitle}
           className={cn(
-            "min-w-0 overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
+            "min-w-0 overflow-hidden",
+            teamsCreatePanelFormClassName,
+            teamsCreatePanelMobileViewClassName,
+            teamsCreatePanelMobileViewTransitionClassName,
+            mobileViewTransitionDurationClassName(asideOpen),
             asideOpen
               ? cn(
                 "flex w-full flex-col",
-                teamsCreatePanelFormClassName,
+                teamsCreatePanelMobileViewActiveClassName,
+                "max-lg:z-20",
                 teamsCreatePanelFormOpenMobileClassName,
                 teamsPanelMaxHeightClassName,
               )
-              : "pointer-events-none max-h-0 w-0 opacity-0",
+              : cn(
+                "pointer-events-none",
+                teamsCreatePanelMobileViewExitRightClassName,
+              ),
           )}
         >
           <section
             className={cn(
               panelShellClassName,
               "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+              panelContentVisibilityClassName(asideOpen),
             )}
           >
             <div
@@ -228,21 +269,29 @@ const CreatePanel = ({
           role="region"
           aria-label={title}
           className={cn(
-            "min-w-0 overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
+            "min-w-0 overflow-hidden",
+            teamsCreatePanelFormClassName,
+            teamsCreatePanelMobileViewClassName,
+            teamsCreatePanelMobileViewTransitionClassName,
+            mobileViewTransitionDurationClassName(open),
             open
               ? cn(
                 "flex w-full flex-col",
-                teamsCreatePanelFormClassName,
+                teamsCreatePanelMobileViewActiveClassName,
                 teamsCreatePanelFormOpenMobileClassName,
                 teamsPanelMaxHeightClassName,
               )
-              : "pointer-events-none max-h-0 w-0 opacity-0",
+              : cn(
+                "pointer-events-none",
+                teamsCreatePanelMobileViewExitRightClassName,
+              ),
           )}
         >
           <section
             className={cn(
               panelShellClassName,
               "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+              panelContentVisibilityClassName(open),
             )}
           >
             <div

@@ -26,6 +26,9 @@ export type EnsureMediaCachedResult = {
   cacheMap: Record<string, string>;
 };
 
+/** Bound background cache warming so a service scan cannot saturate the booth. */
+export const MEDIA_CACHE_WARM_CONCURRENCY = 3;
+
 export class MediaCacheManager {
   private cacheDir: string;
   private cacheIndexPath: string;
@@ -207,9 +210,13 @@ export class MediaCacheManager {
 
     let downloaded = 0;
     let failed = 0;
-    await Promise.all(
-      [...uniqueUrlsByCacheKey.values()].map(async (url) => {
-        if (this.getLocalPath(url)) return;
+    const queue = [...uniqueUrlsByCacheKey.values()];
+    const warmOne = async () => {
+      while (queue.length > 0) {
+        // `shift` happens before the await, so each worker owns one URL and
+        // the number of active downloads never exceeds the policy.
+        const url = queue.shift();
+        if (!url || this.getLocalPath(url)) continue;
         try {
           if (await this.downloadMedia(url)) {
             downloaded += 1;
@@ -219,7 +226,15 @@ export class MediaCacheManager {
         } catch {
           failed += 1;
         }
-      }),
+      }
+    };
+    await Promise.all(
+      Array.from(
+        {
+          length: Math.min(MEDIA_CACHE_WARM_CONCURRENCY, queue.length),
+        },
+        () => warmOne(),
+      ),
     );
 
     return {

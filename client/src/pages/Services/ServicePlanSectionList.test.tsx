@@ -112,6 +112,37 @@ const createSections = (): ServicePlanSection[] => [{
   elements: [createElement("item-a"), createElement("item-b")],
 }];
 
+const createTwoSections = (): ServicePlanSection[] => [
+  {
+    id: "section-a",
+    name: "Section A",
+    elements: [createElement("item-a")],
+  },
+  {
+    id: "section-b",
+    name: "Section B",
+    elements: [createElement("item-b")],
+  },
+];
+
+const moveElementToSection = (
+  sections: ServicePlanSection[],
+  elementId: string,
+  targetSectionId: string,
+): ServicePlanSection[] => {
+  const element = sections
+    .flatMap((section) => section.elements)
+    .find((candidate) => candidate.id === elementId);
+  if (!element) return sections;
+  return sections.map((section) => ({
+    ...section,
+    elements: [
+      ...section.elements.filter((candidate) => candidate.id !== elementId),
+      ...(section.id === targetSectionId ? [element] : []),
+    ],
+  }));
+};
+
 const songDocument = {
   _id: "song-a",
   type: "song",
@@ -175,6 +206,24 @@ const renderList = ({
           onClick={() => setSelection({ sectionId: "section-a", elementId: "item-b" })}
         >
           Externally select Item B
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelection({ sectionId: "section-a" })}
+        >
+          Externally select Section A
+        </button>
+        <button
+          type="button"
+          onClick={() => setSections((current) => moveElementToSection(current, "item-a", "section-b"))}
+        >
+          Move Item A to Section B
+        </button>
+        <button
+          type="button"
+          onClick={() => setSections((current) => [...current].reverse())}
+        >
+          Reorder sections
         </button>
       </>
     );
@@ -285,6 +334,60 @@ describe("ServicePlanSectionList item-specific panels", () => {
     await waitFor(() =>
       expect(screen.queryByRole("complementary", { name: /editor for/i })).not.toBeInTheDocument(),
     );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /editor for/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes the panel when its represented section is deleted", async () => {
+    const user = userEvent.setup();
+    renderList({ initialSections: createTwoSections() });
+
+    await user.click(screen.getByRole("button", { name: "Add content to Item A" }));
+    await user.click(screen.getByRole("button", { name: "Open song details" }));
+    expect(panel("Song details for Song A")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "More tools for Section A" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove section" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("complementary", { name: /song details|editor for/i })).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /song details|editor for/i })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByDisplayValue("Item B")).toBeInTheDocument();
+  });
+
+  it("keeps the panel attached to an element moved to another section", async () => {
+    const user = userEvent.setup();
+    renderList({ initialSections: createTwoSections() });
+
+    await user.click(screen.getByRole("button", { name: "Add content to Item A" }));
+    await user.click(screen.getByRole("button", { name: "Move Item A to Section B" }));
+
+    expect(panel("Content editor for Item A")).toBeInTheDocument();
+    expect(screen.getByText("Content panel for item-a")).toBeInTheDocument();
+  });
+
+  it("keeps the panel open when sections are reordered", async () => {
+    const user = userEvent.setup();
+    renderList({ initialSections: createTwoSections() });
+
+    await user.click(screen.getByRole("button", { name: "Add content to Item A" }));
+    await user.click(screen.getByRole("button", { name: "Reorder sections" }));
+
+    expect(panel("Content editor for Item A")).toBeInTheDocument();
+    expect(screen.getByText("Content panel for item-a")).toBeInTheDocument();
+  });
+
+  it("closes the panel for an external section-only selection", async () => {
+    const user = userEvent.setup();
+    renderList({ desktop: false });
+
+    await user.click(screen.getByRole("button", { name: "Add content to Item A" }));
+    await user.click(screen.getByRole("button", { name: "Externally select Section A" }));
+
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: /editor for/i })).not.toBeInTheDocument(),
     );

@@ -1099,11 +1099,21 @@ ipcMain.handle("get-prepared-video-metrics", (event) => {
   }
 });
 
-ipcMain.handle("open-external-url", async (_event, targetUrl: string) => {
-  assertAllowedOpenExternalUrl(targetUrl, { isDev });
-  await shell.openExternal(targetUrl);
-  return true;
-});
+ipcMain.handle(
+  "open-external-url",
+  async (
+    _event,
+    targetUrl: string,
+    options?: { allowArbitraryHttps?: boolean },
+  ) => {
+    assertAllowedOpenExternalUrl(targetUrl, {
+      isDev,
+      allowArbitraryHttps: options?.allowArbitraryHttps,
+    });
+    await shell.openExternal(targetUrl);
+    return true;
+  },
+);
 
 ipcMain.handle("desktop-auth-listener-ready", () => {
   desktopAuthListenerReady = true;

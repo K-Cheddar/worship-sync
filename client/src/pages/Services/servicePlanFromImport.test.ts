@@ -3,6 +3,7 @@ import {
   buildServicePlanSourceImport,
   guessServicePlanElementType,
 } from "./servicePlanFromImport";
+import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import { richTextToPlainText } from "../../types/richText";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
@@ -373,6 +374,10 @@ describe("buildServicePlanSectionsFromImport", () => {
     ["Special Music", "Trust and Obey", "Special Music"],
     ["Song", "Trust and Obey", "Trust and Obey"],
     ["Hymn", "Amazing Grace", "Amazing Grace"],
+    ["Opening Song", "Trust and Obey", "Opening Song"],
+    ["Closing Song", "Trust and Obey", "Closing Song"],
+    ["Offering Song", "Trust and Obey", "Offering Song"],
+    ["Appeal Song", "Trust and Obey", "Appeal Song"],
   ] as const)(
     "keeps the service moment separate from generic song labels (%s | %s)",
     (elementType, contentTitle, expectedTitle) => {
@@ -560,6 +565,50 @@ describe("buildServicePlanSectionsFromImport", () => {
       { kind: "person", id: "p1", name: "Jane Doe" },
       { kind: "teamPosition", id: "tp1", name: "Host" },
     ]);
+  });
+
+  it("keeps a TeamPosition-only Led by value through a plan round trip", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome",
+                title: "Welcome",
+                ledBy: "Host",
+                ledByAssignments: [
+                  { kind: "teamPosition", id: "tp1", name: "Host" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    const [element] = section.elements;
+    expect(element.assignees).toBeUndefined();
+    expect(element.sourceLedByRaw).toBe("Host");
+    expect(element.sourceLedByAssignments).toEqual([
+      { kind: "teamPosition", id: "tp1", name: "Host" },
+    ]);
+
+    const [roundTrippedRow] = servicePlanToImportData({
+      name: "Sunday Gathering",
+      sections: [section],
+    }).sections[0].rows;
+    expect(roundTrippedRow).toMatchObject({
+      ledBy: "Host",
+      sourceLedByRaw: "Host",
+      ledByAssignments: [
+        { kind: "teamPosition", id: "tp1", name: "Host" },
+      ],
+    });
+    expect(roundTrippedRow.assigneeNames).toBeUndefined();
   });
 });
 

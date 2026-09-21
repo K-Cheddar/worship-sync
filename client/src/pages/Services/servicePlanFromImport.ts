@@ -43,15 +43,6 @@ const GENERIC_ELEMENT_LABELS = new Set([
   "hymn",
   "chorus",
   "anthem",
-  "opening song",
-  "closing song",
-  "offering song",
-  "appeal song",
-  "worship song",
-  "song of praise",
-  "congregational hymn",
-  "worship",
-  "praise",
   "item",
   "service item",
   "content",
@@ -196,13 +187,13 @@ const buildElementFromRow = <
     ...(sourceLedByAssignments
       ? { sourceLedByAssignments }
       : {}),
+    ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(resolvedAssigneeNames.length
       ? {
           assignees: resolvedAssigneeNames.map((name) => ({
             id: generateRandomId(),
             name,
           })),
-          sourceLedByRaw,
         }
       : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),

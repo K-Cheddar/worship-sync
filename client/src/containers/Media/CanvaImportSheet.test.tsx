@@ -516,6 +516,130 @@ test("awaits each refreshed Canva page before starting the next callback", async
   });
 });
 
+test("cleans only returned Canva pages after a mid-list refresh failure", async () => {
+  const existingPages = [1, 2, 3, 4].map(
+    (pageNumber) =>
+      ({
+        ...existingMedia,
+        id: `media-${pageNumber}`,
+        canvaImportKey: `canva:DAF_design_1:rev:100:png:${pageNumber}`,
+        canvaSource: {
+          ...existingMedia.canvaSource!,
+          pageNumbers: [pageNumber],
+        },
+      }) as MediaType,
+  );
+  const refreshedPages = [1, 2, 3, 4].map(
+    (pageNumber) =>
+      ({
+        public_id: `new-page-${pageNumber}`,
+        secure_url: `https://res.cloudinary.com/new-page-${pageNumber}.png`,
+        thumbnail_url: `https://res.cloudinary.com/new-page-${pageNumber}-thumb.png`,
+        resource_type: "image",
+        format: "png",
+        width: 1920,
+        height: 1080,
+        canvaImportKey: `canva:DAF_design_1:rev:101:png:${pageNumber}`,
+        canvaSource: {
+          designId: "DAF_design_1",
+          designTitle: "Sunday Welcome",
+          revision: 101,
+          format: "png" as const,
+          pageNumbers: [pageNumber],
+        },
+      }) as mediaInfoType,
+  );
+  jest.mocked(getCanvaStatus).mockResolvedValue({
+    connected: true,
+    oauthConfigured: true,
+    accountLabel: "Church Creative",
+  });
+  jest.mocked(getCanvaDesign).mockResolvedValue({
+    id: "DAF_design_1",
+    title: "Sunday Welcome",
+    thumbnailUrl: "https://example.test/thumb.png",
+    pageCount: 4,
+    updatedAt: 101,
+    editUrl: "https://www.canva.com/design/DAF_design_1/edit",
+    viewUrl: "https://www.canva.com/design/DAF_design_1/view",
+  });
+  jest.mocked(listCanvaDesigns).mockResolvedValue({
+    items: [
+      {
+        id: "DAF_design_1",
+        title: "Sunday Welcome",
+        thumbnailUrl: "https://example.test/thumb.png",
+        pageCount: 4,
+        updatedAt: 101,
+        editUrl: "https://www.canva.com/design/DAF_design_1/edit",
+        viewUrl: "https://www.canva.com/design/DAF_design_1/view",
+      },
+    ],
+    continuation: "",
+  });
+  jest.mocked(importCanvaDesign).mockResolvedValue({
+    assets: refreshedPages.map((data) => ({ kind: "image" as const, data })),
+    skippedCount: 0,
+    revision: 101,
+  });
+  const onImageRefresh = jest.fn(async (_info: mediaInfoType, mediaId: string) => {
+    if (mediaId === "media-2") throw new Error("page 2 replacement failed");
+  });
+  const cleanup = jest.fn(async () => true);
+
+  render(
+    <MemoryRouter>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <CanvaImportSheet
+          open
+          onOpenChange={jest.fn()}
+          onImageComplete={jest.fn()}
+          onVideoComplete={jest.fn()}
+          onImageRefresh={onImageRefresh}
+          onVideoRefresh={jest.fn()}
+          onUnprocessedAssetCleanup={cleanup}
+          existingMedia={existingPages}
+          sourceMedia={existingPages[0]}
+        />
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  expect(
+    await screen.findByText("A newer Canva revision is available."),
+  ).toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Change design" }));
+  await user.click(
+    await screen.findByRole("button", { name: /Sunday Welcome/ }),
+  );
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  await user.click(screen.getByRole("button", { name: "Refresh selected" }));
+
+  await waitFor(() => {
+    expect(onImageRefresh).toHaveBeenCalledTimes(2);
+  });
+  expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[0], "media-1");
+  expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[1], "media-2");
+  await waitFor(() => {
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  });
+  expect(cleanup).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ kind: "image", data: refreshedPages[2] }),
+  );
+  expect(cleanup).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({ kind: "image", data: refreshedPages[3] }),
+  );
+  expect(cleanup).not.toHaveBeenCalledWith(
+    expect.objectContaining({ data: refreshedPages[0] }),
+  );
+  expect(cleanup).not.toHaveBeenCalledWith(
+    expect.objectContaining({ data: refreshedPages[1] }),
+  );
+});
+
 test("creates a one-slide custom item for an imported Canva video", async () => {
   const importedVideo = {
     playbackId: "canva-video-1",

@@ -225,7 +225,12 @@ test("assertSongAudioChurchAccess enforces church match", () => {
 });
 
 test("church resource browsing allows human read-only sessions but excludes workstations", async () => {
-  const { requireChurchResourceViewAccess, requireChurchResourceEditAccess } =
+  const {
+    requireChurchResourceBrowseAccess,
+    requireChurchResourceReferenceReadAccess,
+    requireChurchResourceViewAccess,
+    requireChurchResourceEditAccess,
+  } =
     createAppSessionGuards({ resolveRequestBootstrap: async () => ({}) });
 
   const humanView = await runMiddleware(requireChurchResourceViewAccess, {
@@ -233,11 +238,34 @@ test("church resource browsing allows human read-only sessions but excludes work
   });
   assert.equal(humanView.nextCalled, true);
 
+  const humanSpecificRead = await runMiddleware(requireChurchResourceReferenceReadAccess, {
+    appSession: { sessionKind: "human", access: "view" },
+  });
+  assert.equal(humanSpecificRead.nextCalled, true);
+
   const workstation = await runMiddleware(requireChurchResourceViewAccess, {
     appSession: { sessionKind: "workstation", access: "full" },
   });
   assert.equal(workstation.nextCalled, false);
   assert.equal(workstation.res.statusCode, 403);
+
+  const workstationSpecificRead = await runMiddleware(requireChurchResourceReferenceReadAccess, {
+    appSession: { sessionKind: "workstation", access: "full" },
+  });
+  assert.equal(workstationSpecificRead.nextCalled, false);
+  assert.equal(workstationSpecificRead.res.statusCode, 403);
+
+  const authorizedWorkstationRead = await runMiddleware(requireChurchResourceReferenceReadAccess, {
+    appSession: { sessionKind: "workstation", access: "full" },
+    authorizedChurchResourceReference: true,
+  });
+  assert.equal(authorizedWorkstationRead.nextCalled, true);
+
+  const browseAlias = await runMiddleware(requireChurchResourceBrowseAccess, {
+    appSession: { sessionKind: "human", access: "view" },
+  });
+  assert.equal(browseAlias.nextCalled, true);
+  assert.equal(requireChurchResourceViewAccess, requireChurchResourceBrowseAccess);
 
   const music = await runMiddleware(requireChurchResourceViewAccess, {
     appSession: { sessionKind: "human", access: "music" },

@@ -14,7 +14,7 @@ import { cn } from "@/utils/cnHelper";
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title?: string;
+  title?: React.ReactNode;
   children: React.ReactNode;
   size?: "sm" | "md" | "lg" | "xl" | "2xl" | "fit" | "full";
   showCloseButton?: boolean;

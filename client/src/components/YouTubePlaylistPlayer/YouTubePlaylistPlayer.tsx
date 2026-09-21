@@ -90,6 +90,7 @@ type YouTubePlaylistPlayerProps = {
   queue: YouTubePlaylistEntry[];
   mode?: "playlist" | "preview";
   autoPlayEntryKey?: string | null;
+  onPlayerReady?: () => void;
   onVideoUnavailable?: (entry: YouTubePlaylistEntry) => void;
   onCurrentEntryChange?: (entryKey: string) => void;
 };
@@ -99,6 +100,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     queue,
     mode = "playlist",
     autoPlayEntryKey,
+    onPlayerReady,
     onVideoUnavailable,
     onCurrentEntryChange,
   }: YouTubePlaylistPlayerProps,
@@ -113,6 +115,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
   );
   const queueRef = useRef(queue);
   const onVideoUnavailableRef = useRef(onVideoUnavailable);
+  const onPlayerReadyRef = useRef(onPlayerReady);
   const onCurrentEntryChangeRef = useRef(onCurrentEntryChange);
   const failedKeysRef = useRef(new Set<string>());
   const currentIndexRef = useRef(0);
@@ -124,6 +127,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
 
   queueRef.current = queue;
   onVideoUnavailableRef.current = onVideoUnavailable;
+  onPlayerReadyRef.current = onPlayerReady;
   onCurrentEntryChangeRef.current = onCurrentEntryChange;
   const currentEntry = queue[currentIndex] ?? null;
   const queueIdentity = useMemo(
@@ -212,6 +216,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
             onReady: () => {
               playerReadyRef.current = true;
               loadedVideoIdRef.current = initialEntry?.videoId || "";
+              onPlayerReadyRef.current?.();
               if (shouldPlayRef.current) player.playVideo();
             },
             onStateChange: (event) => {

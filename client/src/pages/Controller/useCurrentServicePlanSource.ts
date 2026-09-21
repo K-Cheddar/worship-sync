@@ -2,9 +2,11 @@
  * Keeps the Controller connected to saved Service Plans while leaving every
  * live outline mutation behind the operator's explicit Sync action.
  *
- * Selection order is deliberate: the current scheduled occurrence when it has
- * a saved plan, then a clearly unassigned empty state. A nearest saved plan is
- * used only when no scheduled occurrence can be resolved. A manual pick
+ * Automatic selection starts with the current scheduled occurrence. An old
+ * outline binding never overrides that current context; if the current
+ * occurrence has no saved plan, the selection stays explicitly unassigned
+ * unless no scheduled occurrence can be resolved. Bindings remain useful for
+ * outline association/history and explicit manual selection. A manual pick
  * remains pinned for this Controller session.
  */
 import {
@@ -111,16 +113,15 @@ export const useCurrentServicePlanSource = () => {
   const hasReceivedLiveConnectionRef = useRef(false);
   const manualSelectionRef = useRef(false);
   // A URL preview already present when this hook mounts belongs to an earlier
-  // Controller visit and must not suppress the linked/current saved plan. The
-  // revision changes only when the operator imports a URL in this visit.
+  // Controller visit and must not suppress the current occurrence's automatic
+  // selection. The revision changes only when the operator imports a URL in
+  // this visit.
   const previousUrlSelectionRevisionRef = useRef(urlSelectionRevision);
   const currentVisitUrlSelectionRef = useRef(false);
   const selectedOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const activeControllerIdRef = useRef(activeControllerId);
-  const previousOutlineContextRef = useRef({
-    controllerId: activeControllerId,
-    outlineId: selectedOutlineId,
-  });
+  const previousControllerIdRef = useRef(activeControllerId);
+  const previousOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const automaticSelectionContextRef = useRef<string | undefined>(undefined);
   selectedOutlineIdRef.current = selectedOutlineId;
   activeControllerIdRef.current = activeControllerId;
@@ -163,17 +164,8 @@ export const useCurrentServicePlanSource = () => {
   }, []);
 
   useEffect(() => {
-    const previous = previousOutlineContextRef.current;
-    if (
-      previous.controllerId === activeControllerId &&
-      previous.outlineId === selectedOutlineId
-    ) {
-      return;
-    }
-    previousOutlineContextRef.current = {
-      controllerId: activeControllerId,
-      outlineId: selectedOutlineId,
-    };
+    if (previousControllerIdRef.current === activeControllerId) return;
+    previousControllerIdRef.current = activeControllerId;
     generationRef.current += 1;
     reconciliationInFlightRef.current = null;
     manualSelectionRef.current = false;
@@ -183,12 +175,19 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     dispatch(clearServicePlanningPreview());
-  }, [
-    activeControllerId,
-    dispatch,
-    returnOccurrenceToCurrent,
-    selectedOutlineId,
-  ]);
+  }, [activeControllerId, dispatch, returnOccurrenceToCurrent]);
+
+  useEffect(() => {
+    if (previousOutlineIdRef.current === selectedOutlineId) return;
+    previousOutlineIdRef.current = selectedOutlineId;
+    generationRef.current += 1;
+    reconciliationInFlightRef.current = null;
+    // Keep the selected occurrence, plan, and manual-session state. The
+    // selected plan reconciliation below will rebuild the preview for the new
+    // outline and its identity checks prevent old-outline writes.
+    planRef.current = null;
+    dispatch(clearServicePlanningPreview());
+  }, [dispatch, selectedOutlineId]);
 
   const clearUnavailablePlan = useCallback(
     (planKey: string) => {
@@ -209,6 +208,19 @@ export const useCurrentServicePlanSource = () => {
     },
     [dispatch],
   );
+
+  /*
+   * The automatic occurrence remains the hook's source of truth until a
+   * manual plan is selected. If that plan is not represented by an available
+   * occurrence, hide the automatic occurrence rather than pairing two
+   * unrelated contexts in the controls.
+   */
+  const hasManualPlanOutsideOccurrenceWindow =
+    manualSelectionRef.current &&
+    Boolean(selectedPlanKey) &&
+    !occurrences.some(
+      (candidate) => getServicePlanKey(candidate) === selectedPlanKey,
+    );
 
   const refreshPlans = useCallback(async () => {
     if (!isEnabled || !churchId) return;
@@ -261,7 +273,8 @@ export const useCurrentServicePlanSource = () => {
 
   // A URL pasted during this Controller visit is an explicit source choice.
   // A URL preview carried in from an earlier visit intentionally does not take
-  // ownership here, allowing the linked/current saved plan to load instead.
+  // ownership here, allowing the current occurrence's saved plan to load
+  // instead.
   useEffect(() => {
     if (urlSelectionRevision === previousUrlSelectionRevisionRef.current) {
       return;
@@ -299,8 +312,8 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKey,
   ]);
 
-  /** Resolve the initial plan only after the saved-plan list and current
-   * occurrence context are ready. */
+  /** Resolve automatic selection after saved plans and the current occurrence
+   * context are ready; do not persist this derived choice as a binding. */
   useEffect(() => {
     if (
       !plansLoaded ||
@@ -330,6 +343,7 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKeyRef.current = nextKey;
     setSelectedPlanKey(nextKey);
   }, [
+    activeControllerId,
     currentOccurrencePlanKey,
     currentOccurrence,
     dispatch,
@@ -477,7 +491,6 @@ export const useCurrentServicePlanSource = () => {
           }
 
           planRef.current = plan;
-          void persistManualPlanBindingRef.current(plan);
           await applyPlan(
             plan,
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
@@ -528,10 +541,11 @@ export const useCurrentServicePlanSource = () => {
   /**
    * Remembers a deliberate operator pick (dropdown selection or
    * `pinSelectedPlan`) against this outline immediately, rather than only
-   * once the operator syncs — so reopening the outline restores the same
-   * plan without re-prompting even if it was never synced. An automatic
-   * fallback selection (see the effect below) never sets
-   * `manualSelectionRef`, so it never overwrites an existing binding.
+   * once the operator syncs. The binding records outline association/history
+   * and supports explicit manual selection; reopening an outline does not
+   * force it ahead of the current scheduled occurrence. An automatic
+   * selection (see the effect below) never sets `manualSelectionRef`, so it
+   * never writes a new binding merely because the occurrence changed.
    */
   const persistManualPlanBinding = useCallback(
     async (plan: Pick<ServicePlan, "planKey" | "name">) => {
@@ -575,11 +589,6 @@ export const useCurrentServicePlanSource = () => {
   // dispatches a Redux update that changes this callback's identity on every
   // call, which would otherwise re-trigger — and needlessly refetch — the
   // "load" effect below.
-  const persistManualPlanBindingRef = useRef(persistManualPlanBinding);
-  useEffect(() => {
-    persistManualPlanBindingRef.current = persistManualPlanBinding;
-  }, [persistManualPlanBinding]);
-
   useEffect(() => {
     if (
       !isEnabled ||
@@ -620,6 +629,17 @@ export const useCurrentServicePlanSource = () => {
     (planKey: string) => {
       manualSelectionRef.current = true;
       currentVisitUrlSelectionRef.current = false;
+      const matchingOccurrence = occurrences.find(
+        (candidate) => getServicePlanKey(candidate) === planKey,
+      );
+      if (matchingOccurrence) {
+        selectOccurrenceFromSchedule(matchingOccurrence.occurrenceId);
+      } else {
+        // A saved plan may be outside the currently available occurrence
+        // window. Keep the manual plan, but do not leave the automatic
+        // occurrence beside it as if it owned that plan.
+        returnOccurrenceToCurrent();
+      }
       // Persist the operator's choice before waiting for plan details. The
       // picker is local component state, so delaying this until the detail
       // request settles can lose the chosen plan when the Controller unmounts.
@@ -636,7 +656,14 @@ export const useCurrentServicePlanSource = () => {
       dispatch(clearServicePlanningPreview());
       setSelectedPlanKey(planKey || null);
     },
-    [dispatch, persistManualPlanBinding, savedPlans],
+    [
+      dispatch,
+      occurrences,
+      persistManualPlanBinding,
+      returnOccurrenceToCurrent,
+      savedPlans,
+      selectOccurrenceFromSchedule,
+    ],
   );
 
   const selectOccurrence = useCallback(
@@ -648,6 +675,8 @@ export const useCurrentServicePlanSource = () => {
 
       manualSelectionRef.current = true;
       currentVisitUrlSelectionRef.current = false;
+      // Selecting an occurrence always restores occurrence/plan alignment;
+      // the plan may still be explicitly empty when no saved plan exists.
       generationRef.current += 1;
       planRef.current = null;
       selectOccurrenceFromSchedule(occurrenceId);
@@ -826,7 +855,9 @@ export const useCurrentServicePlanSource = () => {
     returnToCurrentService,
     isManualSelection: manualSelectionRef.current,
     pinSelectedPlan,
-    occurrence: currentOccurrence,
+    occurrence: hasManualPlanOutsideOccurrenceWindow
+      ? null
+      : currentOccurrence,
     isEnabled,
     isLoading,
     isLoadingPlans,

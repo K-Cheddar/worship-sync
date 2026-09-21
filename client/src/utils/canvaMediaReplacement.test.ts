@@ -42,7 +42,7 @@ const createArgs = (overrides: Partial<Parameters<typeof commitCanvaMediaReplace
           ? "references"
           : "rollback-references",
       );
-      return { ok: true };
+      return { ok: true, rollbackStatus: "not_needed" };
     },
     flushMedia: async () => {
       events.push("media");
@@ -128,4 +128,68 @@ test("keeps a refreshed Mux rendition active when old-asset cleanup fails", asyn
   expect(args.events).toContain("old-provider");
   expect(args.events).toContain("cleanup-retry");
   expect(args.appliedLists[0][0].muxAssetId).toBe("new-mux-asset");
+});
+
+test("cleans up the new provider when reference rollback succeeds", async () => {
+  const args = createArgs({
+    replaceReferences: async (replacement: { oldMedia: MediaType; newMedia: MediaType }) => {
+      args.events.push(
+        replacement.oldMedia.publicId === args.oldMedia.publicId
+          ? "references"
+          : "rollback-references",
+      );
+      return {
+        ok: false,
+        rollbackStatus: "complete",
+        message: "reference conflict",
+      };
+    },
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(
+    "reference conflict",
+  );
+  expect(args.events).toContain("new-provider");
+  expect(args.events).not.toContain("old-provider");
+});
+
+test("retains the new provider when reference rollback is uncertain", async () => {
+  const args = createArgs({
+    replaceReferences: async () => ({
+      ok: false,
+      rollbackStatus: "uncertain" as const,
+      message: "reference rollback failed",
+    }),
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(
+    "reconciliation is required",
+  );
+  expect(args.events).not.toContain("new-provider");
+  expect(args.events).not.toContain("old-provider");
+});
+
+test("retains the new provider when reverse reference migration is uncertain", async () => {
+  let callCount = 0;
+  const args = createArgs({
+    flushMedia: async () => ({ ok: false, error: new Error("pouch failure") }),
+    replaceReferences: async (replacement: { oldMedia: MediaType; newMedia: MediaType }) => {
+      callCount += 1;
+      args.events.push(callCount === 1 ? "references" : "rollback-references");
+      return callCount === 1
+        ? { ok: true, rollbackStatus: "not_needed" as const }
+        : {
+            ok: false,
+            rollbackStatus: "uncertain" as const,
+            message: "reverse rollback failed",
+          };
+    },
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(
+    "reconciliation is required",
+  );
+  expect(args.events).not.toContain("new-provider");
+  expect(args.events).not.toContain("old-provider");
+  expect(args.appliedLists.at(-1)).toEqual(args.currentList);
 });

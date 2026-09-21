@@ -266,6 +266,8 @@ export type MediaReferenceSweepResult = {
 };
 
 export type MediaReferenceReplacementResult = MediaReferenceSweepResult & {
+  /** Whether failed writes were fully restored before returning an error. */
+  rollbackStatus: "not_needed" | "complete" | "uncertain";
   updatedDocs?: Record<string, unknown>[];
 };
 
@@ -585,6 +587,7 @@ export async function replaceMediaReferencesForReplacement(
       ok: false,
       failedDocIds: [PREFERENCES_POUCH_ID],
       message: "Could not load preferences for Canva media replacement.",
+      rollbackStatus: "not_needed",
     };
   }
 
@@ -614,13 +617,14 @@ export async function replaceMediaReferencesForReplacement(
         string,
         unknown
       >;
-      quickLinksSource = (quickLinksDoc.quickLinks as QuickLinkType[]) ?? [];
+      quickLinksSource = (quickLinksDoc?.quickLinks as QuickLinkType[]) ?? [];
     } catch (error) {
       if ((error as { status?: number }).status !== 404) {
         return {
           ok: false,
           failedDocIds: [QUICK_LINKS_POUCH_ID],
           message: "Could not load quick links for Canva media replacement.",
+          rollbackStatus: "not_needed",
         };
       }
     }
@@ -650,6 +654,7 @@ export async function replaceMediaReferencesForReplacement(
       ok: false,
       failedDocIds: [],
       message: "Could not inspect saved Canva media references.",
+      rollbackStatus: "not_needed",
     };
   }
 
@@ -711,6 +716,8 @@ export async function replaceMediaReferencesForReplacement(
       applied.push({ previous, savedRevision: result.rev });
     }
   } catch (error) {
+    let rollbackStatus: MediaReferenceReplacementResult["rollbackStatus"] =
+      "complete";
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
@@ -719,6 +726,7 @@ export async function replaceMediaReferencesForReplacement(
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
         });
       } catch (rollbackError) {
+        rollbackStatus = "uncertain";
         console.error("Failed to roll back Canva media reference replacement:", {
           rollbackError,
           docId: saved.previous._id,
@@ -733,9 +741,15 @@ export async function replaceMediaReferencesForReplacement(
       ok: false,
       failedDocIds: [failedDocId],
       message: "Could not save Canva media reference replacement.",
+      rollbackStatus,
     };
   }
 
   const updatedDocs = [...pending.values()].map(({ next }) => next);
-  return { ok: true, failedDocIds: [], updatedDocs };
+  return {
+    ok: true,
+    failedDocIds: [],
+    rollbackStatus: "not_needed",
+    updatedDocs,
+  };
 }

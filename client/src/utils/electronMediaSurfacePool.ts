@@ -2,10 +2,15 @@ import type { Box } from "../types";
 import type { ElectronMediaCandidateSourceKind } from "./electronMediaSurfaceDiagnostics";
 
 /**
- * Keep this budget deliberately small. It is a renderer-local resource limit,
- * not a product promise about how many videos a service may contain.
+ * Provisional per-output Electron policy. Protected current/transition media
+ * may exceed this soft budget so a live transition is never evicted.
  */
-export const DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET = 8;
+export const ELECTRON_MEDIA_SURFACE_POLICY = {
+  defaultBudget: 10,
+} as const;
+
+export const DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET =
+  ELECTRON_MEDIA_SURFACE_POLICY.defaultBudget;
 
 export type ElectronMediaSurfaceCandidate = {
   mediaKey: string;

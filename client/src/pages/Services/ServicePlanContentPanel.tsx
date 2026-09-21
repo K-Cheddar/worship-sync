@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
+import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
@@ -31,9 +32,8 @@ import {
 } from "../../components/ui/DropdownMenu";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useSelector } from "../../hooks";
-import { getSongAudioUrl } from "../../api/auth";
-import { getChurchResourceUrl, listChurchResources } from "../../api/auth";
-import { isElectron } from "../../utils/environment";
+import { getChurchResource, getChurchResourceUrl, listChurchResources, getSongAudioUrl } from "../../api/auth";
+import { openExternalUrl } from "../../utils/openExternalUrl";
 import {
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
@@ -46,18 +46,23 @@ import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/f
 import { richTextToPlainText } from "../../types/richText";
 import {
   createServicePlanAudioResource,
-  createServicePlanDocumentResource,
+  createServicePlanChurchResourceReference,
   createServicePlanGenericResource,
   createServicePlanLinkResource,
   createServicePlanTextResource,
+  getEffectiveServicePlanResourceDefinition,
+  getServicePlanChurchResourceId,
   getServicePlanResourceDataString,
-  getServicePlanResourceDefinition,
+  getServicePlanResourceDisplayLabel,
   getServicePlanResourceNotes,
   isHttpUrl,
+  normalizeServicePlanResourceForPreview,
+  isServicePlanChurchResourceReference,
 } from "./servicePlanResources";
 import type { ChurchResource } from "../../types/churchResource";
 
 type ResourceEditorMode = "url" | "text" | "generic";
+const EMPTY_SERVICE_PLAN_RESOURCES: ServicePlanContentResource[] = [];
 
 type ServicePlanContentPanelProps = {
   element: ServicePlanElement;
@@ -73,6 +78,39 @@ type ServicePlanContentPanelProps = {
 
 const resourceEditorLabel = (mode: ResourceEditorMode) =>
   mode === "url" ? "Web link" : mode === "text" ? "Notes" : "Other resource";
+
+const ChurchResourceAudioPlayer = ({
+  churchId,
+  resourceId,
+  fileName,
+}: {
+  churchId: string;
+  resourceId: string;
+  fileName: string;
+}) => {
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setUrl("");
+    setError("");
+    void getChurchResourceUrl({ churchId, resourceId })
+      .then((result) => {
+        if (active) setUrl(result.url);
+      })
+      .catch(() => {
+        if (active) setError("This MP3 could not be opened.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [churchId, resourceId]);
+
+  if (error) return <p className="text-xs text-amber-200">{error}</p>;
+  if (!url) return <p className="text-xs text-gray-400" role="status">Loading audio…</p>;
+  return <audio controls className="min-w-[min(24rem,100%)]" src={url} aria-label={fileName} />;
+};
 
 const ServicePlanContentPanel = ({
   element,
@@ -92,6 +130,7 @@ const ServicePlanContentPanel = ({
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
   const [churchResourcePickerOpen, setChurchResourcePickerOpen] = useState(false);
   const [churchResources, setChurchResources] = useState<ChurchResource[]>([]);
+  const [referencedChurchResources, setReferencedChurchResources] = useState<Record<string, ChurchResource | null>>({});
   const [churchResourceLoading, setChurchResourceLoading] = useState(false);
   const [churchResourceError, setChurchResourceError] = useState("");
   const [activeYouTubeResourceId, setActiveYouTubeResourceId] = useState<string | null>(null);
@@ -103,7 +142,11 @@ const ServicePlanContentPanel = ({
   const [resourceNotes, setResourceNotes] = useState("");
   const [resourceError, setResourceError] = useState("");
   const [openingResourceId, setOpeningResourceId] = useState<string | null>(null);
-  const churchResourceRequestRef = useRef(0);
+  const [previewResource, setPreviewResource] = useState<ReturnType<typeof normalizeServicePlanResourceForPreview> | null>(null);
+  const churchResourcePickerRequestRef = useRef(0);
+  const churchResourceReferenceRequestRef = useRef(0);
+  const churchResourceCacheRef = useRef(new Map<string, ChurchResource | null>());
+  const churchResourceCacheChurchIdRef = useRef<string | undefined>(churchId);
 
   useEffect(() => {
     setPickerOpen(false);
@@ -121,9 +164,17 @@ const ServicePlanContentPanel = ({
 
   const songs = getServicePlanElementSongRefs(element);
   const scriptures = getServicePlanElementScriptureRefs(element);
-  const resources = element.resources || [];
-  const hasChurchResourceReference = resources.some(
-    (resource) => resource.type === "document",
+  const resources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const referencedChurchResourceIds = useMemo(
+    () => [
+      ...new Set(
+        resources
+          .filter(isServicePlanChurchResourceReference)
+          .map(getServicePlanChurchResourceId)
+          .filter(Boolean),
+      ),
+    ],
+    [resources],
   );
   const itemLabel = richTextToPlainText(element.title).trim() || "Untitled item";
   const audioSongs = useMemo(
@@ -152,7 +203,7 @@ const ServicePlanContentPanel = ({
     onUpdate({ resources: next });
 
   const loadChurchResources = async () => {
-    const requestId = ++churchResourceRequestRef.current;
+    const requestId = ++churchResourcePickerRequestRef.current;
     if (!churchId) {
       setChurchResourceError("Sign in to choose a church resource.");
       setChurchResourceLoading(false);
@@ -162,35 +213,96 @@ const ServicePlanContentPanel = ({
     setChurchResourceError("");
     try {
       const result = await listChurchResources(churchId);
-      if (requestId !== churchResourceRequestRef.current) return;
+      if (requestId !== churchResourcePickerRequestRef.current) return;
       setChurchResources(result.resources);
     } catch (error) {
-      if (requestId !== churchResourceRequestRef.current) return;
+      if (requestId !== churchResourcePickerRequestRef.current) return;
       setChurchResourceError(
         error instanceof Error
           ? error.message
           : "Church resources could not be loaded.",
       );
     } finally {
-      if (requestId === churchResourceRequestRef.current) {
+      if (requestId === churchResourcePickerRequestRef.current) {
         setChurchResourceLoading(false);
       }
     }
   };
 
   useEffect(() => {
-    if (hasChurchResourceReference) {
-      void loadChurchResources();
-    } else {
-      churchResourceRequestRef.current += 1;
-      setChurchResources([]);
+    const requestId = ++churchResourceReferenceRequestRef.current;
+    if (churchResourceCacheChurchIdRef.current !== churchId) {
+      churchResourceCacheChurchIdRef.current = churchId;
+      churchResourceCacheRef.current.clear();
+      setReferencedChurchResources({});
+    }
+    if (!churchId || !referencedChurchResourceIds.length) {
+      churchResourceCacheRef.current.clear();
+      setReferencedChurchResources({});
       setChurchResourceLoading(false);
       setChurchResourceError("");
+      return;
     }
-    // The element id effect above owns draft reset; this load follows the
-    // persisted reference and is intentionally independent of edit mode.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId, hasChurchResourceReference]);
+
+    const cached = Object.fromEntries(
+      referencedChurchResourceIds
+        .filter((id) => churchResourceCacheRef.current.has(id))
+        .map((id) => [id, churchResourceCacheRef.current.get(id) || null]),
+    );
+    if (Object.keys(cached).length) {
+      setReferencedChurchResources(cached);
+    }
+    const missingIds = referencedChurchResourceIds.filter(
+      (id) => !churchResourceCacheRef.current.has(id),
+    );
+    if (!missingIds.length) {
+      setChurchResourceLoading(false);
+      setChurchResourceError("");
+      return;
+    }
+
+    setChurchResourceLoading(true);
+    setChurchResourceError("");
+    void Promise.all(
+      missingIds.map(async (resourceId) => {
+        try {
+          return [resourceId, (await getChurchResource(churchId, resourceId)).resource] as const;
+        } catch (error) {
+          if ((error as { status?: number })?.status === 404) {
+            return [resourceId, null] as const;
+          }
+          throw error;
+        }
+      }),
+    )
+      .then((results) => {
+        if (requestId !== churchResourceReferenceRequestRef.current) return;
+        results.forEach(([resourceId, resource]) => {
+          churchResourceCacheRef.current.set(resourceId, resource);
+        });
+        setReferencedChurchResources(
+          Object.fromEntries(
+            referencedChurchResourceIds.map((resourceId) => [
+              resourceId,
+              churchResourceCacheRef.current.get(resourceId) || null,
+            ]),
+          ),
+        );
+      })
+      .catch((error) => {
+        if (requestId !== churchResourceReferenceRequestRef.current) return;
+        setChurchResourceError(
+          error instanceof Error
+            ? error.message
+            : "Church resources could not be loaded.",
+        );
+      })
+      .finally(() => {
+        if (requestId === churchResourceReferenceRequestRef.current) {
+          setChurchResourceLoading(false);
+        }
+      });
+  }, [churchId, referencedChurchResourceIds]);
 
   const resetResourceEditor = () => {
     onResourceEditorModeChange?.(false);
@@ -248,14 +360,51 @@ const ServicePlanContentPanel = ({
     if (!resource.url) return;
     setOpeningResourceId(resource.id);
     try {
-      if (isElectron() && window.electronAPI?.openExternalUrl) {
-        await window.electronAPI.openExternalUrl(resource.url);
-      } else {
-        window.open(resource.url, "_blank", "noopener,noreferrer");
-      }
+      await openExternalUrl(resource.url, { allowArbitraryHttps: true });
     } finally {
       setOpeningResourceId(null);
     }
+  };
+
+  const openResourcePreview = (
+    resource: ServicePlanContentResource,
+    churchResource?: ChurchResource,
+  ) => {
+    const resourceId = getServicePlanChurchResourceId(resource);
+    const songId = getServicePlanResourceDataString(resource, "songId");
+    const audioId = getServicePlanResourceDataString(resource, "audioId");
+    const song = allSongDocs.find((candidate) => candidate._id === songId);
+    const audio = song?.songAudio?.id === audioId ? song.songAudio : undefined;
+    const resolveSource = churchId && resourceId
+      ? async () => {
+          const result = await getChurchResourceUrl({ churchId, resourceId });
+          return {
+            url: result.url,
+            mimeType: churchResource?.storage.contentType,
+            fileName: churchResource?.storage.fileName,
+          };
+        }
+      : churchId && songId && audio
+        ? async () => {
+            const result = await getSongAudioUrl({
+              churchId,
+              songId,
+              audio,
+              disposition: "inline",
+            });
+            return {
+              url: result.url,
+              mimeType: audio.contentType,
+              fileName: audio.fileName,
+            };
+          }
+        : undefined;
+    setPreviewResource(
+      normalizeServicePlanResourceForPreview(resource, {
+        churchResource,
+        ...(resolveSource ? { resolveSource } : {}),
+      }),
+    );
   };
 
   const renderResourceBody = (resource: ServicePlanContentResource) => {
@@ -308,9 +457,9 @@ const ServicePlanContentPanel = ({
         />
       );
     }
-    if (resource.type === "document") {
-      const resourceId = getServicePlanResourceDataString(resource, "resourceId");
-      const churchResource = churchResources.find((item) => item.id === resourceId);
+    if (isServicePlanChurchResourceReference(resource)) {
+      const resourceId = getServicePlanChurchResourceId(resource);
+      const churchResource = referencedChurchResources[resourceId];
       const openChurchResource = async (disposition: "inline" | "attachment") => {
         if (!churchId || !resourceId) return;
         setOpeningResourceId(resource.id);
@@ -320,11 +469,25 @@ const ServicePlanContentPanel = ({
             resourceId,
             disposition,
           });
-          window.open(result.url, "_blank", "noopener,noreferrer");
+          await openExternalUrl(result.url, { allowArbitraryHttps: true });
         } finally {
           setOpeningResourceId(null);
         }
       };
+      if (churchResource?.kind === "audio") {
+        return (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate text-xs text-gray-400">
+              {churchResource.name}
+            </span>
+            <ChurchResourceAudioPlayer
+              churchId={churchId || ""}
+              resourceId={resourceId}
+              fileName={churchResource.storage.fileName}
+            />
+          </div>
+        );
+      }
       return (
         <div className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 truncate text-xs text-gray-400">
@@ -351,6 +514,9 @@ const ServicePlanContentPanel = ({
           >
             Download
           </Button>
+          {!churchResource && !churchResourceLoading ? (
+            <span className="text-xs text-amber-200">This church resource is unavailable.</span>
+          ) : null}
         </div>
       );
     }
@@ -453,15 +619,12 @@ const ServicePlanContentPanel = ({
       <section className="space-y-2" aria-label="Attached resources">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Resources</h3>
         {resources.length ? resources.map((resource) => {
-          const definition = getServicePlanResourceDefinition(resource.type);
-          const ResourceIcon = definition.icon;
-          const churchResource = resource.type === "document"
-            ? churchResources.find(
-                (item) =>
-                  item.id === getServicePlanResourceDataString(resource, "resourceId"),
-              )
+          const churchResource = isServicePlanChurchResourceReference(resource)
+            ? referencedChurchResources[getServicePlanChurchResourceId(resource)]
             : undefined;
-          const displayTitle = churchResource?.name || resource.title;
+          const definition = getEffectiveServicePlanResourceDefinition(resource, churchResource || undefined);
+          const ResourceIcon = definition.icon;
+          const displayTitle = getServicePlanResourceDisplayLabel(resource, churchResource || undefined);
           const isEditable = allowEdit && definition.canEdit &&
             (resource.type === "url" || resource.type === "text" || resource.type === "generic");
           return (
@@ -469,7 +632,22 @@ const ServicePlanContentPanel = ({
               <div className="flex min-w-0 items-start gap-2">
                 <ResourceIcon className={`mt-0.5 size-4 shrink-0 ${definition.toneClassName}`} aria-hidden />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-gray-100">{displayTitle}</p>
+                  {allowEdit ? (
+                    <p className="truncate text-sm text-gray-100" title={displayTitle}>{displayTitle}</p>
+                  ) : (
+                    <button
+                      type="button"
+                      className="block min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-cyan-100 hover:text-cyan-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                      title={displayTitle}
+                      aria-label={`Preview ${displayTitle}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openResourcePreview(resource, churchResource || undefined);
+                      }}
+                    >
+                      {displayTitle}
+                    </button>
+                  )}
                   <p className="text-xs text-gray-400">{definition.label}</p>
                 </div>
                 {isEditable ? <Button type="button" variant="tertiary" iconSize="sm" padding="p-0" className="h-8 w-8 min-h-0 justify-center max-md:min-h-0" svg={Pencil} aria-label={`Edit resource ${resource.title}`} onClick={() => openResourceEditor(resource.type === "text" ? "text" : resource.type === "url" ? "url" : "generic", resource)} /> : null}
@@ -515,13 +693,18 @@ const ServicePlanContentPanel = ({
             {churchResourceLoading ? <p className="text-sm text-gray-400" role="status">Loading resources…</p> : null}
             {churchResourceError ? <p className="text-sm text-red-300" role="alert">{churchResourceError}</p> : null}
             {!churchResourceLoading && !churchResourceError && churchResources.length ? <div className="space-y-1">{churchResources.map((resource) => {
-              const alreadyAttached = resources.some((candidate) => candidate.type === "document" && getServicePlanResourceDataString(candidate, "resourceId") === resource.id);
-              return <Button key={resource.id} type="button" variant="tertiary" className="w-full justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanDocumentResource({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><FileText className="size-4 shrink-0 text-cyan-300" aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto text-xs text-gray-500">{resource.storage.fileName}</span></Button>;
+              const alreadyAttached = resources.some((candidate) => getServicePlanChurchResourceId(candidate) === resource.id);
+              const ResourceIcon = resource.kind === "audio" ? AudioLines : FileText;
+              return <Button key={resource.id} type="button" variant="tertiary" className="w-full justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto text-xs text-gray-500">{resource.storage.fileName}</span></Button>;
             })}</div> : null}
             {!churchResourceLoading && !churchResourceError && !churchResources.length ? <p className="text-sm text-gray-400">No church resources are available yet.</p> : null}
           </div>
         </div>
       ) : null}
+      <ContentPreviewDialog
+        resource={previewResource}
+        onClose={() => setPreviewResource(null)}
+      />
     </div>
   );
 };

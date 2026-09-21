@@ -45,6 +45,10 @@ import {
   isCanvaSourceCurrent,
 } from "./canvaMediaSource";
 import { isCanvaShortLink, parseCanvaDesignId } from "./canvaDesignUrl";
+import {
+  cleanupUnprocessedCanvaAssets,
+  type CanvaImportedAsset,
+} from "../../utils/canvaImportCleanup";
 
 const pageStatusLabel = (status: CanvaPageImportStatus) => {
   switch (status) {
@@ -91,6 +95,7 @@ type Props = {
     info: MuxUploadResult,
     mediaId: string,
   ) => void | Promise<void>;
+  onUnprocessedAssetCleanup?: (asset: CanvaImportedAsset) => Promise<boolean>;
   /** Optionally build a custom item from the imported Canva media. */
   onCreateDeckItem?: (
     pages: MediaType[],
@@ -115,6 +120,7 @@ const CanvaImportSheet = ({
   onVideoComplete,
   onImageRefresh,
   onVideoRefresh,
+  onUnprocessedAssetCleanup,
   onCreateDeckItem,
   existingMedia,
   sourceMedia,
@@ -486,6 +492,8 @@ const CanvaImportSheet = ({
     setPageProgress(
       new Map(importPages.map((page) => [page, { status: "waiting" as const }])),
     );
+    let returnedAssets: CanvaImportedAsset[] = [];
+    let processedAssetCount = 0;
     try {
       const importRequest = {
         designId: selectedDesign.id,
@@ -533,6 +541,7 @@ const CanvaImportSheet = ({
               signal: importController.signal,
             });
       if (importCancelledRef.current) return;
+      returnedAssets = result.assets;
       const recordDeckPages = (
         deckPageByNumber: Map<number, MediaType>,
         media: MediaType | void,
@@ -601,6 +610,7 @@ const CanvaImportSheet = ({
           recordDeckPages(deckPageByNumber, completed);
           importedCount += 1;
         }
+        processedAssetCount += 1;
       }
       const resultParts = [];
       if (refreshedCount) {
@@ -636,10 +646,21 @@ const CanvaImportSheet = ({
     } catch (importError) {
       if (importCancelledRef.current) return;
       setImportPhase("");
-      setError(
+      const unprocessedAssets = returnedAssets.slice(processedAssetCount + 1);
+      const cleanupFailures = onUnprocessedAssetCleanup
+        ? await cleanupUnprocessedCanvaAssets(
+            unprocessedAssets,
+            onUnprocessedAssetCleanup,
+          )
+        : [];
+      const importMessage =
         importError instanceof Error
           ? importError.message
-          : "Could not import that Canva design. Try again.",
+          : "Could not import that Canva design. Try again.";
+      setError(
+        cleanupFailures.length > 0
+          ? `${importMessage} Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.`
+          : importMessage,
       );
     } finally {
       if (importControllerRef.current === importController) {

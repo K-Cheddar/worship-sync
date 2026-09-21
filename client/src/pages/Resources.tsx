@@ -30,6 +30,8 @@ import { broadcastItemUpdate } from "../store/store";
 import {
   buildChurchResourceLibraryEntries,
   resourceEntryContentType,
+  resourceEntryDeleteActionLabel,
+  resourceEntryDeleteConfirmation,
   resourceEntryKind,
   resourceEntryName,
 } from "../utils/churchResourceCatalog";
@@ -258,7 +260,7 @@ const ResourcePreview = ({
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={loading || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button>
         {resource && canEdit ? <Button type="button" variant="tertiary" svg={Pencil} disabled={savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
-        {canEdit ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>Delete</Button> : null}
+        {canEdit ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{resourceEntryDeleteActionLabel(entry)}</Button> : null}
       </div>
     </aside>
   );
@@ -339,7 +341,7 @@ const ResourcesPage = () => {
   };
 
   const deleteEntry = async (entry: ResourceLibraryEntry) => {
-    if (!churchId || !window.confirm(`Delete ${resourceEntryName(entry)}?`)) return;
+    if (!churchId || !window.confirm(resourceEntryDeleteConfirmation(entry))) return;
     setError("");
     try {
       if (entry.source === "church-resource") {

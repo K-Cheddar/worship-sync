@@ -142,6 +142,47 @@ describe("MediaCacheManager", () => {
     );
   });
 
+  it("warms at most three uncached URLs concurrently and continues after failures", async () => {
+    const manager = new MediaCacheManager();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maximumActive = 0;
+    const downloadMedia = jest
+      .spyOn(manager, "downloadMedia")
+      .mockImplementation(
+        (url) =>
+          new Promise<string | null>((resolve) => {
+            active += 1;
+            maximumActive = Math.max(maximumActive, active);
+            releases.push(() => {
+              active -= 1;
+              resolve(url.endsWith("3.mp4") ? null : `${url}.cached`);
+            });
+          }),
+      );
+
+    const request = manager.ensureMediaCached(
+      Array.from({ length: 7 }, (_, index) =>
+        `https://cdn.example.com/${index}.mp4`,
+      ),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(downloadMedia).toHaveBeenCalledTimes(3);
+    while (releases.length > 0) {
+      releases.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await expect(request).resolves.toMatchObject({
+      requested: 7,
+      cacheable: 7,
+      downloaded: 6,
+      failed: 1,
+    });
+    expect(maximumActive).toBeLessThanOrEqual(3);
+  });
+
   it("returns cache metadata for the dev prepared-video picker", () => {
     const manager = new MediaCacheManager();
     const localPath = join(tempRoot, "media-cache", "clip.mp4");

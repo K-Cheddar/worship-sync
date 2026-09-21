@@ -344,6 +344,7 @@ export const useServiceVideoCandidates = ({
   outputId,
   currentItemId,
   currentMedia,
+  outlineId,
   protectedMediaKeys,
   maxSurfaces,
 }: {
@@ -351,6 +352,8 @@ export const useServiceVideoCandidates = ({
   outputId?: string;
   currentItemId?: string;
   currentMedia?: ElectronMediaSurfaceCandidate;
+  /** Already-resolved outline for the output's controller scope. */
+  outlineId?: string | null;
   protectedMediaKeys?: string[];
   maxSurfaces?: number;
 }): ServiceVideoCandidateResult => {
@@ -397,7 +400,11 @@ export const useServiceVideoCandidates = ({
     try {
       const lists = (await db.get("ItemLists")) as ItemLists | undefined;
       if (generation !== loadGenerationRef.current) return;
-      const activeListId = lists?.activeList?._id;
+      // A display must warm the outline owned by its controller. The legacy
+      // activeList is only the presentation fallback; using it for every
+      // output leaks sanctuary media into auxiliary screens.
+      const activeListId =
+        outlineId === undefined ? lists?.activeList?._id : outlineId;
       if (!activeListId) {
         activeListIdRef.current = undefined;
         serviceItemIdsRef.current = new Set();
@@ -442,7 +449,7 @@ export const useServiceVideoCandidates = ({
       // last service-wide set so a transient read cannot collapse the pool to
       // only the live/current-item candidate.
     }
-  }, [db, enabled]);
+  }, [db, enabled, outlineId]);
 
   useEffect(() => {
     void loadServiceMedia();
@@ -453,13 +460,49 @@ export const useServiceVideoCandidates = ({
 
   useEffect(() => {
     if (!enabled || !window.electronAPI?.ensureMediaCached) return;
-    const pending = serviceMedia
-      .flatMap((item) => item.diagnostics)
+    const diagnosticsByKey = new Map<string, ElectronMediaSurfaceCandidateDiagnostic>();
+    [
+      ...serviceMedia.flatMap((item) => item.diagnostics),
+      ...(currentMediaDiscovery.diagnostic
+        ? [currentMediaDiscovery.diagnostic]
+        : []),
+    ].forEach((diagnostic) => {
+      if (!diagnosticsByKey.has(diagnostic.mediaKey)) {
+        diagnosticsByKey.set(diagnostic.mediaKey, diagnostic);
+      }
+    });
+    const currentServiceIndex = serviceMedia.find(
+      (item) => item.itemId === currentItemId,
+    )?.itemIndex;
+    const orderedServiceMedia = [...serviceMedia].sort((left, right) => {
+      const leftDistance =
+        currentServiceIndex == null
+          ? Number.MAX_SAFE_INTEGER
+          : Math.abs(left.itemIndex - currentServiceIndex);
+      const rightDistance =
+        currentServiceIndex == null
+          ? Number.MAX_SAFE_INTEGER
+          : Math.abs(right.itemIndex - currentServiceIndex);
+      return leftDistance - rightDistance || left.itemIndex - right.itemIndex;
+    });
+    const orderedKeys = [
+      ...(currentMediaDiscovery.diagnostic
+        ? [currentMediaDiscovery.diagnostic.mediaKey]
+        : []),
+      ...orderedServiceMedia.flatMap((item) =>
+        item.diagnostics.map((diagnostic) => diagnostic.mediaKey),
+      ),
+    ];
+    const pending = Array.from(new Set(orderedKeys))
+      .map((mediaKey) => diagnosticsByKey.get(mediaKey))
       .filter(
-        (diagnostic) =>
-          diagnostic.cacheStatus === "pending" &&
-          (diagnostic.sourceKind === "hls" ||
-            diagnostic.sourceKind === "remote"),
+        (diagnostic): diagnostic is ElectronMediaSurfaceCandidateDiagnostic =>
+          Boolean(
+            diagnostic &&
+              diagnostic.cacheStatus === "pending" &&
+              (diagnostic.sourceKind === "hls" ||
+                diagnostic.sourceKind === "remote"),
+          ),
       );
     const requests = pending.filter((diagnostic) => {
       if (requestedCacheMediaKeysRef.current.has(diagnostic.mediaKey)) {
@@ -493,7 +536,13 @@ export const useServiceVideoCandidates = ({
     return () => {
       active = false;
     };
-  }, [enabled, loadServiceMedia, serviceMedia]);
+  }, [
+    currentItemId,
+    currentMediaDiscovery.diagnostic,
+    enabled,
+    loadServiceMedia,
+    serviceMedia,
+  ]);
 
   const handleUpdate = useCallback(
     (event: CustomEventInit) => {
@@ -521,7 +570,15 @@ export const useServiceVideoCandidates = ({
   const candidateResult = useMemo(() => {
     const candidates = serviceMedia.flatMap((item) => item.candidates);
     const diagnostics = serviceMedia.flatMap((item) => item.diagnostics);
-    const currentCandidate = currentMediaDiscovery.candidate;
+    // Finite current media is already known from the live lane. Include it
+    // synchronously so a transition cannot begin on the fallback while the
+    // asynchronous local-path lookup is still settling.
+    const immediateCurrentCandidate =
+      currentMedia && !isHLSVideoSource(currentMedia.source)
+        ? currentMedia
+        : undefined;
+    const currentCandidate =
+      currentMediaDiscovery.candidate ?? immediateCurrentCandidate;
     if (currentCandidate) candidates.unshift(currentCandidate);
     if (currentMediaDiscovery.diagnostic) {
       diagnostics.unshift(currentMediaDiscovery.diagnostic);

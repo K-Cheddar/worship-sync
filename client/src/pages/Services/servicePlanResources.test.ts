@@ -1,7 +1,13 @@
 import {
   createServicePlanLinkResource,
   createServicePlanGenericResource,
+  createServicePlanChurchResourceReference,
   createServicePlanDocumentResource,
+  getEffectiveServicePlanResourceDefinition,
+  getServicePlanChurchResourceId,
+  getServicePlanResourceDisplayLabel,
+  isServicePlanChurchResourceReference,
+  normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
 
@@ -31,6 +37,16 @@ describe("service-plan content resources", () => {
     });
   });
 
+  it("does not let placeholder titles hide a URL-derived preview filename", () => {
+    const resource = createServicePlanLinkResource({
+      title: "Untitled resource",
+      url: "https://www.dropbox.com/scl/fi/example/clip.mp4?dl=0",
+    });
+
+    expect(getServicePlanResourceDisplayLabel(resource)).toBe(resource.url);
+    expect(normalizeServicePlanResourceForPreview(resource).title).toBeUndefined();
+  });
+
   it("creates a generic resource without requiring a URL", () => {
     expect(
       createServicePlanGenericResource({
@@ -46,13 +62,23 @@ describe("service-plan content resources", () => {
   });
 
   it("persists only a stable ChurchResource reference", () => {
-    expect(createServicePlanDocumentResource({ resourceId: "churchResource_1" })).toEqual(
+    const reference = createServicePlanChurchResourceReference({ resourceId: "churchResource_1" });
+    expect(reference).toEqual(
       expect.objectContaining({
         type: "document",
         data: { resourceId: "churchResource_1" },
       }),
     );
-    expect(createServicePlanDocumentResource({ resourceId: "churchResource_1" })).not.toHaveProperty("url");
+    expect(reference).not.toHaveProperty("url");
+    expect(createServicePlanDocumentResource({ resourceId: "churchResource_1" })).toMatchObject({
+      data: { resourceId: "churchResource_1" },
+    });
+    expect(getServicePlanChurchResourceId(reference)).toBe("churchResource_1");
+    expect(isServicePlanChurchResourceReference(reference)).toBe(true);
+    expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("Church file");
+    expect(
+      getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label,
+    ).toBe("Audio");
   });
 
   it("projects legacy song and scripture fields when resources is absent", () => {

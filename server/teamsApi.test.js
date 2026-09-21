@@ -25,8 +25,10 @@ import {
 const {
   authHandlers,
   canSeedHumanBearerAuthForServerTests,
+  getDoc,
   seedActiveHumanBearerForServerTests,
   seedChurchServiceTimesForServerTests,
+  setDoc,
 } = await import("../authService.js");
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
@@ -7721,6 +7723,13 @@ test("individual intake recipients personalize and automatically apply one audit
   });
   const memberId = memberIds.Kevin;
   const occurrenceId = "svc@2026-10-04T10:00:00.000Z";
+  const otherOccurrenceId = "other@2026-10-11T10:00:00.000Z";
+  await setDoc(
+    "teamRosterMembers",
+    memberId,
+    { serviceAvailability: { [otherOccurrenceId]: "unavailable" } },
+    { merge: true },
+  );
   const form = await callHandler(authHandlers.createTeamIntakeForm, {
     context,
     body: {
@@ -7733,7 +7742,7 @@ test("individual intake recipients personalize and automatically apply one audit
         {
           occurrenceId,
           serviceId: "svc",
-          name: "Sunday",
+          name: "Saturday",
           startsAt: "2026-10-04T10:00:00.000Z",
         },
       ],
@@ -7767,8 +7776,25 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(link.statusCode, 200);
   assert.match(link.payload.publicUrl, /\/a\//);
   assert.ok(!link.payload.publicUrl.includes("Kevin"));
+  assert.ok(!link.payload.publicUrl.includes(recipient.recipientId));
   const token = link.payload.publicUrl.split("/a/")[1];
-  assert.ok(token);
+  assert.match(token, /^r_[A-Za-z0-9_-]{24}$/);
+  assert.equal(token.length, 26);
+  const storedRecipient = await getDoc(
+    "teamIntakeRecipients",
+    recipient.recipientId,
+  );
+  assert.equal(storedRecipient.recipientToken, undefined);
+  assert.equal(storedRecipient.recipientTokenNonce, undefined);
+  assert.ok(storedRecipient.recipientTokenCiphertext);
+  assert.ok(!JSON.stringify(storedRecipient).includes(token));
+  assert.match(storedRecipient.recipientTokenHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(storedRecipient.recipientTokenHash, token);
+  const repeatedLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  assert.equal(repeatedLink.payload.publicUrl, link.payload.publicUrl);
 
   const anonymousPath = createRes();
   await authHandlers.getTeamIntakePreview(
@@ -7814,7 +7840,10 @@ test("individual intake recipients personalize and automatically apply one audit
           lastName: "",
           email: "",
           positionIds: [positionIds.Vocal],
-          occurrenceAvailability: { [occurrenceId]: availability },
+          occurrenceAvailability:
+            availability === undefined
+              ? {}
+              : { [occurrenceId]: availability },
           blockoutRanges: [],
           notes: "",
         },
@@ -7845,9 +7874,14 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
-  const repeatedSubmit = await submit("available");
-  assert.equal(repeatedSubmit.statusCode, 200);
-  assert.equal(repeatedSubmit.payload.submissionId, firstSubmissionId);
+  const concurrentRepeats = await Promise.all([
+    submit("available"),
+    submit("available"),
+  ]);
+  assert.equal(concurrentRepeats[0].statusCode, 200);
+  assert.equal(concurrentRepeats[1].statusCode, 200);
+  assert.equal(concurrentRepeats[0].payload.submissionId, firstSubmissionId);
+  assert.equal(concurrentRepeats[1].payload.submissionId, firstSubmissionId);
   const afterRepeat = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
   });
@@ -7861,6 +7895,20 @@ test("individual intake recipients personalize and automatically apply one audit
     afterRepeat.payload.members.find((item) => item.memberId === memberId)
       .serviceAvailability[occurrenceId],
     "available",
+  );
+
+  const cleared = await submit();
+  assert.equal(cleared.statusCode, 200);
+  const afterCleared = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const clearedMember = afterCleared.payload.members.find(
+    (item) => item.memberId === memberId,
+  );
+  assert.equal(clearedMember.serviceAvailability[occurrenceId], undefined);
+  assert.equal(
+    clearedMember.serviceAvailability[otherOccurrenceId],
+    "unavailable",
   );
 
   const revoked = await callHandler(authHandlers.revokeTeamIntakeRecipient, {
@@ -7879,6 +7927,37 @@ test("individual intake recipients personalize and automatically apply one audit
     revokedPreview,
   );
   assert.equal(revokedPreview.statusCode, 404);
+
+  const reactivated = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(reactivated.statusCode, 200);
+  assert.equal(
+    reactivated.payload.recipients[0].recipientId,
+    recipient.recipientId,
+  );
+  const reactivatedLink = await callHandler(
+    authHandlers.getTeamIntakeRecipientLink,
+    {
+      context,
+      params: { recipientId: recipient.recipientId },
+    },
+  );
+  const reactivatedToken = reactivatedLink.payload.publicUrl.split("/a/")[1];
+  assert.notEqual(reactivatedToken, token);
+  const reactivatedPreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: reactivatedToken, recipientOnly: "true" },
+    },
+    reactivatedPreview,
+  );
+  assert.equal(reactivatedPreview.statusCode, 200);
 });
 
 test("individual intake recipient creation requires Teams edit permission", async (t) => {
@@ -7912,4 +7991,46 @@ test("individual intake recipient creation requires Teams edit permission", asyn
     body: { memberIds: [memberIds.Rae] },
   });
   assert.equal(blocked.statusCode, 403);
+});
+
+test("individual intake recipient creation validates the full set before writing", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("individual_intake_atomic_create");
+  const scoped = await seedTeam(context, {
+    teamName: "Saturday Team",
+    members: [{ firstName: "In", lastName: "Scope" }],
+  });
+  const outside = await seedTeam(context, {
+    teamName: "Weeknight Team",
+    members: [{ firstName: "Out", lastName: "Scope" }],
+  });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Scoped availability",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      teamIds: [scoped.teamId],
+      active: true,
+    },
+  });
+  const formId = form.payload.form.formId;
+
+  const failed = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: {
+      memberIds: [scoped.memberIds.In, outside.memberIds.Out],
+    },
+  });
+  assert.equal(failed.statusCode, 400);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.equal(
+    bootstrap.payload.intakeRecipients.filter((item) => item.formId === formId)
+      .length,
+    0,
+  );
 });

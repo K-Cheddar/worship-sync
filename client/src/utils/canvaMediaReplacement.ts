@@ -4,6 +4,7 @@ import type { MediaReferenceReplacement } from "./mediaReferenceReplacement";
 type ReferenceMutationResult = {
   ok: boolean;
   message?: string;
+  rollbackStatus?: "not_needed" | "complete" | "uncertain";
 };
 
 type MediaFlushResult = {
@@ -50,13 +51,34 @@ export async function commitCanvaMediaReplacement({
   onCleanupFailure,
 }: CanvaMediaReplacementTransactionArgs): Promise<void> {
   const replacement = { oldMedia, newMedia };
-  const references = await replaceReferences(replacement);
+  let references: ReferenceMutationResult;
+  try {
+    references = await replaceReferences(replacement);
+  } catch (error) {
+    console.error(
+      "Could not determine whether Canva media references were migrated; retaining the new provider asset.",
+      error,
+    );
+    throw error;
+  }
   if (!references.ok) {
-    if (!(await deleteProvider(newMedia, oldMedia))) {
-      onCleanupFailure([newMedia]);
+    const rollbackIsKnownSafe =
+      references.rollbackStatus === "complete" ||
+      references.rollbackStatus === "not_needed";
+    if (rollbackIsKnownSafe) {
+      if (!(await deleteProvider(newMedia, oldMedia))) {
+        onCleanupFailure([newMedia]);
+      }
+    } else {
+      console.error(
+        "Canva media reference migration failed with uncertain rollback; retaining the new provider asset for reconciliation.",
+        references.message,
+      );
     }
     throw new Error(
-      references.message || "Could not update Canva media references.",
+      rollbackIsKnownSafe
+        ? references.message || "Could not update Canva media references."
+        : `${references.message || "Could not update Canva media references."} Saved references may still point to the new Canva rendition; reconciliation is required before cleanup.`,
     );
   }
 
@@ -66,24 +88,47 @@ export async function commitCanvaMediaReplacement({
   applyList(nextList, folders);
   applyLiveReferences(replacement);
 
-  const mediaFlush = await flushMedia(nextList, folders);
+  let mediaFlush: MediaFlushResult;
+  try {
+    mediaFlush = await flushMedia(nextList, folders);
+  } catch (error) {
+    mediaFlush = { ok: false, error };
+  }
   if (!mediaFlush.ok) {
     applyList(currentList, folders);
-    const rollback = await replaceReferences({
-      oldMedia: newMedia,
-      newMedia: oldMedia,
-    });
-    if (!rollback.ok) {
+    let rollback: ReferenceMutationResult;
+    try {
+      rollback = await replaceReferences({
+        oldMedia: newMedia,
+        newMedia: oldMedia,
+      });
+    } catch (error) {
+      rollback = {
+        ok: false,
+        rollbackStatus: "uncertain",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const rollbackIsKnownSafe = rollback.ok &&
+      (rollback.rollbackStatus === "complete" ||
+        rollback.rollbackStatus === "not_needed");
+    if (!rollbackIsKnownSafe) {
       console.error(
-        "Could not roll back Canva media references after media persistence failed.",
+        "Could not safely roll back Canva media references after media persistence failed; retaining both provider assets for reconciliation.",
         rollback.message,
       );
     }
     applyLiveReferences({ oldMedia: newMedia, newMedia: oldMedia });
-    if (!(await deleteProvider(newMedia, oldMedia))) {
-      onCleanupFailure([newMedia]);
+    if (rollbackIsKnownSafe) {
+      if (!(await deleteProvider(newMedia, oldMedia))) {
+        onCleanupFailure([newMedia]);
+      }
     }
-    throw new Error("Could not save the refreshed Canva media.");
+    throw new Error(
+      rollbackIsKnownSafe
+        ? "Could not save the refreshed Canva media."
+        : "Could not save the refreshed Canva media. Saved references may still point to the new Canva rendition; reconciliation is required before cleanup.",
+    );
   }
 
   if (!(await deleteProvider(oldMedia, newMedia))) {

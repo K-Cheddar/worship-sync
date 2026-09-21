@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -29,6 +30,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
+import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import ServicePlanAssigneeList, {
   addMicrophoneSlot,
   addServicePlanAssignee,
@@ -76,9 +79,16 @@ import {
 import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { getChurchResource, getChurchResourceUrl } from "../../api/auth";
 import generateRandomId from "../../utils/generateRandomId";
 import { pad2 } from "../../constants";
-import { getServicePlanResourceDefinition } from "./servicePlanResources";
+import {
+  getServicePlanChurchResourceId,
+  getServicePlanResourceDefinition,
+  getServicePlanResourceDisplayLabel,
+  normalizeServicePlanResourceForPreview,
+} from "./servicePlanResources";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import ServicePlanScripturePopover, {
@@ -99,6 +109,7 @@ import type {
   ServicePlanAssignee,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServicePlanContentResource,
   ServicePlanSongReference,
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
@@ -1174,6 +1185,8 @@ const ServicePlanElementRow = ({
   onOpenContent,
   onOpenSongDetails,
 }: ServicePlanElementRowProps) => {
+  const globalInfo = useContext(GlobalInfoContext);
+  const churchId = globalInfo?.churchId || "";
   const hasNotes = !isRichTextEmpty(element.notes);
   const [notesEditorOpen, setNotesEditorOpen] = useState(hasNotes);
   // Existing notes start minimized; newly added notes open expanded for editing.
@@ -1192,6 +1205,7 @@ const ServicePlanElementRow = ({
   const isDesktopAssignmentPanel = useMediaQuery("(min-width: 1280px)");
   const usesAssignmentPanel = Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
+  const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
   const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
@@ -1362,6 +1376,33 @@ const ServicePlanElementRow = ({
       return;
     }
     setContentManagerOpen(true);
+  };
+
+  const openResourcePreview = (
+    resource: ServicePlanContentResource,
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
+    event.stopPropagation();
+    const resourceId = getServicePlanChurchResourceId(resource);
+    const resolveSource = churchId && resourceId
+      ? async () => {
+          const [resourceResult, urlResult] = await Promise.all([
+            getChurchResource(churchId, resourceId),
+            getChurchResourceUrl({ churchId, resourceId, disposition: "inline" }),
+          ]);
+          return {
+            url: urlResult.url,
+            title: resourceResult.resource.name,
+            mimeType: resourceResult.resource.storage.contentType,
+            fileName: resourceResult.resource.storage.fileName,
+          };
+        }
+      : undefined;
+    setPreviewResource(
+      normalizeServicePlanResourceForPreview(resource, {
+        ...(resolveSource ? { resolveSource } : {}),
+      }),
+    );
   };
   const readOnlyLeadDetails = assignees.length > 0 ? (
     <ServicePlanAssigneeList
@@ -2026,13 +2067,20 @@ const ServicePlanElementRow = ({
               <button
                 type="button"
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
-                aria-label={`${allowEdit ? "Manage" : "View"} content for ${itemLabel}`}
+                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${getServicePlanResourceDisplayLabel(resource)}`}
+                title={getServicePlanResourceDisplayLabel(resource)}
                 onClick={(event) => {
-                  if (usesContentPanel) openContent(event.currentTarget);
+                  if (allowEdit) {
+                    if (usesContentPanel) openContent(event.currentTarget);
+                    return;
+                  }
+                  if (resource.url || resource.data?.text || getServicePlanChurchResourceId(resource)) {
+                    openResourcePreview(resource, event);
+                  }
                 }}
               >
                 <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
-                <span className="min-w-0 flex-1 truncate leading-none">{resource.title}</span>
+                <span className="min-w-0 flex-1 truncate leading-none">{getServicePlanResourceDisplayLabel(resource)}</span>
               </button>
               {allowEdit ? (
                 <Button
@@ -2113,25 +2161,28 @@ const ServicePlanElementRow = ({
   ) : contentReferenceCount === 1 ? (
     attachmentChips("summary")
   ) : (
-    <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
-      <PopoverTrigger asChild>
-        <div
-          role="button"
-          tabIndex={0}
-          className="flex min-w-0 max-w-full cursor-pointer items-center overflow-hidden rounded hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
-          aria-label={`View content for ${itemLabel}`}
+    <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded">
+      {attachmentChips("summary")}
+      <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="tertiary"
+            className="h-7 min-h-0 shrink-0 rounded-none border-0 px-2 text-xs font-normal leading-none text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-8"
+            aria-label={`View content for ${itemLabel}`}
+          >
+            +{contentReferenceCount - 1}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
         >
-          {attachmentChips("summary")}
-        </div>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
-      >
-        <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
-        {attachmentChips("manager")}
-      </PopoverContent>
-    </Popover>
+          <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
+          {attachmentChips("manager")}
+        </PopoverContent>
+      </Popover>
+    </div>
   ) : contentAddControl;
 
   const notesBlock = showNotesEditor ? (
@@ -2742,6 +2793,10 @@ const ServicePlanElementRow = ({
           })}
         />
       ) : null}
+      <ContentPreviewDialog
+        resource={previewResource}
+        onClose={() => setPreviewResource(null)}
+      />
     </div>
   );
 };

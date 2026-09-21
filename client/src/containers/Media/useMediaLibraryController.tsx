@@ -115,6 +115,14 @@ import {
   replaceMediaReferencesForReplacement,
 } from "../../utils/mediaReferenceSweep";
 import { commitCanvaMediaReplacement } from "../../utils/canvaMediaReplacement";
+import {
+  getCanvaProviderCleanupKey,
+  getCanvaProviderIdentity,
+} from "../../utils/canvaProviderCleanup";
+import {
+  mediaFromCanvaAsset,
+  type CanvaImportedAsset,
+} from "../../utils/canvaImportCleanup";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
 import { buildVideoPlaybackCueForSend } from "../../utils/videoBackgroundPlayback";
@@ -1049,31 +1057,20 @@ export function useMediaLibraryController({
     [cloud],
   );
 
-  const providerIdentity = useCallback(
-    (row: MediaType) => {
-      if (row.source === "mux") return row.muxAssetId || "";
-      if (row.source === "cloudinary") {
-        return row.publicId || extractPublicId(row.background) || "";
-      }
-      return "";
-    },
-    [],
-  );
-
   const deleteCanvaProvider = useCallback(
     async (row: MediaType, protectedRow?: MediaType) => {
       if (
         protectedRow &&
         row.source === protectedRow.source &&
-        providerIdentity(row) &&
-        providerIdentity(row) === providerIdentity(protectedRow)
+        getCanvaProviderIdentity(row) &&
+        getCanvaProviderIdentity(row) === getCanvaProviderIdentity(protectedRow)
       ) {
         return true;
       }
       const failed = await deleteFromProviders([row]);
       return failed.length === 0;
     },
-    [deleteFromProviders, providerIdentity],
+    [deleteFromProviders],
   );
 
   const showProviderCleanupRetry = useCallback((rows: MediaType[]) => {
@@ -1081,12 +1078,21 @@ export function useMediaLibraryController({
     setProviderRetryRows((current) => {
       const next = [...current];
       for (const row of rows) {
-        if (!next.some((existing) => existing.id === row.id)) next.push(row);
+        const key = getCanvaProviderCleanupKey(row);
+        if (!next.some((existing) => getCanvaProviderCleanupKey(existing) === key)) {
+          next.push(row);
+        }
       }
       return next;
     });
     setShowProviderRetryModal(true);
   }, []);
+
+  const cleanupCanvaAsset = useCallback(
+    async (asset: CanvaImportedAsset) =>
+      deleteCanvaProvider(mediaFromCanvaAsset(asset)),
+    [deleteCanvaProvider],
+  );
 
   const commitCanvaReplacement = useCallback(
     async (oldMedia: MediaType, newMedia: MediaType) => {
@@ -1817,6 +1823,7 @@ export function useMediaLibraryController({
     addMuxVideo,
     refreshCanvaImage,
     refreshCanvaVideo,
+    cleanupCanvaAsset,
     handleUploadActiveChange,
     isMediaLoading,
     hasMediaLoadError,

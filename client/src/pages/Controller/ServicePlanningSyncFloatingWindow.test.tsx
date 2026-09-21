@@ -280,6 +280,46 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(mockPlanSource.returnToCurrentService).toHaveBeenCalled();
   });
 
+  it("shows a manual plan without claiming an unrelated occurrence", async () => {
+    mockPlanSource.savedPlans = [
+      {
+        planKey: "service-3@2026-08-02",
+        serviceId: "service-3",
+        date: "2026-08-02",
+        name: "Outside Window Service",
+      },
+    ];
+    mockPlanSource.selectedPlan = mockPlanSource.savedPlans[0];
+    mockPlanSource.selectedPlanKey = "service-3@2026-08-02";
+    mockPlanSource.occurrences = [
+      {
+        occurrenceId: "occurrence-1",
+        name: "Sunday Service",
+        startsAt: "2026-08-02T10:00:00.000Z",
+      },
+    ];
+    mockPlanSource.isManualSelection = true;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer },
+    });
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+
+    expect(screen.getByRole("combobox", { name: /Service occurrence/i })).toHaveTextContent(
+      "Select",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Manually selected plan (no matching occurrence)",
+    );
+    expect(
+      screen.getByRole("button", { name: "Return to current service" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows a loading status instead of the previous plan while selection changes", () => {
     mockPlanSource.isLoading = true;
     const store = configureStore({

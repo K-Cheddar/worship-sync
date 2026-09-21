@@ -41,6 +41,9 @@ import {
   selectDisplayOutputs,
   selectDisplayOutputsLoaded,
 } from "../../store/displayOutputsSlice";
+import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
+import { getOwningControllerProfile } from "../../utils/controllerProfiles";
+import { resolveOutlineForScope } from "../../utils/outlineScope";
 import {
   isDisplayChromeReady,
   resolveDisplaySettings,
@@ -536,13 +539,38 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // back to the built-in surface for their render profile.
     const fallbackOutputType =
       displayType === "monitor" ||
-        displayType === "stream" ||
-        displayType === "projector"
+      displayType === "stream" ||
+      displayType === "projector"
         ? displayType
         : "projector";
     const settingsOutputId = outputId ?? fallbackOutputType;
     const registryOutputs = useSelector(selectDisplayOutputs);
     const registryLoaded = useSelector(selectDisplayOutputsLoaded);
+    const controllerProfiles = useSelector(selectControllerProfiles);
+    const preparedMediaOutlines = useSelector(
+      (state) => state.undoable?.present?.itemLists?.currentLists ?? [],
+    );
+    const preparedMediaSelectedIds = useSelector(
+      (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
+    );
+    const preparedMediaOutlineId = useMemo(() => {
+      const owner = outputId
+        ? getOwningControllerProfile(controllerProfiles, outputId)
+        : controllerProfiles.find((profile) => profile.type === "presentation");
+      if (!owner) return null;
+      return (
+        resolveOutlineForScope(
+          preparedMediaOutlines,
+          owner.outlineScope,
+          preparedMediaSelectedIds[owner.outlineScope],
+        )?._id ?? null
+      );
+    }, [
+      controllerProfiles,
+      outputId,
+      preparedMediaOutlines,
+      preparedMediaSelectedIds,
+    ]);
     const pairedDeviceSettings =
       useContext(GlobalInfoContext)?.device?.settings;
     // The built-in monitor keeps honouring the church-wide monitorSettings until
@@ -1280,6 +1308,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         outputId,
         windowRole: displayType ?? "unknown",
         currentItemId,
+        preparedMediaOutlineId,
+        showBackground,
         fileVideoAudioEnabled: localVideoFileAudioEnabled,
         volume: localVideoVolume,
         playbackRole: isEditor ? "preview" : "output",
@@ -1320,6 +1350,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         videoPreloadRole,
         outputId,
         currentItemId,
+        preparedMediaOutlineId,
+        showBackground,
       ],
     );
 

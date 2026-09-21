@@ -3,12 +3,17 @@
 ChurchResource files use the private Cloudflare R2 bucket configured by:
 
 ```text
+R2_BUCKET=worshipsync-audio
 R2_RESOURCES_BUCKET=worshipsync-resources
 ```
 
-The existing `R2_BUCKET` remains the SongAudio bucket. Both buckets reuse the
-existing R2 account, endpoint, and credentials. Neither bucket should have
-public access, a Development URL, or a public custom domain enabled.
+`R2_BUCKET` is the existing SongAudio bucket. `R2_RESOURCES_BUCKET` is the
+ChurchResource bucket and must be configured separately. Do not point
+`R2_RESOURCES_BUCKET` at `worshipsync-audio` or omit it: ChurchResource
+storage fails closed with a 503 rather than falling back to the SongAudio
+bucket. Both buckets reuse the existing R2 account, endpoint, and credentials.
+Neither bucket should have public access, a Development URL, or a public
+custom domain enabled.
 
 ## Browser upload CORS
 

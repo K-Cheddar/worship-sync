@@ -44,6 +44,8 @@ const renderCandidates = (
   options: {
     currentItemId?: string;
     currentMedia?: { mediaKey: string; source: string };
+    outlineId?: string | null;
+    outlineItems?: Record<string, string[]>;
     maxSurfaces?: number;
     cacheMap?: Record<string, string>;
     getLocalMediaPath?: jest.Mock;
@@ -52,6 +54,7 @@ const renderCandidates = (
 ) => {
   const cacheMap = options.cacheMap ?? {};
   let currentDocs = docs;
+  const configuredOutlineItems = options.outlineItems;
   if (options.getLocalMediaPath) {
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
@@ -76,8 +79,10 @@ const renderCandidates = (
         return { activeList: { _id: "list-1" } } as ItemLists;
       }
       return {
-        _id: "list-1",
-        items: currentDocs.map((doc) => ({ _id: doc._id })),
+        _id: id,
+        items: (
+          configuredOutlineItems?.[id] ?? currentDocs.map((doc) => doc._id)
+        ).map((itemId) => ({ _id: itemId })),
       } as unknown as DBItemListDetails;
     }),
     allDocs: jest.fn(async ({ keys }: { keys: string[] }) => ({
@@ -110,6 +115,7 @@ const renderCandidates = (
         enabled: true,
         currentItemId,
         currentMedia,
+        outlineId: options.outlineId,
         maxSurfaces: options.maxSurfaces,
       }),
     { wrapper },
@@ -338,6 +344,45 @@ describe("useServiceVideoCandidates", () => {
     expect(result.current.candidates).toHaveLength(0);
   });
 
+  it("warms current media before current-item, nearby, and remaining service media", async () => {
+    const sources = ["current", "current-item", "nearby", "remaining"];
+    const ensureMediaCached = jest.fn().mockResolvedValue({
+      requested: 4,
+      cacheable: 4,
+      downloaded: 4,
+      failed: 0,
+      cacheMap: {},
+    });
+    const docs = sources.slice(1).map((name, index) =>
+      item(`item-${index + 1}`, name, [
+        slide(`slide-${index + 1}`, [
+          {
+            id: name,
+            mediaInfo: video(name, `https://stream.mux.com/${name}.m3u8`),
+          },
+        ]),
+      ]),
+    );
+
+    renderCandidates(docs, {
+      currentItemId: "item-1",
+      currentMedia: {
+        mediaKey: "remote:current",
+        source: "https://stream.mux.com/current.m3u8",
+      },
+      ensureMediaCached,
+      getLocalMediaPath: jest.fn().mockResolvedValue(null),
+    });
+
+    await waitFor(() => expect(ensureMediaCached).toHaveBeenCalledTimes(1));
+    expect(ensureMediaCached).toHaveBeenCalledWith([
+      "https://stream.mux.com/current.m3u8",
+      "https://stream.mux.com/current-item.m3u8",
+      "https://stream.mux.com/nearby.m3u8",
+      "https://stream.mux.com/remaining.m3u8",
+    ]);
+  });
+
   it("keeps an uncached finite MP4 eligible while warming its additive cache", async () => {
     const ensureMediaCached = jest.fn().mockResolvedValue({
       requested: 1,
@@ -442,6 +487,46 @@ describe("useServiceVideoCandidates", () => {
     expect(
       result.current.candidates.map((candidate) => candidate.mediaKey),
     ).toEqual(["remote:first", "remote:second"]);
+  });
+
+  it("reads the explicitly resolved auxiliary outline instead of active presentation", async () => {
+    const sanctuary = item("sanctuary", "Sanctuary", [
+      slide("sanctuary-slide", [
+        { id: "sanctuary-video", mediaInfo: video("sanctuary-video", "https://cdn.example.com/sanctuary.mp4") },
+      ]),
+    ]);
+    const lobby = item("lobby", "Lobby", [
+      slide("lobby-slide", [
+        { id: "lobby-video", mediaInfo: video("lobby-video", "https://cdn.example.com/lobby.mp4") },
+      ]),
+    ]);
+    const { result, db } = renderCandidates([sanctuary, lobby], {
+      outlineId: "list-lobby",
+      outlineItems: { "list-lobby": ["lobby"] },
+    });
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(1));
+    expect(result.current.candidates[0].mediaKey).toBe("remote:lobby-video");
+    expect(db.get).toHaveBeenCalledWith("list-lobby");
+    expect(db.get).not.toHaveBeenCalledWith("list-1");
+  });
+
+  it("does not warm the presentation outline when the output has no resolved scope outline", async () => {
+    const ensureMediaCached = jest.fn();
+    const sanctuary = item("sanctuary", "Sanctuary", [
+      slide("sanctuary-slide", [
+        { id: "sanctuary-video", mediaInfo: video("sanctuary-video", "https://cdn.example.com/sanctuary.mp4") },
+      ]),
+    ]);
+    const { result, db } = renderCandidates([sanctuary], {
+      outlineId: null,
+      ensureMediaCached,
+    });
+
+    await act(async () => undefined);
+    expect(result.current.candidates).toEqual([]);
+    expect(db.get).not.toHaveBeenCalledWith("list-1");
+    expect(ensureMediaCached).not.toHaveBeenCalled();
   });
 
   it("promotes a pending Mux video to an eligible media-cache candidate", async () => {

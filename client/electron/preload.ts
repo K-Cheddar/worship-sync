@@ -9,8 +9,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   isElectron: () => ipcRenderer.invoke("is-electron"),
   isDev: () => ipcRenderer.invoke("is-dev"),
-  openExternalUrl: (url: string) =>
-    ipcRenderer.invoke("open-external-url", url),
+  openExternalUrl: (url: string, options?: { allowArbitraryHttps?: boolean }) =>
+    ipcRenderer.invoke("open-external-url", url, options),
   fetchGeniusLyrics: (url: string) =>
     ipcRenderer.invoke("fetch-genius-lyrics", url),
   searchGeniusLyrics: (query: {

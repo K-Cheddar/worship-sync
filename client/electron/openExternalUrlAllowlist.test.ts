@@ -82,6 +82,15 @@ describe("assertAllowedOpenExternalUrl", () => {
     ).toThrow(/allowed list/);
   });
 
+  it("allows arbitrary https preview links only when explicitly requested", () => {
+    expect(() =>
+      assertAllowedOpenExternalUrl("https://resource.example/file.pdf", {
+        isDev: false,
+        allowArbitraryHttps: true,
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects non-http(s) schemes", () => {
     expect(() =>
       assertAllowedOpenExternalUrl("javascript:alert(1)", { isDev: true }),

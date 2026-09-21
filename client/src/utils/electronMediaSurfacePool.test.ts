@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET,
   getEvictedElectronMediaSurfaceKeys,
   selectElectronMediaSurfaceCandidates,
 } from "./electronMediaSurfacePool";
@@ -15,6 +16,17 @@ const candidate = (
 });
 
 describe("electronMediaSurfacePool", () => {
+  it("uses the provisional ten-surface default budget", () => {
+    const selected = selectElectronMediaSurfaceCandidates({
+      candidates: Array.from({ length: 11 }, (_, index) =>
+        candidate(`media-${index}`),
+      ),
+    });
+
+    expect(DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET).toBe(10);
+    expect(selected).toHaveLength(10);
+  });
+
   it("prioritizes the current media, current item, then nearby service items", () => {
     const selected = selectElectronMediaSurfaceCandidates({
       candidates: [

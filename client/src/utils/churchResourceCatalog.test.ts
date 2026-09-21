@@ -1,4 +1,9 @@
-import { buildChurchResourceLibraryEntries, resourceEntryName } from "./churchResourceCatalog";
+import {
+  buildChurchResourceLibraryEntries,
+  resourceEntryDeleteActionLabel,
+  resourceEntryDeleteConfirmation,
+  resourceEntryName,
+} from "./churchResourceCatalog";
 import type { DBItem } from "../types";
 
 describe("church resource catalog", () => {
@@ -39,6 +44,10 @@ describe("church resource catalog", () => {
     expect(entries[0]).toMatchObject({ source: "church-resource", resource });
     expect(entries[1]).toMatchObject({ source: "song-audio", songId: "song-1", songName: "Trust and Obey" });
     expect(resourceEntryName(entries[1])).toBe("rehearsal.mp3");
+    expect(resourceEntryDeleteActionLabel(entries[1])).toBe("Remove from song");
+    expect(resourceEntryDeleteConfirmation(entries[1])).toContain("rehearsal.mp3");
+    expect(resourceEntryDeleteConfirmation(entries[1])).toContain("Trust and Obey");
+    expect(resourceEntryDeleteConfirmation(entries[1])).toMatch(/removes the audio attachment/i);
     expect(resource).not.toHaveProperty("songAudio");
   });
 });

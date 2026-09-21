@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   createR2ObjectStorage,
   isR2NotFoundError,
+  R2ObjectStorageNotConfiguredError,
 } from "./storage/r2ObjectStorage.js";
 
 export const CHURCH_RESOURCE_MAX_BYTES = 50 * 1024 * 1024;
@@ -171,9 +172,21 @@ export const createChurchResourceStorage = ({
   randomId = createResourceId,
   now = () => new Date().toISOString(),
 } = {}) => {
+  const resourcesBucket =
+    typeof env.R2_RESOURCES_BUCKET === "string"
+      ? env.R2_RESOURCES_BUCKET.trim()
+      : "";
+  if (!resourcesBucket) {
+    // The low-level storage factory deliberately retains its SongAudio
+    // R2_BUCKET fallback. Church resources are a separate trust boundary and
+    // must never silently write into the audio bucket.
+    throw new R2ObjectStorageNotConfiguredError(
+      "Church resource storage is not configured. Set R2_RESOURCES_BUCKET.",
+    );
+  }
   const objectStorage = createR2ObjectStorage({
     env,
-    bucket: env.R2_RESOURCES_BUCKET,
+    bucket: resourcesBucket,
     s3Client,
     ...(signUrl ? { signUrl } : {}),
   });

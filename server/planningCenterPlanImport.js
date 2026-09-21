@@ -247,7 +247,7 @@ const rowFromItem = (item, includedByKey) => {
   const startTime = startTimeFromItemTimes(item, includedByKey);
 
   let elementType = "Item";
-  if (isSong) elementType = "Song";
+  if (isSong) elementType = itemTitle || "Song";
   else if (itemType === "media") elementType = "Media";
 
   return {

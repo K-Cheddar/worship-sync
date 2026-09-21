@@ -43,3 +43,14 @@ export const resourceEntryKind = (
   if (entry.resource.kind === "audio") return "audio";
   return "document";
 };
+
+export const resourceEntryDeleteActionLabel = (
+  entry: ResourceLibraryEntry,
+): string => (entry.source === "song-audio" ? "Remove from song" : "Delete");
+
+export const resourceEntryDeleteConfirmation = (
+  entry: ResourceLibraryEntry,
+): string =>
+  entry.source === "song-audio"
+    ? `Remove "${entry.audio.fileName}" from "${entry.songName}"? This removes the audio attachment from the song; it does not delete the song.`
+    : `Delete "${entry.resource.name}"?`;

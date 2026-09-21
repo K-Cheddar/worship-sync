@@ -1,15 +1,14 @@
 # Transition regression contracts
 
-Current delayed-media contract: live file-video A -> B keeps the old media
-visible while B's live frame is delayed. Meaningful foreground may animate
-independently, and the media plane does not settle until B presents a live
-frame. The old content may remain mounted at opacity zero until the media plane
-settles. The earlier single-phase wording below is retained as historical
-context and is superseded for independent full transitions.
+Current delayed-media contract: live file-video A -> B keeps the complete old
+foreground and media visible while B's required live frame is delayed. Full
+transitions do not animate their foreground and media independently. Once both
+incoming planes are ready, one GSAP timeline crossfades them together.
 
 Focused coverage belongs in `DisplayBoxTransitionStage.test.tsx`.
 
 - Live file-video A → B stays `preparing` after B's poster is ready and animates only after B presents a live frame.
+- Electron pool A -> B keeps A's lane fallback active while A is merely ready, adopts B's prepared wrapper only at the transition boundary, and keeps B's owner through a content-only change.
 - Same video with changed lyrics keeps one mounted media node and only fades content.
 - Rapid A → B → C retains C; obsolete timeline completion cannot restore B.
 - Content settles do not re-expose stale lyrics.

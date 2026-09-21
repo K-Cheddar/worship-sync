@@ -180,7 +180,7 @@ test("renders only the fields selected by the form owner", async () => {
         {
           occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
           serviceId: "service_1",
-          name: "Sunday service",
+          name: "Saturday service",
           startsAt: "2026-09-06T10:00:00.000Z",
         },
       ],

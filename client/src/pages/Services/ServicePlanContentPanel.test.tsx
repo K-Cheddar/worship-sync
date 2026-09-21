@@ -1,13 +1,25 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { getChurchResource, getChurchResourceUrl, listChurchResources } from "../../api/auth";
 import ServicePlanContentPanel from "./ServicePlanContentPanel";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlanElement } from "../../types/servicePlan";
 
 let mockSongDocs: Array<Record<string, unknown>> = [];
+const mockGetChurchResource = jest.mocked(getChurchResource);
+const mockGetChurchResourceUrl = jest.mocked(getChurchResourceUrl);
+const mockListChurchResources = jest.mocked(listChurchResources);
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({ allDocs: { allSongDocs: mockSongDocs } }),
+}));
+
+jest.mock("../../api/auth", () => ({
+  getChurchResource: jest.fn(),
+  getChurchResourceUrl: jest.fn(),
+  getSongAudioUrl: jest.fn(),
+  listChurchResources: jest.fn(),
 }));
 
 jest.mock("./ServicePlanLibraryPicker", () => ({
@@ -35,6 +47,9 @@ const element = (overrides: Partial<ServicePlanElement> = {}): ServicePlanElemen
 describe("ServicePlanContentPanel resources", () => {
   beforeEach(() => {
     mockSongDocs = [];
+    mockGetChurchResource.mockReset();
+    mockGetChurchResourceUrl.mockReset();
+    mockListChurchResources.mockReset();
   });
 
   it("adds multiple generic resources and removes one without touching the other", async () => {
@@ -133,6 +148,58 @@ describe("ServicePlanContentPanel resources", () => {
         mediaId: "audio-1",
         data: { songId: "song-1", audioId: "audio-1" },
       })],
+    });
+  });
+
+  it("fetches only referenced ChurchResources and renders a referenced MP3 as audio", async () => {
+    mockGetChurchResource.mockResolvedValue({
+      success: true,
+      resource: {
+        id: "churchResource_mp3",
+        churchId: "church-1",
+        name: "Rehearsal track",
+        kind: "audio",
+        storage: {
+          key: "churches/church-1/files/churchResource_mp3/original",
+          fileName: "rehearsal.mp3",
+          contentType: "audio/mpeg",
+          sizeBytes: 100,
+          uploadedAt: "2026-01-01T00:00:00.000Z",
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      },
+    });
+    mockGetChurchResourceUrl.mockResolvedValue({
+      url: "https://example.test/transient-resource-url",
+      expiresAt: "2026-01-01T00:15:00.000Z",
+    });
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel
+          element={element({
+            resources: [{
+              id: "resource-ref-1",
+              type: "document",
+              title: "Church resource",
+              data: { resourceId: "churchResource_mp3" },
+            }],
+          })}
+          allowEdit={false}
+          onUpdate={jest.fn()}
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockGetChurchResource).toHaveBeenCalledWith("church-1", "churchResource_mp3"));
+    expect(mockListChurchResources).not.toHaveBeenCalled();
+    expect(await screen.findByLabelText("rehearsal.mp3")).toBeInTheDocument();
+    expect(screen.getByText("Audio")).toBeInTheDocument();
+    expect(mockGetChurchResourceUrl).toHaveBeenCalledWith({
+      churchId: "church-1",
+      resourceId: "churchResource_mp3",
     });
   });
 

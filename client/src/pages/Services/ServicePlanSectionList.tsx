@@ -62,7 +62,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
-import { Sheet, SheetContent, SheetTitle } from "../../components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "../../components/ui/sheet";
 import type {
   ServicePlanSection,
   ServicePlanSongReference,
@@ -480,6 +485,7 @@ const ServicePlanSectionList = ({
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [elementPlacement, setElementPlacement] =
     useState<ServicePlanElementPlacement | null>(null);
+  const songDetailsElementId = songDetailsRef?.elementId;
   const elementPlacementRef = useRef<ServicePlanElementPlacement | null>(null);
   const planListRef = useRef<HTMLDivElement | null>(null);
   const setDragElementPlacement = (
@@ -533,17 +539,17 @@ const ServicePlanSectionList = ({
       sections.flatMap((section) => section.elements).map((element) => element.id),
     );
     const activePanelElementId =
-      assignmentPanelElementId || contentPanelElementId || songDetailsRef?.elementId;
+      assignmentPanelElementId || contentPanelElementId || songDetailsElementId;
     if (activePanelElementId && !elementIds.has(activePanelElementId)) {
-      setAssignmentPanelElementId(null);
-      setContentPanelElementId(null);
-      setIsScriptureAttachMode(false);
-      setIsResourceEditorMode(false);
-      setSongDetailsRef(null);
-      setSongDetailsEditing(false);
-      assignmentPanelTriggerRef.current = null;
+      resetItemSpecificPanel();
     }
-  }, [assignmentPanelElementId, contentPanelElementId, sections, songDetailsRef?.elementId]);
+  }, [
+    assignmentPanelElementId,
+    contentPanelElementId,
+    resetItemSpecificPanel,
+    sections,
+    songDetailsElementId,
+  ]);
   const closeAssignmentPanel = () => {
     const trigger = assignmentPanelTriggerRef.current;
     resetItemSpecificPanel();
@@ -586,6 +592,23 @@ const ServicePlanSectionList = ({
     setContentPanelElementId(elementId);
     onOpenContentProp?.(elementId, trigger);
   };
+  const syncOpenPanelToElement = useCallback((elementId: string) => {
+    setIsScriptureAttachMode(false);
+    setIsResourceEditorMode(false);
+    if (assignmentPanelElementId && assignmentPanelElementId !== elementId) {
+      setAssignmentPanelElementId(elementId);
+      assignmentPanelTriggerRef.current = null;
+    } else if (songDetailsElementId && songDetailsElementId !== elementId) {
+      setAssignmentPanelElementId(null);
+      setContentPanelElementId(elementId);
+      setSongDetailsRef(null);
+      setSongDetailsEditing(false);
+      assignmentPanelTriggerRef.current = null;
+    } else if (contentPanelElementId && contentPanelElementId !== elementId) {
+      setContentPanelElementId(elementId);
+      assignmentPanelTriggerRef.current = null;
+    }
+  }, [assignmentPanelElementId, contentPanelElementId, songDetailsElementId]);
   const handleSelectSection = (sectionId: string) => {
     if (assignmentPanelElementId || contentPanelElementId || songDetailsRef) {
       resetItemSpecificPanel();
@@ -593,21 +616,7 @@ const ServicePlanSectionList = ({
     onSelectionChange?.({ sectionId });
   };
   const handleSelectElement = (sectionId: string, elementId: string) => {
-    setIsScriptureAttachMode(false);
-    setIsResourceEditorMode(false);
-    if (assignmentPanelElementId) {
-      setAssignmentPanelElementId(elementId);
-      assignmentPanelTriggerRef.current = null;
-    } else if (songDetailsRef) {
-      setAssignmentPanelElementId(null);
-      setContentPanelElementId(elementId);
-      setSongDetailsRef(null);
-      setSongDetailsEditing(false);
-      assignmentPanelTriggerRef.current = null;
-    } else if (contentPanelElementId) {
-      setContentPanelElementId(elementId);
-      assignmentPanelTriggerRef.current = null;
-    }
+    syncOpenPanelToElement(elementId);
     onSelectionChange?.({ sectionId, elementId });
   };
   const previousSelectionRef = useRef({
@@ -625,27 +634,17 @@ const ServicePlanSectionList = ({
     };
     if (!selectionChanged) return;
     if (!selectedElementId) {
-      if (assignmentPanelElementId || contentPanelElementId || songDetailsRef) {
+      if (assignmentPanelElementId || contentPanelElementId || songDetailsElementId) {
         resetItemSpecificPanel();
       }
       return;
     }
-    if (assignmentPanelElementId && assignmentPanelElementId !== selectedElementId) {
-      setAssignmentPanelElementId(selectedElementId);
-      assignmentPanelTriggerRef.current = null;
-      return;
-    }
-    if (songDetailsRef && songDetailsRef.elementId !== selectedElementId) {
-      setAssignmentPanelElementId(null);
-      setContentPanelElementId(selectedElementId);
-      setSongDetailsRef(null);
-      setSongDetailsEditing(false);
-      assignmentPanelTriggerRef.current = null;
-      return;
-    }
-    if (contentPanelElementId && contentPanelElementId !== selectedElementId) {
-      setContentPanelElementId(selectedElementId);
-      assignmentPanelTriggerRef.current = null;
+    if (
+      (assignmentPanelElementId && assignmentPanelElementId !== selectedElementId)
+      || (songDetailsElementId && songDetailsElementId !== selectedElementId)
+      || (contentPanelElementId && contentPanelElementId !== selectedElementId)
+    ) {
+      syncOpenPanelToElement(selectedElementId);
     }
   }, [
     assignmentPanelElementId,
@@ -653,7 +652,8 @@ const ServicePlanSectionList = ({
     resetItemSpecificPanel,
     selectedElementId,
     selectedSectionId,
-    songDetailsRef,
+    songDetailsElementId,
+    syncOpenPanelToElement,
   ]);
   const handleRemoveSection = (sectionId: string) => {
     const panelElementIsInSection = sections
@@ -1013,6 +1013,9 @@ const ServicePlanSectionList = ({
             aria-label={panelAriaLabel}
           >
             <SheetTitle className="sr-only">{panelTitle}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {panelTitle} for {panelSubtitle}
+            </SheetDescription>
             {panelHeader}
             <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
               {panelContent}

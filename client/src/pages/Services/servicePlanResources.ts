@@ -15,6 +15,11 @@ import type {
   ServicePlanContentResource,
   ServicePlanContentResourceType,
 } from "../../types/servicePlan";
+import type { ChurchResource } from "../../types/churchResource";
+import type {
+  ContentPreviewResource,
+  ContentPreviewResolvedSource,
+} from "../../components/ContentPreview/contentPreview";
 
 export type ServicePlanResourceDefinition = {
   label: string;
@@ -61,6 +66,77 @@ export const getServicePlanResourceDataString = (
 export const getServicePlanResourceNotes = (
   resource: ServicePlanContentResource,
 ): string => getServicePlanResourceDataString(resource, "notes");
+
+const getExplicitServicePlanResourceTitle = (
+  resource: ServicePlanContentResource,
+): string => {
+  const title = resource.title?.trim() || "";
+  const url = resource.url?.trim() || "";
+  const normalizedTitle = title.toLowerCase();
+  const isPlaceholder = ["untitled resource", "church resource"].includes(normalizedTitle);
+  return title && title !== url && !isPlaceholder ? title : "";
+};
+
+export const getServicePlanResourceDisplayLabel = (
+  resource: ServicePlanContentResource,
+  churchResource?: ChurchResource,
+): string =>
+  churchResource?.name?.trim() ||
+  getExplicitServicePlanResourceTitle(resource) ||
+  resource.url?.trim() ||
+  "Untitled resource";
+
+type ContentPreviewNormalizerOptions = {
+  churchResource?: ChurchResource;
+  resolveSource?: () => Promise<ContentPreviewResolvedSource>;
+};
+
+/** Convert current and future Service Plan records into the shared preview shape. */
+export const normalizeServicePlanResourceForPreview = (
+  resource: ServicePlanContentResource,
+  options: ContentPreviewNormalizerOptions = {},
+): ContentPreviewResource => ({
+  id: resource.id,
+  title: options.churchResource?.name?.trim() || getExplicitServicePlanResourceTitle(resource) || undefined,
+  url: resource.url,
+  type: resource.type,
+  provider: resource.provider,
+  mediaId: resource.mediaId,
+  mimeType: resource.metadata?.mimeType || options.churchResource?.storage.contentType,
+  fileName: options.churchResource?.storage.fileName,
+  textContent: getServicePlanResourceDataString(resource, "text") || undefined,
+  ...(options.resolveSource ? { resolveSource: options.resolveSource } : {}),
+});
+
+/**
+ * ChurchResource references retain the historical `document` wire type for
+ * persisted-plan compatibility. Their effective file/audio behavior comes
+ * from the referenced ChurchResource metadata, never from a copied URL/key.
+ */
+export const getServicePlanChurchResourceId = (
+  resource: ServicePlanContentResource,
+): string => {
+  if (resource.type !== "document" && resource.type !== "church-resource") {
+    return "";
+  }
+  return getServicePlanResourceDataString(resource, "resourceId");
+};
+
+export const isServicePlanChurchResourceReference = (
+  resource: ServicePlanContentResource,
+): boolean => Boolean(getServicePlanChurchResourceId(resource));
+
+export const getEffectiveServicePlanResourceDefinition = (
+  resource: ServicePlanContentResource,
+  churchResource?: ChurchResource,
+): ServicePlanResourceDefinition => {
+  if (getServicePlanChurchResourceId(resource)) {
+    return churchResource?.kind === "audio"
+      ? SERVICE_PLAN_RESOURCE_REGISTRY.audio
+      : SERVICE_PLAN_RESOURCE_REGISTRY.document;
+  }
+  return getServicePlanResourceDefinition(resource.type);
+};
 
 export const isHttpUrl = (value: string): boolean => {
   try {
@@ -141,7 +217,7 @@ export const createServicePlanAudioResource = ({
 });
 
 /** Persist only the stable ChurchResource reference; metadata and URLs stay server-owned. */
-export const createServicePlanDocumentResource = ({
+export const createServicePlanChurchResourceReference = ({
   resourceId,
 }: {
   resourceId: string;
@@ -151,3 +227,8 @@ export const createServicePlanDocumentResource = ({
   title: "Church resource",
   data: { resourceId },
 });
+
+// Keep the original creator name for callers and saved-plan tooling that
+// already describe this compatible wire shape as a document reference.
+export const createServicePlanDocumentResource =
+  createServicePlanChurchResourceReference;

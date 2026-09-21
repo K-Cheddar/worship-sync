@@ -3,6 +3,7 @@ import {
   buildChurchResourceKey,
   createChurchResourceStorage,
 } from "./churchResourceService.js";
+import { findChurchResourceServicePlanReferences } from "./churchResourceReferences.js";
 
 const MAX_NAME_LENGTH = 300;
 const MAX_DESCRIPTION_LENGTH = 2_000;
@@ -102,11 +103,15 @@ const errorResponse = (res, error, fallback) => {
       : 500;
   if (statusCode >= 500) console.error(fallback, error);
   const message = statusCode < 500 ? error.message : fallback;
-  return res.status(statusCode).json({
+  const payload = {
     success: false,
     error: message,
     errorMessage: message,
-  });
+  };
+  if (Number.isSafeInteger(error?.referenceCount)) {
+    payload.references = { count: error.referenceCount };
+  }
+  return res.status(statusCode).json(payload);
 };
 
 const resourceInputFromBody = (body) =>
@@ -153,6 +158,13 @@ export const createChurchResourceHandlers = ({
   nowIso,
   storage,
   storageFactory = () => createChurchResourceStorage({ env: process.env }),
+  findResourceReferences = ({ churchId, resourceId }) =>
+    findChurchResourceServicePlanReferences({
+      queryDocs,
+      servicePlansCollection: COLLECTIONS.servicePlans,
+      churchId,
+      resourceId,
+    }),
 }) => {
   const getStorage = () => storage || storageFactory();
 
@@ -366,6 +378,15 @@ export const createChurchResourceHandlers = ({
         const churchId = requireChurchSession(req);
         const resourceId = requireResourceId(req);
         const resource = await findResource(churchId, resourceId);
+        const references = await findResourceReferences({ churchId, resourceId });
+        if (references.length) {
+          const conflict = httpError(
+            409,
+            `This resource is used by ${references.length} Service Plan${references.length === 1 ? "" : "s"}. Remove it from the plan${references.length === 1 ? "" : "s"} before deleting it.`,
+          );
+          conflict.referenceCount = references.length;
+          throw conflict;
+        }
         await getStorage().remove({ churchId, resource });
         await deleteDoc(COLLECTIONS.churchResources, resourceId);
         return res.json({ success: true });

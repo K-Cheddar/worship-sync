@@ -43,6 +43,14 @@ import {
   resolveMemberAddress,
 } from "./notificationRecipients.js";
 import { normalizeUsPhoneNumber } from "./phoneNumber.js";
+import {
+  createTeamIntakeRecipientToken,
+  decryptTeamIntakeRecipientToken,
+  encryptTeamIntakeRecipientToken,
+  hashTeamIntakeRecipientToken,
+  looksLikeTeamIntakeRecipientToken,
+  resolveTeamIntakeRecipientTokenSecret,
+} from "./teamIntakeRecipientToken.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -61,9 +69,7 @@ const teamIntakeTokenSecret =
   "dev-auth-secret";
 
 const teamIntakeRecipientTokenSecret =
-  process.env.AUTH_TEAM_INTAKE_RECIPIENT_TOKEN_SECRET ||
-  process.env.AUTH_SESSION_SECRET ||
-  "dev-auth-recipient-secret";
+  resolveTeamIntakeRecipientTokenSecret();
 
 // Upper bound for a single church's per-collection bootstrap query. Sized to
 // cover realistic roster/submission growth while still bounding Firestore reads.
@@ -2207,6 +2213,27 @@ export const createTeamsAuthHandlers = ({
     return result;
   };
 
+  const replaceServiceAvailabilityForForm = ({
+    existingAvailability,
+    replacementAvailability,
+    form,
+  }) => {
+    const formOccurrenceIds = new Set(
+      (Array.isArray(form?.availabilityOccurrences)
+        ? form.availabilityOccurrences
+        : []
+      )
+        .map((occurrence) => String(occurrence?.occurrenceId || "").trim())
+        .filter(Boolean),
+    );
+    const preserved = Object.fromEntries(
+      Object.entries(existingAvailability || {}).filter(
+        ([occurrenceId]) => !formOccurrenceIds.has(occurrenceId),
+      ),
+    );
+    return { ...preserved, ...(replacementAvailability || {}) };
+  };
+
   // Combine the notes of merged blockout ranges, de-duplicating individual
   // entries (split on ";") so repeated intake submissions don't stack identical
   // notes like "From intake form".
@@ -2706,6 +2733,8 @@ export const createTeamsAuthHandlers = ({
   const sanitizeTeamIntakeRecipientForAdmin = (recipient) => {
     const {
       recipientTokenNonce,
+      recipientTokenHash,
+      recipientTokenCiphertext,
       createdByUid,
       linkCopiedByUid,
       ...clientRecipient
@@ -4850,48 +4879,17 @@ export const createTeamsAuthHandlers = ({
   const createTeamIntakeRecipientId = (formId, memberId) =>
     `teamIntakeRecipient_${hashValue(`${formId}:${memberId}`).slice(0, 32)}`;
 
-  const createTeamIntakeRecipientTokenNonce = (recipientId) =>
-    hashValue(recipientId).slice(0, 32);
-
-  const signTeamIntakeRecipientToken = (recipientId, nonce) =>
-    crypto
-      .createHmac("sha256", teamIntakeRecipientTokenSecret)
-      .update(`${recipientId}:${nonce}`)
-      .digest("base64url");
-
-  const createTeamIntakeRecipientToken = (recipientId, nonce) =>
-    `${recipientId}.${nonce}.${signTeamIntakeRecipientToken(recipientId, nonce)}`;
-
-  const isValidTeamIntakeRecipientToken = (recipientId, nonce, signature) => {
-    const expected = signTeamIntakeRecipientToken(recipientId, nonce);
-    const expectedBuffer = Buffer.from(expected);
-    const signatureBuffer = Buffer.from(String(signature || ""));
-    return (
-      expectedBuffer.length === signatureBuffer.length &&
-      crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
-    );
-  };
-
   const buildTeamIntakeRecipientPublicUrl = (token) =>
     `${APP_BASE_URL}/a/${encodeURIComponent(String(token || "").trim())}`;
 
-  const getTeamIntakeRecipientContextByToken = async (token) => {
-    const [recipientId, nonce, signature] = String(token || "").split(".");
+  const getTeamIntakeRecipientContext = async (
+    recipient,
+    { requireTokenHash = true } = {},
+  ) => {
+    const recipientId = String(recipient?.recipientId || recipient?.id || "").trim();
     if (
-      !recipientId?.startsWith("teamIntakeRecipient_") ||
-      !nonce ||
-      !signature
-    ) {
-      throw httpError(404, "Request not found.");
-    }
-    const recipient = await getDoc(
-      COLLECTIONS.teamIntakeRecipients,
-      recipientId,
-    );
-    if (
-      !recipient ||
-      recipient.recipientTokenNonce !== nonce ||
-      !isValidTeamIntakeRecipientToken(recipientId, nonce, signature) ||
+      !recipientId ||
+      (requireTokenHash && !recipient?.recipientTokenHash) ||
       recipient.revokedAt
     ) {
       throw httpError(404, "Request not found.");
@@ -4917,6 +4915,45 @@ export const createTeamsAuthHandlers = ({
       form: { formId: recipient.formId, ...form },
       member: { memberId: recipient.memberId, ...member },
     };
+  };
+
+  const getTeamIntakeRecipientContextByToken = async (token) => {
+    if (!looksLikeTeamIntakeRecipientToken(token)) {
+      throw httpError(404, "Request not found.");
+    }
+    const [recipient] = await queryDocs(
+      COLLECTIONS.teamIntakeRecipients,
+      [
+        {
+          field: "recipientTokenHash",
+          value: hashTeamIntakeRecipientToken(
+            token,
+            teamIntakeRecipientTokenSecret,
+          ),
+        },
+      ],
+      { limit: 1 },
+    );
+    return getTeamIntakeRecipientContext(recipient);
+  };
+
+  const writeTeamIntakeRecipientBatch = async (writes) => {
+    const db = requireFirestore?.();
+    if (db) {
+      const batch = db.batch();
+      writes.forEach(({ id, data, merge }) => {
+        batch.set(
+          db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+          data,
+          { merge },
+        );
+      });
+      await batch.commit();
+      return;
+    }
+    for (const { id, data, merge } of writes) {
+      await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
+    }
   };
 
   const applyTeamIntakeSubmissionToMember = async ({
@@ -5009,10 +5046,11 @@ export const createTeamsAuthHandlers = ({
               ...(member.blockoutDates || []),
               ...blockoutDates,
             ]);
-      const nextServiceAvailability = {
-        ...(member.serviceAvailability || {}),
-        ...submissionAvailability,
-      };
+      const nextServiceAvailability = replaceServiceAvailabilityForForm({
+        existingAvailability: member.serviceAvailability,
+        replacementAvailability: submissionAvailability,
+        form,
+      });
       const submittedEmail = normalizeMemberEmail(submission.email);
       const submittedTitle = normalizeShortText(submission.title, { max: 40 });
       const submittedBirthDate = normalizeBirthDate(submission.birthDate);
@@ -5076,6 +5114,216 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
+    token,
+    payload,
+  }) => {
+    const db = requireFirestore?.();
+    if (!db) return null;
+
+    const submittedAt = nowIso();
+    return db.runTransaction(async (transaction) => {
+      const tokenHash = hashTeamIntakeRecipientToken(
+        token,
+        teamIntakeRecipientTokenSecret,
+      );
+      const recipientQuery = db
+        .collection(COLLECTIONS.teamIntakeRecipients)
+        .where("recipientTokenHash", "==", tokenHash)
+        .limit(1);
+      const recipientQuerySnapshot = await transaction.get(recipientQuery);
+      const recipientDocument = recipientQuerySnapshot.docs[0];
+      if (!recipientDocument) throw httpError(404, "Request not found.");
+
+      const recipient = {
+        recipientId: recipientDocument.id,
+        ...recipientDocument.data(),
+      };
+      if (recipient.revokedAt) throw httpError(404, "Request not found.");
+
+      const formRef = db
+        .collection(COLLECTIONS.teamIntakeForms)
+        .doc(recipient.formId);
+      const memberRef = db
+        .collection(COLLECTIONS.teamRosterMembers)
+        .doc(recipient.memberId);
+      const formSnapshot = await transaction.get(formRef);
+      const memberSnapshot = await transaction.get(memberRef);
+      if (!formSnapshot.exists || !memberSnapshot.exists) {
+        throw httpError(404, "Request not found.");
+      }
+      const form = { formId: formSnapshot.id, ...formSnapshot.data() };
+      const member = { memberId: memberSnapshot.id, ...memberSnapshot.data() };
+      if (
+        form.churchId !== recipient.churchId ||
+        form.archivedAt ||
+        member.churchId !== recipient.churchId ||
+        member.archivedAt
+      ) {
+        throw httpError(404, "Request not found.");
+      }
+      assertTeamIntakeFormIsOpen(form);
+
+      const submissionId =
+        recipient.submissionId ||
+        `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+
+      const desiredPositionIds = normalizeIdArray(payload.positionIds);
+      const positionSnapshots = [];
+      for (const positionId of desiredPositionIds) {
+        positionSnapshots.push(
+          await transaction.get(
+            db.collection(COLLECTIONS.teamPositions).doc(positionId),
+          ),
+        );
+      }
+      const formTeamIds = new Set(normalizeIdArray(form.teamIds));
+      const positionTeamIds = new Set();
+      for (const positionSnapshot of positionSnapshots) {
+        if (!positionSnapshot.exists) {
+          throw httpError(400, "One or more selected positions are no longer available.");
+        }
+        const position = positionSnapshot.data();
+        if (
+          position.churchId !== form.churchId ||
+          (formTeamIds.size > 0 && !formTeamIds.has(position.teamId))
+        ) {
+          throw httpError(
+            400,
+            "One or more selected positions are not available on this form.",
+          );
+        }
+        if (position.teamId) positionTeamIds.add(position.teamId);
+      }
+
+      const candidateTeamIds = new Set([...formTeamIds, ...positionTeamIds]);
+      const teamSnapshots = [];
+      for (const teamId of candidateTeamIds) {
+        teamSnapshots.push(
+          await transaction.get(db.collection(COLLECTIONS.teams).doc(teamId)),
+        );
+      }
+
+      const formCollectsBlockouts =
+        Boolean(form.startDate && form.endDate) &&
+        normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
+          "blockoutDates",
+        );
+      const blockoutDates = mergeBlockoutDateRanges(
+        (payload.blockoutRanges || []).map((range) => ({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          notes: "From intake form",
+        })),
+      );
+      const nextBlockoutDates = formCollectsBlockouts
+        ? replaceBlockoutDateRangesInPeriod({
+            existingRanges: member.blockoutDates,
+            replacementRanges: blockoutDates,
+            startDate: form.startDate,
+            endDate: form.endDate,
+          })
+        : member.blockoutDates || [];
+      const nextServiceAvailability = replaceServiceAvailabilityForForm({
+        existingAvailability: member.serviceAvailability,
+        replacementAvailability: normalizeServiceAvailability(
+          payload.occurrenceAvailability,
+        ),
+        form,
+      });
+      const adminUserId = `recipient:${recipient.recipientId}`;
+      const memberUpdate = {
+        desiredPositionIds,
+        serviceAvailability: nextServiceAvailability,
+        blockoutDates: nextBlockoutDates,
+        ...(member.email || !payload.email
+          ? {}
+          : { email: normalizeMemberEmail(payload.email) }),
+        ...(!member.title && payload.title
+          ? { title: normalizeShortText(payload.title, { max: 40 }) }
+          : {}),
+        ...(!member.birthDate && payload.birthDate
+          ? {
+              birthDate: normalizeBirthDate(payload.birthDate),
+              isMinor:
+                isMinorFromBirthDate(payload.birthDate) ??
+                Boolean(member.isMinor),
+            }
+          : {}),
+        ...(payload.servingFrequency
+          ? { servingFrequency: payload.servingFrequency }
+          : {}),
+        ...(payload.recurringAvailability
+          ? { recurringAvailability: payload.recurringAvailability }
+          : {}),
+        updatedAt: submittedAt,
+        updatedByUid: adminUserId,
+      };
+      const application = {
+        status: "applied",
+        appliedAt: submittedAt,
+        appliedByUid: adminUserId,
+        appliedMemberId: member.memberId,
+        appliedMemberCreated: false,
+      };
+      const submission = {
+        ...payload,
+        submissionId,
+        formId: form.formId,
+        churchId: form.churchId,
+        status: "applied",
+        submittedAt,
+        ...application,
+        reviewedAt: submittedAt,
+        reviewedByUid: adminUserId,
+        updatedAt: submittedAt,
+        updatedByUid: adminUserId,
+      };
+
+      // All reads are complete before any write. Firestore retries this whole
+      // callback when another process changes one of these documents, so the
+      // member, deterministic audit row, recipient state, and team rosters
+      // commit together instead of relying on the process-local queue.
+      transaction.set(
+        db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId),
+        submission,
+        { merge: false },
+      );
+      transaction.set(memberRef, memberUpdate, { merge: true });
+      for (const teamSnapshot of teamSnapshots) {
+        if (!teamSnapshot.exists) continue;
+        const team = teamSnapshot.data();
+        if (
+          team.churchId !== form.churchId ||
+          team.archivedAt ||
+          (team.memberIds || []).includes(member.memberId)
+        ) {
+          continue;
+        }
+        transaction.set(
+          teamSnapshot.ref,
+          {
+            memberIds: [...(team.memberIds || []), member.memberId],
+            updatedAt: submittedAt,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+      }
+      transaction.set(
+        recipientDocument.ref,
+        {
+          respondedAt: submittedAt,
+          submissionId,
+          updatedAt: submittedAt,
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      return { success: true, submissionId };
+    });
+  };
+
   const teamIntakeRecipientSubmissionQueues = new Map();
   const enqueueTeamIntakeRecipientSubmission = (recipientId, task) => {
     const previous =
@@ -5094,11 +5342,6 @@ export const createTeamsAuthHandlers = ({
     return run;
   };
 
-  const looksLikeTeamIntakeRecipientToken = (token) =>
-    String(token || "")
-      .split(".")[0]
-      ?.startsWith("teamIntakeRecipient_") || false;
-
   const submitTeamIntakeRecipient = async (req, token) =>
     enqueueTeamIntakeRecipientSubmission(token, async () => {
       const { recipient, form, member } =
@@ -5108,6 +5351,12 @@ export const createTeamsAuthHandlers = ({
         form,
         { member },
       );
+      const transactionalResult =
+        await submitTeamIntakeRecipientWithFirestoreTransaction({
+          token,
+          payload,
+        });
+      if (transactionalResult) return transactionalResult;
       const submittedAt = nowIso();
       const submissionId =
         recipient.submissionId ||
@@ -7860,7 +8109,13 @@ export const createTeamsAuthHandlers = ({
         const formTeamIds = new Set(normalizeIdArray(form.teamIds));
         const now = nowIso();
         const recipients = [];
-        for (const memberId of memberIds) {
+        const existingRecipients = await Promise.all(
+          memberIds.map((memberId) =>
+            getDoc(COLLECTIONS.teamIntakeRecipients, createTeamIntakeRecipientId(req.params.formId, memberId)),
+          ),
+        );
+        const writes = [];
+        for (const [index, memberId] of memberIds.entries()) {
           const member = members.find((item) => item.memberId === memberId);
           if (!member || member.archivedAt) {
             throw httpError(404, "Member not found or archived.");
@@ -7887,13 +8142,49 @@ export const createTeamsAuthHandlers = ({
             req.params.formId,
             memberId,
           );
-          const existing = await getDoc(
-            COLLECTIONS.teamIntakeRecipients,
-            recipientId,
-          );
+          const existing = existingRecipients[index];
           const isActive = Boolean(existing && !existing.revokedAt);
+          const existingToken = isActive
+            ? decryptTeamIntakeRecipientToken(
+                existing.recipientTokenCiphertext,
+                teamIntakeRecipientTokenSecret,
+              )
+            : null;
+          const canReuseToken = Boolean(
+            isActive &&
+              existing.recipientTokenHash &&
+              existingToken &&
+              looksLikeTeamIntakeRecipientToken(existingToken) &&
+              hashTeamIntakeRecipientToken(
+                existingToken,
+                teamIntakeRecipientTokenSecret,
+              ) === existing.recipientTokenHash,
+          );
+          const token = canReuseToken
+            ? existingToken
+            : createTeamIntakeRecipientToken();
+          const tokenHash = canReuseToken
+            ? existing.recipientTokenHash
+            : hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret);
+          const tokenCiphertext = canReuseToken
+            ? existing.recipientTokenCiphertext
+            : encryptTeamIntakeRecipientToken(
+                token,
+                teamIntakeRecipientTokenSecret,
+              );
           const recipient = isActive
-            ? existing
+            ? {
+                ...existing,
+                ...(!canReuseToken
+                  ? {
+                      recipientTokenHash: tokenHash,
+                      recipientTokenCiphertext: tokenCiphertext,
+                      tokenIssuedAt: now,
+                      updatedAt: now,
+                      updatedByUid: admin.user.uid,
+                    }
+                  : {}),
+              }
             : {
                 recipientId,
                 churchId: req.params.churchId,
@@ -7901,9 +8192,9 @@ export const createTeamsAuthHandlers = ({
                 memberId,
                 createdAt: existing?.createdAt || now,
                 createdByUid: admin.user.uid,
-                recipientTokenNonce: existing?.revokedAt
-                  ? randomSecret(16)
-                  : createTeamIntakeRecipientTokenNonce(recipientId),
+                recipientTokenHash: tokenHash,
+                recipientTokenCiphertext: tokenCiphertext,
+                tokenIssuedAt: now,
                 revokedAt: null,
                 respondedAt: null,
                 submissionId: null,
@@ -7912,13 +8203,12 @@ export const createTeamsAuthHandlers = ({
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               };
-          if (!isActive) {
-            await setDoc(
-              COLLECTIONS.teamIntakeRecipients,
-              recipientId,
-              recipient,
-              { merge: Boolean(existing) },
-            );
+          if (!isActive || !canReuseToken) {
+            writes.push({
+              id: recipientId,
+              data: recipient,
+              merge: Boolean(existing),
+            });
           }
           recipients.push(
             sanitizeTeamIntakeRecipientForAdmin({
@@ -7927,6 +8217,7 @@ export const createTeamsAuthHandlers = ({
             }),
           );
         }
+        await writeTeamIntakeRecipientBatch(writes);
         await addSecurityEvent({
           type: "team_intake_recipients_created",
           churchId: req.params.churchId,
@@ -7955,15 +8246,40 @@ export const createTeamsAuthHandlers = ({
         if (!recipient || recipient.churchId !== req.params.churchId) {
           throw httpError(404, "Individual request not found.");
         }
-        const { form, member } = await getTeamIntakeRecipientContextByToken(
-          createTeamIntakeRecipientToken(
-            recipient.recipientId,
-            recipient.recipientTokenNonce,
-          ),
-        );
+        const { form, member } = await getTeamIntakeRecipientContext(recipient, {
+          requireTokenHash: false,
+        });
         const copiedAt = nowIso();
         const markCopied = req.body?.markCopied === true;
+        const existingToken = decryptTeamIntakeRecipientToken(
+          recipient.recipientTokenCiphertext,
+          teamIntakeRecipientTokenSecret,
+        );
+        const canReuseToken = Boolean(
+          existingToken &&
+            looksLikeTeamIntakeRecipientToken(existingToken) &&
+            hashTeamIntakeRecipientToken(
+              existingToken,
+              teamIntakeRecipientTokenSecret,
+            ) === recipient.recipientTokenHash,
+        );
+        const token = canReuseToken
+          ? existingToken
+          : createTeamIntakeRecipientToken();
         const update = {
+          ...(canReuseToken
+            ? {}
+            : {
+                recipientTokenHash: hashTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                tokenIssuedAt: copiedAt,
+              }),
           ...(markCopied
             ? {
                 linkCopiedAt: copiedAt,
@@ -7993,12 +8309,7 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           recipient: sanitizeTeamIntakeRecipientForAdmin(nextRecipient),
-          publicUrl: buildTeamIntakeRecipientPublicUrl(
-            createTeamIntakeRecipientToken(
-              recipient.recipientId,
-              recipient.recipientTokenNonce,
-            ),
-          ),
+          publicUrl: buildTeamIntakeRecipientPublicUrl(token),
         });
       } catch (error) {
         return sendTeamsJsonError(

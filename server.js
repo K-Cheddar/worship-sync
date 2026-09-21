@@ -79,6 +79,7 @@ import {
   getChurchResourceMaxBytes,
 } from "./server/churchResourceService.js";
 import { createChurchResourceHandlers } from "./server/churchResourceApi.js";
+import { createChurchResourceUploadGuard } from "./server/churchResourceUploadGuard.js";
 import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
 import {
   RichLinkPreviewInputError,
@@ -301,7 +302,8 @@ const {
   requireChurchAdmin,
   requireSongAudioEditAccess,
   assertSongAudioChurchAccess,
-  requireChurchResourceViewAccess,
+  requireChurchResourceBrowseAccess,
+  requireChurchResourceReferenceReadAccess,
   requireChurchResourceEditAccess,
 } = createAppSessionGuards({
   resolveRequestBootstrap,
@@ -323,6 +325,7 @@ const parseChurchResourceBytes = express.raw({
   limit: getChurchResourceMaxBytes(),
 });
 const guardSongAudioUpload = createSongAudioUploadGuard();
+const guardChurchResourceUpload = createChurchResourceUploadGuard();
 const chatImageMaxBytes = (() => {
   const configured = Number(process.env.CHAT_IMAGE_MAX_BYTES);
   return Number.isSafeInteger(configured) && configured > 0
@@ -1212,18 +1215,19 @@ app.delete(
 app.use("/api/churches/:churchId/resources", requireAppSession);
 app.get(
   "/api/churches/:churchId/resources",
-  requireChurchResourceViewAccess,
+  requireChurchResourceBrowseAccess,
   (req, res) => getChurchResourceHandlers().list(req, res),
 );
 app.get(
   "/api/churches/:churchId/resources/:resourceId",
-  requireChurchResourceViewAccess,
+  requireChurchResourceReferenceReadAccess,
   (req, res) => getChurchResourceHandlers().get(req, res),
 );
 app.post(
   "/api/churches/:churchId/resources/upload",
   requireChurchResourceEditAccess,
   requireMutationCsrf,
+  guardChurchResourceUpload,
   (req, res) => getChurchResourceHandlers().createUpload(req, res),
 );
 app.post(
@@ -1236,12 +1240,14 @@ app.post(
   "/api/churches/:churchId/resources/upload-from-app",
   requireChurchResourceEditAccess,
   requireMutationCsrf,
+  // Apply the same quota before express.raw buffers the Electron fallback.
+  guardChurchResourceUpload,
   parseChurchResourceBytes,
   (req, res) => getChurchResourceHandlers().uploadFromApp(req, res),
 );
 app.get(
   "/api/churches/:churchId/resources/:resourceId/url",
-  requireChurchResourceViewAccess,
+  requireChurchResourceReferenceReadAccess,
   (req, res) => getChurchResourceHandlers().createUrl(req, res),
 );
 app.patch(

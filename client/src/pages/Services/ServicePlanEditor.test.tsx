@@ -1,5 +1,6 @@
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import type { ContextType, ReactNode } from "react";
 import ServicePlanEditor from "./ServicePlanEditor";
 import {
@@ -2377,7 +2378,7 @@ Opening Song to begin the worship experience.
     expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
   });
 
-  it("catches up schedule progress and missed publicLive changes after a long resume", async () => {
+  it("catches up schedule progress and missed publicLive changes after a long resume under StrictMode", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
     const sections = [{
@@ -2417,15 +2418,23 @@ Opening Song to begin the worship experience.
       ...initialPlan,
       publicLive: { mode: "manual" as const, currentElementId: "message" },
     };
-    mockGetServicePlan
-      .mockResolvedValueOnce({ success: true, servicePlan: initialPlan })
-      .mockResolvedValueOnce({ success: true, servicePlan: resumedPlan });
+    let getServicePlanCallCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({
+      success: true,
+      servicePlan:
+        getServicePlanCallCount++ < 2 ? initialPlan : resumedPlan,
+    }));
 
     try {
-      renderEditor();
+      render(
+        <StrictMode>
+          {editorTree()}
+        </StrictMode>,
+      );
       expect(
         await screen.findByLabelText("Live on schedule: Welcome"),
       ).toBeInTheDocument();
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
 
       act(() => {
         Object.defineProperty(document, "visibilityState", {
@@ -2441,7 +2450,7 @@ Opening Song to begin the worship experience.
         document.dispatchEvent(new Event("visibilitychange"));
       });
 
-      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
       expect(
         screen.getByLabelText("Live (pinned): Message"),
       ).toBeInTheDocument();

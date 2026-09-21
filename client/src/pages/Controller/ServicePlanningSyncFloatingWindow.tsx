@@ -506,6 +506,16 @@ const ServicePlanningSyncFloatingWindow = ({
       })),
     [occurrences],
   );
+  const hasManualPlanWithoutOccurrence =
+    isManualSelection && Boolean(selectedPlan) && !occurrence;
+  let occurrenceStatus = "No scheduled service context";
+  if (hasManualPlanWithoutOccurrence) {
+    occurrenceStatus = "Manually selected plan (no matching occurrence)";
+  } else if (isManualSelection) {
+    occurrenceStatus = "Manually selected";
+  } else if (occurrence) {
+    occurrenceStatus = `Following current service: ${occurrence.name}`;
+  }
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping;
@@ -791,11 +801,7 @@ const ServicePlanningSyncFloatingWindow = ({
           }
           role="status"
         >
-          {isManualSelection
-            ? "Manually selected"
-            : occurrence
-              ? `Following current service: ${occurrence.name}`
-              : "No scheduled service context"}
+          {occurrenceStatus}
         </p>
         {isManualSelection ? (
           <Button

@@ -93,7 +93,10 @@ export interface ElectronAPI {
   getPlatform: () => Promise<string>;
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
-  openExternalUrl: (url: string) => Promise<boolean>;
+  openExternalUrl: (
+    url: string,
+    options?: { allowArbitraryHttps?: boolean },
+  ) => Promise<boolean>;
   fetchGeniusLyrics: (url: string) => Promise<{
     ok: boolean;
     status: number;

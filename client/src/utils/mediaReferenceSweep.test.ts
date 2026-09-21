@@ -271,6 +271,7 @@ describe("replaceMediaReferencesForReplacement", () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.rollbackStatus).toBe("not_needed");
     const savedItem = docs.get(item._id);
     expect(savedItem.background).toBe(newMedia.background);
     expect(savedItem.slides[0].boxes[0].background).toBe(newMedia.background);
@@ -339,8 +340,61 @@ describe("replaceMediaReferencesForReplacement", () => {
     });
 
     expect(result.ok).toBe(false);
+    expect(result.rollbackStatus).toBe("complete");
     expect(docs.get(PREFERENCES_POUCH_ID).preferences.defaultSongBackground.background).toBe(
       oldMedia.background,
     );
+  });
+
+  it("reports uncertain rollback when restoring a written document fails", async () => {
+    const oldMedia = {
+      id: "old-uncertain",
+      background: "https://cdn.example/old-uncertain.png",
+    } as MediaType;
+    const newMedia = {
+      ...oldMedia,
+      background: "https://cdn.example/new-uncertain.png",
+    } as MediaType;
+    const preferences = {
+      _id: PREFERENCES_POUCH_ID,
+      _rev: "1-prefs",
+      preferences: {
+        defaultSongBackground: { background: oldMedia.background },
+        defaultTimerBackground: { background: "" },
+        defaultBibleBackground: { background: "" },
+        defaultFreeFormBackground: { background: "" },
+      },
+    };
+    const item = {
+      _id: "item-uncertain",
+      type: "free",
+      background: oldMedia.background,
+      slides: [],
+      arrangements: [],
+    };
+    const docs = new Map<string, any>([
+      [PREFERENCES_POUCH_ID, preferences],
+      [item._id, item],
+    ]);
+    let putCount = 0;
+    const db = {
+      get: jest.fn(async (id: string) => docs.get(id)),
+      allDocs: jest.fn(async () => ({ rows: [{ id: item._id, doc: item }] })),
+      put: jest.fn(async (doc: any) => {
+        putCount += 1;
+        if (putCount === 2) throw new Error("conflict");
+        if (putCount === 3) throw new Error("rollback conflict");
+        docs.set(doc._id, doc);
+        return { rev: "2-saved" };
+      }),
+    } as unknown as PouchDB.Database;
+
+    const result = await replaceMediaReferencesForReplacement(db, {
+      oldMedia,
+      newMedia,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.rollbackStatus).toBe("uncertain");
   });
 });

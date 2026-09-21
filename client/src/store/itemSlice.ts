@@ -283,7 +283,6 @@ export const itemSlice = createSlice({
           action.payload,
         );
       }
-      state.hasPendingUpdate = true;
     },
     attachCloudCopyToLocalImageInActiveItem: (
       state,
