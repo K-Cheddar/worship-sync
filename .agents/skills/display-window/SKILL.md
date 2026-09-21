@@ -5,6 +5,20 @@ description: WorshipSync DisplayWindow implementation and review guide. Use when
 
 # Display Window
 
+## Architecture references
+
+Use this file as the live-surface safety checklist. For transition work, read
+the concise supporting references before editing:
+
+- `references/architecture.md` and `references/transition-model.md` for A/B
+  ownership, modes, readiness, and interruption.
+- `references/invariants.md` for the non-negotiable audience contract.
+- `references/media-lifecycle.md` for current media ownership and the bounded
+  Electron surface-pool boundary.
+- `references/debugging.md` for opt-in readiness tracing.
+- `references/regressions.md` for focused test contracts.
+- `references/remote-displays.md` for stream transparency and aux behavior.
+
 ## Purpose
 
 Use this skill to protect WorshipSync's live display surfaces. Treat DisplayWindow changes as high-risk: projector, monitor, stream, previews, Electron windows, media playback, timers, overlays, and sync behavior can all be affected by small rendering changes.
