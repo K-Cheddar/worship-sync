@@ -8,6 +8,7 @@ const TeamsFormsPage = () => {
     <IntakeManager
       forms={pageData.intakeForms}
       submissions={pageData.intakeSubmissions}
+      intakeRecipients={pageData.intakeRecipients}
       services={pageData.services}
       members={pageData.members}
       positions={pageData.positions}
@@ -19,6 +20,9 @@ const TeamsFormsPage = () => {
       }
       onMemberSaved={(member) => upsertData("members", "memberId", member)}
       onTeamSaved={(team) => upsertData("teams", "teamId", team)}
+      onRecipientSaved={(recipient) =>
+        upsertData("intakeRecipients", "recipientId", recipient)
+      }
     />
   );
 };

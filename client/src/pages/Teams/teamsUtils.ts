@@ -8,6 +8,7 @@ import {
   isHydratedSchedule,
   type TeamRecord,
   type TeamIntakeForm,
+  type TeamIntakeRecipient,
   type TeamIntakeSubmission,
   type TeamPosition,
   type TeamQualificationArea,
@@ -148,6 +149,7 @@ export const normalizeTeamsData = (data?: Partial<TeamsData>): TeamsData => ({
   intakeSubmissions: (data?.intakeSubmissions || []).map(
     normalizeIntakeSubmission,
   ),
+  intakeRecipients: data?.intakeRecipients || [],
 });
 
 // Normalize a single data collection without touching the rest of the dataset.
@@ -449,6 +451,7 @@ export const applyTeamEntityDeletionLocally = (
         schedules: "scheduleId",
         intakeForms: "formId",
         intakeSubmissions: "submissionId",
+        intakeRecipients: "recipientId",
       };
       const idField = idFieldByKey[key];
       return idField ? String(entry[idField] || "") !== id : true;
@@ -466,6 +469,7 @@ export const buildTeamsDataFromBootstrap = (response: {
   schedules?: (TeamSchedule | TeamScheduleSummary)[];
   intakeForms?: TeamIntakeForm[];
   intakeSubmissions?: TeamIntakeSubmission[];
+  intakeRecipients?: TeamIntakeRecipient[];
 }) =>
   normalizeTeamsData({
     members: response.members,
@@ -478,6 +482,7 @@ export const buildTeamsDataFromBootstrap = (response: {
     schedules: response.schedules,
     intakeForms: response.intakeForms,
     intakeSubmissions: response.intakeSubmissions,
+    intakeRecipients: response.intakeRecipients,
   });
 
 export const assignmentFailureKey = (serviceId: string, positionId: string) =>

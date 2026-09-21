@@ -42,6 +42,7 @@ import {
   findUnreachableMemberIds,
   resolveMemberAddress,
 } from "./notificationRecipients.js";
+import { normalizeUsPhoneNumber } from "./phoneNumber.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -58,6 +59,11 @@ const teamIntakeTokenSecret =
   process.env.AUTH_TEAM_INTAKE_TOKEN_SECRET ||
   process.env.AUTH_SESSION_SECRET ||
   "dev-auth-secret";
+
+const teamIntakeRecipientTokenSecret =
+  process.env.AUTH_TEAM_INTAKE_RECIPIENT_TOKEN_SECRET ||
+  process.env.AUTH_SESSION_SECRET ||
+  "dev-auth-recipient-secret";
 
 // Upper bound for a single church's per-collection bootstrap query. Sized to
 // cover realistic roster/submission growth while still bounding Firestore reads.
@@ -818,6 +824,14 @@ export const createTeamsAuthHandlers = ({
     return normalized;
   };
 
+  const normalizeMemberPhoneNumber = (value) => {
+    try {
+      return normalizeUsPhoneNumber(value);
+    } catch {
+      throw httpError(400, "Enter a valid U.S. mobile number.");
+    }
+  };
+
   const normalizeIdArray = (value) =>
     Array.from(
       new Set(
@@ -1208,6 +1222,69 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const normalizeServicePlanResourceData = (raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    try {
+      const serialized = JSON.stringify(raw);
+      if (!serialized || serialized.length > 20_000) return undefined;
+      return JSON.parse(serialized);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const normalizeServicePlanContentResource = (raw) => {
+    if (!raw || typeof raw !== "object") return undefined;
+    const title = normalizeShortText(raw.title, { max: 300 });
+    if (!title) return undefined;
+    const type =
+      normalizeShortText(raw.type, { max: 80 })?.toLowerCase() || "generic";
+    const rawUrl = normalizeShortText(raw.url, { max: 2_000 });
+    let url;
+    if (rawUrl) {
+      try {
+        const parsedUrl = new URL(rawUrl);
+        if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+          url = rawUrl;
+        }
+      } catch {
+        // Optional resource URLs are dropped when they are not web URLs.
+      }
+    }
+    const provider = normalizeShortText(raw.provider, { max: 120 });
+    const mediaId = normalizeShortText(raw.mediaId, { max: 300 });
+    const data = normalizeServicePlanResourceData(raw.data);
+    const metadata = raw.metadata && typeof raw.metadata === "object"
+      ? {
+          ...(normalizeShortText(raw.metadata.subtitle, { max: 300 })
+            ? { subtitle: normalizeShortText(raw.metadata.subtitle, { max: 300 }) }
+            : {}),
+          ...(Number.isFinite(Number(raw.metadata.duration)) &&
+          Number(raw.metadata.duration) >= 0
+            ? { duration: Number(raw.metadata.duration) }
+            : {}),
+          ...(normalizeShortText(raw.metadata.thumbnailUrl, { max: 2_000 })
+            ? { thumbnailUrl: normalizeShortText(raw.metadata.thumbnailUrl, { max: 2_000 }) }
+            : {}),
+          ...(normalizeShortText(raw.metadata.mimeType, { max: 160 })
+            ? { mimeType: normalizeShortText(raw.metadata.mimeType, { max: 160 }) }
+            : {}),
+        }
+      : undefined;
+    return {
+      id:
+        normalizeShortText(raw.id, { max: 160 }) ||
+        createId("servicePlanResource"),
+      type,
+      title,
+      ...(url ? { url } : {}),
+      ...(provider ? { provider } : {}),
+      ...(mediaId ? { mediaId } : {}),
+      ...(data ? { data } : {}),
+      ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
+    };
+  };
+
   const normalizeServicePlanAttachments = (
     raw,
     normalizeAttachment,
@@ -1254,6 +1331,25 @@ export const createTeamsAuthHandlers = ({
     return minutes === undefined ? undefined : Math.round(minutes * 60);
   };
 
+  const normalizeServicePlanSourceLedByAssignments = (raw) => {
+    if (!Array.isArray(raw)) return undefined;
+    const assignments = raw
+      .map((assignment) => {
+        if (!assignment || typeof assignment !== "object") return undefined;
+        const name = normalizeShortText(assignment.name, { max: 200 });
+        if (!name) return undefined;
+        const kind =
+          assignment.kind === "person" || assignment.kind === "teamPosition"
+            ? assignment.kind
+            : undefined;
+        if (!kind) return undefined;
+        const id = normalizeShortText(assignment.id, { max: 160 });
+        return { kind, ...(id ? { id } : {}), name };
+      })
+      .filter(Boolean);
+    return assignments.length ? assignments.slice(0, MAX_SERVICE_PLAN_POSITIONS) : undefined;
+  };
+
   const normalizeServicePlanElement = (raw) => {
     const songRefs = normalizeServicePlanAttachments(
       raw?.songRefs,
@@ -1264,6 +1360,10 @@ export const createTeamsAuthHandlers = ({
       raw?.scriptureRefs,
       normalizeServicePlanScriptureRef,
       raw?.scriptureRef,
+    );
+    const resources = normalizeServicePlanAttachments(
+      raw?.resources,
+      normalizeServicePlanContentResource,
     );
     const notes = normalizeRichTextDocument(raw?.notes);
     const teamNotes = Array.isArray(raw?.teamNotes)
@@ -1316,6 +1416,7 @@ export const createTeamsAuthHandlers = ({
           }),
       songRefs,
       scriptureRefs,
+      resources,
       // The singular fields are still written, the same way durationMinutes is
       // above: mid-rollout an older tab reads only these, and a save it did not
       // make would otherwise look to it like the attachments had vanished.
@@ -1337,8 +1438,14 @@ export const createTeamsAuthHandlers = ({
       ).slice(0, MAX_SERVICE_PLAN_POSITIONS),
       sourceLedByRaw:
         normalizeShortText(raw?.sourceLedByRaw, { max: 200 }) || undefined,
+      sourceLedByAssignments: normalizeServicePlanSourceLedByAssignments(
+        raw?.sourceLedByAssignments,
+      ),
       sourceElementTypeRaw:
         normalizeShortText(raw?.sourceElementTypeRaw, { max: 200 }) ||
+        undefined,
+      sourceContentTitleRaw:
+        normalizeShortText(raw?.sourceContentTitleRaw, { max: 300 }) ||
         undefined,
       ...(raw?.sourceSongReferenceDismissed === true
         ? { sourceSongReferenceDismissed: true }
@@ -2596,6 +2703,20 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const sanitizeTeamIntakeRecipientForAdmin = (recipient) => {
+    const {
+      recipientTokenNonce,
+      createdByUid,
+      linkCopiedByUid,
+      ...clientRecipient
+    } = recipient || {};
+    return {
+      ...clientRecipient,
+      ...(createdByUid ? { createdBy: createdByUid } : {}),
+      ...(linkCopiedByUid ? { linkCopiedBy: linkCopiedByUid } : {}),
+    };
+  };
+
   // How far around "today" the bootstrap ships fully-hydrated schedules when the
   // client opts into summaries. Anything outside the window arrives as a summary
   // and is hydrated on demand. One month back keeps the just-finished month's
@@ -2732,6 +2853,7 @@ export const createTeamsAuthHandlers = ({
       schedules,
       rawIntakeForms,
       intakeSubmissions,
+      intakeRecipients,
     ] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
@@ -2778,6 +2900,12 @@ export const createTeamsAuthHandlers = ({
       listTeamCollectionForChurch(
         COLLECTIONS.teamIntakeSubmissions,
         "submissionId",
+        churchId,
+        { truncatedCollections },
+      ),
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamIntakeRecipients,
+        "recipientId",
         churchId,
         { truncatedCollections },
       ),
@@ -2845,6 +2973,7 @@ export const createTeamsAuthHandlers = ({
         : {}),
       intakeForms,
       intakeSubmissions,
+      intakeRecipients: intakeRecipients.map(sanitizeTeamIntakeRecipientForAdmin),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -3092,6 +3221,12 @@ export const createTeamsAuthHandlers = ({
     // and set only by the invite-accept path, never by a client payload.
     if (Object.prototype.hasOwnProperty.call(body || {}, "email")) {
       payload.email = normalizeMemberEmail(body?.email);
+    }
+    // Like email, an omitted phone field is a partial-update no-op. An explicit
+    // empty string is the deliberate clear action. Phone numbers are contact
+    // information only: duplicates are valid and never establish identity.
+    if (Object.prototype.hasOwnProperty.call(body || {}, "phoneNumber")) {
+      payload.phoneNumber = normalizeMemberPhoneNumber(body?.phoneNumber);
     }
     if (Object.prototype.hasOwnProperty.call(body || {}, "title")) {
       payload.title = normalizeShortText(body?.title, { max: 40 });
@@ -4168,6 +4303,8 @@ export const createTeamsAuthHandlers = ({
     "positions",
     "availability",
     "schedulingPreferences",
+    "recurringAvailability",
+    "schedulingFrequency",
     "blockoutDates",
     "notes",
   ]);
@@ -4183,17 +4320,28 @@ export const createTeamsAuthHandlers = ({
     "notes",
   ];
   const normalizeTeamIntakeFields = (value, existing) => {
-    if (value === undefined) {
-      return Array.isArray(existing)
-        ? existing
-        : [...LEGACY_TEAM_INTAKE_FIELDS];
-    }
-    if (!Array.isArray(value)) {
+    const rawFields = value === undefined ? existing : value;
+    if (rawFields !== undefined && !Array.isArray(rawFields)) {
       throw httpError(400, "Form fields must be a list.");
     }
-    return [
-      ...new Set(value.filter((field) => TEAM_INTAKE_FIELD_IDS.has(field))),
+    const normalizedFields = [
+      ...new Set(
+        (Array.isArray(rawFields) ? rawFields : LEGACY_TEAM_INTAKE_FIELDS).filter(
+          (field) => TEAM_INTAKE_FIELD_IDS.has(field),
+        ),
+      ),
     ];
+    return normalizedFields.includes("schedulingPreferences")
+      ? [
+          ...new Set([
+            ...normalizedFields.filter(
+              (field) => field !== "schedulingPreferences",
+            ),
+            "recurringAvailability",
+            "schedulingFrequency",
+          ]),
+        ]
+      : normalizedFields;
   };
 
   const validateTeamIntakeFormPayload = (body, existing = null) => {
@@ -4285,14 +4433,22 @@ export const createTeamsAuthHandlers = ({
       })
       .filter(Boolean);
 
-  const validateTeamIntakeSubmissionPayload = async (body, form) => {
+  const validateTeamIntakeSubmissionPayload = async (
+    body,
+    form,
+    { member: personalizedMember = null } = {},
+  ) => {
     const enabledFields = new Set(
       normalizeTeamIntakeFields(undefined, form?.enabledFields),
     );
-    const firstName = enabledFields.has("firstName")
+    const firstName = personalizedMember
+      ? normalizeShortText(personalizedMember.firstName, { max: 80 })
+      : enabledFields.has("firstName")
       ? normalizeShortText(body?.firstName, { max: 80 })
       : "";
-    const lastName = enabledFields.has("lastName")
+    const lastName = personalizedMember
+      ? normalizeShortText(personalizedMember.lastName, { max: 80 })
+      : enabledFields.has("lastName")
       ? normalizeShortText(body?.lastName, { max: 80 })
       : "";
     if (enabledFields.has("firstName") && !firstName) {
@@ -4309,22 +4465,28 @@ export const createTeamsAuthHandlers = ({
     // volunteers on every existing form the moment this deploys — before the
     // public form even renders an email field. Churches enable it per form, and
     // the default can flip once the client field has shipped everywhere.
-    const email = enabledFields.has("email")
+    const email = personalizedMember
+      ? ""
+      : enabledFields.has("email")
       ? normalizeMemberEmail(body?.email)
       : "";
-    if (enabledFields.has("email") && !email) {
+    if (!personalizedMember && enabledFields.has("email") && !email) {
       throw httpError(400, "Email is required.");
     }
-    const title = enabledFields.has("title")
+    const title = personalizedMember
+      ? ""
+      : enabledFields.has("title")
       ? normalizeShortText(body?.title, { max: 40 })
       : "";
-    if (enabledFields.has("title") && !title) {
+    if (!personalizedMember && enabledFields.has("title") && !title) {
       throw httpError(400, "Title is required.");
     }
-    const birthDate = enabledFields.has("birthDate")
+    const birthDate = personalizedMember
+      ? null
+      : enabledFields.has("birthDate")
       ? normalizeBirthDate(body?.birthDate)
       : null;
-    if (enabledFields.has("birthDate") && !birthDate) {
+    if (!personalizedMember && enabledFields.has("birthDate") && !birthDate) {
       throw httpError(400, "Birthday is required.");
     }
     // The public preview only offers positions from the form's scoped teams
@@ -4388,14 +4550,24 @@ export const createTeamsAuthHandlers = ({
       notes: enabledFields.has("notes")
         ? normalizeLongText(body?.notes, { max: 2000 })
         : "",
-      ...(enabledFields.has("schedulingPreferences")
+      ...(enabledFields.has("schedulingFrequency") ||
+      enabledFields.has("recurringAvailability")
         ? {
-            servingFrequency: normalizeTeamMemberServingFrequency(
-              body?.servingFrequency,
-            ),
-            recurringAvailability: normalizeTeamMemberRecurringAvailability(
-              body?.recurringAvailability,
-            ),
+            ...(enabledFields.has("schedulingFrequency")
+              ? {
+                  servingFrequency: normalizeTeamMemberServingFrequency(
+                    body?.servingFrequency,
+                  ),
+                }
+              : {}),
+            ...(enabledFields.has("recurringAvailability")
+              ? {
+                  recurringAvailability:
+                    normalizeTeamMemberRecurringAvailability(
+                      body?.recurringAvailability,
+                    ),
+                }
+              : {}),
           }
         : {}),
     };
@@ -4674,6 +4846,324 @@ export const createTeamsAuthHandlers = ({
       throw httpError(400, "This form is closed.");
     }
   };
+
+  const createTeamIntakeRecipientId = (formId, memberId) =>
+    `teamIntakeRecipient_${hashValue(`${formId}:${memberId}`).slice(0, 32)}`;
+
+  const createTeamIntakeRecipientTokenNonce = (recipientId) =>
+    hashValue(recipientId).slice(0, 32);
+
+  const signTeamIntakeRecipientToken = (recipientId, nonce) =>
+    crypto
+      .createHmac("sha256", teamIntakeRecipientTokenSecret)
+      .update(`${recipientId}:${nonce}`)
+      .digest("base64url");
+
+  const createTeamIntakeRecipientToken = (recipientId, nonce) =>
+    `${recipientId}.${nonce}.${signTeamIntakeRecipientToken(recipientId, nonce)}`;
+
+  const isValidTeamIntakeRecipientToken = (recipientId, nonce, signature) => {
+    const expected = signTeamIntakeRecipientToken(recipientId, nonce);
+    const expectedBuffer = Buffer.from(expected);
+    const signatureBuffer = Buffer.from(String(signature || ""));
+    return (
+      expectedBuffer.length === signatureBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
+    );
+  };
+
+  const buildTeamIntakeRecipientPublicUrl = (token) =>
+    `${APP_BASE_URL}/a/${encodeURIComponent(String(token || "").trim())}`;
+
+  const getTeamIntakeRecipientContextByToken = async (token) => {
+    const [recipientId, nonce, signature] = String(token || "").split(".");
+    if (
+      !recipientId?.startsWith("teamIntakeRecipient_") ||
+      !nonce ||
+      !signature
+    ) {
+      throw httpError(404, "Request not found.");
+    }
+    const recipient = await getDoc(
+      COLLECTIONS.teamIntakeRecipients,
+      recipientId,
+    );
+    if (
+      !recipient ||
+      recipient.recipientTokenNonce !== nonce ||
+      !isValidTeamIntakeRecipientToken(recipientId, nonce, signature) ||
+      recipient.revokedAt
+    ) {
+      throw httpError(404, "Request not found.");
+    }
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+    const member = await getDoc(
+      COLLECTIONS.teamRosterMembers,
+      recipient.memberId,
+    );
+    if (
+      !form ||
+      form.churchId !== recipient.churchId ||
+      form.archivedAt ||
+      !member ||
+      member.churchId !== recipient.churchId ||
+      member.archivedAt
+    ) {
+      throw httpError(404, "Request not found.");
+    }
+    assertTeamIntakeFormIsOpen(form);
+    return {
+      recipient: { recipientId, ...recipient },
+      form: { formId: recipient.formId, ...form },
+      member: { memberId: recipient.memberId, ...member },
+    };
+  };
+
+  const applyTeamIntakeSubmissionToMember = async ({
+    submission,
+    form,
+    churchId,
+    memberId,
+    createMember = false,
+    adminUserId,
+    now = nowIso(),
+  }) => {
+    const formBelongsToChurch = Boolean(form && form.churchId === churchId);
+    const formCollectsBlockouts =
+      formBelongsToChurch &&
+      Boolean(form.startDate && form.endDate) &&
+      normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
+        "blockoutDates",
+      );
+    const blockoutDates = mergeBlockoutDateRanges(
+      (submission.blockoutRanges || []).map((range) => ({
+        startDate: range.startDate,
+        endDate: range.endDate,
+        notes: "From intake form",
+      })),
+    );
+    const desiredPositionIds = submission.positionIds || [];
+    const submissionAvailability = normalizeServiceAvailability(
+      submission.occurrenceAvailability,
+    );
+    const formTeamIds = formBelongsToChurch ? normalizeIdArray(form.teamIds) : [];
+    const addedTeamIds = new Set();
+    const trackTeams = (ids) => (ids || []).forEach((id) => addedTeamIds.add(id));
+    let member;
+
+    if (createMember) {
+      member = await upsertTeamEntity({
+        kind: "member",
+        churchId,
+        payload: {
+          title: normalizeShortText(submission.title, { max: 40 }),
+          firstName: submission.firstName,
+          lastName: submission.lastName,
+          email: normalizeMemberEmail(submission.email),
+          birthDate: normalizeBirthDate(submission.birthDate),
+          isMinor: isMinorFromBirthDate(submission.birthDate) ?? false,
+          servingFrequency: submission.servingFrequency || "as_needed",
+          recurringAvailability:
+            submission.recurringAvailability ||
+            normalizeTeamMemberRecurringAvailability(null),
+          positionIds: [],
+          desiredPositionIds,
+          serviceAvailability: submissionAvailability,
+          blockoutDates,
+          notes: normalizeLongText(submission.notes),
+        },
+        adminUserId,
+      });
+      trackTeams(
+        await addMemberToTeamsForPositions({
+          churchId,
+          positionIds: desiredPositionIds,
+          memberId: member.memberId,
+          adminUserId,
+        }),
+      );
+      trackTeams(
+        await addMemberToTeams({
+          churchId,
+          teamIds: formTeamIds,
+          memberId: member.memberId,
+          adminUserId,
+        }),
+      );
+    } else {
+      member = await assertTeamEntityInChurch("member", memberId, churchId, {
+        label: "Member",
+        active: false,
+      });
+      const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
+      const nextBlockoutDates = formCollectsBlockouts
+        ? replaceBlockoutDateRangesInPeriod({
+            existingRanges: member.blockoutDates,
+            replacementRanges: blockoutDates,
+            startDate: form.startDate,
+            endDate: form.endDate,
+          })
+        : formBelongsToChurch
+          ? member.blockoutDates || []
+          : mergeBlockoutDateRanges([
+              ...(member.blockoutDates || []),
+              ...blockoutDates,
+            ]);
+      const nextServiceAvailability = {
+        ...(member.serviceAvailability || {}),
+        ...submissionAvailability,
+      };
+      const submittedEmail = normalizeMemberEmail(submission.email);
+      const submittedTitle = normalizeShortText(submission.title, { max: 40 });
+      const submittedBirthDate = normalizeBirthDate(submission.birthDate);
+      await setDoc(
+        COLLECTIONS.teamRosterMembers,
+        member.memberId,
+        {
+          desiredPositionIds: nextDesiredPositionIds,
+          serviceAvailability: nextServiceAvailability,
+          blockoutDates: nextBlockoutDates,
+          ...(member.email ? {} : submittedEmail ? { email: submittedEmail } : {}),
+          ...(!member.title && submittedTitle ? { title: submittedTitle } : {}),
+          ...(!member.birthDate && submittedBirthDate
+            ? {
+                birthDate: submittedBirthDate,
+                isMinor:
+                  isMinorFromBirthDate(submittedBirthDate) ??
+                  Boolean(member.isMinor),
+              }
+            : {}),
+          ...(submission.servingFrequency
+            ? { servingFrequency: submission.servingFrequency }
+            : {}),
+          ...(submission.recurringAvailability
+            ? { recurringAvailability: submission.recurringAvailability }
+            : {}),
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      trackTeams(
+        await addMemberToTeamsForPositions({
+          churchId,
+          positionIds: nextDesiredPositionIds,
+          memberId: member.memberId,
+          adminUserId,
+        }),
+      );
+      trackTeams(
+        await addMemberToTeams({
+          churchId,
+          teamIds: formTeamIds,
+          memberId: member.memberId,
+          adminUserId,
+        }),
+      );
+      member = await getTeamEntity("member", member.memberId);
+    }
+
+    return {
+      member,
+      updatedTeams: await loadTeamsByIds(churchId, Array.from(addedTeamIds)),
+      application: {
+        status: "applied",
+        appliedAt: now,
+        appliedByUid: adminUserId,
+        appliedMemberId: member.memberId,
+        appliedMemberCreated: Boolean(createMember),
+      },
+    };
+  };
+
+  const teamIntakeRecipientSubmissionQueues = new Map();
+  const enqueueTeamIntakeRecipientSubmission = (recipientId, task) => {
+    const previous =
+      teamIntakeRecipientSubmissionQueues.get(recipientId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    teamIntakeRecipientSubmissionQueues.set(recipientId, settled);
+    void settled.finally(() => {
+      if (teamIntakeRecipientSubmissionQueues.get(recipientId) === settled) {
+        teamIntakeRecipientSubmissionQueues.delete(recipientId);
+      }
+    });
+    return run;
+  };
+
+  const looksLikeTeamIntakeRecipientToken = (token) =>
+    String(token || "")
+      .split(".")[0]
+      ?.startsWith("teamIntakeRecipient_") || false;
+
+  const submitTeamIntakeRecipient = async (req, token) =>
+    enqueueTeamIntakeRecipientSubmission(token, async () => {
+      const { recipient, form, member } =
+        await getTeamIntakeRecipientContextByToken(token);
+      const payload = await validateTeamIntakeSubmissionPayload(
+        req.body,
+        form,
+        { member },
+      );
+      const submittedAt = nowIso();
+      const submissionId =
+        recipient.submissionId ||
+        `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+      const submission = {
+        ...payload,
+        submissionId,
+        formId: form.formId,
+        churchId: form.churchId,
+        status: "new",
+        submittedAt,
+      };
+
+      // A recipient has one current response. Reusing its deterministic audit
+      // record makes retries safe: a lost response or a second submission never
+      // creates a second applied side effect or a second queue row.
+      await setDoc(
+        COLLECTIONS.teamIntakeSubmissions,
+        submissionId,
+        submission,
+        { merge: false },
+      );
+      const application = await applyTeamIntakeSubmissionToMember({
+        submission,
+        form,
+        churchId: form.churchId,
+        memberId: member.memberId,
+        adminUserId: `recipient:${recipient.recipientId}`,
+        now: submittedAt,
+      });
+      const applicationUpdate = {
+        ...application.application,
+        reviewedAt: submittedAt,
+        reviewedByUid: `recipient:${recipient.recipientId}`,
+        updatedAt: submittedAt,
+        updatedByUid: `recipient:${recipient.recipientId}`,
+      };
+      await setDoc(
+        COLLECTIONS.teamIntakeSubmissions,
+        submissionId,
+        applicationUpdate,
+        { merge: true },
+      );
+      await setDoc(
+        COLLECTIONS.teamIntakeRecipients,
+        recipient.recipientId,
+        {
+          respondedAt: submittedAt,
+          submissionId,
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${recipient.recipientId}`,
+        },
+        { merge: true },
+      );
+      return { success: true, submissionId };
+    });
 
   const getScheduleAssignmentCellMemberIds = (cell) => {
     const normalized = normalizeScheduleAssignmentCell(cell);
@@ -7331,6 +7821,238 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async createTeamIntakeRecipients(req, res) {
+      try {
+        await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const form = await getDoc(
+          COLLECTIONS.teamIntakeForms,
+          req.params.formId,
+        );
+        if (!form || form.churchId !== req.params.churchId) {
+          throw httpError(404, "Intake form not found.");
+        }
+        assertTeamIntakeFormIsOpen(form);
+        const memberIds = normalizeIdArray(req.body?.memberIds).slice(0, 500);
+        if (memberIds.length === 0) {
+          throw httpError(400, "Choose at least one member.");
+        }
+        const [members, positions, teams] = await Promise.all([
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamRosterMembers,
+            "memberId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teams,
+            "teamId",
+            req.params.churchId,
+          ),
+        ]);
+        const positionTeamById = new Map(
+          positions.map((position) => [position.positionId, position.teamId]),
+        );
+        const formTeamIds = new Set(normalizeIdArray(form.teamIds));
+        const now = nowIso();
+        const recipients = [];
+        for (const memberId of memberIds) {
+          const member = members.find((item) => item.memberId === memberId);
+          if (!member || member.archivedAt) {
+            throw httpError(404, "Member not found or archived.");
+          }
+          if (formTeamIds.size > 0) {
+            const memberTeamIds = new Set([
+              ...Object.keys(member.teamMemberships || {}),
+              ...(member.positionIds || [])
+                .map((positionId) => positionTeamById.get(positionId))
+                .filter(Boolean),
+              ...teams
+                .filter((team) => (team.memberIds || []).includes(memberId))
+                .map((team) => team.teamId),
+            ]);
+            if (![...formTeamIds].some((teamId) => memberTeamIds.has(teamId))) {
+              throw httpError(
+                400,
+                "One or more selected members are outside this form's team scope.",
+              );
+            }
+          }
+
+          const recipientId = createTeamIntakeRecipientId(
+            req.params.formId,
+            memberId,
+          );
+          const existing = await getDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+          );
+          const isActive = Boolean(existing && !existing.revokedAt);
+          const recipient = isActive
+            ? existing
+            : {
+                recipientId,
+                churchId: req.params.churchId,
+                formId: req.params.formId,
+                memberId,
+                createdAt: existing?.createdAt || now,
+                createdByUid: admin.user.uid,
+                recipientTokenNonce: existing?.revokedAt
+                  ? randomSecret(16)
+                  : createTeamIntakeRecipientTokenNonce(recipientId),
+                revokedAt: null,
+                respondedAt: null,
+                submissionId: null,
+                linkCopiedAt: null,
+                linkCopiedByUid: null,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+              };
+          if (!isActive) {
+            await setDoc(
+              COLLECTIONS.teamIntakeRecipients,
+              recipientId,
+              recipient,
+              { merge: Boolean(existing) },
+            );
+          }
+          recipients.push(
+            sanitizeTeamIntakeRecipientForAdmin({
+              recipientId,
+              ...recipient,
+            }),
+          );
+        }
+        await addSecurityEvent({
+          type: "team_intake_recipients_created",
+          churchId: req.params.churchId,
+          userId: admin.user.uid,
+          formId: req.params.formId,
+          memberIds,
+        });
+        return res.json({ success: true, recipients });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not create individual intake requests.",
+        );
+      }
+    },
+
+    async getTeamIntakeRecipientLink(req, res) {
+      try {
+        await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const { form, member } = await getTeamIntakeRecipientContextByToken(
+          createTeamIntakeRecipientToken(
+            recipient.recipientId,
+            recipient.recipientTokenNonce,
+          ),
+        );
+        const copiedAt = nowIso();
+        const markCopied = req.body?.markCopied === true;
+        const update = {
+          ...(markCopied
+            ? {
+                linkCopiedAt: copiedAt,
+                linkCopiedByUid: admin.user.uid,
+              }
+            : {}),
+          updatedAt: copiedAt,
+          updatedByUid: admin.user.uid,
+        };
+        await setDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId, update, {
+          merge: true,
+        });
+        const nextRecipient = {
+          ...recipient,
+          ...update,
+        };
+        if (markCopied) {
+          await addSecurityEvent({
+            type: "team_intake_recipient_link_copied",
+            churchId: req.params.churchId,
+            userId: admin.user.uid,
+            formId: form.formId,
+            memberId: member.memberId,
+            recipientId: recipient.recipientId,
+          });
+        }
+        return res.json({
+          success: true,
+          recipient: sanitizeTeamIntakeRecipientForAdmin(nextRecipient),
+          publicUrl: buildTeamIntakeRecipientPublicUrl(
+            createTeamIntakeRecipientToken(
+              recipient.recipientId,
+              recipient.recipientTokenNonce,
+            ),
+          ),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not create the individual intake link.",
+        );
+      }
+    },
+
+    async revokeTeamIntakeRecipient(req, res) {
+      try {
+        await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const revokedAt = nowIso();
+        await setDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          recipient.recipientId,
+          {
+            revokedAt,
+            updatedAt: revokedAt,
+            updatedByUid: admin.user.uid,
+          },
+          { merge: true },
+        );
+        const nextRecipient = { ...recipient, revokedAt, updatedAt: revokedAt };
+        await addSecurityEvent({
+          type: "team_intake_recipient_revoked",
+          churchId: req.params.churchId,
+          userId: admin.user.uid,
+          formId: recipient.formId,
+          memberId: recipient.memberId,
+          recipientId: recipient.recipientId,
+        });
+        return res.json({
+          success: true,
+          recipient: sanitizeTeamIntakeRecipientForAdmin(nextRecipient),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not revoke the individual intake request.",
+        );
+      }
+    },
+
     async getTeamIntakePreview(req, res) {
       try {
         enforcePublicTokenRateLimit({
@@ -7341,7 +8063,18 @@ export const createTeamsAuthHandlers = ({
           windowMs: 10 * 60 * 1000,
           blockMs: 10 * 60 * 1000,
         });
-        const { form } = await getTeamIntakeFormByToken(req.query?.token);
+        const token = String(req.query?.token || "");
+        const recipientOnly =
+          req.teamIntakeRecipientOnly === true ||
+          req.query?.recipientOnly === "true";
+        if (recipientOnly !== looksLikeTeamIntakeRecipientToken(token)) {
+          throw httpError(404, "Request not found.");
+        }
+        const personalizedContext = looksLikeTeamIntakeRecipientToken(token)
+          ? await getTeamIntakeRecipientContextByToken(token)
+          : null;
+        const { form, member } =
+          personalizedContext || (await getTeamIntakeFormByToken(token));
         assertTeamIntakeFormIsOpen(form);
         const church = await getDoc(COLLECTIONS.churches, form.churchId);
         const churchLogoUrl = await readChurchPublicBoardHeaderLogoUrl(
@@ -7400,6 +8133,9 @@ export const createTeamsAuthHandlers = ({
             availabilityMessage: form.availabilityMessage || "",
             notesMessage: form.notesMessage || "",
           },
+          ...(member
+            ? { recipient: { firstName: member.firstName || "there" } }
+            : {}),
           // Allowlist the fields the public form needs — never ship internal
           // position columns (description, order, timestamps) on a public link.
           positions: positions.map((position) => ({
@@ -7429,7 +8165,17 @@ export const createTeamsAuthHandlers = ({
           windowMs: 10 * 60 * 1000,
           blockMs: 30 * 60 * 1000,
         });
-        const { form } = await getTeamIntakeFormByToken(req.query?.token);
+        const token = String(req.query?.token || "");
+        const recipientOnly =
+          req.teamIntakeRecipientOnly === true ||
+          req.query?.recipientOnly === "true";
+        if (recipientOnly !== looksLikeTeamIntakeRecipientToken(token)) {
+          throw httpError(404, "Request not found.");
+        }
+        if (looksLikeTeamIntakeRecipientToken(token)) {
+          return res.json(await submitTeamIntakeRecipient(req, token));
+        }
+        const { form } = await getTeamIntakeFormByToken(token);
         assertTeamIntakeFormIsOpen(form);
         const payload = await validateTeamIntakeSubmissionPayload(
           req.body,
@@ -9275,193 +10021,18 @@ export const createTeamsAuthHandlers = ({
             COLLECTIONS.teamIntakeForms,
             submission.formId,
           );
-          const formBelongsToChurch = Boolean(
-            intakeForm && intakeForm.churchId === req.params.churchId,
-          );
-          const formCollectsBlockouts =
-            formBelongsToChurch &&
-            Boolean(intakeForm.startDate && intakeForm.endDate) &&
-            normalizeTeamIntakeFields(
-              undefined,
-              intakeForm.enabledFields,
-            ).includes("blockoutDates");
-          const blockoutDates = mergeBlockoutDateRanges(
-            (submission.blockoutRanges || []).map((range) => ({
-              startDate: range.startDate,
-              endDate: range.endDate,
-              notes: "From intake form",
-            })),
-          );
-          // Intake positions are what the member *wants* to do, not what they
-          // are eligible to be scheduled for. Apply records desire only; an
-          // admin promotes desired positions into `positionIds` (the schedule
-          // gate) explicitly. Never auto-grant eligibility here.
-          const desiredPositionIds = submission.positionIds || [];
-          // Per-service availability the submitter marked. "unavailable" entries
-          // become a hard scheduling constraint on the member.
-          const submissionAvailability = normalizeServiceAvailability(
-            submission.occurrenceAvailability,
-          );
-          // Teams the member should join so they appear on those schedules
-          // (shadow-eligible even with no positions): the teams that own their
-          // requested positions, plus the teams the form explicitly collects
-          // for. An all-teams form (empty teamIds) intentionally adds no extra
-          // teams beyond the requested-position ones — we never mass-add.
-          const formTeamIds = formBelongsToChurch
-            ? normalizeIdArray(intakeForm.teamIds)
-            : [];
-          const addedTeamIds = new Set();
-          const trackTeams = (ids) =>
-            (ids || []).forEach((id) => addedTeamIds.add(id));
-          if (req.body?.createMember) {
-            member = await upsertTeamEntity({
-              kind: "member",
-              churchId: req.params.churchId,
-              payload: {
-                title: normalizeShortText(submission.title, { max: 40 }),
-                firstName: submission.firstName,
-                lastName: submission.lastName,
-                email: normalizeMemberEmail(submission.email),
-                birthDate: normalizeBirthDate(submission.birthDate),
-                isMinor: isMinorFromBirthDate(submission.birthDate) ?? false,
-                servingFrequency: submission.servingFrequency || "as_needed",
-                recurringAvailability:
-                  submission.recurringAvailability ||
-                  normalizeTeamMemberRecurringAvailability(null),
-                positionIds: [],
-                desiredPositionIds,
-                serviceAvailability: submissionAvailability,
-                blockoutDates,
-                notes: normalizeLongText(submission.notes),
-              },
-              adminUserId: admin.user.uid,
-            });
-            // Surface the new member on the rosters of teams that own their
-            // desired positions, plus the form's scoped teams, so an admin can
-            // find and (if needed) promote them. This is team visibility only;
-            // assignability is still gated by `positionIds`, which stays empty
-            // until promotion — so they can only be shadowed in for now.
-            trackTeams(
-              await addMemberToTeamsForPositions({
-                churchId: req.params.churchId,
-                positionIds: desiredPositionIds,
-                memberId: member.memberId,
-                adminUserId: admin.user.uid,
-              }),
-            );
-            trackTeams(
-              await addMemberToTeams({
-                churchId: req.params.churchId,
-                teamIds: formTeamIds,
-                memberId: member.memberId,
-                adminUserId: admin.user.uid,
-              }),
-            );
-          } else {
-            const memberId = normalizeShortText(req.body?.memberId, {
-              max: 160,
-            });
-            member = await assertTeamEntityInChurch(
-              "member",
-              memberId,
-              req.params.churchId,
-              { label: "Member", active: false },
-            );
-            // Latest intake wins for desired positions; eligibility
-            // (`positionIds`) is left untouched.
-            const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
-            // A form's blockout field is authoritative for that form's period;
-            // forms that do not collect blockouts must not clear existing data.
-            // Keep the old merge fallback for orphaned legacy submissions.
-            const nextBlockoutDates = formCollectsBlockouts
-              ? replaceBlockoutDateRangesInPeriod({
-                  existingRanges: member.blockoutDates,
-                  replacementRanges: blockoutDates,
-                  startDate: intakeForm.startDate,
-                  endDate: intakeForm.endDate,
-                })
-              : formBelongsToChurch
-                ? member.blockoutDates || []
-                : mergeBlockoutDateRanges([
-                    ...(member.blockoutDates || []),
-                    ...blockoutDates,
-                  ]);
-            // Merge availability per occurrence; the latest submission wins for
-            // any occurrence it covers, while older occurrences are preserved.
-            const nextServiceAvailability = {
-              ...(member.serviceAvailability || {}),
-              ...submissionAvailability,
-            };
-            // Backfill an address only when the member has none. A member who
-            // submits intake is describing themselves, but an admin-entered
-            // address is still the more deliberate record — never clobber it.
-            const submittedEmail = normalizeMemberEmail(submission.email);
-            const nextEmail = member.email ? member.email : submittedEmail;
-            const submittedTitle = normalizeShortText(submission.title, {
-              max: 40,
-            });
-            const submittedBirthDate = normalizeBirthDate(submission.birthDate);
-            await setDoc(
-              COLLECTIONS.teamRosterMembers,
-              member.memberId,
-              {
-                desiredPositionIds: nextDesiredPositionIds,
-                serviceAvailability: nextServiceAvailability,
-                blockoutDates: nextBlockoutDates,
-                ...(nextEmail ? { email: nextEmail } : {}),
-                ...(!member.title && submittedTitle
-                  ? { title: submittedTitle }
-                  : {}),
-                ...(!member.birthDate && submittedBirthDate
-                  ? {
-                      birthDate: submittedBirthDate,
-                      isMinor:
-                        isMinorFromBirthDate(submittedBirthDate) ??
-                        Boolean(member.isMinor),
-                    }
-                  : {}),
-                ...(submission.servingFrequency
-                  ? { servingFrequency: submission.servingFrequency }
-                  : {}),
-                ...(submission.recurringAvailability
-                  ? { recurringAvailability: submission.recurringAvailability }
-                  : {}),
-                updatedAt: now,
-                updatedByUid: admin.user.uid,
-              },
-              { merge: true },
-            );
-            // Mirror the create path: surface the linked member on the rosters
-            // of teams that own their desired positions, plus the form's scoped
-            // teams. Visibility only — assignability stays gated by
-            // `positionIds`, which we never touch here.
-            trackTeams(
-              await addMemberToTeamsForPositions({
-                churchId: req.params.churchId,
-                positionIds: nextDesiredPositionIds,
-                memberId: member.memberId,
-                adminUserId: admin.user.uid,
-              }),
-            );
-            trackTeams(
-              await addMemberToTeams({
-                churchId: req.params.churchId,
-                teamIds: formTeamIds,
-                memberId: member.memberId,
-                adminUserId: admin.user.uid,
-              }),
-            );
-            member = await getTeamEntity("member", member.memberId);
-          }
-          update.status = "applied";
-          update.appliedAt = now;
-          update.appliedByUid = admin.user.uid;
-          update.appliedMemberId = member.memberId;
-          update.appliedMemberCreated = Boolean(req.body?.createMember);
-          updatedTeams = await loadTeamsByIds(
-            req.params.churchId,
-            Array.from(addedTeamIds),
-          );
+          const application = await applyTeamIntakeSubmissionToMember({
+            submission,
+            form: intakeForm,
+            churchId: req.params.churchId,
+            memberId: normalizeShortText(req.body?.memberId, { max: 160 }),
+            createMember: Boolean(req.body?.createMember),
+            adminUserId: admin.user.uid,
+            now,
+          });
+          member = application.member;
+          updatedTeams = application.updatedTeams;
+          Object.assign(update, application.application);
         } else if (action === "dismissed") {
           update.status = "dismissed";
         } else if (action === "reviewed") {

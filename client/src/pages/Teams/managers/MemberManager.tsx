@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Plus, X } from "lucide-react";
+import { Camera, Copy, Plus, X } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
@@ -11,6 +11,7 @@ import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
+import { formatUsPhoneNumber } from "../../../utils/phoneNumber";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -127,6 +128,7 @@ const buildMemberDraft = (
   firstName: member?.firstName || "",
   lastName: member?.lastName || "",
   email: member?.email || "",
+  phoneNumber: formatUsPhoneNumber(member?.phoneNumber),
   birthDate: member?.birthDate || null,
   isMinor: Boolean(member?.isMinor),
   servingFrequency: member?.servingFrequency || DEFAULT_SERVING_FREQUENCY,
@@ -555,6 +557,21 @@ const MemberManager = ({
     }
   };
 
+  const copySmsOptInLink = async () => {
+    if (!navigator.clipboard?.writeText) {
+      showToast("Couldn't copy the SMS opt-in link.", "error");
+      return;
+    }
+
+    try {
+      const url = new URL("/sms-opt-in", window.location.origin).toString();
+      await navigator.clipboard.writeText(url);
+      showToast("SMS opt-in link copied.");
+    } catch {
+      showToast("Couldn't copy the SMS opt-in link.", "error");
+    }
+  };
+
   /**
    * Claims or releases this member record for the signed-in account.
    *
@@ -683,6 +700,7 @@ const MemberManager = ({
         firstName: body.firstName.trim(),
         lastName: body.lastName.trim(),
         email: (body.email || "").trim().toLowerCase(),
+        phoneNumber: (body.phoneNumber || "").trim(),
         birthDate: body.birthDate || null,
         isMinor: Boolean(body.isMinor),
         servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
@@ -1216,7 +1234,7 @@ const MemberManager = ({
               </span>
             </div>
           ) : (
-            <Input
+              <Input
               label="Email"
               type="email"
               value={draft.email || ""}
@@ -1226,6 +1244,47 @@ const MemberManager = ({
               }
             />
           )}
+          <Input
+            label="Mobile"
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            value={draft.phoneNumber || ""}
+            helperText="U.S. numbers are stored securely in E.164 format."
+            onChange={(phoneNumber) =>
+              setDraft((d) => ({ ...d, phoneNumber: String(phoneNumber) }))
+            }
+          />
+          {editing && canEdit ? (
+            <div className="flex flex-col gap-1 border-t border-gray-700/50 pt-3">
+              <span className="text-sm text-gray-300">SMS consent</span>
+              <span className="text-xs text-gray-400">
+                Share the public opt-in page with this member. Consent is recorded
+                separately and is not linked to this member record.
+              </span>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="textLink"
+                  padding="p-0"
+                  svg={Copy}
+                  iconSize="sm"
+                  onClick={() => void copySmsOptInLink()}
+                >
+                  Copy SMS opt-in link
+                </Button>
+                <Button
+                  component="link"
+                  variant="textLink"
+                  padding="p-0"
+                  to="/sms-opt-in"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open SMS opt-in page
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet

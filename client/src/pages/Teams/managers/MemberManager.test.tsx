@@ -66,6 +66,7 @@ const buildData = (overrides: Partial<TeamsData> = {}): TeamsData => ({
   schedules: [],
   intakeForms: [],
   intakeSubmissions: [],
+  intakeRecipients: [],
   ...overrides,
 }) as TeamsData;
 
@@ -682,6 +683,37 @@ describe("MemberManager notification readiness", () => {
     // Surfaced in the list so it is fixable where addresses are entered,
     // rather than only visible after opening each member.
     expect(screen.getByText("No email")).toBeInTheDocument();
+  });
+
+  it("offers contextual SMS opt-in link actions for a saved member", async () => {
+    const user = userEvent.setup();
+    const originalClipboard = navigator.clipboard;
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+      await user.click(screen.getByRole("button", { name: /Has Email/ }));
+
+      expect(
+        screen.getByRole("link", { name: /Open SMS opt-in page/i }),
+      ).toHaveAttribute("href", "/sms-opt-in");
+
+      await user.click(
+        screen.getByRole("button", { name: /Copy SMS opt-in link/i }),
+      );
+      expect(writeText).toHaveBeenCalledWith(
+        `${window.location.origin}/sms-opt-in`,
+      );
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
   });
 
   it("shows the invite disabled, with the reason, when there is no address", async () => {

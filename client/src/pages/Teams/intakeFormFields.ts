@@ -18,7 +18,8 @@ export const ALL_INTAKE_FORM_FIELDS: TeamIntakeFieldId[] = [
   "birthDate",
   "positions",
   "availability",
-  "schedulingPreferences",
+  "recurringAvailability",
+  "schedulingFrequency",
   "blockoutDates",
   "notes",
 ];
@@ -34,7 +35,8 @@ export const INTAKE_FORM_FIELD_OPTIONS: Array<{
   { id: "birthDate", label: "Birthday (year optional)" },
   { id: "positions", label: "Positions" },
   { id: "availability", label: "Service date availability" },
-  { id: "schedulingPreferences", label: "Scheduling preferences" },
+  { id: "recurringAvailability", label: "Scheduling preferences" },
+  { id: "schedulingFrequency", label: "Scheduling frequency" },
   { id: "blockoutDates", label: "Blockout dates" },
   { id: "notes", label: "Notes" },
 ];
@@ -43,5 +45,11 @@ export const resolveIntakeFormFields = (
   form: Pick<TeamIntakeForm, "enabledFields">,
 ): TeamIntakeFieldId[] =>
   Array.isArray(form.enabledFields)
-    ? form.enabledFields
+    ? [...new Set(
+        form.enabledFields.flatMap((field): TeamIntakeFieldId[] =>
+          field === "schedulingPreferences"
+            ? ["recurringAvailability", "schedulingFrequency"]
+            : [field],
+        ),
+      )]
     : LEGACY_INTAKE_FORM_FIELDS;

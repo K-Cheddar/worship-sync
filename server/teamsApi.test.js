@@ -4245,6 +4245,12 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               sourcePlanningManaged: true,
               type: "song",
               title: richText("Great Are You Lord"),
+              sourceElementTypeRaw: "Special Music",
+              sourceContentTitleRaw: "Great Are You Lord",
+              sourceLedByAssignments: [
+                { kind: "person", id: "person-1", name: "Jane Doe" },
+                { kind: "teamPosition", id: "position-1", name: "Choir" },
+              ],
               durationMinutes: 5,
               notes: richText("Red mic"),
               teamNotes: [
@@ -4263,6 +4269,21 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.deepEqual(
     created.payload.servicePlan.sections[0].elements[0].title,
     richText("Great Are You Lord"),
+  );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceElementTypeRaw,
+    "Special Music",
+  );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceContentTitleRaw,
+    "Great Are You Lord",
+  );
+  assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].sourceLedByAssignments,
+    [
+      { kind: "person", id: "person-1", name: "Jane Doe" },
+      { kind: "teamPosition", id: "position-1", name: "Choir" },
+    ],
   );
   assert.equal(
     created.payload.servicePlan.sections[0].sourcePlanningManaged,
@@ -4905,6 +4926,34 @@ test("service plan elements round-trip scripture refs and raw source strings", a
                   version: "KJV",
                 },
               ],
+              resources: [
+                {
+                  id: "resource-youtube",
+                  type: "youtube",
+                  title: "Rehearsal video",
+                  provider: "youtube",
+                  mediaId: "dQw4w9WgXcQ",
+                  url: "https://youtu.be/dQw4w9WgXcQ",
+                },
+                {
+                  id: "resource-notes",
+                  type: "text",
+                  title: "Sermon notes",
+                  data: { text: "Welcome the guest speaker." },
+                },
+                {
+                  id: "resource-future",
+                  type: "future-provider",
+                  title: "Future resource",
+                  data: { providerSpecificId: "keep-me" },
+                },
+                {
+                  id: "resource-file",
+                  type: "document",
+                  title: "Church resource",
+                  data: { resourceId: "churchResource_123" },
+                },
+              ],
             },
           ],
         },
@@ -4938,6 +4987,34 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   assert.deepEqual(third.songRef, third.songRefs[0]);
   assert.deepEqual(third.scriptureRef, third.scriptureRefs[0]);
   assert.equal(third.scriptureRef.label, "Psalm 23 (KJV)");
+  assert.deepEqual(third.resources, [
+    {
+      id: "resource-youtube",
+      type: "youtube",
+      title: "Rehearsal video",
+      url: "https://youtu.be/dQw4w9WgXcQ",
+      provider: "youtube",
+      mediaId: "dQw4w9WgXcQ",
+    },
+    {
+      id: "resource-notes",
+      type: "text",
+      title: "Sermon notes",
+      data: { text: "Welcome the guest speaker." },
+    },
+    {
+      id: "resource-future",
+      type: "future-provider",
+      title: "Future resource",
+      data: { providerSpecificId: "keep-me" },
+    },
+    {
+      id: "resource-file",
+      type: "document",
+      title: "Church resource",
+      data: { resourceId: "churchResource_123" },
+    },
+  ]);
 });
 
 test("service plan templates: create, update in place, list, scope, and delete", async (t) => {
@@ -7587,4 +7664,252 @@ test("reshaping a schedule's occurrences does not leave answers behind", async (
   // re-adding the same person resurrects their decline.
   assert.equal(saved.responses?.[occurrenceId]?.[cellKey], undefined);
   assert.ok(memberId);
+});
+
+test("roster phone numbers normalize, validate, and allow shared numbers", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("phone_numbers");
+  const body = {
+    firstName: "Phone",
+    lastName: "One",
+    positionIds: [],
+    blockoutDates: [],
+    phoneNumber: "(954) 555-1234",
+  };
+  const first = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body,
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.payload.member.phoneNumber, "+19545551234");
+
+  const omitted = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: first.payload.member.memberId },
+    body: {
+      firstName: "Phone",
+      lastName: "One",
+      positionIds: [],
+      blockoutDates: [],
+    },
+  });
+  assert.equal(omitted.statusCode, 200);
+  assert.equal(omitted.payload.member.phoneNumber, "+19545551234");
+
+  const duplicate = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { ...body, firstName: "Phone", lastName: "Two" },
+  });
+  assert.equal(duplicate.statusCode, 200);
+  assert.equal(duplicate.payload.member.phoneNumber, "+19545551234");
+
+  const invalid = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { ...body, phoneNumber: "(123) 555-1234" },
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.match(invalid.payload.errorMessage, /valid U\.S\. mobile number/i);
+});
+
+test("individual intake recipients personalize and automatically apply one auditable response", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("individual_intake");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [{ firstName: "Kevin", lastName: "Cheddar", positions: ["Vocal"] }],
+  });
+  const memberId = memberIds.Kevin;
+  const occurrenceId = "svc@2026-10-04T10:00:00.000Z";
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "October availability",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      teamIds: [teamId],
+      active: true,
+      availabilityOccurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc",
+          name: "Sunday",
+          startsAt: "2026-10-04T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  const formId = form.payload.form.formId;
+
+  const firstCreate = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(firstCreate.statusCode, 200);
+  const recipient = firstCreate.payload.recipients[0];
+  assert.ok(recipient.recipientId);
+
+  const secondCreate = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(secondCreate.statusCode, 200);
+  assert.equal(secondCreate.payload.recipients[0].recipientId, recipient.recipientId);
+
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+    body: { markCopied: true },
+  });
+  assert.equal(link.statusCode, 200);
+  assert.match(link.payload.publicUrl, /\/a\//);
+  assert.ok(!link.payload.publicUrl.includes("Kevin"));
+  const token = link.payload.publicUrl.split("/a/")[1];
+  assert.ok(token);
+
+  const anonymousPath = createRes();
+  await authHandlers.getTeamIntakePreview(
+    { params: {}, headers: {}, session: createSession(), query: { token } },
+    anonymousPath,
+  );
+  assert.equal(anonymousPath.statusCode, 404);
+
+  const preview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token, recipientOnly: "true" },
+    },
+    preview,
+  );
+  assert.equal(preview.statusCode, 200);
+  assert.equal(preview.payload.recipient.firstName, "Kevin");
+  assert.ok(!JSON.stringify(preview.payload).includes("Cheddar"));
+  assert.ok(!JSON.stringify(preview.payload).includes("recipientTokenNonce"));
+
+  const beforeSubmit = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.ok(
+    !beforeSubmit.payload.intakeRecipients.find(
+      (item) => item.recipientId === recipient.recipientId,
+    ).respondedAt,
+  );
+
+  const submit = async (availability) => {
+    const response = createRes();
+    await authHandlers.submitTeamIntake(
+      {
+        params: {},
+        headers: {},
+        session: createSession(),
+        query: { token, recipientOnly: "true" },
+        body: {
+          firstName: "",
+          lastName: "",
+          email: "",
+          positionIds: [positionIds.Vocal],
+          occurrenceAvailability: { [occurrenceId]: availability },
+          blockoutRanges: [],
+          notes: "",
+        },
+      },
+      response,
+    );
+    return response;
+  };
+
+  const firstSubmit = await submit("unavailable");
+  assert.equal(firstSubmit.statusCode, 200, JSON.stringify(firstSubmit.payload));
+  const firstSubmissionId = firstSubmit.payload.submissionId;
+  const afterFirst = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const firstSubmission = afterFirst.payload.intakeSubmissions.find(
+    (item) => item.submissionId === firstSubmissionId,
+  );
+  const firstRecipient = afterFirst.payload.intakeRecipients.find(
+    (item) => item.recipientId === recipient.recipientId,
+  );
+  const firstMember = afterFirst.payload.members.find(
+    (item) => item.memberId === memberId,
+  );
+  assert.equal(firstSubmission.status, "applied");
+  assert.equal(firstSubmission.appliedMemberId, memberId);
+  assert.equal(firstMember.serviceAvailability[occurrenceId], "unavailable");
+  assert.equal(firstRecipient.submissionId, firstSubmissionId);
+  assert.ok(firstRecipient.respondedAt);
+
+  const repeatedSubmit = await submit("available");
+  assert.equal(repeatedSubmit.statusCode, 200);
+  assert.equal(repeatedSubmit.payload.submissionId, firstSubmissionId);
+  const afterRepeat = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.equal(
+    afterRepeat.payload.intakeSubmissions.filter(
+      (item) => item.formId === formId,
+    ).length,
+    1,
+  );
+  assert.equal(
+    afterRepeat.payload.members.find((item) => item.memberId === memberId)
+      .serviceAvailability[occurrenceId],
+    "available",
+  );
+
+  const revoked = await callHandler(authHandlers.revokeTeamIntakeRecipient, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  assert.equal(revoked.statusCode, 200);
+  const revokedPreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token, recipientOnly: "true" },
+    },
+    revokedPreview,
+  );
+  assert.equal(revokedPreview.statusCode, 404);
+});
+
+test("individual intake recipient creation requires Teams edit permission", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("individual_intake_permission");
+  const { teamId, memberIds } = await seedTeam(admin, {
+    teamName: "Worship",
+    members: [{ firstName: "Rae", lastName: "Kim" }],
+  });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context: admin,
+    body: {
+      name: "October",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      teamIds: [teamId],
+      active: true,
+    },
+  });
+  const viewer = await createHumanContext("individual_intake_viewer", {
+    churchId: admin.churchId,
+    userId: "individual_intake_viewer",
+    email: "individual-intake-viewer@example.com",
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "view" },
+  });
+  const blocked = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: viewer,
+    params: { formId: form.payload.form.formId },
+    body: { memberIds: [memberIds.Rae] },
+  });
+  assert.equal(blocked.statusCode, 403);
 });

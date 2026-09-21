@@ -1,6 +1,7 @@
 import type {
   TeamRecord,
   TeamIntakeForm,
+  TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamPosition,
   TeamQualificationArea,
@@ -30,6 +31,7 @@ export type TeamsData = {
   schedules: (TeamSchedule | TeamScheduleSummary)[];
   intakeForms: TeamIntakeForm[];
   intakeSubmissions: TeamIntakeSubmission[];
+  intakeRecipients: TeamIntakeRecipient[];
 };
 
 export type TeamsScheduleDrafts = Record<string, TeamSchedulePayload>;
