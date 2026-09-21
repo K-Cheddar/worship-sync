@@ -35,6 +35,11 @@ import {
   parseSupportContactBody,
   resolveSupportInboxEmail,
 } from "./server/supportContact.js";
+import {
+  parseSmsConsentBody,
+  SMS_CONSENT_TEXT,
+  SMS_CONSENT_VERSION,
+} from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
@@ -140,7 +145,7 @@ const SESSION_ABSOLUTE_TTL_MS = Number(
   process.env.AUTH_SESSION_ABSOLUTE_TTL_MS || 30 * 24 * 60 * 60 * 1000,
 );
 
-const COLLECTIONS = {
+export const COLLECTIONS = {
   churches: "churches",
   users: "users",
   memberships: "memberships",
@@ -161,19 +166,22 @@ const COLLECTIONS = {
   teamSchedules: "teamSchedules",
   teamIntakeForms: "teamIntakeForms",
   teamIntakeSubmissions: "teamIntakeSubmissions",
+  teamIntakeRecipients: "teamIntakeRecipients",
   servicePlans: "servicePlans",
   servicePlanTemplates: "servicePlanTemplates",
   servicePlanAssignmentHistory: "servicePlanAssignmentHistory",
+  churchResources: "churchResources",
   adminRecoveryRequests: "adminRecoveryRequests",
   securityEvents: "securityEvents",
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
+  smsConsents: "smsConsents",
   emailCodeChallenges: "emailCodeChallenges",
   humanApiCredentials: "humanApiCredentials",
 };
 
 const normalizeEmail = (email = "") => email.trim().toLowerCase();
-const nowIso = () => new Date().toISOString();
+export const nowIso = () => new Date().toISOString();
 const createId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const createNumericCode = () => crypto.randomInt(100000, 1000000).toString();
 const hashValue = (value) =>
@@ -563,13 +571,16 @@ const memoryState = {
   teamSchedules: new Map(),
   teamIntakeForms: new Map(),
   teamIntakeSubmissions: new Map(),
+  teamIntakeRecipients: new Map(),
   churchServiceTimes: new Map(),
   servicePlans: new Map(),
   servicePlanTemplates: new Map(),
   servicePlanAssignmentHistory: new Map(),
+  churchResources: new Map(),
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
+  smsConsents: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
 };
@@ -626,13 +637,16 @@ const collectionMap = {
   [COLLECTIONS.teamSchedules]: memoryState.teamSchedules,
   [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
   [COLLECTIONS.teamIntakeSubmissions]: memoryState.teamIntakeSubmissions,
+  [COLLECTIONS.teamIntakeRecipients]: memoryState.teamIntakeRecipients,
   [COLLECTIONS.servicePlans]: memoryState.servicePlans,
   [COLLECTIONS.servicePlanTemplates]: memoryState.servicePlanTemplates,
   [COLLECTIONS.servicePlanAssignmentHistory]:
     memoryState.servicePlanAssignmentHistory,
+  [COLLECTIONS.churchResources]: memoryState.churchResources,
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
+  [COLLECTIONS.smsConsents]: memoryState.smsConsents,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
   [COLLECTIONS.humanApiCredentials]: memoryState.humanApiCredentials,
 };
@@ -1127,7 +1141,7 @@ const assertCsrf = async (req) => {
   }
 };
 
-const getDoc = async (collectionName, id) => {
+export const getDoc = async (collectionName, id) => {
   const db = requireFirestore();
   if (db) {
     const snapshot = await db.collection(collectionName).doc(id).get();
@@ -1137,7 +1151,7 @@ const getDoc = async (collectionName, id) => {
   return item ? { id, ...item } : null;
 };
 
-const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
+export const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).set(data, { merge });
@@ -1231,7 +1245,7 @@ const updateDocMapKeys = async (
   store.set(id, { ...current, ...fields, [field]: nextMap });
 };
 
-const deleteDoc = async (collectionName, id) => {
+export const deleteDoc = async (collectionName, id) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).delete();
@@ -1240,7 +1254,7 @@ const deleteDoc = async (collectionName, id) => {
   collectionMap[collectionName].delete(id);
 };
 
-const queryDocs = async (
+export const queryDocs = async (
   collectionName,
   filters = [],
   { limit = 100 } = {},
@@ -1498,6 +1512,64 @@ const addSecurityEvent = async (event) => {
   await setDoc(COLLECTIONS.securityEvents, eventId, payload);
   logAuthEvent("log", event.type || "security_event", payload);
   return payload;
+};
+
+const smsConsentIdForPhone = (phoneNumber) =>
+  `smsConsent_${hashValue(phoneNumber)}`;
+
+/**
+ * Store one consent record per normalized phone number. The deterministic
+ * document ID makes repeat opt-ins idempotent and keeps phone-number lookups
+ * out of the public API. Firestore uses a transaction to serialize concurrent
+ * first submissions for the same number.
+ */
+const upsertSmsConsent = async (phoneNumber) => {
+  const consentId = smsConsentIdForPhone(phoneNumber);
+  const consentedAt = nowIso();
+  const db = requireFirestore();
+
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const existing = snapshot.exists ? snapshot.data() : null;
+      transaction.set(consentRef, {
+        consentId,
+        phoneNumber,
+        phoneHash: hashValue(phoneNumber),
+        status: "opted_in",
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+        consentText: SMS_CONSENT_TEXT,
+        consentedAt,
+        optedOutAt: null,
+        createdAt: existing?.createdAt || consentedAt,
+        updatedAt: consentedAt,
+      });
+    });
+    return { consentId, consentedAt };
+  }
+
+  const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+  await setDoc(
+    COLLECTIONS.smsConsents,
+    consentId,
+    {
+      consentId,
+      phoneNumber,
+      phoneHash: hashValue(phoneNumber),
+      status: "opted_in",
+      source: "web_form",
+      consentVersion: SMS_CONSENT_VERSION,
+      consentText: SMS_CONSENT_TEXT,
+      consentedAt,
+      optedOutAt: null,
+      createdAt: existing?.createdAt || consentedAt,
+      updatedAt: consentedAt,
+    },
+    { merge: false },
+  );
+  return { consentId, consentedAt };
 };
 
 const buildDesktopAuthBrowserUrl = ({ desktopAuthId, provider }) =>
@@ -4443,6 +4515,23 @@ export const getRosterMemberForServerTests = async (memberId) => {
   return getDoc(COLLECTIONS.teamRosterMembers, memberId);
 };
 
+export const getSmsConsentForServerTests = async (phoneNumber) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "getSmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "getSmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  return getDoc(
+    COLLECTIONS.smsConsents,
+    smsConsentIdForPhone(String(phoneNumber || "").trim()),
+  );
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -6129,6 +6218,52 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not send your message.",
+      });
+    }
+  },
+
+  /** Public SMS consent form. No session required; no phone existence is disclosed. */
+  async submitSmsConsent(req, res) {
+    try {
+      const parsed = parseSmsConsentBody(req.body);
+      if (!parsed.ok) {
+        throw httpError(400, parsed.errorMessage);
+      }
+
+      const clientIp = getClientIp(req);
+      enforceRateLimit({
+        scope: "sms-consent-ip",
+        key: clientIp,
+        limit: 5,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      enforceRateLimit({
+        scope: "sms-consent-phone",
+        key: hashValue(parsed.phoneNumber),
+        limit: 3,
+        windowMs: 60 * 60 * 1000,
+        blockMs: 60 * 60 * 1000,
+      });
+
+      const { consentId } = await upsertSmsConsent(parsed.phoneNumber);
+      await addSecurityEvent({
+        type: "sms_consent_opted_in",
+        consentId,
+        phoneHash: hashValue(parsed.phoneNumber),
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+      });
+
+      return res.json({ success: true });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage:
+          statusCode >= 500
+            ? "Could not save your SMS consent right now. Please try again."
+            : error.message || "Could not save your SMS consent.",
       });
     }
   },

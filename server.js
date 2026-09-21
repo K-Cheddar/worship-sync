@@ -15,13 +15,19 @@ import Mux from "@mux/mux-node";
 import https from "https";
 import {
   authHandlers,
+  COLLECTIONS,
+  deleteDoc,
   getServerFirestore,
   getServerRealtimeDatabase,
   authSessionConfig,
+  getDoc,
+  nowIso,
+  queryDocs,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
   requireTeamsViewSession,
   assertServerCsrf,
+  setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
 import { createLyricsImportService } from "./lyricsImport.js";
@@ -52,6 +58,12 @@ import {
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
 import {
+  YouTubeSearchInputError,
+  YouTubeSearchNotConfiguredError,
+  YouTubeSearchUpstreamError,
+  createYouTubeSearchService,
+} from "./server/youtubeSearchService.js";
+import {
   createCanvaService,
   normalizeMuxStaticRenditions,
 } from "./server/canvaService.js";
@@ -62,6 +74,11 @@ import {
   SongAudioStorageNotConfiguredError,
   createSongAudioStorage,
 } from "./server/songAudioStorage.js";
+import {
+  createChurchResourceStorage,
+  getChurchResourceMaxBytes,
+} from "./server/churchResourceService.js";
+import { createChurchResourceHandlers } from "./server/churchResourceApi.js";
 import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
 import {
   RichLinkPreviewInputError,
@@ -284,6 +301,8 @@ const {
   requireChurchAdmin,
   requireSongAudioEditAccess,
   assertSongAudioChurchAccess,
+  requireChurchResourceViewAccess,
+  requireChurchResourceEditAccess,
 } = createAppSessionGuards({
   resolveRequestBootstrap,
   assertRequestCsrf: assertServerCsrf,
@@ -298,6 +317,10 @@ const songAudioMaxBytes = (() => {
 const parseSongAudioBytes = express.raw({
   type: ["audio/mpeg", "audio/mp3", "audio/x-mpeg"],
   limit: songAudioMaxBytes,
+});
+const parseChurchResourceBytes = express.raw({
+  type: "*/*",
+  limit: getChurchResourceMaxBytes(),
 });
 const guardSongAudioUpload = createSongAudioUploadGuard();
 const chatImageMaxBytes = (() => {
@@ -315,6 +338,10 @@ const guardChatImageFinalize = createChatImageFinalizeGuard();
 const richLinkPreviewService = createRichLinkPreviewService({
   httpClient: axios,
 });
+const youtubeSearchService = createYouTubeSearchService({
+  httpClient: axios,
+  apiKey: process.env.YOUTUBE_API_KEY,
+});
 
 let songAudioStorage;
 const getSongAudioStorage = () => {
@@ -322,6 +349,22 @@ const getSongAudioStorage = () => {
     songAudioStorage = createSongAudioStorage();
   }
   return songAudioStorage;
+};
+
+let churchResourceHandlers;
+const getChurchResourceHandlers = () => {
+  if (!churchResourceHandlers) {
+    churchResourceHandlers = createChurchResourceHandlers({
+      COLLECTIONS,
+      deleteDoc,
+      getDoc,
+      nowIso,
+      queryDocs,
+      setDoc,
+      storageFactory: () => createChurchResourceStorage(),
+    });
+  }
+  return churchResourceHandlers;
 };
 
 let chatImageStorage;
@@ -895,6 +938,7 @@ app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
 app.post("/api/support/contact", authHandlers.submitSupportContact);
+app.post("/api/sms-consent", authHandlers.submitSmsConsent);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",
@@ -989,6 +1033,41 @@ app.get("/api/link-previews", requireAppSession, async (req, res) => {
     return res.json({ preview });
   } catch (error) {
     return respondRichLinkPreviewError(res, error);
+  }
+});
+
+const respondYouTubeSearchError = (res, error) => {
+  if (error instanceof YouTubeSearchInputError) {
+    return res.status(400).json({ errorMessage: error.message });
+  }
+  if (error instanceof YouTubeSearchNotConfiguredError) {
+    return res.status(503).json({
+      errorMessage: "YouTube search is not configured on this server yet.",
+    });
+  }
+  if (error instanceof YouTubeSearchUpstreamError) {
+    console.error("Error searching YouTube:", error.cause);
+  } else {
+    console.error("Error searching YouTube:", error);
+  }
+  return res.status(502).json({
+    errorMessage: "YouTube search is unavailable right now. Try again.",
+  });
+};
+
+app.get("/api/youtube/search", requireAppSession, async (req, res) => {
+  try {
+    const result = await youtubeSearchService.search({
+      title: req.query.title,
+      artist: req.query.artist,
+      album: req.query.album,
+      query: req.query.query,
+      forceRefresh:
+        req.query.refresh === "true" || req.query.refresh === "1",
+    });
+    return res.json(result);
+  } catch (error) {
+    return respondYouTubeSearchError(res, error);
   }
 });
 
@@ -1129,6 +1208,54 @@ app.delete(
     }
   },
 );
+
+app.use("/api/churches/:churchId/resources", requireAppSession);
+app.get(
+  "/api/churches/:churchId/resources",
+  requireChurchResourceViewAccess,
+  (req, res) => getChurchResourceHandlers().list(req, res),
+);
+app.get(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceViewAccess,
+  (req, res) => getChurchResourceHandlers().get(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/upload",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().createUpload(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/:resourceId/complete",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().completeUpload(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/upload-from-app",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  parseChurchResourceBytes,
+  (req, res) => getChurchResourceHandlers().uploadFromApp(req, res),
+);
+app.get(
+  "/api/churches/:churchId/resources/:resourceId/url",
+  requireChurchResourceViewAccess,
+  (req, res) => getChurchResourceHandlers().createUrl(req, res),
+);
+app.patch(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().update(req, res),
+);
+app.delete(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().remove(req, res),
+);
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
@@ -1146,11 +1273,31 @@ app.post(
   authHandlers.getTeamIntakeFormLink,
 );
 app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId/recipients",
+  authHandlers.createTeamIntakeRecipients,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/recipients/:recipientId/link",
+  authHandlers.getTeamIntakeRecipientLink,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/recipients/:recipientId/revoke",
+  authHandlers.revokeTeamIntakeRecipient,
+);
+app.post(
   "/api/churches/:churchId/team-intake/submissions/:submissionId",
   authHandlers.updateTeamIntakeSubmission,
 );
 app.get("/api/team-intake/preview", authHandlers.getTeamIntakePreview);
 app.post("/api/team-intake/submit", authHandlers.submitTeamIntake);
+app.get("/api/team-intake/recipient-preview", (req, res) => {
+  req.teamIntakeRecipientOnly = true;
+  return authHandlers.getTeamIntakePreview(req, res);
+});
+app.post("/api/team-intake/recipient-submit", (req, res) => {
+  req.teamIntakeRecipientOnly = true;
+  return authHandlers.submitTeamIntake(req, res);
+});
 app.post(
   "/api/churches/:churchId/team-roster-members",
   authHandlers.createTeamRosterMember,
