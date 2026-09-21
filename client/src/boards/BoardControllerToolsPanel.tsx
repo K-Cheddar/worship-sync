@@ -56,11 +56,14 @@ export const BoardToolsPanelBody = ({
   showToast,
 }: BoardToolsPanelBodyProps) => {
   const [restreamResetOpen, setRestreamResetOpen] = useState(false);
+  const [isConfirmingRestreamReset, setIsConfirmingRestreamReset] =
+    useState(false);
   const { session: restreamSessionState, reload: reloadRestream } =
     restreamSession;
 
   const handleRestreamResetConfirm = useCallback(async () => {
-    if (!churchId) return;
+    if (!churchId || isConfirmingRestreamReset) return;
+    setIsConfirmingRestreamReset(true);
     try {
       await resetRestreamSession(churchId);
       await reloadRestream();
@@ -73,8 +76,10 @@ export const BoardToolsPanelBody = ({
           : "Could not start a new Restream session.",
         "error",
       );
+    } finally {
+      setIsConfirmingRestreamReset(false);
     }
-  }, [churchId, reloadRestream, showToast]);
+  }, [churchId, isConfirmingRestreamReset, reloadRestream, showToast]);
 
   const historyOptions: Option[] = useMemo(
     () =>
@@ -97,7 +102,8 @@ export const BoardToolsPanelBody = ({
           message="Are you sure you want to clear"
           warningMessage="This only clears the current Restream session history. Discussion board posts stay the same."
           confirmText="Start new session"
-          isConfirming={false}
+          confirmingLabel="Starting new session..."
+          isConfirming={isConfirmingRestreamReset}
         />
       ) : null}
 

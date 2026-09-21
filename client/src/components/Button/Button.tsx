@@ -174,6 +174,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
             state={state}
             {...rest}
             aria-disabled={disabled || undefined}
+            aria-busy={isLoading || undefined}
             tabIndex={disabled ? -1 : rest.tabIndex}
             onClick={(e) => {
               if (disabled) {
@@ -202,6 +203,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
         className={layoutClassName}
         onClick={onClick as React.ComponentProps<"button">["onClick"]}
         {...rest}
+        aria-busy={isLoading || undefined}
       >
         {commonContent}
       </ShadcnButton>

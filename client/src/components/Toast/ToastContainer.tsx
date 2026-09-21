@@ -86,7 +86,10 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-9999">
+    <div
+      className="fixed inset-0 pointer-events-none z-9999"
+      data-testid="toast-container"
+    >
       {Object.entries(toastsByPosition).map(([position, positionToasts]) => {
         const toastPosition = position as ToastPosition;
         const isTop = toastPosition.startsWith("top");
