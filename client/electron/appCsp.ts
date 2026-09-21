@@ -18,7 +18,7 @@ export const buildAppCspHeader = (isPackaged: boolean): string => {
 
   return (
     "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://www.youtube.com https://*.msftauth.net https://*.msauth.net; " +
     "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
     "font-src 'self' data:; " +
     "img-src 'self' data: blob: media-cache: worshipsync-media: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.r2.cloudflarestorage.com https://*.canva.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +

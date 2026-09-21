@@ -1,3 +1,8 @@
+import {
+  localVideoDiagnosticsEnabled,
+  recordLocalVideoConstraints,
+} from "./localVideoDiagnostics";
+
 export type LocalVideoPixelSize = {
   width: number;
   height: number;
@@ -79,6 +84,7 @@ export const applyLocalVideoCaptureProfile = async (
   stream: MediaStream,
   targetWidth: number,
   targetHeight: number,
+  sourceId?: string,
 ) => {
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack?.applyConstraints) return;
@@ -86,14 +92,19 @@ export const applyLocalVideoCaptureProfile = async (
     { width: targetWidth, height: targetHeight },
   ]);
   if (lastAppliedProfileByTrack.get(videoTrack) === profile.id) return;
+  const requestedConstraints = {
+    width: { ideal: profile.width },
+    height: { ideal: profile.height },
+    frameRate: { ideal: MAX_CAPTURE_FRAME_RATE },
+  };
+  const diagnosticsEnabled = Boolean(sourceId && localVideoDiagnosticsEnabled());
+  const before = diagnosticsEnabled ? videoTrack.getSettings?.() : undefined;
   try {
-    await videoTrack.applyConstraints({
-      width: { ideal: profile.width },
-      height: { ideal: profile.height },
-      frameRate: { ideal: MAX_CAPTURE_FRAME_RATE },
-    });
+    await videoTrack.applyConstraints(requestedConstraints);
     lastAppliedProfileByTrack.set(videoTrack, profile.id);
+    if (sourceId && diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile, requestedConstraints, before, succeeded: true, after: videoTrack.getSettings?.() });
   } catch {
+    if (sourceId && diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile, requestedConstraints, before, succeeded: false, after: videoTrack.getSettings?.() });
     // Keep the closest available mode rather than surfacing a toast.
   }
 };

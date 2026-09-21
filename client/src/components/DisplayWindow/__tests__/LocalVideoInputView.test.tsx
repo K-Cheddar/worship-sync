@@ -178,6 +178,25 @@ describe("LocalVideoInputView", () => {
     play.mockRestore();
   });
 
+  it("uses hardware recovery copy when the video element reports an error", async () => {
+    render(<LocalVideoInputView input={input} />);
+    const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
+
+    await waitFor(() => expect(video.srcObject).toBe(stream));
+    fireEvent.error(video);
+
+    expect(
+      screen.getByText(
+        "Check the input connection and camera permission, then try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Choose the screen again on this computer, then try again.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows no connecting chrome while the warm stream attaches", () => {
     mockAcquireWarmCapture.mockReturnValue(new Promise(() => undefined));
     render(<LocalVideoInputView input={input} />);
@@ -332,6 +351,7 @@ describe("LocalVideoInputView", () => {
       stream,
       expect.any(Number),
       expect.any(Number),
+      "source-1",
     );
     expect(video.muted).toBe(false);
     play.mockRestore();

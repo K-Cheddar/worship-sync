@@ -1,5 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
-import type { Box } from "../../../types";
+import type { Box, MediaType } from "../../../types";
 import MonitorView from "../MonitorView";
 import type {
   DisplayBoxTransitionSnapshot,
@@ -152,10 +152,20 @@ describe("MonitorView", () => {
     const videoBox: Box = {
       ...baseBox,
       mediaInfo: {
+        path: "",
+        createdAt: "",
+        updatedAt: "",
+        format: "mp4",
+        height: 1080,
+        width: 1920,
+        name: "playback",
+        publicId: "playbackId123",
         type: "video",
+        id: "video-1",
         background: "https://stream.mux.com/playbackId123",
+        thumbnail: "https://cdn.example.com/poster.jpg",
         placeholderImage: "https://cdn.example.com/poster.jpg",
-      },
+      } satisfies MediaType,
     };
     const backgroundMedia = {
       kind: "fileVideo" as const,

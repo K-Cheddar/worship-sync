@@ -134,16 +134,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Media cache
   downloadMedia: (url: string) => ipcRenderer.invoke("download-media", url),
+  ensureMediaCached: (urls: string[]) =>
+    ipcRenderer.invoke("ensure-media-cached", urls),
   getMediaCacheMap: () =>
     ipcRenderer.invoke("get-media-cache-map") as Promise<
       Record<string, string>
     >,
+  getPreparedVideoSources: () => ipcRenderer.invoke("get-prepared-video-sources"),
   getLocalMediaPath: (url: string) =>
     ipcRenderer.invoke("get-local-media-path", url),
   cleanupUnusedMedia: (usedUrls: string[]) =>
     ipcRenderer.invoke("cleanup-unused-media", usedUrls),
   syncMediaCache: (mediaUrls: string[]) =>
     ipcRenderer.invoke("sync-media-cache", mediaUrls),
+  getPreparedVideoMetrics: () => ipcRenderer.invoke("get-prepared-video-metrics"),
 
   // App-managed local assets. Native paths stay inside the preload/main
   // boundary; renderers receive only metadata and a streamable protocol URL.

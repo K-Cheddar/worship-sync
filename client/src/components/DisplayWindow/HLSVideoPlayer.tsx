@@ -75,21 +75,39 @@ const elementState = (video: HTMLVideoElement) => ({
   errorCode: video.error?.code,
 });
 
+const videoDiagnosticIdentity = (video: HTMLVideoElement) => ({
+  mediaKey: video.dataset.mediaKey,
+  outputId: video.dataset.outputId,
+  windowRole: video.dataset.windowRole,
+  src: video.currentSrc || video.src,
+});
+
 const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
-  logVideoCue("play.before", elementState(video));
+  logVideoCue("play.before", {
+    ...videoDiagnosticIdentity(video),
+    ...elementState(video),
+  });
   video
     .play()
     .then(() => {
-      logVideoCue("play.resolved", elementState(video));
+      logVideoCue("play.resolved", {
+        ...videoDiagnosticIdentity(video),
+        ...elementState(video),
+      });
       // If the promise resolved but the playhead never moves, the element is
       // stalled on the source rather than blocked by policy.
       window.setTimeout(
-        () => logVideoCue("play.after500ms", elementState(video)),
+        () =>
+          logVideoCue("play.after500ms", {
+            ...videoDiagnosticIdentity(video),
+            ...elementState(video),
+          }),
         500,
       );
     })
     .catch((e) => {
       logVideoCue("play.rejected", {
+        ...videoDiagnosticIdentity(video),
         name: (e as Error)?.name,
         message: (e as Error)?.message,
         ...elementState(video),
@@ -239,6 +257,10 @@ const HLSPlayer = ({
         clearPaintReadyWaits();
         logVideoCue("player.paintReady", {
           role: playbackRoleRef.current,
+          mediaKey: mediaKeyRef.current,
+          outputId,
+          windowRole,
+          src: videoSrc,
           ...elementState(video),
         });
         onLoadedDataRef.current?.();
@@ -285,7 +307,7 @@ const HLSPlayer = ({
 
       finish();
     },
-    [clearPaintReadyWaits],
+    [clearPaintReadyWaits, outputId, windowRole],
   );
 
   const notifyPaintReadyRef = useRef(notifyPaintReady);
@@ -379,6 +401,10 @@ const HLSPlayer = ({
       ((cue.applySeek || isFreshSrc) && awayFromCue);
     logVideoCue("player.apply", {
       role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src: activeSrc,
       generation: cue.generation,
       paused: cue.paused,
       seek,
@@ -393,16 +419,26 @@ const HLSPlayer = ({
     appliedGenerationRef.current = cue.generation;
     appliedWithoutDurationRef.current = seek && !hasDuration;
     notifyPaintReadyRef.current(activeSrc);
-  }, []);
+  }, [outputId, windowRole]);
 
   const syncPlaybackRef = useRef(syncPlayback);
   syncPlaybackRef.current = syncPlayback;
 
   /** Metadata is loaded: the element now knows its duration and can be cued. */
   const handleMediaReady = useCallback((videoSrc: string) => {
+    const video = videoRef.current;
+    if (!video) return;
     readySrcRef.current = videoSrc;
+    logVideoCue("player.mediaReady", {
+      role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src: videoSrc,
+      ...elementState(video),
+    });
     syncPlaybackRef.current();
-  }, []);
+  }, [outputId, windowRole]);
 
   const handleEnded = useCallback(() => {
     const video = videoRef.current;
@@ -569,6 +605,15 @@ const HLSPlayer = ({
     if (video) video.playbackRate = 1;
     if (!video || !src) return;
 
+    logVideoCue("player.mount", {
+      role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src,
+      sourceKind: getVideoSourceKind(src),
+    });
+
 
     if (isHLSVideoSource(src)) {
       const stopHls = playHLS(video, src);
@@ -588,7 +633,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
     };
-  }, [src, playNative, playHLS, clearPaintReadyWaits]);
+  }, [src, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -614,6 +659,10 @@ const HLSPlayer = ({
       const handler = () =>
         logVideoCue(`element.${name}`, {
           role: playbackRoleRef.current,
+          mediaKey: mediaKeyRef.current,
+          outputId,
+          windowRole,
+          src: srcRef.current,
           ...elementState(video),
         });
       video.addEventListener(name, handler);
@@ -624,7 +673,7 @@ const HLSPlayer = ({
         video.removeEventListener(name, handler),
       );
     };
-  }, []);
+  }, [outputId, windowRole]);
 
   // Cue changes (and the load paths above) both route through syncPlayback,
   // which no-ops until the element has metadata for the current src.
@@ -833,6 +882,9 @@ const HLSPlayer = ({
     <video
       ref={videoRef}
       data-testid="hls-video-player"
+      data-media-key={mediaKey}
+      data-output-id={outputId}
+      data-window-role={windowRole}
       preload={preloadValue}
       className={
         className ||

@@ -14,6 +14,8 @@ type LocalVideoInputLayerProps = {
   showErrors?: boolean;
   transparentBackground?: boolean;
   contentVisible?: boolean;
+  outputId?: string;
+  windowRole?: string;
 };
 
 /** One current/previous media lane used to crossfade local capture sources. */
@@ -29,6 +31,8 @@ const LocalVideoInputLayer = ({
   showErrors,
   transparentBackground,
   contentVisible = true,
+  outputId,
+  windowRole,
 }: LocalVideoInputLayerProps) => {
   const [transitionVisible, setTransitionVisible] = useState(
     shouldAnimate ? isPrevious : !isPrevious,
@@ -65,6 +69,9 @@ const LocalVideoInputLayer = ({
         publishPreview={publishPreview}
         showErrors={showErrors}
         transparentBackground={transparentBackground}
+        outputId={outputId}
+        windowRole={windowRole}
+        laneRole={isPrevious ? "previous" : "current"}
       />
     </div>
   );

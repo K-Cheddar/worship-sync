@@ -49,6 +49,7 @@ import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIn
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
   | "configurations"
@@ -457,6 +458,7 @@ const Toolbar = ({
                   <Menu variant="default" />
                 </div>
                 {modeToggle}
+                <MediaSurfaceDiagnostics />
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
               </div>
@@ -486,6 +488,7 @@ const Toolbar = ({
                 <Menu variant="overlay" />
               </div>
               {modeToggle}
+              <MediaSurfaceDiagnostics />
               {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
               <ToolbarOverlay
                 toolbarRow={mode === "edit" ? "primary" : "present"}

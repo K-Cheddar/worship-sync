@@ -21,12 +21,22 @@ import {
   subscribeLocalVideoRealtime,
   supportsLocalVideoRealtimeRelay,
 } from "../../utils/localVideoRealtimeRelay";
-import { subscribeLocalVideoCaptureQuality } from "../../utils/localVideoCaptureQualityRelay";
+import {
+  subscribeLocalVideoCaptureQuality,
+  type LocalVideoCaptureQualityDetails,
+} from "../../utils/localVideoCaptureQualityRelay";
 import {
   subscribeBrowserDesktopShares,
   supportsDirectElectronDesktopCapture,
 } from "../../utils/desktopCapture";
 import { applyLocalVideoCaptureProfile } from "../../utils/localVideoQuality";
+import {
+  markLocalVideoViewFrame,
+  localVideoDiagnosticsEnabled,
+  startLocalVideoView,
+  stopLocalVideoView,
+  updateLocalVideoView,
+} from "../../utils/localVideoDiagnostics";
 
 type LocalVideoInputViewProps = {
   input: LocalVideoInputPresentation;
@@ -38,6 +48,9 @@ type LocalVideoInputViewProps = {
   publishPreview?: boolean;
   showErrors?: boolean;
   transparentBackground?: boolean;
+  outputId?: string;
+  windowRole?: string;
+  laneRole?: "current" | "previous";
   /** True once a usable capture/preview frame (or terminal status) can paint. */
   onPaintReadyChange?: (ready: boolean) => void;
 };
@@ -50,6 +63,9 @@ const getRenderedPixelSize = (element: HTMLElement) => {
   return {
     width: Math.max(1, Math.round(cssWidth * scale)),
     height: Math.max(1, Math.round(cssHeight * scale)),
+    cssWidth,
+    cssHeight,
+    devicePixelRatio: scale,
   };
 };
 
@@ -107,6 +123,9 @@ const LocalVideoInputView = ({
   publishPreview = false,
   showErrors = true,
   transparentBackground = false,
+  outputId,
+  windowRole,
+  laneRole,
   onPaintReadyChange,
 }: LocalVideoInputViewProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -117,6 +136,9 @@ const LocalVideoInputView = ({
   const captureConsumerIdRef = useRef(
     globalThis.crypto?.randomUUID?.() ??
     `local-video-view-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  const diagnosticViewIdRef = useRef(
+    globalThis.crypto?.randomUUID?.() ?? `local-video-diagnostic-${Date.now()}`,
   );
   const previewFrameUrlRef = useRef<string | undefined>(undefined);
   const retiredPreviewFrameUrlsRef = useRef(new Set<string>());
@@ -187,6 +209,7 @@ const LocalVideoInputView = ({
     }
     const video = videoRef.current;
     if (!video) return;
+    const diagnosticViewId = diagnosticViewIdRef.current;
     setErrorDetail(null);
     setIsDirectReady(false);
     let active = true;
@@ -195,20 +218,42 @@ const LocalVideoInputView = ({
       | ReturnType<typeof subscribeLocalVideoCaptureQuality>
       | undefined;
     let targetSizeObserver: ResizeObserver | undefined;
+    let bufferedFrameCallbackId: number | undefined;
     let observedOutputElement: HTMLElement | undefined;
     const syncOutputTargetSize = () => {
       if (!observedOutputElement) return;
       const target = getRenderedPixelSize(observedOutputElement);
-      qualitySubscription?.updateTargetSize(target.width, target.height);
+      const details = localVideoDiagnosticsEnabled()
+        ? ({
+            cssWidth: target.cssWidth,
+            cssHeight: target.cssHeight,
+            devicePixelRatio: target.devicePixelRatio,
+            outputId,
+            windowRole,
+            laneRole,
+            diagnosticViewId,
+          } satisfies LocalVideoCaptureQualityDetails)
+        : undefined;
+      if (details) {
+        qualitySubscription?.updateTargetSize(target.width, target.height, details);
+      } else {
+        qualitySubscription?.updateTargetSize(target.width, target.height);
+      }
     };
     const subscribeBufferedRelay = () => {
       if (!active || stopBufferedRelay) return;
       setIsRealtimeActive(false);
+      startLocalVideoView(input.sourceId, diagnosticViewId, {
+        outputId,
+        windowRole,
+        path: "BUFFERED_MSE",
+      });
       stopBufferedRelay = subscribeLocalVideoMedia(input.sourceId, video, {
         includeAudio: playAudioRef.current,
         onStarted: () => {
           setErrorDetail(null);
           setIsDirectReady(true);
+          markLocalVideoViewFrame(input.sourceId, diagnosticViewId);
         },
         onError: setErrorDetail,
         onStopped: () => setIsDirectReady(false),
@@ -217,6 +262,25 @@ const LocalVideoInputView = ({
 
     if (canUseRealtimeRelay && realtimeCanvasRef.current) {
       setIsRealtimeActive(true);
+      startLocalVideoView(input.sourceId, diagnosticViewId, {
+        outputId,
+        windowRole,
+        path: "REALTIME_WEBCODECS",
+      });
+      if (
+        localVideoDiagnosticsEnabled() &&
+        "requestVideoFrameCallback" in video
+      ) {
+        const trackBufferedFrame = () => {
+          markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
+          bufferedFrameCallbackId = (
+            video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
+          ).requestVideoFrameCallback(trackBufferedFrame);
+        };
+        bufferedFrameCallbackId = (
+          video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
+        ).requestVideoFrameCallback(trackBufferedFrame);
+      }
       const realtimeSubscription = subscribeLocalVideoRealtime(
         input.sourceId,
         realtimeCanvasRef.current,
@@ -236,6 +300,7 @@ const LocalVideoInputView = ({
             setIsDirectReady(false);
             subscribeBufferedRelay();
           },
+          diagnosticViewId,
         },
       );
       realtimeSubscriptionRef.current = realtimeSubscription;
@@ -250,11 +315,28 @@ const LocalVideoInputView = ({
     }
     if (observedOutputElement) {
       const initialTarget = getRenderedPixelSize(observedOutputElement);
-      qualitySubscription = subscribeLocalVideoCaptureQuality(
-        input.sourceId,
-        initialTarget.width,
-        initialTarget.height,
-      );
+      if (localVideoDiagnosticsEnabled()) {
+        qualitySubscription = subscribeLocalVideoCaptureQuality(
+          input.sourceId,
+          initialTarget.width,
+          initialTarget.height,
+          {
+            cssWidth: initialTarget.cssWidth,
+            cssHeight: initialTarget.cssHeight,
+            devicePixelRatio: initialTarget.devicePixelRatio,
+            outputId,
+            windowRole,
+            laneRole,
+            diagnosticViewId,
+          },
+        );
+      } else {
+        qualitySubscription = subscribeLocalVideoCaptureQuality(
+          input.sourceId,
+          initialTarget.width,
+          initialTarget.height,
+        );
+      }
       if (typeof ResizeObserver !== "undefined") {
         targetSizeObserver = new ResizeObserver(syncOutputTargetSize);
         targetSizeObserver.observe(observedOutputElement);
@@ -270,6 +352,10 @@ const LocalVideoInputView = ({
       realtimeSubscriptionRef.current?.stop();
       realtimeSubscriptionRef.current = undefined;
       stopBufferedRelay?.();
+      if (bufferedFrameCallbackId !== undefined && "cancelVideoFrameCallback" in video) {
+        (video as HTMLVideoElement & { cancelVideoFrameCallback: (id: number) => void }).cancelVideoFrameCallback(bufferedFrameCallbackId);
+      }
+      stopLocalVideoView(input.sourceId, diagnosticViewId);
     };
   }, [
     canUseRealtimeRelay,
@@ -279,6 +365,9 @@ const LocalVideoInputView = ({
     isLocal,
     receiveHighQuality,
     useDirectElectronDesktopCapture,
+    outputId,
+    windowRole,
+    laneRole,
   ]);
 
   useEffect(() => {
@@ -290,6 +379,7 @@ const LocalVideoInputView = ({
       return;
     }
     setErrorDetail(null);
+    const diagnosticViewId = diagnosticViewIdRef.current;
     const clearPreviewFrames = () => {
       if (previewFrameUrlRef.current) {
         URL.revokeObjectURL(previewFrameUrlRef.current);
@@ -301,6 +391,9 @@ const LocalVideoInputView = ({
       retiredPreviewFrameUrlsRef.current.clear();
       previewFramePendingRef.current = false;
     };
+    // The still relay warms in parallel while the preferred direct/realtime
+    // path starts. It must not replace that path in diagnostics.
+    const previewDiagnosticViewId = `${diagnosticViewId}:preview`;
     const unsubscribe = subscribeLocalVideoPreview(input.sourceId, (frame) => {
       if (!frame) {
         clearPreviewFrames();
@@ -308,6 +401,14 @@ const LocalVideoInputView = ({
         return;
       }
       if (previewFramePendingRef.current) return;
+      startLocalVideoView(input.sourceId, previewDiagnosticViewId, {
+        outputId,
+        windowRole,
+        path: "STILL_PREVIEW",
+      });
+      updateLocalVideoView(input.sourceId, diagnosticViewId, {
+        previewWarm: true,
+      });
       const nextUrl = URL.createObjectURL(frame);
       const previousUrl = previewFrameUrlRef.current;
       if (previousUrl) retiredPreviewFrameUrlsRef.current.add(previousUrl);
@@ -318,6 +419,10 @@ const LocalVideoInputView = ({
     return () => {
       unsubscribe();
       clearPreviewFrames();
+      stopLocalVideoView(input.sourceId, previewDiagnosticViewId);
+      updateLocalVideoView(input.sourceId, diagnosticViewId, {
+        previewWarm: false,
+      });
     };
   }, [
     captureOwnedElsewhere,
@@ -325,6 +430,8 @@ const LocalVideoInputView = ({
     isDirectReady,
     isLocal,
     publishPreview,
+    outputId,
+    windowRole,
   ]);
 
   useEffect(() => {
@@ -338,9 +445,11 @@ const LocalVideoInputView = ({
       return;
     }
     let active = true;
+    const diagnosticViewId = diagnosticViewIdRef.current;
     let retryTimer: number | undefined;
     let playbackRecoveryTimer: number | undefined;
     let frameCallbackId: number | undefined;
+    let diagnosticFrameCallbackId: number | undefined;
     let directPlaybackReady = false;
     let attachedVideo: HTMLVideoElement | null = null;
     let attachedStream: MediaStream | undefined;
@@ -356,6 +465,7 @@ const LocalVideoInputView = ({
         attachedStream,
         target.width,
         target.height,
+        input.sourceId,
       );
     };
     const scheduleDirectCaptureProfileSync = () => {
@@ -387,6 +497,11 @@ const LocalVideoInputView = ({
     setErrorDetail(null);
     setAudioWarning(null);
     setIsDirectReady(false);
+    startLocalVideoView(input.sourceId, diagnosticViewId, {
+      outputId,
+      windowRole,
+      path: "DIRECT",
+    });
 
     const startCapture = async () => {
       try {
@@ -431,6 +546,7 @@ const LocalVideoInputView = ({
           directPlaybackReady = true;
           video.volume = normalizedVolumeRef.current;
           setIsDirectReady(true);
+          markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
           if (playbackRecoveryTimer !== undefined) {
             window.clearInterval(playbackRecoveryTimer);
             playbackRecoveryTimer = undefined;
@@ -454,6 +570,17 @@ const LocalVideoInputView = ({
           }
         };
         video.srcObject = stream;
+        if (localVideoDiagnosticsEnabled() && "requestVideoFrameCallback" in video) {
+          const trackDirectFrame = () => {
+            markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
+            diagnosticFrameCallbackId = (
+              video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
+            ).requestVideoFrameCallback(trackDirectFrame);
+          };
+          diagnosticFrameCallbackId = (
+            video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
+          ).requestVideoFrameCallback(trackDirectFrame);
+        }
         video.addEventListener("loadedmetadata", markDirectReady);
         video.addEventListener("loadeddata", markDirectReady);
         video.addEventListener("playing", markDirectReady);
@@ -536,6 +663,7 @@ const LocalVideoInputView = ({
         setErrorDetail(
           getLocalVideoSourceErrorMessage(error, input.captureKind),
         );
+        updateLocalVideoView(input.sourceId, diagnosticViewId, { path: "UNAVAILABLE" });
         retryCapture(Math.min(1_000 * 2 ** Math.min(captureAttempt, 3), 8_000));
       }
     };
@@ -568,6 +696,9 @@ const LocalVideoInputView = ({
           }
         ).cancelVideoFrameCallback(frameCallbackId);
       }
+      if (video && diagnosticFrameCallbackId !== undefined && "cancelVideoFrameCallback" in video) {
+        (video as HTMLVideoElement & { cancelVideoFrameCallback: (id: number) => void }).cancelVideoFrameCallback(diagnosticFrameCallbackId);
+      }
       void releaseWarmLocalVideoCapture(input.sourceId, captureConsumerId);
       const stream = video?.srcObject as MediaStream | null | undefined;
       stream?.getTracks?.().forEach((track) => {
@@ -575,6 +706,7 @@ const LocalVideoInputView = ({
         track.removeEventListener?.("ended", handleAudioTrackEnded);
       });
       if (video) video.srcObject = null;
+      stopLocalVideoView(input.sourceId, diagnosticViewId);
     };
   }, [
     audioDeviceId,
@@ -587,6 +719,8 @@ const LocalVideoInputView = ({
     playAudio,
     publishPreview,
     useDirectElectronDesktopCapture,
+    outputId,
+    windowRole,
   ]);
 
   // Re-sharing in this window does not change any saved binding, so watch for
@@ -648,6 +782,7 @@ const LocalVideoInputView = ({
           className={`absolute inset-0 h-full w-full ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
           alt={`${input.deviceLabel} local preview`}
           onLoad={() => {
+            markLocalVideoViewFrame(input.sourceId, diagnosticViewIdRef.current);
             previewFramePendingRef.current = false;
             retiredPreviewFrameUrlsRef.current.forEach((url) =>
               URL.revokeObjectURL(url),
@@ -702,9 +837,7 @@ const LocalVideoInputView = ({
             onPlaying={() => setIsDirectReady(true)}
             onError={() =>
               setErrorDetail(
-                isDesktopShare
-                  ? `Choose the ${input.captureKind === "window" ? "window" : "screen"} again on this computer, then try again.`
-                  : "Check the input connection and camera permission, then try again.",
+                getLocalVideoSourceErrorMessage(undefined, input.captureKind),
               )
             }
           />

@@ -253,6 +253,8 @@ type DisplayWindowProps = {
   displayType?: DisplayType;
   /** Display output whose settings this surface renders with. */
   outputId?: string;
+  /** Current outline item used only as a local media-preparation priority hint. */
+  currentItemId?: string;
   /**
    * Opt in to the high-quality local video path (direct capture and/or relay).
    * Live outputs and same-machine operator previews set this so the booth
@@ -336,6 +338,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       displayType,
 
       outputId,
+      currentItemId,
 
       canCaptureLocalVideo = false,
       directLocalVideoCapture = false,
@@ -1276,6 +1279,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       () => ({
         outputId,
         windowRole: displayType ?? "unknown",
+        currentItemId,
         fileVideoAudioEnabled: localVideoFileAudioEnabled,
         volume: localVideoVolume,
         playbackRole: isEditor ? "preview" : "output",
@@ -1315,6 +1319,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         suspendVideoPlayback,
         videoPreloadRole,
         outputId,
+        currentItemId,
       ],
     );
 
@@ -1359,6 +1364,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           publishPreview={canCaptureLocalVideo && displayType === "editor"}
           showErrors={!canCaptureLocalVideo || displayType === "editor"}
           transparentBackground={displayType === "stream"}
+          outputId={outputId}
+          windowRole={displayType ?? "unknown"}
           contentVisible={localVideoContentVisible}
         />
       ) : null;
@@ -1374,6 +1381,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           receiveHighQuality={canCaptureLocalVideo}
           showErrors={false}
           transparentBackground={displayType === "stream"}
+          outputId={outputId}
+          windowRole={displayType ?? "unknown"}
           contentVisible={localVideoContentVisible}
         />
       ) : null;

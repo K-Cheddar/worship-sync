@@ -67,6 +67,10 @@ import {
 } from "./updaterHelpers";
 import { isTrustedControllerIpcSender } from "./ipcSenderAuthorization";
 import { createLyricsImportService } from "../../lyricsImport.js";
+import {
+  createUnavailablePreparedVideoMetrics,
+  normalizePreparedVideoMetrics,
+} from "./preparedVideoMetrics";
 
 const { autoUpdater } = updaterPkg;
 
@@ -1068,6 +1072,33 @@ ipcMain.handle("is-dev", () => {
   return isDev;
 });
 
+ipcMain.handle("get-prepared-video-metrics", (event) => {
+  if (!isDev) {
+    return createUnavailablePreparedVideoMetrics(
+      "metric_unsupported",
+      "prepared-video metrics are available only in development",
+    );
+  }
+
+  try {
+    const rendererPid = event.sender.getOSProcessId();
+    const metrics = app.getAppMetrics();
+    const result = normalizePreparedVideoMetrics({ rendererPid, metrics });
+    console.debug("[prepared-surface] renderer metrics", {
+      rendererPid,
+      matchedPid: result.matchedPid,
+      processType: result.processType,
+      status: result.status,
+      metricCount: metrics.length,
+    });
+    return result;
+  } catch (error) {
+    const reason = `Electron metrics unavailable: ${(error as Error).message}`;
+    console.debug("[prepared-surface] renderer metrics unavailable", { reason });
+    return createUnavailablePreparedVideoMetrics("metric_unsupported", reason);
+  }
+});
+
 ipcMain.handle("open-external-url", async (_event, targetUrl: string) => {
   assertAllowedOpenExternalUrl(targetUrl, { isDev });
   await shell.openExternal(targetUrl);
@@ -1622,9 +1653,38 @@ ipcMain.handle("download-media", async (_event, url: string) => {
   }
 });
 
+ipcMain.handle("ensure-media-cached", async (_event, videoUrls: string[]) => {
+  if (!mediaCacheManager) {
+    return {
+      requested: 0,
+      cacheable: 0,
+      downloaded: 0,
+      failed: 0,
+      cacheMap: {},
+    };
+  }
+  try {
+    return await mediaCacheManager.ensureMediaCached(videoUrls);
+  } catch (error) {
+    console.error("Error ensuring media cache:", error);
+    return {
+      requested: videoUrls.length,
+      cacheable: 0,
+      downloaded: 0,
+      failed: videoUrls.length,
+      cacheMap: mediaCacheManager.getMediaCacheMap(),
+    };
+  }
+});
+
 ipcMain.handle("get-media-cache-map", () => {
   if (!mediaCacheManager) return {};
   return mediaCacheManager.getMediaCacheMap();
+});
+
+ipcMain.handle("get-prepared-video-sources", () => {
+  if (!isDev || !mediaCacheManager) return [];
+  return mediaCacheManager.getMediaCacheEntries();
 });
 
 ipcMain.handle("get-local-media-path", (_event, url: string) => {

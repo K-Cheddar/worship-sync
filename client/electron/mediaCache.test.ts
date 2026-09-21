@@ -112,4 +112,53 @@ describe("MediaCacheManager", () => {
       "media-cache://playback-id.mp4",
     );
   });
+
+  it("additively ensures unique cacheable URLs without removing unrelated entries", async () => {
+    const manager = new MediaCacheManager();
+    const unrelatedPath = join(tempRoot, "media-cache", "unrelated.mp4");
+    fs.writeFileSync(unrelatedPath, "video");
+    manager["cacheIndex"].set("https://cdn.example.com/unrelated.mp4", {
+      url: "https://cdn.example.com/unrelated.mp4",
+      localPath: unrelatedPath,
+      lastUsed: Date.now(),
+    });
+    const downloadMedia = jest
+      .spyOn(manager, "downloadMedia")
+      .mockResolvedValue(join(tempRoot, "media-cache", "new.mp4"));
+
+    const result = await manager.ensureMediaCached([
+      "https://stream.mux.com/playback-id.m3u8",
+      "https://stream.mux.com/playback-id/master.m3u8",
+      "https://example.com/live.m3u8",
+    ]);
+
+    expect(downloadMedia).toHaveBeenCalledTimes(1);
+    expect(downloadMedia).toHaveBeenCalledWith(
+      "https://stream.mux.com/playback-id.m3u8",
+    );
+    expect(result).toMatchObject({ requested: 3, cacheable: 1, downloaded: 1 });
+    expect(manager.getAllCachedUrls()).toContain(
+      "https://cdn.example.com/unrelated.mp4",
+    );
+  });
+
+  it("returns cache metadata for the dev prepared-video picker", () => {
+    const manager = new MediaCacheManager();
+    const localPath = join(tempRoot, "media-cache", "clip.mp4");
+    fs.writeFileSync(localPath, "video");
+    manager["cacheIndex"].set("https://cdn.example.com/clip.mp4", {
+      url: "https://cdn.example.com/clip.mp4",
+      localPath,
+      lastUsed: Date.now(),
+      contentType: "video/mp4",
+    });
+
+    expect(manager.getMediaCacheEntries()).toEqual([
+      {
+        source: "media-cache://clip.mp4",
+        sourceUrl: "https://cdn.example.com/clip.mp4",
+        contentType: "video/mp4",
+      },
+    ]);
+  });
 });

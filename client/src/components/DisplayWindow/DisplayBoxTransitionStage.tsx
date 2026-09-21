@@ -1,6 +1,7 @@
 import {
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -14,11 +15,19 @@ import type {
 import LaneFullFrameMedia from "./LaneFullFrameMedia";
 import {
   getLaneBackgroundMediaKey,
+  getLanePreparedMediaKey,
   getSnapshotBackgroundIdentity,
   getSnapshotForegroundIdentity,
   NONE_LANE_BACKGROUND_MEDIA,
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
+import { logVideoCue } from "../../utils/videoBackgroundPlayback";
+import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
+import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
+import type {
+  ElectronMediaSurfaceCandidate,
+  ElectronMediaSurfaceView,
+} from "../../utils/electronMediaSurfacePool";
 
 type LaneId = "a" | "b";
 
@@ -32,6 +41,7 @@ export type DisplayBoxTransitionSnapshot = {
 
 /** Which visual planes participate in the in-flight transition. */
 type TransitionMode = "full" | "content" | "media";
+type PlanePhase = "preparing" | "animating" | "settled";
 
 type TransitionState = {
   activeLaneId: LaneId;
@@ -40,6 +50,9 @@ type TransitionState = {
   requestedKey: string;
   queuedSnapshot: DisplayBoxTransitionSnapshot | null;
   mode: TransitionMode;
+  /** Present only for a full transition with meaningful independent content. */
+  foregroundPhase?: PlanePhase;
+  mediaPhase?: PlanePhase;
   /**
    * Lane that owns the live full-frame media element during content-only
    * transitions. Never flips mid-fade so the <video>/capture node stays put.
@@ -50,6 +63,8 @@ type TransitionState = {
 export type LaneMediaPlaybackOptions = {
   outputId?: string;
   windowRole?: string;
+  currentItemId?: string;
+  preparedSurfaceBudget?: number;
   fileVideoAudioEnabled?: boolean;
   volume?: number;
   playbackRole?: "preview" | "output";
@@ -108,6 +123,19 @@ export const getDisplayBoxesLayerKey = (boxes: Box[]) =>
 /** Role-based stacking only — never prefer lane "a" over "b". */
 const roleStackOffset = (isOutgoing: boolean) => (isOutgoing ? 0 : 1);
 
+const phaseForPlanes = (
+  foregroundPhase: PlanePhase,
+  mediaPhase: PlanePhase,
+): TransitionState["phase"] => {
+  if (foregroundPhase === "animating" || mediaPhase === "animating") {
+    return "animating";
+  }
+  if (foregroundPhase === "preparing" || mediaPhase === "preparing") {
+    return "preparing";
+  }
+  return "idle";
+};
+
 const otherLane = (laneId: LaneId): LaneId => (laneId === "a" ? "b" : "a");
 
 /** Build a typed A/B lane map without computed-key Record widening. */
@@ -133,6 +161,12 @@ const backgroundIdentityOf = (snapshot: DisplayBoxTransitionSnapshot) =>
 
 const foregroundIdentityOf = (snapshot: DisplayBoxTransitionSnapshot) =>
   getSnapshotForegroundIdentity(snapshot.boxes);
+
+/** Media-only/custom visual slides must not advance their meaningful content before media. */
+const hasIndependentForeground = (snapshot: DisplayBoxTransitionSnapshot): boolean =>
+  snapshot.boxes.some(
+    (box) => Boolean(box.words?.trim() || box.label?.trim()),
+  );
 
 const resolveTransitionMode = (
   active: DisplayBoxTransitionSnapshot,
@@ -180,6 +214,23 @@ const DisplayBoxTransitionStage = ({
     b: null,
   });
   const timelineRef = useRef<GSAPTimeline | null>(null);
+  const independentContentTimelineRef = useRef<GSAPTimeline | null>(null);
+  const independentMediaTimelineRef = useRef<GSAPTimeline | null>(null);
+  const preparedMediaRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const preparedMediaReadyRef = useRef<Record<string, boolean>>({});
+  const preparedMediaLiveReadyRef = useRef<Record<string, boolean>>({});
+  const adoptedPreparedMediaKeysRef = useRef(new Set<string>());
+  const [preparedMediaReady, setPreparedMediaReady] = useState<
+    Record<string, boolean>
+  >({});
+  const [preparedMediaLiveReady, setPreparedMediaLiveReady] = useState<
+    Record<string, boolean>
+  >({});
+  const [lastSendPath, setLastSendPath] = useState<"pool" | "fallback">(
+    "fallback",
+  );
+  const [lastMediaKey, setLastMediaKey] = useState<string | undefined>();
+  const [posterShown, setPosterShown] = useState(false);
   const requestGenerationRef = useRef(0);
   const [state, setState] = useState<TransitionState>(() => ({
     activeLaneId: "a",
@@ -203,6 +254,47 @@ const DisplayBoxTransitionStage = ({
     Record<LaneId, DisplayBoxTransitionSnapshot | null>
   >({ a: snapshot, b: null });
   laneSnapshotsRef.current = state.lanes;
+
+  const poolEnabled = Boolean(
+    mediaPlayback?.playbackRole === "output" &&
+      mediaPlayback.outputId &&
+      window.electronAPI,
+  );
+  const currentPoolMedia = useMemo<ElectronMediaSurfaceCandidate | undefined>(
+    () =>
+      snapshot.backgroundMedia.kind === "fileVideo"
+        ? {
+            mediaKey: snapshot.backgroundMedia.mediaKey,
+            source: snapshot.backgroundMedia.originalSrc,
+            itemId: mediaPlayback?.currentItemId,
+          }
+        : undefined,
+    [mediaPlayback?.currentItemId, snapshot.backgroundMedia],
+  );
+  const protectedPoolMediaKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          Object.values(state.lanes)
+            .map((lane) =>
+              getLanePreparedMediaKey(lane?.backgroundMedia) === "none"
+                ? undefined
+                : getLanePreparedMediaKey(lane?.backgroundMedia),
+            )
+            .filter((mediaKey): mediaKey is string => Boolean(mediaKey)),
+        ),
+      ),
+    [state.lanes],
+  );
+  const poolCandidateResult = useServiceVideoCandidates({
+    enabled: poolEnabled,
+    outputId: mediaPlayback?.outputId,
+    currentItemId: mediaPlayback?.currentItemId,
+    currentMedia: currentPoolMedia,
+    protectedMediaKeys: protectedPoolMediaKeys,
+    maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
+  });
+  const poolCandidates = poolCandidateResult.candidates;
   /**
    * Playback ownership follows the lane's media identity, not its transient
    * visual role. A lane can become the baseline during an interruption while
@@ -254,7 +346,17 @@ const DisplayBoxTransitionStage = ({
 
   useLayoutEffect(() => {
     const isNewRequest = snapshot.key !== state.requestedKey;
-    if (isNewRequest) requestGenerationRef.current += 1;
+    if (isNewRequest) {
+      requestGenerationRef.current += 1;
+      logVideoCue("transition.requested", {
+        outputId: mediaPlayback?.outputId,
+        windowRole: mediaPlayback?.windowRole,
+        snapshotKey: snapshot.key,
+        media: getLaneBackgroundMediaKey(snapshot.backgroundMedia),
+        generation: requestGenerationRef.current,
+        priorPhase: state.phase,
+      });
+    }
 
     // The latest operator request must take over immediately. Preserve one
     // coherent baseline, kill the obsolete fade, and prepare the new request
@@ -269,12 +371,22 @@ const DisplayBoxTransitionStage = ({
         contentRefs.current[activeLaneId],
       );
       const incomingMediaOpacity = readLaneOpacity(
-        mediaRefs.current[incomingLaneId],
+        mediaRefs.current[incomingLaneId] ??
+          preparedMediaRefs.current[
+            getLaneBackgroundMediaKey(
+              state.lanes[incomingLaneId]?.backgroundMedia,
+            )
+          ],
       );
       const activeMediaOpacity = readLaneOpacity(
-        mediaRefs.current[activeLaneId],
+        mediaRefs.current[activeLaneId] ??
+          preparedMediaRefs.current[
+            getLaneBackgroundMediaKey(state.lanes[activeLaneId]?.backgroundMedia)
+          ],
       );
       let baselineLaneId = activeLaneId;
+      let contentBaselineLaneId = activeLaneId;
+      let mediaBaselineLaneId = activeLaneId;
       if (state.mode === "content") {
         // The existing media anchor is the stable baseline for lyric-only
         // interruption; keeping it in place avoids remounting video/capture.
@@ -292,28 +404,89 @@ const DisplayBoxTransitionStage = ({
         // planes have become dominant; this never combines split baselines.
         baselineLaneId = incomingLaneId;
       }
-      const baselineSnapshot =
+      let baselineSnapshot =
         state.lanes[baselineLaneId] ?? state.lanes[activeLaneId];
+
+      if (
+        state.mode === "full" &&
+        state.foregroundPhase != null &&
+        state.mediaPhase != null
+      ) {
+        contentBaselineLaneId =
+          state.foregroundPhase === "settled" ||
+          (incomingContentOpacity != null &&
+            activeContentOpacity != null &&
+            incomingContentOpacity >= activeContentOpacity)
+            ? incomingLaneId
+            : activeLaneId;
+        mediaBaselineLaneId =
+          state.mediaPhase === "settled" ||
+          (incomingMediaOpacity != null &&
+            activeMediaOpacity != null &&
+            incomingMediaOpacity >= activeMediaOpacity)
+            ? incomingLaneId
+            : activeLaneId;
+        const foregroundBaseline = state.lanes[contentBaselineLaneId];
+        const mediaBaseline = state.lanes[mediaBaselineLaneId];
+        if (foregroundBaseline && mediaBaseline) {
+          baselineLaneId = activeLaneId;
+          baselineSnapshot = {
+            key: `baseline:${foregroundBaseline.key}:${getLaneBackgroundMediaKey(
+              mediaBaseline.backgroundMedia,
+            )}`,
+            boxes: foregroundBaseline.boxes,
+            time: foregroundBaseline.time,
+            timerInfo: foregroundBaseline.timerInfo,
+            backgroundMedia: mediaBaseline.backgroundMedia,
+          };
+        }
+      }
+      if (state.foregroundPhase == null || state.mediaPhase == null) {
+        contentBaselineLaneId = baselineLaneId;
+        mediaBaselineLaneId = baselineLaneId;
+      }
 
       if (baselineSnapshot) {
         timelineRef.current?.kill();
         timelineRef.current = null;
+        independentContentTimelineRef.current?.kill();
+        independentContentTimelineRef.current = null;
+        independentMediaTimelineRef.current?.kill();
+        independentMediaTimelineRef.current = null;
         for (const laneId of ["a", "b"] as const) {
-          const opacity = laneId === baselineLaneId ? 1 : 0;
+          const mediaOpacity =
+            laneId === mediaBaselineLaneId ? 1 : 0;
+          const contentOpacity =
+            laneId === contentBaselineLaneId ? 1 : 0;
           if (mediaRefs.current[laneId]) {
-            gsap.set(mediaRefs.current[laneId], { opacity });
+            gsap.set(mediaRefs.current[laneId], { opacity: mediaOpacity });
           }
           if (contentRefs.current[laneId]) {
-            gsap.set(contentRefs.current[laneId], { opacity });
+            gsap.set(contentRefs.current[laneId], { opacity: contentOpacity });
+          }
+          const laneMediaKey = getLaneBackgroundMediaKey(
+            state.lanes[laneId]?.backgroundMedia,
+          );
+          if (preparedMediaRefs.current[laneMediaKey]) {
+            gsap.set(preparedMediaRefs.current[laneMediaKey], {
+              opacity: mediaOpacity,
+            });
           }
         }
+        const nextMode = resolveTransitionMode(baselineSnapshot, snapshot);
+        const independentPlanes =
+          shouldAnimate &&
+          nextMode === "full" &&
+          hasIndependentForeground(snapshot);
         setState({
           activeLaneId: baselineLaneId,
           lanes: lanePair(baselineLaneId, baselineSnapshot, snapshot),
           phase: "preparing",
           requestedKey: snapshot.key,
           queuedSnapshot: null,
-          mode: resolveTransitionMode(baselineSnapshot, snapshot),
+          mode: nextMode,
+          foregroundPhase: independentPlanes ? "preparing" : undefined,
+          mediaPhase: independentPlanes ? "preparing" : undefined,
           mediaAnchorLaneId: baselineLaneId,
         });
         return;
@@ -403,6 +576,10 @@ const DisplayBoxTransitionStage = ({
 
       const mode = resolveTransitionMode(active, snapshot);
       const incomingLaneId = otherLane(current.activeLaneId);
+      const independentPlanes =
+        shouldAnimate &&
+        mode === "full" &&
+        hasIndependentForeground(snapshot);
       return {
         ...current,
         lanes: { ...current.lanes, [incomingLaneId]: snapshot },
@@ -410,12 +587,14 @@ const DisplayBoxTransitionStage = ({
         requestedKey: snapshot.key,
         queuedSnapshot: null,
         mode,
+        foregroundPhase: independentPlanes ? "preparing" : undefined,
+        mediaPhase: independentPlanes ? "preparing" : undefined,
         // Content-only: keep the existing media host. Do not retarget the
         // anchor to activeLaneId — after a prior content settle those differ.
         mediaAnchorLaneId: current.mediaAnchorLaneId,
       };
     });
-  }, [mediaPlayback?.outputId, mediaPlayback?.windowRole, snapshot, state]);
+  }, [mediaPlayback?.outputId, mediaPlayback?.windowRole, shouldAnimate, snapshot, state]);
 
   const reportBoxPaintReady = useCallback(
     (laneId: LaneId, laneKey: string, index: number, ready: boolean) => {
@@ -480,6 +659,77 @@ const DisplayBoxTransitionStage = ({
     [],
   );
 
+  const reportPreparedMediaReady = useCallback(
+    (mediaKey: string, ready: boolean) => {
+      preparedMediaReadyRef.current[mediaKey] = ready;
+      setPreparedMediaReady((current) =>
+        current[mediaKey] === ready ? current : { ...current, [mediaKey]: ready },
+      );
+    },
+    [],
+  );
+
+  const reportPreparedMediaLiveReady = useCallback(
+    (mediaKey: string, ready: boolean) => {
+      preparedMediaLiveReadyRef.current[mediaKey] = ready;
+      setPreparedMediaLiveReady((current) =>
+        current[mediaKey] === ready ? current : { ...current, [mediaKey]: ready },
+      );
+    },
+    [],
+  );
+
+  const reportPreparedMediaElement = useCallback(
+    (mediaKey: string, element: HTMLDivElement | null) => {
+      if (element) {
+        preparedMediaRefs.current[mediaKey] = element;
+      } else {
+        delete preparedMediaRefs.current[mediaKey];
+      }
+    },
+    [],
+  );
+
+  const getPreparedMediaKey = (
+    laneId: LaneId,
+    mediaKey: string,
+    mediaSnapshot?: DisplayBoxTransitionSnapshot["backgroundMedia"],
+  ): string => {
+    const media = mediaSnapshot ?? state.lanes[laneId]?.backgroundMedia;
+    return getLanePreparedMediaKey(media) === "none"
+      ? mediaKey
+      : getLanePreparedMediaKey(media);
+  };
+
+  const usesPreparedSurface = (
+    laneId: LaneId,
+    mediaKey: string,
+    mediaSnapshot?: DisplayBoxTransitionSnapshot["backgroundMedia"],
+  ): boolean => {
+    const preparedKey = getPreparedMediaKey(laneId, mediaKey, mediaSnapshot);
+    if (!poolEnabled || preparedKey === "none" || !preparedMediaReady[preparedKey]) {
+      return false;
+    }
+    const isIncoming =
+      state.phase !== "idle" && laneId === otherLane(state.activeLaneId);
+    const isActiveLane = laneId === state.activeLaneId;
+    return isIncoming || isActiveLane || adoptedPreparedMediaKeysRef.current.has(preparedKey);
+  };
+
+  useLayoutEffect(() => {
+    const media = snapshot.backgroundMedia;
+    if (media.kind !== "fileVideo") {
+      setLastMediaKey(undefined);
+      setLastSendPath("fallback");
+      setPosterShown(false);
+      return;
+    }
+    const pooled = poolEnabled && preparedMediaReady[media.mediaKey] === true;
+    setLastMediaKey(media.mediaKey);
+    setLastSendPath(pooled ? "pool" : "fallback");
+    setPosterShown(!pooled);
+  }, [poolEnabled, preparedMediaReady, snapshot]);
+
   const isLanePaintReady = (
     laneId: LaneId,
     laneSnapshot: DisplayBoxTransitionSnapshot,
@@ -495,11 +745,43 @@ const DisplayBoxTransitionStage = ({
         ));
     const mediaKey = getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia);
     const mediaState = mediaPaintReadiness[laneId];
+    const usesPrepared = usesPreparedSurface(laneId, mediaKey);
     const mediaReady =
       mode === "content" ||
       mediaKey === "none" ||
-      (mediaState?.mediaKey === mediaKey && mediaState.ready);
-    return boxesReady && mediaReady;
+      (usesPrepared
+        ? preparedMediaLiveReady[mediaKey] === true
+        : mediaState?.mediaKey === mediaKey && mediaState.ready);
+    const activeSnapshot = state.lanes[state.activeLaneId];
+    const outgoingMediaKey = getLaneBackgroundMediaKey(
+      activeSnapshot?.backgroundMedia,
+    );
+    const outgoingUsesPrepared = usesPreparedSurface(
+      state.activeLaneId,
+      outgoingMediaKey,
+    );
+    const outgoingLiveMedia = mediaLivePaintReadiness[state.activeLaneId];
+    const outgoingFileVideoCanBeLive =
+      activeSnapshot?.backgroundMedia.kind === "fileVideo" &&
+      (outgoingUsesPrepared
+        ? preparedMediaLiveReady[outgoingMediaKey] !== false
+        : outgoingLiveMedia?.mediaKey !== outgoingMediaKey ||
+          outgoingLiveMedia.ready);
+    const incomingFileVideoMustBeLive =
+      mode !== "content" &&
+      laneSnapshot.backgroundMedia.kind === "fileVideo" &&
+      outgoingFileVideoCanBeLive &&
+      outgoingMediaKey !== mediaKey;
+    const incomingLiveMedia = mediaLivePaintReadiness[laneId];
+    const incomingLiveReady =
+      usesPrepared
+        ? preparedMediaLiveReady[mediaKey] === true
+        : incomingLiveMedia?.mediaKey === mediaKey && incomingLiveMedia.ready;
+
+    // A poster is a legitimate first-paint fallback, but never a destination
+    // for a live file-video replacement. Hold the valid outgoing video until
+    // the incoming video has presented a real frame.
+    return boxesReady && mediaReady && (!incomingFileVideoMustBeLive || incomingLiveReady);
   };
 
   const incomingLaneId = otherLane(state.activeLaneId);
@@ -510,6 +792,83 @@ const DisplayBoxTransitionStage = ({
   );
 
   useLayoutEffect(() => {
+    if (state.phase === "idle") return;
+    const incomingMedia = incomingSnapshot?.backgroundMedia;
+    if (
+      incomingMedia?.kind === "fileVideo" &&
+      preparedMediaReady[incomingMedia.mediaKey]
+    ) {
+      adoptedPreparedMediaKeysRef.current.add(incomingMedia.mediaKey);
+    }
+  }, [incomingSnapshot, preparedMediaReady, state.phase]);
+
+  useLayoutEffect(() => {
+    const independentPlanes =
+      state.mode === "full" &&
+      state.foregroundPhase != null &&
+      state.mediaPhase != null;
+
+    if (independentPlanes) {
+      if (state.phase === "idle" || !incomingSnapshot) return;
+      const incomingContentReady = isLanePaintReady(
+        incomingLaneId,
+        incomingSnapshot,
+        "content",
+      );
+      setState((current) => {
+        if (
+          current.mode !== "full" ||
+          current.foregroundPhase == null ||
+          current.mediaPhase == null
+        ) {
+          return current;
+        }
+        const foregroundPhase =
+          current.foregroundPhase === "preparing" && incomingContentReady
+            ? "animating"
+            : current.foregroundPhase;
+        const mediaPhase =
+          current.mediaPhase === "preparing" && incomingPaintReady
+            ? "animating"
+            : current.mediaPhase;
+        if (
+          current.foregroundPhase === "preparing" &&
+          current.mediaPhase === "preparing" &&
+          incomingContentReady &&
+          incomingPaintReady
+        ) {
+          // The normal full transition remains one coordinated timeline when
+          // both planes are already ready. Split timing is only needed when a
+          // delayed media plane would otherwise hold back meaningful text.
+          return {
+            ...current,
+            phase: "animating",
+            foregroundPhase: undefined,
+            mediaPhase: undefined,
+          };
+        }
+        if (
+          foregroundPhase === current.foregroundPhase &&
+          mediaPhase === current.mediaPhase
+        ) {
+          return current;
+        }
+        logVideoCue("transition.planes-ready", {
+          outputId: mediaPlayback?.outputId,
+          windowRole: mediaPlayback?.windowRole,
+          foreground: foregroundPhase,
+          media: mediaPhase,
+        });
+        return {
+          ...current,
+          foregroundPhase,
+          mediaPhase,
+          phase: phaseForPlanes(foregroundPhase, mediaPhase),
+        };
+      });
+      return;
+    }
+
     if (state.phase !== "preparing" || !incomingPaintReady) return;
 
     if (!shouldAnimate) {
@@ -546,19 +905,209 @@ const DisplayBoxTransitionStage = ({
       return;
     }
 
-    setState((current) =>
-      current.phase === "preparing"
-        ? { ...current, phase: "animating" }
-        : current,
-    );
-  }, [incomingPaintReady, shouldAnimate, state.phase]);
+    setState((current) => {
+      if (current.phase !== "preparing") return current;
+      const incoming = current.lanes[otherLane(current.activeLaneId)];
+      logVideoCue("transition.animating", {
+        outputId: mediaPlayback?.outputId,
+        windowRole: mediaPlayback?.windowRole,
+        outgoingKey: current.lanes[current.activeLaneId]?.key,
+        incomingKey: incoming?.key,
+        outgoingMedia: getLaneBackgroundMediaKey(
+          current.lanes[current.activeLaneId]?.backgroundMedia,
+        ),
+        incomingMedia: getLaneBackgroundMediaKey(incoming?.backgroundMedia),
+        mode: current.mode,
+      });
+      return { ...current, phase: "animating" };
+    });
+  // The readiness helper is intentionally render-scoped so it reads the same
+  // lane snapshot as this effect; its concrete readiness inputs are listed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    boxPaintReadiness,
+    incomingPaintReady,
+    incomingLaneId,
+    incomingSnapshot,
+    mediaLivePaintReadiness,
+    mediaPaintReadiness,
+    mediaPlayback?.outputId,
+    mediaPlayback?.windowRole,
+    preparedMediaLiveReady,
+    preparedMediaReady,
+    shouldAnimate,
+    state.activeLaneId,
+    state.foregroundPhase,
+    state.mediaPhase,
+    state.mode,
+    state.lanes,
+    state.phase,
+  ]);
+
+  const completeIndependentPlane = useCallback(
+    (plane: "foreground" | "media") => {
+      setState((current) => {
+        if (current.foregroundPhase == null || current.mediaPhase == null) {
+          return current;
+        }
+        const foregroundPhase =
+          plane === "foreground" ? "settled" : current.foregroundPhase;
+        const mediaPhase = plane === "media" ? "settled" : current.mediaPhase;
+        if (foregroundPhase !== "settled" || mediaPhase !== "settled") {
+          return {
+            ...current,
+            foregroundPhase,
+            mediaPhase,
+            phase: phaseForPlanes(foregroundPhase, mediaPhase),
+          };
+        }
+
+        const nextActiveLaneId = otherLane(current.activeLaneId);
+        const nextSnapshot = current.lanes[nextActiveLaneId];
+        return {
+          activeLaneId: nextActiveLaneId,
+          lanes: lanePair(nextActiveLaneId, nextSnapshot, null),
+          phase: "idle",
+          requestedKey: nextSnapshot?.key ?? current.requestedKey,
+          queuedSnapshot: null,
+          mode: "full",
+          mediaAnchorLaneId: nextActiveLaneId,
+        };
+      });
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
-    if (state.phase !== "animating" || !incomingSnapshot) return;
+    if (
+      state.mode !== "full" ||
+      state.foregroundPhase !== "animating" ||
+      !incomingSnapshot
+    ) {
+      return;
+    }
+    const outgoingContent = contentRefs.current[state.activeLaneId];
+    const incomingContent = contentRefs.current[incomingLaneId];
+    if (!outgoingContent || !incomingContent) return;
+
+    independentContentTimelineRef.current?.kill();
+    const animationGeneration = requestGenerationRef.current;
+    const timeline = gsap.timeline({
+      onComplete: () => {
+        if (animationGeneration !== requestGenerationRef.current) return;
+        completeIndependentPlane("foreground");
+      },
+    });
+    independentContentTimelineRef.current = timeline;
+    timeline.fromTo(
+      outgoingContent,
+      { opacity: 1 },
+      { opacity: 0, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+      0,
+    );
+    timeline.fromTo(
+      incomingContent,
+      { opacity: 0 },
+      { opacity: 1, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+      0,
+    );
+
+    return () => {
+      timeline.kill();
+      if (independentContentTimelineRef.current === timeline) {
+        independentContentTimelineRef.current = null;
+      }
+    };
+  }, [
+    completeIndependentPlane,
+    incomingLaneId,
+    incomingSnapshot,
+    state.activeLaneId,
+    state.foregroundPhase,
+    state.lanes,
+    state.mode,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      state.mode !== "full" ||
+      state.mediaPhase !== "animating" ||
+      !incomingSnapshot
+    ) {
+      return;
+    }
+    const mediaElementForLane = (laneId: LaneId) => {
+      const laneMedia = state.lanes[laneId]?.backgroundMedia;
+      const mediaKey = getLaneBackgroundMediaKey(laneMedia);
+      const preparedKey = getPreparedMediaKey(laneId, mediaKey, laneMedia);
+      return usesPreparedSurface(laneId, mediaKey)
+        ? preparedMediaRefs.current[preparedKey]
+        : mediaRefs.current[laneId];
+    };
+    const outgoingMedia = mediaElementForLane(state.activeLaneId);
+    const incomingMedia = mediaElementForLane(incomingLaneId);
+    if (!outgoingMedia || !incomingMedia) return;
+
+    independentMediaTimelineRef.current?.kill();
+    const animationGeneration = requestGenerationRef.current;
+    const timeline = gsap.timeline({
+      onComplete: () => {
+        if (animationGeneration !== requestGenerationRef.current) return;
+        completeIndependentPlane("media");
+      },
+    });
+    independentMediaTimelineRef.current = timeline;
+    timeline.fromTo(
+      outgoingMedia,
+      { opacity: 1 },
+      { opacity: 0, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+      0,
+    );
+    timeline.fromTo(
+      incomingMedia,
+      { opacity: 0 },
+      { opacity: 1, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+      0,
+    );
+
+    return () => {
+      timeline.kill();
+      if (independentMediaTimelineRef.current === timeline) {
+        independentMediaTimelineRef.current = null;
+      }
+    };
+  // The media element resolver intentionally reads the current render's lane
+  // ownership; adding its function identity would restart an active fade.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    completeIndependentPlane,
+    incomingLaneId,
+    incomingSnapshot,
+    state.activeLaneId,
+    state.lanes,
+    state.mediaPhase,
+    state.mode,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      state.phase !== "animating" ||
+      !incomingSnapshot ||
+      (state.mode === "full" && state.foregroundPhase != null)
+    ) {
+      return;
+    }
 
     const mode = state.mode;
-    const outgoingMedia = mediaRefs.current[state.activeLaneId];
-    const incomingMedia = mediaRefs.current[incomingLaneId];
+    const mediaElementForLane = (laneId: LaneId) => {
+      const laneMedia = state.lanes[laneId]?.backgroundMedia;
+      const mediaKey = getLaneBackgroundMediaKey(laneMedia);
+      return usesPreparedSurface(laneId, mediaKey)
+        ? preparedMediaRefs.current[mediaKey]
+        : mediaRefs.current[laneId];
+    };
+    const outgoingMedia = mediaElementForLane(state.activeLaneId);
+    const incomingMedia = mediaElementForLane(incomingLaneId);
     const outgoingContent = contentRefs.current[state.activeLaneId];
     const incomingContent = contentRefs.current[incomingLaneId];
 
@@ -575,6 +1124,13 @@ const DisplayBoxTransitionStage = ({
     const timeline = gsap.timeline({
       onComplete: () => {
         if (animationGeneration !== requestGenerationRef.current) return;
+        logVideoCue("transition.complete", {
+          outputId: mediaPlayback?.outputId,
+          windowRole: mediaPlayback?.windowRole,
+          outgoingKey,
+          incomingKey,
+          mode,
+        });
         // Do NOT clearProps("opacity") here. Clearing restores default opacity
         // 1 on the outgoing wrapper while old content is still mounted, which
         // paints a one-frame flash of the previous lyrics before React
@@ -750,6 +1306,9 @@ const DisplayBoxTransitionStage = ({
       timeline.kill();
       if (timelineRef.current === timeline) timelineRef.current = null;
     };
+  // The media element resolver intentionally reads the current render's lane
+  // ownership; adding its function identity would restart an active fade.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     incomingLaneId,
     incomingSnapshot,
@@ -757,6 +1316,8 @@ const DisplayBoxTransitionStage = ({
     state.lanes,
     state.mode,
     state.phase,
+    mediaPlayback?.outputId,
+    mediaPlayback?.windowRole,
   ]);
 
   const hasFullFrameMedia = (laneSnapshot: DisplayBoxTransitionSnapshot) =>
@@ -782,6 +1343,7 @@ const DisplayBoxTransitionStage = ({
     mediaKey: string;
     fullFramePaintReady: boolean;
     liveVideoPaintReady: boolean;
+    usesPreparedSurface: boolean;
     mediaOpacity: number | undefined;
     contentOpacity: number | undefined;
     needsStillHold: boolean;
@@ -821,21 +1383,49 @@ const DisplayBoxTransitionStage = ({
       (mediaSnapshot ?? contentSnapshot)?.backgroundMedia ??
       NONE_LANE_BACKGROUND_MEDIA,
     );
+    const usesPrepared = usesPreparedSurface(
+      laneId,
+      mediaKey,
+      mediaSnapshot?.backgroundMedia,
+    );
     const mediaState = mediaPaintReadiness[laneId];
     const fullFramePaintReady =
       isContentMode ||
       mediaKey === "none" ||
-      (mediaState?.mediaKey === mediaKey && mediaState.ready);
+      (usesPrepared
+        ? preparedMediaReady[mediaKey] === true
+        : mediaState?.mediaKey === mediaKey && mediaState.ready);
     const liveMediaState = mediaLivePaintReadiness[laneId];
     const liveVideoPaintReady =
       mediaKey !== "none" &&
-      liveMediaState?.mediaKey === mediaKey &&
-      liveMediaState.ready;
+      (usesPrepared
+        ? preparedMediaLiveReady[mediaKey] === true
+        : liveMediaState?.mediaKey === mediaKey && liveMediaState.ready);
 
     let mediaOpacity: number | undefined;
     let contentOpacity: number | undefined;
 
-    if (state.phase === "animating") {
+    const independentPlanes =
+      isFullMode &&
+      state.foregroundPhase != null &&
+      state.mediaPhase != null;
+    if (independentPlanes) {
+      if (state.foregroundPhase === "preparing") {
+        contentOpacity = isActive ? 1 : 0;
+      } else if (state.foregroundPhase === "animating") {
+        contentOpacity = undefined;
+      } else {
+        contentOpacity = isActive ? 0 : 1;
+      }
+
+      if (state.mediaPhase === "preparing") {
+        mediaOpacity = isActive ? 1 : 0;
+      } else if (state.mediaPhase === "animating") {
+        mediaOpacity = undefined;
+      } else {
+        mediaOpacity = isActive ? 0 : 1;
+      }
+    } else if (state.phase === "animating") {
       mediaOpacity = undefined;
       contentOpacity = undefined;
     } else if (isContentMode) {
@@ -876,10 +1466,12 @@ const DisplayBoxTransitionStage = ({
         mediaKey,
         fullFramePaintReady,
         liveVideoPaintReady,
+        usesPreparedSurface: usesPrepared,
         mediaOpacity,
         contentOpacity,
         needsStillHold,
         paintBackground:
+          !usesPrepared &&
           !needsStillHold &&
           !(sharedMediaHost && hasSharedFullFrame) &&
           !(isContentMode && hasSharedFullFrame),
@@ -887,6 +1479,37 @@ const DisplayBoxTransitionStage = ({
       },
     ];
   });
+
+  const poolViews = Array.from(
+    laneViews.reduce((views, laneView) => {
+      if (
+        !laneView.usesPreparedSurface ||
+        !laneView.mediaSnapshot ||
+        laneView.mediaSnapshot.backgroundMedia.kind !== "fileVideo"
+      ) {
+        return views;
+      }
+      const media = laneView.mediaSnapshot.backgroundMedia;
+      if (views.has(media.mediaKey)) return views;
+      views.set(media.mediaKey, {
+        mediaKey: media.mediaKey,
+        source: media.originalSrc,
+        videoBox: media.videoBox,
+        opacity: laneView.mediaOpacity,
+        zIndex: laneView.stackOffset,
+        shouldPlay: laneView.hostsMedia,
+        muted:
+          laneView.isPrevious ||
+          !(mediaPlayback?.fileVideoAudioEnabled ?? false),
+        volume: mediaPlayback?.volume ?? 1,
+        playback: resolvePlaybackForLane(
+          laneView.laneId,
+          laneView.mediaSnapshot.backgroundMedia,
+        ),
+      });
+      return views;
+    }, new Map<string, ElectronMediaSurfaceView>()).values(),
+  );
 
   return (
     <div
@@ -904,6 +1527,20 @@ const DisplayBoxTransitionStage = ({
         data-plane="media"
         style={{ zIndex: MEDIA_PLANE_Z, pointerEvents: "none" }}
       >
+        <ElectronMediaSurfacePool
+          enabled={poolEnabled}
+          candidates={poolCandidates}
+          candidateDiagnostics={poolCandidateResult.diagnostics}
+          views={poolViews}
+          onReadyChange={reportPreparedMediaReady}
+          onLiveReadyChange={reportPreparedMediaLiveReady}
+          onSurfaceElement={reportPreparedMediaElement}
+          lastSendPath={lastSendPath}
+          lastMediaKey={lastMediaKey}
+          posterShown={posterShown}
+          outputId={mediaPlayback?.outputId}
+          windowRole={mediaPlayback?.windowRole}
+        />
         {laneViews.map(
           ({
             laneId,
@@ -915,8 +1552,9 @@ const DisplayBoxTransitionStage = ({
             mediaOpacity,
             needsStillHold,
             stackOffset,
+            usesPreparedSurface,
           }) => {
-            if (!hostsMedia || !mediaSnapshot) return null;
+            if (!hostsMedia || !mediaSnapshot || usesPreparedSurface) return null;
             return (
               <div
                 key={`media-${laneId}`}

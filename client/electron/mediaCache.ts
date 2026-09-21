@@ -12,6 +12,20 @@ interface MediaCacheEntry {
   contentType?: string;
 }
 
+export type MediaCacheEntryInfo = {
+  source: string;
+  sourceUrl: string;
+  contentType?: string;
+};
+
+export type EnsureMediaCachedResult = {
+  requested: number;
+  cacheable: number;
+  downloaded: number;
+  failed: number;
+  cacheMap: Record<string, string>;
+};
+
 export class MediaCacheManager {
   private cacheDir: string;
   private cacheIndexPath: string;
@@ -125,7 +139,7 @@ export class MediaCacheManager {
     if (url.includes("stream.mux.com")) {
       const playbackIdMatch = url.match(/stream\.mux\.com\/([^/?]+)/);
       if (playbackIdMatch) {
-        const playbackId = playbackIdMatch[1];
+        const playbackId = playbackIdMatch[1].replace(/\.(?:m3u8|mp4)$/i, "");
         return `https://stream.mux.com/${playbackId}/highest.mp4`;
       }
     }
@@ -176,6 +190,45 @@ export class MediaCacheManager {
         this.inFlightDownloads.delete(cacheKey);
       }
     }
+  }
+
+  /**
+   * Additively warm the cache for the requested URLs. Unlike syncMediaCache,
+   * this never removes entries that are not part of the request.
+   */
+  async ensureMediaCached(urls: string[]): Promise<EnsureMediaCachedResult> {
+    const uniqueUrlsByCacheKey = new Map<string, string>();
+    for (const url of urls) {
+      const cacheKey = this.getCacheKey(url);
+      if (cacheKey && !uniqueUrlsByCacheKey.has(cacheKey)) {
+        uniqueUrlsByCacheKey.set(cacheKey, url);
+      }
+    }
+
+    let downloaded = 0;
+    let failed = 0;
+    await Promise.all(
+      [...uniqueUrlsByCacheKey.values()].map(async (url) => {
+        if (this.getLocalPath(url)) return;
+        try {
+          if (await this.downloadMedia(url)) {
+            downloaded += 1;
+          } else {
+            failed += 1;
+          }
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+
+    return {
+      requested: urls.length,
+      cacheable: uniqueUrlsByCacheKey.size,
+      downloaded,
+      failed,
+      cacheMap: this.getMediaCacheMap(),
+    };
   }
 
   private async downloadMediaInternal(url: string): Promise<string | null> {
@@ -406,5 +459,21 @@ export class MediaCacheManager {
       }
     }
     return map;
+  }
+
+  /** Metadata for the dev-only prepared-video picker. */
+  getMediaCacheEntries(): MediaCacheEntryInfo[] {
+    const entries: MediaCacheEntryInfo[] = [];
+    for (const [sourceUrl, entry] of this.cacheIndex) {
+      if (!fs.existsSync(entry.localPath)) continue;
+      const filename = entry.localPath.split(/[/\\]/).pop();
+      if (!filename) continue;
+      entries.push({
+        source: `media-cache://${filename}`,
+        sourceUrl,
+        ...(entry.contentType ? { contentType: entry.contentType } : {}),
+      });
+    }
+    return entries;
   }
 }

@@ -2497,7 +2497,7 @@ describe("DisplayWindow core paths", () => {
     );
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
 
     const players = await screen.findAllByTestId("window-hls-player");
