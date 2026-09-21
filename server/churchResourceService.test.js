@@ -39,7 +39,6 @@ test("ChurchResource validation accepts supported types and Office extension fal
     ChurchResourceInputError,
   );
 });
-
 test("ChurchResource storage uses the resources bucket, scoped keys, and promotion flow", async () => {
   const commands = [];
   const storage = createChurchResourceStorage({
@@ -112,4 +111,3 @@ test("ChurchResource server upload, signed read, and delete use final ID keys", 
   await storage.remove({ churchId: "church-1", resource: { id: resource.id, storage: resource } });
   assert.equal(commands.at(-1).constructor.name, "DeleteObjectCommand");
 });
-

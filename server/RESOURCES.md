@@ -37,4 +37,3 @@ Do not expire `churches/`; those are permanent ChurchResource objects. The
 completion endpoint promotes a pending object to `churches/.../original` and
 deletes the pending object immediately, while the lifecycle rule recovers
 objects abandoned by interrupted uploads.
-

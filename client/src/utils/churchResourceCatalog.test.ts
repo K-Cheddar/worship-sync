@@ -42,4 +42,3 @@ describe("church resource catalog", () => {
     expect(resource).not.toHaveProperty("songAudio");
   });
 });
-
