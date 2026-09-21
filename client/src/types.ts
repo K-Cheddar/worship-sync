@@ -192,6 +192,8 @@ export type SongLink = {
   id: string;
   label?: string;
   url: string;
+  /** Optional YouTube duration captured when the link was selected from search. */
+  durationSeconds?: number;
   /** Optional replay ranges for a YouTube resource. Times are absolute seconds. */
   segments?: SongLinkSegment[];
 };

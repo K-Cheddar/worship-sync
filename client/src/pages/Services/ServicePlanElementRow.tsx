@@ -78,6 +78,7 @@ import { cn } from "../../utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import generateRandomId from "../../utils/generateRandomId";
 import { pad2 } from "../../constants";
+import { getServicePlanResourceDefinition } from "./servicePlanResources";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import ServicePlanScripturePopover, {
@@ -1189,7 +1190,7 @@ const ServicePlanElementRow = ({
   const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
   const [leadPopoverOpen, setLeadPopoverOpen] = useState(false);
   const isDesktopAssignmentPanel = useMediaQuery("(min-width: 1280px)");
-  const usesDesktopAssignmentPanel = isDesktopAssignmentPanel && Boolean(onOpenAssignment);
+  const usesAssignmentPanel = Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
   const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
@@ -1349,7 +1350,7 @@ const ServicePlanElementRow = ({
     || scheduledPositionIds.length > 0
     || scheduledRows.length > 0;
   const openAssignment = (trigger?: HTMLElement) => {
-    if (usesDesktopAssignmentPanel && onOpenAssignment) {
+    if (usesAssignmentPanel && onOpenAssignment) {
       onOpenAssignment(trigger);
       return;
     }
@@ -1563,8 +1564,9 @@ const ServicePlanElementRow = ({
     });
   };
 
-  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel);
-  const contentReferenceCount = songRefs.length + scriptureRefs.length;
+  const contentResources = element.resources || [];
+  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel) || contentResources.length > 0;
+  const contentReferenceCount = songRefs.length + scriptureRefs.length + contentResources.length;
 
   const renderItemActionsMenu = () => allowEdit ? (
     <ItemActionsMenu
@@ -1999,6 +2001,49 @@ const ServicePlanElementRow = ({
                     scriptureRef: undefined,
                     scriptureRefs: scriptureRefs.filter((_, currentIndex) => currentIndex !== scriptureIndex),
                   })}
+                />
+              ) : null}
+            </span>
+          );
+        })}
+        {contentResources.map((resource, index) => {
+          if (placement === "summary" && (firstSongIndex >= 0 || scriptureLabel || index > 0)) {
+            return null;
+          }
+          const definition = getServicePlanResourceDefinition(resource.type);
+          const ResourceIcon = definition.icon;
+          return (
+            <span
+              key={resource.id}
+              className={cn(
+                SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+                placement === "summary" && cn(
+                  SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+                  "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                ),
+              )}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                aria-label={`${allowEdit ? "Manage" : "View"} content for ${itemLabel}`}
+                onClick={(event) => {
+                  if (usesContentPanel) openContent(event.currentTarget);
+                }}
+              >
+                <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
+                <span className="min-w-0 flex-1 truncate leading-none">{resource.title}</span>
+              </button>
+              {allowEdit ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  iconSize="sm"
+                  padding="p-0"
+                  className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
+                  svg={X}
+                  aria-label={`Remove resource ${resource.title}`}
+                  onClick={() => onUpdate({ resources: contentResources.filter((_, currentIndex) => currentIndex !== index) })}
                 />
               ) : null}
             </span>
@@ -2621,7 +2666,7 @@ const ServicePlanElementRow = ({
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {assignmentSheetOpen && !usesDesktopAssignmentPanel ? (
+      {assignmentSheetOpen && !usesAssignmentPanel ? (
         <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
           <SheetContent
             side="right"

@@ -36,7 +36,7 @@ import {
   buildOutlineVirtualRows,
   captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
-  captureOutlineZoomFocalPoint,
+  captureOutlineSlideFocalPoint,
   findOutlineRowIndexForItem,
   getControllerItemPath,
   getOutlineVirtualRowKey,
@@ -47,7 +47,7 @@ import {
   resolveOutlineScrollTopFromAnchor,
   type OutlineScrollAnchor,
   type OutlineSlideSection,
-  type OutlineZoomFocalPoint,
+  type OutlineSlideFocalPoint,
 } from "../../utils/outlineSlideSections";
 import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
@@ -363,25 +363,41 @@ const OutlineItemSlidesScroller = ({
   const rowIndexDataRef = useRef(rowIndexData);
   rowIndexDataRef.current = rowIndexData;
   const rowsRef = useRef(rows);
+  const previousRenderInputsRef = useRef({
+    cols,
+    activeSlides: activeItem.slides,
+    activeArrangements: activeItem.arrangements,
+    activeFormattedSections: activeItem.formattedSections,
+  });
   const virtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(
     null,
   );
-  const pendingZoomFocalRef = useRef<OutlineZoomFocalPoint | null>(null);
-  const isZoomRestoringRef = useRef(false);
-  const zoomRestoreTimerRef = useRef<number | null>(null);
-  const colsSeenRef = useRef(cols);
+  const pendingFocalPointRef = useRef<OutlineSlideFocalPoint | null>(null);
+  const isFocalPointRestoringRef = useRef(false);
+  const focalPointRestoreTimerRef = useRef<number | null>(null);
 
   const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
   const tileRowHeightRef = useRef(tileRowHeight);
   tileRowHeightRef.current = tileRowHeight;
   const representativeTileRowKeyRef = useRef<string | null>(null);
+  const tileRowMeasureFrameRef = useRef<number | null>(null);
 
   const didInitialScrollRef = useRef(false);
   const isInitialAnchoringRef = useRef(false);
 
-  // Capture from the previous column packing before this render's rows/virtualizer
+  // Capture from the previous row geometry before this render's rows/virtualizer
   // replace it. Layout effects run too late: the new DOM is already committed.
-  if (colsSeenRef.current !== cols) {
+  // This covers both zoom reflows and remote content updates.
+  const previousRenderInputs = previousRenderInputsRef.current;
+  const contentChanged =
+    previousRenderInputs.activeSlides !== activeItem.slides ||
+    previousRenderInputs.activeArrangements !== activeItem.arrangements ||
+    previousRenderInputs.activeFormattedSections !==
+      activeItem.formattedSections;
+  if (
+    rowsRef.current !== rows &&
+    (previousRenderInputs.cols !== cols || contentChanged)
+  ) {
     const element = scrollRef.current;
     const previousVirtualizer = virtualizerRef.current;
     if (
@@ -401,7 +417,7 @@ const OutlineItemSlidesScroller = ({
         if (row?.type === "empty") return EMPTY_ROW_HEIGHT;
         return tileRowHeightRef.current;
       };
-      pendingZoomFocalRef.current = captureOutlineZoomFocalPoint(
+      pendingFocalPointRef.current = captureOutlineSlideFocalPoint(
         rowsRef.current,
         getRowStart,
         getRowHeight,
@@ -411,11 +427,16 @@ const OutlineItemSlidesScroller = ({
         selectedSlide,
         sectionsByListId,
       );
-      isZoomRestoringRef.current = pendingZoomFocalRef.current != null;
+      isFocalPointRestoringRef.current = pendingFocalPointRef.current != null;
     }
-    colsSeenRef.current = cols;
   }
   rowsRef.current = rows;
+  previousRenderInputsRef.current = {
+    cols,
+    activeSlides: activeItem.slides,
+    activeArrangements: activeItem.arrangements,
+    activeFormattedSections: activeItem.formattedSections,
+  };
 
   const virtualizerChangeRef = useRef<
     ((instance: Virtualizer<HTMLElement, Element>, sync: boolean) => void) | null
@@ -472,6 +493,30 @@ const OutlineItemSlidesScroller = ({
     }
   }, [tileRowHeight]);
 
+  const invalidateTileRowGeometry = useCallback(() => {
+    if (tileRowMeasureFrameRef.current != null) return;
+
+    tileRowMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      tileRowMeasureFrameRef.current = null;
+      representativeTileRowKeyRef.current = null;
+
+      const element = scrollRef.current;
+      const representativeRow =
+        element?.querySelector<HTMLElement>('[data-row-type="tiles"]');
+      const nextHeight = representativeRow?.getBoundingClientRect().height ?? 0;
+      if (nextHeight > 0) {
+        tileRowHeightRef.current = nextHeight;
+        setTileRowHeight((current) =>
+          Math.abs(current - nextHeight) > 1 ? nextHeight : current,
+        );
+      }
+
+      // Tile rows share one height estimate. Clear TanStack's per-row cache so
+      // all offsets are rebuilt from the newly measured representative row.
+      virtualizerRef.current?.measure();
+    });
+  }, [scrollRef]);
+
   const targetListId =
     selectedItemListId || activeItemListId || undefined;
   const lastPinnedListIdRef = useRef(targetListId);
@@ -500,7 +545,7 @@ const OutlineItemSlidesScroller = ({
 
   const captureViewportAnchor = useCallback(
     (options?: { force?: boolean }) => {
-      if (isZoomRestoringRef.current && !options?.force) return;
+      if (isFocalPointRestoringRef.current && !options?.force) return;
       const element = scrollRef.current;
       if (!element) return;
       viewportAnchorRef.current = captureOutlineScrollAnchor(
@@ -525,16 +570,16 @@ const OutlineItemSlidesScroller = ({
     }, durationMs);
   }, [captureViewportAnchor]);
 
-  const beginZoomRestoreWindow = useCallback(() => {
-    isZoomRestoringRef.current = true;
+  const beginFocalPointRestoreWindow = useCallback(() => {
+    isFocalPointRestoringRef.current = true;
     ignorePinRef.current = true;
-    if (zoomRestoreTimerRef.current != null) {
-      window.clearTimeout(zoomRestoreTimerRef.current);
+    if (focalPointRestoreTimerRef.current != null) {
+      window.clearTimeout(focalPointRestoreTimerRef.current);
     }
-    zoomRestoreTimerRef.current = window.setTimeout(() => {
-      zoomRestoreTimerRef.current = null;
-      isZoomRestoringRef.current = false;
-      pendingZoomFocalRef.current = null;
+    focalPointRestoreTimerRef.current = window.setTimeout(() => {
+      focalPointRestoreTimerRef.current = null;
+      isFocalPointRestoringRef.current = false;
+      pendingFocalPointRef.current = null;
       ignorePinRef.current = false;
       captureViewportAnchor({ force: true });
     }, OUTLINE_INITIAL_ANCHOR_MS);
@@ -542,16 +587,17 @@ const OutlineItemSlidesScroller = ({
 
   const layoutColsRef = useRef(cols);
   useLayoutEffect(() => {
-    if (layoutColsRef.current === cols) return;
-    layoutColsRef.current = cols;
-    representativeTileRowKeyRef.current = null;
-    setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
-    prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
-    virtualizerRef.current?.measure();
-    if (pendingZoomFocalRef.current) {
-      beginZoomRestoreWindow();
+    if (layoutColsRef.current !== cols) {
+      layoutColsRef.current = cols;
+      representativeTileRowKeyRef.current = null;
+      setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
+      prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
+      virtualizerRef.current?.measure();
     }
-  }, [beginZoomRestoreWindow, cols]);
+    if (pendingFocalPointRef.current) {
+      beginFocalPointRestoreWindow();
+    }
+  }, [beginFocalPointRestoreWindow, cols, rows]);
 
   const extendInitialAnchoring = useCallback(() => {
     isInitialAnchoringRef.current = true;
@@ -606,7 +652,7 @@ const OutlineItemSlidesScroller = ({
     (instance: Virtualizer<HTMLElement, Element>) => {
       const scrollTop = instance.scrollOffset ?? scrollRef.current?.scrollTop ?? 0;
       const virtualItems = instance.getVirtualItems();
-      if (!isZoomRestoringRef.current) {
+      if (!isFocalPointRestoringRef.current) {
         viewportAnchorRef.current = captureOutlineScrollAnchorFromVirtualItems(
           rowsRef.current,
           virtualItems,
@@ -641,8 +687,8 @@ const OutlineItemSlidesScroller = ({
       if (initialAnchorTimerRef.current != null) {
         window.clearTimeout(initialAnchorTimerRef.current);
       }
-      if (zoomRestoreTimerRef.current != null) {
-        window.clearTimeout(zoomRestoreTimerRef.current);
+      if (focalPointRestoreTimerRef.current != null) {
+        window.clearTimeout(focalPointRestoreTimerRef.current);
       }
       if (browsePinTimerRef.current != null) {
         window.clearTimeout(browsePinTimerRef.current);
@@ -710,8 +756,8 @@ const OutlineItemSlidesScroller = ({
     [scrollToListId],
   );
 
-  const applyZoomFocal = useCallback(
-    (focal: OutlineZoomFocalPoint) => {
+  const applyFocalPoint = useCallback(
+    (focal: OutlineSlideFocalPoint) => {
       const element = scrollRef.current;
       const currentVirtualizer = virtualizerRef.current;
       if (!element || !currentVirtualizer) return false;
@@ -802,7 +848,7 @@ const OutlineItemSlidesScroller = ({
     const tryScroll = () => {
       // Parent attaches the scroll element ref; child layout can run first.
       if (!scrollRef.current) return false;
-      if (isZoomRestoringRef.current) return true;
+      if (isFocalPointRestoringRef.current) return true;
       if (!didInitialScrollRef.current) {
         didInitialScrollRef.current = true;
         lastPinnedListIdRef.current = listId;
@@ -845,7 +891,7 @@ const OutlineItemSlidesScroller = ({
       scrollToListId(listId, selectedSlideRef.current, { behavior: "auto" });
       return;
     }
-    if (isZoomRestoringRef.current) return;
+    if (isFocalPointRestoringRef.current) return;
     if (isInitialAnchoringRef.current) {
       applyPinnedScroll(selectedSlideRef.current, "auto");
     }
@@ -858,16 +904,22 @@ const OutlineItemSlidesScroller = ({
     tileRowHeight,
   ]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const element = scrollRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
     let lastHeight = element.clientHeight;
+    let lastWidth = element.clientWidth;
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight;
       if (nextHeight <= 0) return;
       const heightChanged = nextHeight !== lastHeight;
+      const widthChanged =
+        element.clientWidth > 0 && element.clientWidth !== lastWidth;
       lastHeight = nextHeight;
-      if (isZoomRestoringRef.current) return;
+      lastWidth = element.clientWidth;
+
+      if (widthChanged) invalidateTileRowGeometry();
+      if (isFocalPointRestoringRef.current) return;
       if (!heightChanged && didInitialScrollRef.current && !isInitialAnchoringRef.current) {
         return;
       }
@@ -881,22 +933,30 @@ const OutlineItemSlidesScroller = ({
       applyPinnedScroll(selectedSlideRef.current, "auto");
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [applyPinnedScroll, extendInitialAnchoring, scrollRef]);
+    return () => {
+      observer.disconnect();
+      if (tileRowMeasureFrameRef.current != null) {
+        window.cancelAnimationFrame(tileRowMeasureFrameRef.current);
+        tileRowMeasureFrameRef.current = null;
+      }
+    };
+  }, [
+    applyPinnedScroll,
+    extendInitialAnchoring,
+    invalidateTileRowGeometry,
+    scrollRef,
+  ]);
 
-  // After the initial anchor window, restore the visible row when virtual
-  // geometry rebuilds (remote doc updates, prefetch, tile-height sync). Zoom
-  // uses a frozen slide/row identity captured before the column reflow. Other
-  // rebuilds keep the on-screen row, not the selected slide — the operator may
-  // have scrolled elsewhere. Selection keep-in-view still runs when the chosen
-  // slide changes.
+  // After the initial anchor window, restore the frozen selected-slide focal
+  // point when virtual geometry rebuilds (zoom or remote content updates).
+  // Missing selections still fall back to the existing viewport anchor.
   useLayoutEffect(() => {
     if (!didInitialScrollRef.current) return;
 
     const restore = () => {
-      const zoomFocal = pendingZoomFocalRef.current;
-      if (isZoomRestoringRef.current && zoomFocal) {
-        return applyZoomFocal(zoomFocal);
+      const focalPoint = pendingFocalPointRef.current;
+      if (isFocalPointRestoringRef.current && focalPoint) {
+        return applyFocalPoint(focalPoint);
       }
       if (isInitialAnchoringRef.current) return false;
 
@@ -928,7 +988,7 @@ const OutlineItemSlidesScroller = ({
     });
     return () => window.cancelAnimationFrame(rafId);
   }, [
-    applyZoomFocal,
+    applyFocalPoint,
     captureViewportAnchor,
     readRowStart,
     rowIndexData,
@@ -940,10 +1000,10 @@ const OutlineItemSlidesScroller = ({
   // Parent scroll ref can attach after child layout (same race as collapse/open).
   useEffect(() => {
     if (!didInitialScrollRef.current) return;
-    const zoomFocal = pendingZoomFocalRef.current;
-    if (!isZoomRestoringRef.current || !zoomFocal) return;
-    applyZoomFocal(zoomFocal);
-  }, [applyZoomFocal, rows, tileRowHeight]);
+    const focalPoint = pendingFocalPointRef.current;
+    if (!isFocalPointRestoringRef.current || !focalPoint) return;
+    applyFocalPoint(focalPoint);
+  }, [applyFocalPoint, rows, tileRowHeight]);
 
   // Left-list / route item changes: update browse pin only. Scrolling to the
   // selection is owned by the activeItemListId + selectedSlide effect below so

@@ -21,6 +21,13 @@ import {
 } from "../types";
 import { isLegacyPreferencesDoc } from "./dbUtils";
 import type { allDocsType } from "../types";
+import {
+  mediaReferenceMatches,
+  replaceMediaReferencesInItem,
+  replaceMediaReferencesInPreference,
+  replaceMediaReferencesInQuickLinks,
+  type MediaReferenceReplacement,
+} from "./mediaReferenceReplacement";
 
 /** Canonical defaults when stripping a deleted asset from preference fields (matches preferencesSlice seeds). */
 const CANONICAL_DEFAULT_BACKGROUNDS: Pick<
@@ -256,6 +263,10 @@ export type MediaReferenceSweepResult = {
   ok: boolean;
   failedDocIds: string[];
   message?: string;
+};
+
+export type MediaReferenceReplacementResult = MediaReferenceSweepResult & {
+  updatedDocs?: Record<string, unknown>[];
 };
 
 function buildDeletedUrlSet(rows: MediaType[]): Set<string> {
@@ -537,4 +548,194 @@ export async function sweepMediaReferencesBeforeDelete(
   }
 
   return { ok: true, failedDocIds: [] };
+}
+
+/**
+ * Replace references to a Media rendition without applying delete-sweep
+ * defaults. The replacement is prepared in memory first and previously saved
+ * documents are restored when a later put fails, so callers can safely keep
+ * the superseded provider asset until this operation reports success.
+ */
+export async function replaceMediaReferencesForReplacement(
+  db: PouchDB.Database,
+  replacement: MediaReferenceReplacement,
+): Promise<MediaReferenceReplacementResult> {
+  const pending = new Map<
+    string,
+    { previous: Record<string, unknown>; next: Record<string, unknown> }
+  >();
+
+  const addIfChanged = (
+    previous: Record<string, unknown>,
+    next: Record<string, unknown>,
+  ) => {
+    if (JSON.stringify(previous) === JSON.stringify(next)) return;
+    const id = typeof previous._id === "string" ? previous._id : "";
+    if (id) pending.set(id, { previous, next });
+  };
+
+  let prefsRaw: Record<string, unknown>;
+  try {
+    prefsRaw = (await db.get(PREFERENCES_POUCH_ID)) as unknown as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    return {
+      ok: false,
+      failedDocIds: [PREFERENCES_POUCH_ID],
+      message: "Could not load preferences for Canva media replacement.",
+    };
+  }
+
+  const prefs = {
+    ...((prefsRaw.preferences ?? {}) as PreferencesType),
+  };
+  for (const field of [
+    "defaultSongBackground",
+    "defaultTimerBackground",
+    "defaultBibleBackground",
+    "defaultFreeFormBackground",
+  ] as const) {
+    prefs[field] = replaceMediaReferencesInPreference(
+      prefs[field],
+      replacement,
+    );
+  }
+
+  const legacy = isLegacyPreferencesDoc(prefsRaw);
+  let quickLinksSource: QuickLinkType[] = [];
+  let quickLinksDoc: Record<string, unknown> | undefined;
+  if (legacy) {
+    quickLinksSource = (prefsRaw.quickLinks as QuickLinkType[]) ?? [];
+  } else {
+    try {
+      quickLinksDoc = (await db.get(QUICK_LINKS_POUCH_ID)) as Record<
+        string,
+        unknown
+      >;
+      quickLinksSource = (quickLinksDoc.quickLinks as QuickLinkType[]) ?? [];
+    } catch (error) {
+      if ((error as { status?: number }).status !== 404) {
+        return {
+          ok: false,
+          failedDocIds: [QUICK_LINKS_POUCH_ID],
+          message: "Could not load quick links for Canva media replacement.",
+        };
+      }
+    }
+  }
+  const nextQuickLinks = replaceMediaReferencesInQuickLinks(
+    quickLinksSource,
+    replacement,
+  );
+  const nextPrefsRaw: Record<string, unknown> = {
+    ...prefsRaw,
+    preferences: prefs,
+  };
+  if (legacy) nextPrefsRaw.quickLinks = nextQuickLinks;
+  addIfChanged(prefsRaw, nextPrefsRaw);
+  if (quickLinksDoc) {
+    addIfChanged(quickLinksDoc, {
+      ...quickLinksDoc,
+      quickLinks: nextQuickLinks,
+    });
+  }
+
+  let allDocs: allDocsType;
+  try {
+    allDocs = (await db.allDocs({ include_docs: true })) as allDocsType;
+  } catch {
+    return {
+      ok: false,
+      failedDocIds: [],
+      message: "Could not inspect saved Canva media references.",
+    };
+  }
+
+  for (const row of allDocs.rows) {
+    const doc = row.doc as unknown as Record<string, unknown> | undefined;
+    if (!doc || typeof doc._id !== "string") continue;
+    const id = doc._id;
+    if (
+      id === PREFERENCES_POUCH_ID ||
+      id === QUICK_LINKS_POUCH_ID ||
+      id === MONITOR_SETTINGS_POUCH_ID ||
+      id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
+      id === "media"
+    ) {
+      continue;
+    }
+
+    const dtype = doc.type as string | undefined;
+    if (
+      dtype &&
+      ITEM_TYPES.includes(dtype as ItemType) &&
+      !id.startsWith("overlay-")
+    ) {
+      addIfChanged(
+        doc,
+        replaceMediaReferencesInItem(doc as unknown as DBItem, replacement) as unknown as Record<string, unknown>,
+      );
+      continue;
+    }
+
+    if (
+      id.startsWith("overlay-") &&
+      id !== "overlay-templates" &&
+      !id.startsWith("overlay-history") &&
+      doc.type === "image" &&
+      mediaReferenceMatches(
+        replacement.oldMedia,
+        undefined,
+        String(doc.imageUrl || ""),
+      )
+    ) {
+      addIfChanged(doc, {
+        ...doc,
+        imageUrl: replacement.newMedia.background,
+      });
+    }
+  }
+
+  const applied: Array<{
+    previous: Record<string, unknown>;
+    savedRevision?: string;
+  }> = [];
+  try {
+    for (const { previous, next } of pending.values()) {
+      const result = (await db.put({
+        ...next,
+        updatedAt: new Date().toISOString(),
+      })) as { rev?: string };
+      applied.push({ previous, savedRevision: result.rev });
+    }
+  } catch (error) {
+    for (let index = applied.length - 1; index >= 0; index -= 1) {
+      const saved = applied[index];
+      try {
+        await db.put({
+          ...saved.previous,
+          ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
+        });
+      } catch (rollbackError) {
+        console.error("Failed to roll back Canva media reference replacement:", {
+          rollbackError,
+          docId: saved.previous._id,
+        });
+      }
+    }
+    const failedDocId =
+      error && typeof error === "object" && "id" in error
+        ? String((error as { id: unknown }).id)
+        : "unknown";
+    return {
+      ok: false,
+      failedDocIds: [failedDocId],
+      message: "Could not save Canva media reference replacement.",
+    };
+  }
+
+  const updatedDocs = [...pending.values()].map(({ next }) => next);
+  return { ok: true, failedDocIds: [], updatedDocs };
 }

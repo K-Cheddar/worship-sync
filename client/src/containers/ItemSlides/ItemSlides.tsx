@@ -148,6 +148,13 @@ import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
 
+const haveSameSlideOrder = (
+  firstSlides: ItemSlideType[],
+  secondSlides: ItemSlideType[],
+) =>
+  firstSlides.length === secondSlides.length &&
+  firstSlides.every((slide, index) => slide.id === secondSlides[index]?.id);
+
 /** Preserve the existing custom-item reorder unit: a named section moves as a block. */
 const reorderSlidesForDrag = (
   slides: ItemSlideType[],
@@ -157,61 +164,56 @@ const reorderSlidesForDrag = (
   const draggedSlide = slides.find((slide) => slide.id === activeId);
   if (!draggedSlide) return slides;
 
-  const sectionNum = getFreeSectionNumber(draggedSlide);
-  if (sectionNum == null) return slides;
-  const sectionSlides = slides.filter(
-    (slide) => getFreeSectionNumber(slide) === sectionNum,
-  );
   const targetSlide = slides.find((slide) => slide.id === overId);
   if (!targetSlide) return slides;
 
-  const targetIndex = slides.findIndex((slide) => slide.id === overId);
-  const targetSectionNum = getFreeSectionNumber(targetSlide);
-  if (targetSectionNum != null && targetSectionNum !== sectionNum) {
-    const targetSectionStart = slides.findIndex((slide) =>
-      getFreeSectionNumber(slide) === targetSectionNum,
-    );
-    const targetSectionEnd = slides.findIndex(
-      (slide, index) =>
-        index > targetSectionStart &&
-        getFreeSectionNumber(slide) !== targetSectionNum,
-    );
-    if (
-      targetIndex > targetSectionStart &&
-      targetIndex < targetSectionEnd
-    ) {
-      return slides;
-    }
-  }
+  const getReorderUnit = (slide: ItemSlideType) => {
+    const sectionNum = getFreeSectionNumber(slide);
+    return sectionNum == null
+      ? [slide]
+      : slides.filter(
+          (candidate) => getFreeSectionNumber(candidate) === sectionNum,
+        );
+  };
+  const draggedUnit = getReorderUnit(draggedSlide);
+  const targetUnit = getReorderUnit(targetSlide);
+  const draggedIds = new Set(draggedUnit.map((slide) => slide.id));
 
-  const firstSectionIndex = slides.findIndex(
-    (slide) => getFreeSectionNumber(slide) === sectionNum,
-  );
-  const updatedSlides = [...slides];
-  updatedSlides.splice(firstSectionIndex, sectionSlides.length);
-  const updatedTargetIndex = updatedSlides.findIndex(
-    (slide) => slide.id === overId,
-  );
-  if (updatedTargetIndex < 0) return slides;
-  let insertionIndex = updatedTargetIndex + 1;
-  if (targetSectionNum != null) {
-    const updatedTargetSectionStart = updatedSlides.findIndex(
-      (slide) => getFreeSectionNumber(slide) === targetSectionNum,
-    );
-    if (updatedTargetIndex === updatedTargetSectionStart) {
-      const updatedTargetSectionEnd = updatedSlides.findIndex(
-        (slide, index) =>
-          index > updatedTargetSectionStart &&
-          getFreeSectionNumber(slide) !== targetSectionNum,
-      );
-      insertionIndex =
-        updatedTargetSectionEnd < 0
-          ? updatedSlides.length
-          : updatedTargetSectionEnd;
+  // Hovering over another slide in the same reorder unit is a no-op.
+  if (targetUnit.some((slide) => draggedIds.has(slide.id))) return slides;
+
+  // The target boundary must be found after removal so movement in either
+  // direction uses the same hover semantics and never splits a section.
+  const remainingSlides = slides.filter((slide) => !draggedIds.has(slide.id));
+  const targetIds = new Set(targetUnit.map((slide) => slide.id));
+  let targetStartIndex = -1;
+  let targetEndIndex = -1;
+  remainingSlides.forEach((slide, index) => {
+    if (targetIds.has(slide.id)) {
+      if (targetStartIndex < 0) targetStartIndex = index;
+      targetEndIndex = index;
     }
-  }
-  updatedSlides.splice(insertionIndex, 0, ...sectionSlides);
-  return updatedSlides;
+  });
+  if (targetStartIndex < 0 || targetEndIndex < 0) return slides;
+
+  const draggedStartIndex = slides.findIndex(
+    (slide) => slide.id === draggedUnit[0]?.id,
+  );
+  const targetStartInOriginal = slides.findIndex(
+    (slide) => slide.id === targetUnit[0]?.id,
+  );
+  const insertionIndex =
+    draggedStartIndex < targetStartInOriginal
+      ? targetEndIndex + 1
+      : targetStartIndex;
+  const reorderedSlides = [
+    ...remainingSlides.slice(0, insertionIndex),
+    ...draggedUnit,
+    ...remainingSlides.slice(insertionIndex),
+  ];
+  return haveSameSlideOrder(slides, reorderedSlides)
+    ? slides
+    : reorderedSlides;
 };
 
 type SizeConfig = {
@@ -765,16 +767,17 @@ const ItemSlidesContent = () => {
       if (!options?.presentationOnly) dispatch(setSelectedSlide(index));
       const slide = presentationSlides[index];
       if (slide?.mediaSource?.kind === "local-video-input") {
+        const mediaSource = slide.mediaSource;
         const localVideoInput = buildLocalVideoInputPresentation(
-          slide.mediaSource,
+          mediaSource,
           getOrCreateDeviceId(),
           getTrustedDeviceLabel(),
         );
         if (!localVideoInput) {
           showToast?.(
-            isDesktopCaptureKind(slide.mediaSource.captureKind)
-              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
-              : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            isDesktopCaptureKind(mediaSource.captureKind)
+              ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+              : `Relink ${mediaSource.label} on this computer, then try again.`,
             "warning",
           );
           return;
@@ -830,13 +833,13 @@ const ItemSlidesContent = () => {
             );
           }
         };
-        const localVideoSourceId = slide.mediaSource.sourceId;
+        const localVideoSourceId = mediaSource.sourceId;
         const binding = resolveLocalVideoInputBinding(localVideoSourceId);
         if (!binding) {
           showToast?.(
-            isDesktopCaptureKind(slide.mediaSource.captureKind)
-              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
-              : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            isDesktopCaptureKind(mediaSource.captureKind)
+              ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+              : `Relink ${mediaSource.label} on this computer, then try again.`,
             "warning",
           );
           return;
@@ -874,10 +877,10 @@ const ItemSlidesContent = () => {
             }
             showToast?.(
               isDesktopCaptureSourceMissingError(error)
-                ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+                ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
                 : getLocalVideoSourceErrorMessage(
                     error,
-                    slide.mediaSource?.captureKind,
+                    mediaSource.captureKind,
                   ),
               "warning",
             );
@@ -1824,6 +1827,7 @@ const ItemSlidesContent = () => {
     if (!dragPreviewSlides) return;
     const updatedSlides = dragPreviewSlides;
     setDragPreviewSlides(null);
+    if (haveSameSlideOrder(slides, updatedSlides)) return;
     setDebouncedSlides(updatedSlides);
     dispatch(updateSlides({ slides: updatedSlides }));
   };

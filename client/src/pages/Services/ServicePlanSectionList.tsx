@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, GripVertical, MoreHorizontal, Trash2, X } from "lucide-react";
 import {
   DndContext,
@@ -154,7 +154,10 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   sectionBorderColor: string;
   onOpenAssignment: (elementId: string, trigger?: HTMLElement) => void;
   onOpenContent: (elementId: string, trigger?: HTMLElement) => void;
-  onOpenSongDetails: (songRef: ServicePlanSongReference) => void;
+  onOpenSongDetails: (
+    elementId: string,
+    songRef: ServicePlanSongReference,
+  ) => void;
   /** When an item is dragging, section cards must not also translate — the preview array is the layout. */
   lockSortableLayout?: boolean;
 };
@@ -354,7 +357,7 @@ const SortableSectionCard = ({
                   structureOnly={structureOnly}
                   onOpenAssignment={(trigger) => onOpenAssignment(element.id, trigger)}
                   onOpenContent={(trigger) => onOpenContent(element.id, trigger)}
-                  onOpenSongDetails={onOpenSongDetails}
+                  onOpenSongDetails={(songRef) => onOpenSongDetails(element.id, songRef)}
                 />
               ))}
             </div>
@@ -467,12 +470,18 @@ const ServicePlanSectionList = ({
   const selectedElementId = selection?.elementId || null;
   const [assignmentPanelElementId, setAssignmentPanelElementId] = useState<string | null>(null);
   const [contentPanelElementId, setContentPanelElementId] = useState<string | null>(null);
-  const [songDetailsRef, setSongDetailsRef] = useState<ServicePlanSongReference | null>(null);
+  const [isScriptureAttachMode, setIsScriptureAttachMode] = useState(false);
+  const [isResourceEditorMode, setIsResourceEditorMode] = useState(false);
+  const [songDetailsRef, setSongDetailsRef] = useState<{
+    elementId: string;
+    songRef: ServicePlanSongReference;
+  } | null>(null);
   const [songDetailsEditing, setSongDetailsEditing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [elementPlacement, setElementPlacement] =
     useState<ServicePlanElementPlacement | null>(null);
   const elementPlacementRef = useRef<ServicePlanElementPlacement | null>(null);
+  const planListRef = useRef<HTMLDivElement | null>(null);
   const setDragElementPlacement = (
     next: ServicePlanElementPlacement | null,
   ) => {
@@ -510,15 +519,40 @@ const ServicePlanSectionList = ({
       section.elements.some((element) => element.id === assignmentPanelElement.id),
     )
     : undefined;
-  const closeAssignmentPanel = () => {
+  const resetItemSpecificPanel = useCallback(() => {
     setAssignmentPanelElementId(null);
     setContentPanelElementId(null);
+    setIsScriptureAttachMode(false);
+    setIsResourceEditorMode(false);
     setSongDetailsRef(null);
     setSongDetailsEditing(false);
-    assignmentPanelTriggerRef.current?.focus();
     assignmentPanelTriggerRef.current = null;
+  }, []);
+  useEffect(() => {
+    const elementIds = new Set(
+      sections.flatMap((section) => section.elements).map((element) => element.id),
+    );
+    const activePanelElementId =
+      assignmentPanelElementId || contentPanelElementId || songDetailsRef?.elementId;
+    if (activePanelElementId && !elementIds.has(activePanelElementId)) {
+      setAssignmentPanelElementId(null);
+      setContentPanelElementId(null);
+      setIsScriptureAttachMode(false);
+      setIsResourceEditorMode(false);
+      setSongDetailsRef(null);
+      setSongDetailsEditing(false);
+      assignmentPanelTriggerRef.current = null;
+    }
+  }, [assignmentPanelElementId, contentPanelElementId, sections, songDetailsRef?.elementId]);
+  const closeAssignmentPanel = () => {
+    const trigger = assignmentPanelTriggerRef.current;
+    resetItemSpecificPanel();
+    trigger?.focus();
   };
   const backToContentPanel = () => {
+    if (songDetailsRef) {
+      setContentPanelElementId(songDetailsRef.elementId);
+    }
     setSongDetailsRef(null);
     setSongDetailsEditing(false);
   };
@@ -547,12 +581,105 @@ const ServicePlanSectionList = ({
     setAssignmentPanelElementId(null);
     setSongDetailsRef(null);
     setSongDetailsEditing(false);
+    setIsScriptureAttachMode(false);
+    setIsResourceEditorMode(false);
     setContentPanelElementId(elementId);
     onOpenContentProp?.(elementId, trigger);
   };
+  const handleSelectSection = (sectionId: string) => {
+    if (assignmentPanelElementId || contentPanelElementId || songDetailsRef) {
+      resetItemSpecificPanel();
+    }
+    onSelectionChange?.({ sectionId });
+  };
+  const handleSelectElement = (sectionId: string, elementId: string) => {
+    setIsScriptureAttachMode(false);
+    setIsResourceEditorMode(false);
+    if (assignmentPanelElementId) {
+      setAssignmentPanelElementId(elementId);
+      assignmentPanelTriggerRef.current = null;
+    } else if (songDetailsRef) {
+      setAssignmentPanelElementId(null);
+      setContentPanelElementId(elementId);
+      setSongDetailsRef(null);
+      setSongDetailsEditing(false);
+      assignmentPanelTriggerRef.current = null;
+    } else if (contentPanelElementId) {
+      setContentPanelElementId(elementId);
+      assignmentPanelTriggerRef.current = null;
+    }
+    onSelectionChange?.({ sectionId, elementId });
+  };
+  const previousSelectionRef = useRef({
+    sectionId: selectedSectionId,
+    elementId: selectedElementId,
+  });
+  useEffect(() => {
+    const previousSelection = previousSelectionRef.current;
+    const selectionChanged =
+      previousSelection.sectionId !== selectedSectionId
+      || previousSelection.elementId !== selectedElementId;
+    previousSelectionRef.current = {
+      sectionId: selectedSectionId,
+      elementId: selectedElementId,
+    };
+    if (!selectionChanged) return;
+    if (!selectedElementId) {
+      if (assignmentPanelElementId || contentPanelElementId || songDetailsRef) {
+        resetItemSpecificPanel();
+      }
+      return;
+    }
+    if (assignmentPanelElementId && assignmentPanelElementId !== selectedElementId) {
+      setAssignmentPanelElementId(selectedElementId);
+      assignmentPanelTriggerRef.current = null;
+      return;
+    }
+    if (songDetailsRef && songDetailsRef.elementId !== selectedElementId) {
+      setAssignmentPanelElementId(null);
+      setContentPanelElementId(selectedElementId);
+      setSongDetailsRef(null);
+      setSongDetailsEditing(false);
+      assignmentPanelTriggerRef.current = null;
+      return;
+    }
+    if (contentPanelElementId && contentPanelElementId !== selectedElementId) {
+      setContentPanelElementId(selectedElementId);
+      assignmentPanelTriggerRef.current = null;
+    }
+  }, [
+    assignmentPanelElementId,
+    contentPanelElementId,
+    resetItemSpecificPanel,
+    selectedElementId,
+    selectedSectionId,
+    songDetailsRef,
+  ]);
+  const handleRemoveSection = (sectionId: string) => {
+    const panelElementIsInSection = sections
+      .find((section) => section.id === sectionId)
+      ?.elements.some((element) =>
+        element.id === assignmentPanelElementId
+        || element.id === contentPanelElementId
+        || element.id === songDetailsRef?.elementId,
+      );
+    if (panelElementIsInSection) resetItemSpecificPanel();
+    onSectionsChange(removeSection(sections, sectionId));
+  };
+  const handleRemoveElement = (elementId: string) => {
+    if (
+      elementId === assignmentPanelElementId
+      || elementId === contentPanelElementId
+      || elementId === songDetailsRef?.elementId
+    ) {
+      resetItemSpecificPanel();
+    }
+    onSectionsChange(applyElementRemoval(sections, elementId));
+  };
   const activePanelElement = assignmentPanelElement || contentPanelElement;
-  const songDetails = songDetailsRef?.kind === "library"
-    ? allSongDocs.find((song) => song._id === songDetailsRef.songId && song.type === "song")
+  const songDetailsSongRef = songDetailsRef?.songRef;
+  const songDetails = songDetailsSongRef?.kind === "library"
+    ? allSongDocs.find((song) => song._id === songDetailsSongRef.songId && song.type === "song")
     : undefined;
 
   const commitDisplayedSections = (next: ServicePlanSection[]) => {
@@ -677,11 +804,11 @@ const ServicePlanSectionList = ({
       />
     </div>
   );
-  const panelFooter = (
+  const panelFooter = isScriptureAttachMode || isResourceEditorMode ? null : (
     <div className="border-t border-gray-800 p-4">
       <Button
         type="button"
-        variant="primary"
+        variant="cta"
         className="w-full cursor-pointer justify-center"
         onClick={closeAssignmentPanel}
       >
@@ -702,6 +829,8 @@ const ServicePlanSectionList = ({
           element={contentPanelElement}
           allowEdit={canEdit && isEditing}
           onUpdate={(changes) => onSectionsChange(updateElement(sections, sections.find((section) => section.elements.some((element) => element.id === contentPanelElement.id))?.id || "", contentPanelElement.id, changes))}
+          onScriptureAttachModeChange={setIsScriptureAttachMode}
+          onResourceEditorModeChange={setIsResourceEditorMode}
           onViewSongLyrics={onViewSongLyrics}
           onOpenSongDetails={(songRef) => {
             if (songRef.kind !== "library") {
@@ -709,7 +838,7 @@ const ServicePlanSectionList = ({
               return;
             }
             setSongDetailsEditing(false);
-            setSongDetailsRef(songRef);
+            setSongDetailsRef({ elementId: contentPanelElement.id, songRef });
           }}
           onCreatePendingSong={onCreatePendingSong}
           canCreateLibrarySong={canCreateLibrarySong}
@@ -744,6 +873,7 @@ const ServicePlanSectionList = ({
         <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
           <div
             id={scrollId}
+            ref={planListRef}
             role="region"
             aria-label={ariaLabel}
             className="scrollbar-variable min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto"
@@ -768,22 +898,20 @@ const ServicePlanSectionList = ({
                     `section:${section.id}:name`,
                   )
                 }
-                onRemove={() => onSectionsChange(removeSection(sections, section.id))}
+                onRemove={() => handleRemoveSection(section.id)}
                 isSelected={selectedSectionId === section.id && !selectedElementId}
                 selectedElementId={
                   selectedSectionId === section.id ? selectedElementId || undefined : undefined
                 }
                 onSelectSection={() => {
                   if (!canEdit || !isEditing) return;
-                  onSelectionChange?.({ sectionId: section.id });
+                  handleSelectSection(section.id);
                 }}
                 onSelectElement={(elementId) => {
                   if (!canEdit || !isEditing) return;
-                  onSelectionChange?.({ sectionId: section.id, elementId });
+                  handleSelectElement(section.id, elementId);
                 }}
-                onRemoveElement={(elementId) =>
-                  onSectionsChange(applyElementRemoval(sections, elementId))
-                }
+                onRemoveElement={handleRemoveElement}
                 onUpdateElement={(elementId, changes, coalesceKey) =>
                   onSectionsChange(
                     updateElement(sections, section.id, elementId, changes),
@@ -833,7 +961,7 @@ const ServicePlanSectionList = ({
                 sectionBorderColor={sectionBorderColor}
                 onOpenAssignment={handleOpenAssignment}
                 onOpenContent={handleOpenContent}
-                onOpenSongDetails={(songRef) => {
+                onOpenSongDetails={(elementId, songRef) => {
                   if (songRef.kind !== "library") {
                     onViewSongLyrics?.(songRef);
                     return;
@@ -841,7 +969,7 @@ const ServicePlanSectionList = ({
                   setContentPanelElementId(null);
                   setAssignmentPanelElementId(null);
                   setSongDetailsEditing(false);
-                  setSongDetailsRef(songRef);
+                  setSongDetailsRef({ elementId, songRef });
                 }}
                 {...liveRowState}
               />
@@ -849,7 +977,7 @@ const ServicePlanSectionList = ({
 
           </div>
         </SortableContext>
-        {activePanelElement || songDetails ? (
+        {isDesktopPanel && (activePanelElement || songDetails) ? (
           <aside
             aria-label={panelAriaLabel}
             className="hidden min-h-0 w-[min(26rem,32vw)] shrink-0 flex-col overflow-hidden rounded-lg border border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl xl:flex"
@@ -862,6 +990,7 @@ const ServicePlanSectionList = ({
           </aside>
         ) : null}
         <Sheet
+          modal={false}
           open={!isDesktopPanel && Boolean(activePanelElement || songDetails)}
           onOpenChange={(open) => {
             if (!open) closeAssignmentPanel();
@@ -870,6 +999,16 @@ const ServicePlanSectionList = ({
           <SheetContent
             side="right"
             showClose={false}
+            onPointerDownOutside={(event) => {
+              if (planListRef.current?.contains(event.target as Node)) {
+                event.preventDefault();
+              }
+            }}
+            onFocusOutside={(event) => {
+              if (planListRef.current?.contains(event.target as Node)) {
+                event.preventDefault();
+              }
+            }}
             className="w-full max-w-md gap-0 p-0 xl:hidden"
             aria-label={panelAriaLabel}
           >

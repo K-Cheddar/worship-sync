@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType, ReactNode } from "react";
 import ServicePlanEditor from "./ServicePlanEditor";
@@ -2375,6 +2375,163 @@ Opening Song to begin the worship experience.
     expect(await screen.findByText("Synced")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
+  });
+
+  it("catches up schedule progress and missed publicLive changes after a long resume", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const sections = [{
+      id: "section-1",
+      name: "Worship",
+      elements: [
+        {
+          id: "welcome",
+          type: "free",
+          title: plainTextToRichText("Welcome"),
+          startTime: "14:00",
+          durationMinutes: 5,
+        },
+        {
+          id: "message",
+          type: "free",
+          title: plainTextToRichText("Message"),
+          startTime: "14:05",
+          durationMinutes: 30,
+        },
+      ],
+    }];
+    const initialPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      revision: 4,
+      sections,
+      publicLive: { mode: "schedule" as const },
+    } as ServicePlan;
+    const resumedPlan = {
+      ...initialPlan,
+      publicLive: { mode: "manual" as const, currentElementId: "message" },
+    };
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: initialPlan })
+      .mockResolvedValueOnce({ success: true, servicePlan: resumedPlan });
+
+    try {
+      renderEditor();
+      expect(
+        await screen.findByLabelText("Live on schedule: Welcome"),
+      ).toBeInTheDocument();
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      expect(
+        screen.getByLabelText("Live (pinned): Message"),
+      ).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("preserves an unsaved draft and raises the existing conflict state on resume", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let resolveSave: (() => void) | null = null;
+    const initialPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      revision: 1,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "welcome",
+          type: "free",
+          title: plainTextToRichText("Welcome"),
+        }],
+      }, {
+        id: "section-2",
+        name: "Response",
+        elements: [{
+          id: "response",
+          type: "free",
+          title: plainTextToRichText("Response"),
+        }],
+      }],
+    } as ServicePlan;
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: initialPlan })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: { ...initialPlan, revision: 9, name: "Remote version" },
+      });
+    mockSaveServicePlan.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = () =>
+            resolve({ success: true, servicePlan: initialPlan });
+        }),
+    );
+
+    try {
+      const user = userEvent.setup();
+      renderEditor({ initialEditing: true });
+      await screen.findByDisplayValue("Worship");
+      await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+      await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
+      expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+      expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+      expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
+      expect(screen.getByText("Plan changed elsewhere")).toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Reload latest" }),
+      ).toBeInTheDocument();
+    } finally {
+      const finishSave = resolveSave as (() => void) | null;
+      if (finishSave) {
+        await act(async () => finishSave());
+      }
+      nowSpy.mockRestore();
+    }
   });
 
   it("shares from plan actions on narrow layouts and lets an editor make an item live from its row", async () => {

@@ -36,6 +36,7 @@ import {
   updateLocalImageReferenceInItem,
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
+import { replaceMediaReferencesInItem } from "../utils/mediaReferenceReplacement";
 import type { AppDispatch, RootState } from "./store";
 
 const defaultShouldSendTo: ShouldSendTo = {
@@ -257,6 +258,32 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    replaceMediaReferencesInActiveItem: (
+      state,
+      action: PayloadAction<{
+        oldMedia: MediaType;
+        newMedia: MediaType;
+      }>,
+    ) => {
+      const next = replaceMediaReferencesInItem(state, action.payload);
+      if (next === state) return;
+      state.background = next.background || "";
+      state.slides = next.slides || [];
+      state.arrangements = next.arrangements || [];
+      if (state.baseItem) {
+        state.baseItem = replaceMediaReferencesInItem(
+          state.baseItem,
+          action.payload,
+        );
+      }
+      if (state.pendingRemoteItem) {
+        state.pendingRemoteItem = replaceMediaReferencesInItem(
+          state.pendingRemoteItem,
+          action.payload,
+        );
+      }
+      state.hasPendingUpdate = true;
     },
     attachCloudCopyToLocalImageInActiveItem: (
       state,
@@ -1029,6 +1056,7 @@ export const {
   _updateArrangements,
   clearTransientState,
   setActiveItem,
+  replaceMediaReferencesInActiveItem,
   attachCloudCopyToLocalImageInActiveItem,
   updateLocalImageReferenceInActiveItem,
   setItemIsLoading,

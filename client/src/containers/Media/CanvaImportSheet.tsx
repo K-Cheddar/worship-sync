@@ -83,8 +83,14 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   onImageComplete: (info: mediaInfoType) => MediaType | void;
   onVideoComplete: (info: MuxUploadResult) => MediaType | void;
-  onImageRefresh: (info: mediaInfoType, mediaId: string) => void;
-  onVideoRefresh: (info: MuxUploadResult, mediaId: string) => void;
+  onImageRefresh: (
+    info: mediaInfoType,
+    mediaId: string,
+  ) => void | Promise<void>;
+  onVideoRefresh: (
+    info: MuxUploadResult,
+    mediaId: string,
+  ) => void | Promise<void>;
   /** Optionally build a custom item from the imported Canva media. */
   onCreateDeckItem?: (
     pages: MediaType[],
@@ -564,13 +570,13 @@ const CanvaImportSheet = ({
       let importedCount = 0;
       const deckPageByNumber = new Map<number, MediaType>();
       let deckMedia: MediaType | undefined;
-      result.assets.forEach((asset) => {
+      for (const asset of result.assets) {
         const refreshTarget = asset.data.canvaSource
           ? findRefreshTarget(asset.data.canvaSource)
           : undefined;
         if (asset.kind === "image") {
           if (refreshTarget) {
-            onImageRefresh(asset.data, refreshTarget.id);
+            await onImageRefresh(asset.data, refreshTarget.id);
             refreshedCount += 1;
             recordDeckPages(
               deckPageByNumber,
@@ -582,7 +588,7 @@ const CanvaImportSheet = ({
             recordDeckPages(deckPageByNumber, created);
           }
         } else if (refreshTarget) {
-          onVideoRefresh(asset.data, refreshTarget.id);
+          await onVideoRefresh(asset.data, refreshTarget.id);
           refreshedCount += 1;
           deckMedia = mediaFromRefreshedVideo(refreshTarget, asset.data);
           recordDeckPages(
@@ -595,7 +601,7 @@ const CanvaImportSheet = ({
           recordDeckPages(deckPageByNumber, completed);
           importedCount += 1;
         }
-      });
+      }
       const resultParts = [];
       if (refreshedCount) {
         resultParts.push(

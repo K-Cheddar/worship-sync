@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { BookOpen, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
+import { BookOpen, ExternalLink, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
@@ -10,6 +10,7 @@ import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRi
 import { getServiceFlowProgress } from "../services/serviceFlowProgress";
 import type {
   PublicServiceFlowItem,
+  PublicServiceFlowResource,
   PublicServiceFlowServingTeam,
   PublicServiceFlowSnapshot,
 } from "../services/serviceFlowTypes";
@@ -18,6 +19,7 @@ import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
 import { SERVICE_PLAN_SONG_ICON_CLASS } from "./Services/servicePlanChipStyles";
 import { SERVICE_PLAN_SCRIPTURE_ICON_CLASS } from "./Services/ServicePlanScripturePopover";
+import { getServicePlanResourceDefinition } from "./Services/servicePlanResources";
 import { ServicePlanMicrophoneChip } from "../components/ServicePlanMicrophoneChip";
 import {
   readServicePublicNotesTeam,
@@ -143,7 +145,8 @@ const PublicItemContent = ({
 }) => {
   const songs = item.songs || [];
   const scriptureRefs = item.scriptureRefs || [];
-  if (!songs.length && !scriptureRefs.length) return null;
+  const resources = item.resources || [];
+  if (!songs.length && !scriptureRefs.length && !resources.length) return null;
 
   const renderReferences = (labels: string[], IconComponent: typeof Music, tone: string) => {
     const visible = labels.slice(0, 3);
@@ -164,18 +167,70 @@ const PublicItemContent = ({
   };
 
   return (
-    <div
-      className={cn(
-        "mt-1.5 space-y-0.5 text-xs leading-5",
-        theme === "light" ? "text-slate-700" : "text-neutral-300",
-      )}
-      aria-label="Songs and scripture"
-    >
-      {songs.length ? renderReferences(songs, Music, SERVICE_PLAN_SONG_ICON_CLASS) : null}
-      {scriptureRefs.length ? renderReferences(scriptureRefs, BookOpen, SERVICE_PLAN_SCRIPTURE_ICON_CLASS) : null}
+    <div className="mt-1.5 space-y-1 text-xs leading-5">
+      {songs.length || scriptureRefs.length ? (
+        <div
+          className={theme === "light" ? "text-slate-700" : "text-neutral-300"}
+          aria-label="Songs and scripture"
+        >
+          {songs.length ? renderReferences(songs, Music, SERVICE_PLAN_SONG_ICON_CLASS) : null}
+          {scriptureRefs.length ? renderReferences(scriptureRefs, BookOpen, SERVICE_PLAN_SCRIPTURE_ICON_CLASS) : null}
+        </div>
+      ) : null}
+      {resources.length ? <PublicResourceReferences resources={resources} theme={theme} /> : null}
     </div>
   );
 };
+
+const PublicResourceReferences = ({
+  resources,
+  theme,
+}: {
+  resources: PublicServiceFlowResource[];
+  theme: ServicePublicTheme;
+}) => (
+  <div
+    className={cn(
+      "flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1",
+      theme === "light" ? "text-slate-700" : "text-neutral-300",
+    )}
+    aria-label="Resources"
+  >
+    {resources.map((resource, index) => {
+      const definition = getServicePlanResourceDefinition(resource.type);
+      const ResourceIcon = definition.icon;
+      const content = (
+        <>
+          <ResourceIcon className={cn("mt-0.5 size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
+          <span className="min-w-0">
+            <span className="block truncate">{resource.title}</span>
+            <span className={cn("block text-[10px] uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
+              {definition.label}
+            </span>
+            {resource.detail ? <span className="block whitespace-pre-wrap break-words text-xs leading-4">{resource.detail}</span> : null}
+          </span>
+          {resource.url ? <ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden /> : null}
+        </>
+      );
+      const className = "inline-flex min-w-0 max-w-full items-start gap-1 text-left hover:text-cyan-200";
+      return resource.url ? (
+        <a
+          key={`${resource.type}:${resource.title}:${index}`}
+          href={resource.url}
+          target="_blank"
+          rel="noreferrer"
+          className={className}
+        >
+          {content}
+        </a>
+      ) : (
+        <span key={`${resource.type}:${resource.title}:${index}`} className={className}>
+          {content}
+        </span>
+      );
+    })}
+  </div>
+);
 
 const rolePositionIds = (note: { positionId?: string; positionIds?: string[] }) =>
   note.positionIds?.filter(Boolean) ?? (note.positionId ? [note.positionId] : []);
@@ -980,7 +1035,7 @@ const ServicePublicView = ({
 
   return (
     <main
-      className={cn(publicPageScrollClassName, chrome.page)}
+      className={cn(publicPageScrollClassName, "overflow-x-hidden", chrome.page)}
       onScroll={handlePageScroll}
       onWheel={pauseLiveFollow}
       onTouchMove={pauseLiveFollow}

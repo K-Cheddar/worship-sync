@@ -161,7 +161,7 @@ jest.mock("./ItemSlide", () => ({
     thumbnailScaleFactor,
   }: {
     index: number;
-    slide: { name: string };
+    slide: { id: string; name: string };
     selectSlide: (index: number) => void;
     onRenameSection?: unknown;
     thumbnailScaleFactor?: number;
@@ -169,7 +169,12 @@ jest.mock("./ItemSlide", () => ({
     mockItemSlideProps.push({ onRenameSection });
     return (
       <>
-        <button type="button" onClick={() => selectSlide(index)}>
+        <button
+          type="button"
+          data-testid="mock-item-slide"
+          data-slide-id={slide.id}
+          onClick={() => selectSlide(index)}
+        >
           {slide.name}
         </button>
         <div
@@ -367,6 +372,59 @@ describe("ItemSlides", () => {
         </ControllerInfoContext.Provider>
       </GlobalInfoContext.Provider>,
     );
+  };
+
+  const setFreeSlides = (slideDefinitions: Array<{ id: string; name: string }>) => {
+    mockState.undoable.present.item.slides = slideDefinitions.map(
+      ({ id, name }, index) => ({
+        ...baseSlides[index % baseSlides.length],
+        id,
+        name,
+      }),
+    );
+  };
+
+  const getSlideIdsInOrder = () =>
+    screen
+      .getAllByTestId("mock-item-slide")
+      .map((slide) => slide.getAttribute("data-slide-id"))
+      .filter((id): id is string => Boolean(id));
+
+  const commitSlideDrag = async (activeId: string, overId: string) => {
+    const dragEvent = {
+      active: {
+        id: activeId,
+        data: { current: { kind: "slide", slideId: activeId } },
+      },
+      over: {
+        id: overId,
+        data: { current: { kind: "slide", slideId: overId } },
+      },
+    };
+
+    act(() => mockDndMonitorListener?.onDragStart?.(dragEvent));
+    act(() => mockDndMonitorListener?.onDragOver?.(dragEvent));
+    const previewIds = getSlideIdsInOrder();
+
+    mockDispatch.mockClear();
+    act(() => mockDndMonitorListener?.onDragEnd?.(dragEvent));
+    const updateThunk = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => typeof action === "function");
+    if (typeof updateThunk !== "function") {
+      return { previewIds, committedIds: undefined };
+    }
+
+    await act(async () => {
+      await updateThunk(mockDispatch, () => mockState, undefined);
+    });
+    const updateAction = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action?.type === "item/_updateSlides");
+    return {
+      previewIds,
+      committedIds: updateAction?.payload.map((slide: { id: string }) => slide.id),
+    };
   };
 
   const renderWithToast = (showToast: jest.Mock) =>
@@ -620,6 +678,10 @@ describe("ItemSlides", () => {
   );
 
   it("keeps the existing section reorder behavior", () => {
+    setFreeSlides([
+      { id: "slide-1", name: "Section 1" },
+      { id: "slide-2", name: "Section 2" },
+    ]);
     render(
       <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
         <ControllerInfoContext.Provider value={mockControllerInfoValue}>
@@ -631,6 +693,18 @@ describe("ItemSlides", () => {
     act(() =>
       mockDndMonitorListener?.onDragStart?.({
         active: {
+          id: "slide-1",
+          data: { current: { kind: "slide", slideId: "slide-1" } },
+        },
+      }),
+    );
+    act(() =>
+      mockDndMonitorListener?.onDragOver?.({
+        active: {
+          id: "slide-1",
+          data: { current: { kind: "slide", slideId: "slide-1" } },
+        },
+        over: {
           id: "slide-2",
           data: { current: { kind: "slide", slideId: "slide-2" } },
         },
@@ -639,17 +713,132 @@ describe("ItemSlides", () => {
     act(() => {
       mockDndMonitorListener?.onDragEnd?.({
         active: {
-          id: "slide-2",
-          data: { current: { kind: "slide", slideId: "slide-2" } },
-        },
-        over: {
           id: "slide-1",
           data: { current: { kind: "slide", slideId: "slide-1" } },
+        },
+        over: {
+          id: "slide-2",
+          data: { current: { kind: "slide", slideId: "slide-2" } },
         },
       });
     });
 
-    expect(mockDispatch).toHaveBeenCalledWith(expect.any(Function));
+    const updateThunk = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => typeof action === "function");
+    expect(updateThunk).toEqual(expect.any(Function));
+    act(() => {
+      updateThunk(mockDispatch, () => mockState, undefined);
+    });
+    expect(
+      mockDispatch.mock.calls
+        .map(([action]) => action)
+        .find((action) => action?.type === "item/_updateSlides")?.payload.map(
+          (slide: { id: string }) => slide.id,
+        ),
+    ).toEqual(["slide-2", "slide-1"]);
+  });
+
+  it("reorders ordinary slides and commits exactly the preview order", async () => {
+    setFreeSlides([
+      { id: "first", name: "First" },
+      { id: "camera", name: "Camera" },
+      { id: "image", name: "Image" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("camera", "image");
+
+    expect(result.previewIds).toEqual(["first", "image", "camera"]);
+    expect(result.committedIds).toEqual(result.previewIds);
+  });
+
+  it("does not dispatch an unchanged reorder", async () => {
+    setFreeSlides([
+      { id: "first", name: "First" },
+      { id: "camera", name: "Camera" },
+      { id: "image", name: "Image" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("camera", "camera");
+
+    expect(result.previewIds).toEqual(["first", "camera", "image"]);
+    expect(result.committedIds).toBeUndefined();
+  });
+
+  it("moves an ordinary slide before a section block", async () => {
+    setFreeSlides([
+      { id: "first", name: "First" },
+      { id: "section-1", name: "Section 1" },
+      { id: "section-1a", name: "Section 1A" },
+      { id: "camera", name: "Camera" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("camera", "section-1");
+
+    expect(result.committedIds).toEqual([
+      "first",
+      "camera",
+      "section-1",
+      "section-1a",
+    ]);
+  });
+
+  it("moves an ordinary slide after a section block", async () => {
+    setFreeSlides([
+      { id: "first", name: "First" },
+      { id: "camera", name: "Camera" },
+      { id: "section-1", name: "Section 1" },
+      { id: "section-1a", name: "Section 1A" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("first", "section-1");
+
+    expect(result.committedIds).toEqual([
+      "camera",
+      "section-1",
+      "section-1a",
+      "first",
+    ]);
+  });
+
+  it("moves a section block after an ordinary slide without splitting it", async () => {
+    setFreeSlides([
+      { id: "section-1", name: "Section 1" },
+      { id: "section-1a", name: "Section 1A" },
+      { id: "camera", name: "Camera" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("section-1", "camera");
+
+    expect(result.committedIds).toEqual([
+      "camera",
+      "section-1",
+      "section-1a",
+    ]);
+  });
+
+  it("moves a section block before an ordinary slide without splitting it", async () => {
+    setFreeSlides([
+      { id: "first", name: "First" },
+      { id: "camera", name: "Camera" },
+      { id: "section-1", name: "Section 1" },
+      { id: "section-1a", name: "Section 1A" },
+    ]);
+    renderAncestorItemSlides();
+
+    const result = await commitSlideDrag("section-1", "camera");
+
+    expect(result.committedIds).toEqual([
+      "first",
+      "section-1",
+      "section-1a",
+      "camera",
+    ]);
   });
 
   it("previews a free slide reorder before drop and commits that exact order", () => {

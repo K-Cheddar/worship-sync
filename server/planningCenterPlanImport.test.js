@@ -164,11 +164,19 @@ test("mapPlanningCenterPlanToImportData maps assignees, key, arrangement, and st
   assert.equal(result.sections[0].sectionName, "Worship");
   const songRow = result.sections[0].rows[0];
   assert.equal(songRow.songTitle, "Great Are You Lord");
+  assert.equal(songRow.contentTitle, songRow.title);
   assert.equal(songRow.title, "Great Are You Lord — Acoustic (G)");
   assert.equal(songRow.startTime, "10:15");
   assert.equal(songRow.ledBy, "Jane Doe, Jordan Lee");
+  assert.deepEqual(songRow.ledByAssignments, [
+    { kind: "person", id: "p1", name: "Jane Doe" },
+    { kind: "person", id: "p2", name: "Jordan Lee" },
+  ]);
   assert.equal(songRow.note, "Band in");
   assert.equal(result.sections[0].rows[1].ledBy, "Host");
+  assert.deepEqual(result.sections[0].rows[1].ledByAssignments, [
+    { kind: "teamPosition", id: "tp1", name: "Host" },
+  ]);
   assert.equal(result.sections[1].sectionName, "Message");
 });
 

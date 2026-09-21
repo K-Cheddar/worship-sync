@@ -20,6 +20,9 @@ import {
 } from "../utils/displayOutputs";
 import { normalizeLocalVideoInput } from "../utils/localVideoInput";
 import type { LocalImageReferencePatch } from "../utils/localImageAssets";
+import {
+  replaceMediaReferencesInPresentation as replaceMediaReferencesInPresentationData,
+} from "../utils/mediaReferenceReplacement";
 
 /**
  * Per-output presentation as it is stored under `presentation/outputs/{id}`.
@@ -841,6 +844,28 @@ export const presentationSlice = createSlice({
   name: "presentation",
   initialState,
   reducers: {
+    replaceMediaReferencesInPresentation: (
+      state,
+      action: PayloadAction<{
+        oldMedia: MediaType;
+        newMedia: MediaType;
+      }>,
+    ) => {
+      for (const slot of Object.values(state.outputs)) {
+        const replacement = action.payload;
+        const nextInfo = replaceMediaReferencesInPresentationData(
+          slot.info,
+          replacement,
+        );
+        const nextPrevInfo = replaceMediaReferencesInPresentationData(
+          slot.prevInfo,
+          replacement,
+        );
+        if (nextInfo !== slot.info) Object.assign(slot.info, nextInfo);
+        if (nextPrevInfo !== slot.prevInfo)
+          Object.assign(slot.prevInfo, nextPrevInfo);
+      }
+    },
     attachCloudCopyToLocalImageInPresentation: (
       state,
       action: PayloadAction<{
@@ -2490,6 +2515,7 @@ export const presentationSlice = createSlice({
 });
 
 export const {
+  replaceMediaReferencesInPresentation,
   attachCloudCopyToLocalImageInPresentation,
   updateLocalImageReferenceInPresentation,
   updatePresentation,

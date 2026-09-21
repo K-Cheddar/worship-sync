@@ -964,10 +964,32 @@ export const createCanvaService = ({
       Number(design.thumbnail?.height || 0) >
       Number(design.thumbnail?.width || 0);
     const assets = [];
+    const createdCloudinaryPublicIds = new Set();
+    const committedCloudinaryPublicIds = new Set();
+    let cleanupCreatedCloudinaryAssets = null;
     let cleanupCreatedMuxAssets = null;
     const committedMuxAssetIds = new Set();
     try {
       if (format === "png") {
+      const destroyCloudinaryAsset = cloudinaryClient?.uploader?.destroy;
+      cleanupCreatedCloudinaryAssets = async () => {
+        if (typeof destroyCloudinaryAsset !== "function") return;
+        for (const publicId of [...createdCloudinaryPublicIds].filter(
+          (id) => !committedCloudinaryPublicIds.has(id),
+        )) {
+          try {
+            await destroyCloudinaryAsset.call(cloudinaryClient.uploader, publicId, {
+              resource_type: "image",
+              invalidate: true,
+            });
+          } catch (error) {
+            console.warn("Could not remove failed Canva Cloudinary asset:", {
+              publicId,
+              error,
+            });
+          }
+        }
+      };
       for (const pageNumber of selectedPages) {
         await importPageProgress(pageNumber, "waiting");
         await importPageProgress(pageNumber, "exporting");
@@ -1071,6 +1093,9 @@ export const createCanvaService = ({
             error: `Could not save Canva page ${pageNumber}. Try again.`,
           });
           throw error;
+        }
+        if (uploaded?.public_id) {
+          createdCloudinaryPublicIds.add(uploaded.public_id);
         }
         assets.push({
           kind: "image",
@@ -1368,12 +1393,18 @@ export const createCanvaService = ({
       await emitProgress({ type: "finalizing" });
       await updateStatus(churchId, { lastImportedAt: now(), lastError: "" });
       for (const asset of assets) {
+        if (asset.kind === "image" && asset.data.public_id) {
+          committedCloudinaryPublicIds.add(asset.data.public_id);
+        }
+      }
+      for (const asset of assets) {
         if (asset.kind === "video" && asset.data.assetId) {
           committedMuxAssetIds.add(asset.data.assetId);
         }
       }
       return { assets, skippedCount, revision };
     } catch (error) {
+      await cleanupCreatedCloudinaryAssets?.();
       await cleanupCreatedMuxAssets?.();
       throw error;
     }

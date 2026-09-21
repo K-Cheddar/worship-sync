@@ -407,6 +407,12 @@ describe("cloneSectionsForTemplate", () => {
       assignees: [{ id: "assignee-1", name: "Jamie", memberId: "member-1" }],
       sourceLedByRaw: "Jamie",
       pushedOutlineListId: "list-item-1",
+      resources: [{
+        id: "resource-ref-1",
+        type: "document",
+        title: "Church resource",
+        data: { resourceId: "churchResource_1" },
+      }],
     });
 
     const cloned = cloneSectionsForTemplate(sections);
@@ -419,6 +425,7 @@ describe("cloneSectionsForTemplate", () => {
     expect(element.assignees).toEqual([]);
     expect(element.sourceLedByRaw).toBeUndefined();
     expect(element.pushedOutlineListId).toBeUndefined();
+    expect(element.resources).toBeUndefined();
     // Kind follows the now-cleared attachments.
     expect(element.type).toBe("free");
   });
