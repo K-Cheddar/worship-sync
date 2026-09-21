@@ -55,8 +55,8 @@ const LocationProbe = () => {
   return <div data-testid="location">{location.pathname}</div>;
 };
 
-const RunnerHarness = () => {
-  useServicePlanningSyncRunner();
+const RunnerHarness = ({ allowOverlaySync = true }: { allowOverlaySync?: boolean } = {}) => {
+  useServicePlanningSyncRunner({ allowOverlaySync });
   return <LocationProbe />;
 };
 
@@ -259,6 +259,94 @@ describe("useServicePlanningSyncRunner", () => {
     expect(
       store.getState().servicePlanningImport.outlinePlanBinding?.planKey,
     ).toBe("service-1@2026-08-09");
+  });
+
+  it("persists an aux-selected outline rather than the presentation outline", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => ({
+          present: {
+            itemLists: {
+              selectedList: { _id: "aux-outline", name: "Lobby" },
+            },
+          },
+        }),
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([]);
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture as any,
+        planKey: "service-aux@2026-08-09",
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db: {} } as any}>
+        <MemoryRouter initialEntries={["/aux-controller/ctrl_lobby"]}>
+          <RunnerHarness allowOverlaySync={false} />
+        </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "outline" }));
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.sync.status).toBe(
+        "completed",
+      ),
+    );
+    expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+      {},
+      "aux-outline",
+      expect.objectContaining({ planKey: "service-aux@2026-08-09" }),
+    );
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale overlay-capable run on an outline-only controller", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [{ action: "create", elementType: "Welcome", patch: {} }],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([]);
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture as any));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/aux-controller/ctrl_lobby"]}>
+          <RunnerHarness allowOverlaySync={false} />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "both" }));
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed"),
+    );
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
   });
 
   it("allows an overlays-only sync without a selected outline", async () => {

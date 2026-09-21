@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, Download, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -63,11 +63,13 @@ import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../compone
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useControllerBasePath } from "../../context/activeController";
 import {
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
+import { formatOccurrenceLabel } from "./currentServiceWorkspaceUtils";
 
 const MARGIN = 16;
 
@@ -281,9 +283,17 @@ const getLineItemDisplayTitle = (item: ServicePlanningLineItem): string =>
     ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
     : item.title.trim() || item.cleanedTitle.trim() || item.elementType.trim() || "Untitled item");
 
-const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hideOutlineActions?: boolean }) => {
+const ServicePlanningSyncFloatingWindow = ({
+  hideOutlineActions = false,
+  allowOverlaySync = true,
+}: {
+  hideOutlineActions?: boolean;
+  /** Overlay sync belongs to the presentation/stream controller, not aux. */
+  allowOverlaySync?: boolean;
+}) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const { churchBranding } = useContext(GlobalInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
   const { showToast } = useToast();
@@ -298,6 +308,12 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     selectedPlan,
     selectedPlanKey,
     selectPlan,
+    occurrences,
+    occurrence,
+    selectedOccurrenceId,
+    selectOccurrence,
+    returnToCurrentService,
+    isManualSelection,
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
     isLoadingPlans,
@@ -419,14 +435,19 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   const isContextChanging = isLoading || targetOutlineLoading;
   const canSyncOverlays =
-    !isContextChanging && hasSyncableOverlayItems(preview, overlays);
+    allowOverlaySync &&
+    !isContextChanging &&
+    hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline =
     !isContextChanging && Boolean(selectedList) && hasSyncableOutlineItems(preview);
-  const canSyncAny = canSyncOverlays || canSyncOutline;
+  const canSyncAny = allowOverlaySync
+    ? canSyncOverlays || canSyncOutline
+    : canSyncOutline;
 
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
-    const shouldSyncOverlays = mode !== "outline" && canSyncOverlays;
-    const shouldSyncOutline = mode !== "overlays" && canSyncOutline;
+    const effectiveMode = allowOverlaySync ? mode : "outline";
+    const shouldSyncOverlays = effectiveMode !== "outline" && canSyncOverlays;
+    const shouldSyncOutline = effectiveMode !== "overlays" && canSyncOutline;
     if (!shouldSyncOverlays && !shouldSyncOutline) return;
 
     const nextMode =
@@ -437,7 +458,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode: nextMode }));
-  }, [canSyncOutline, canSyncOverlays, dispatch]);
+  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch]);
 
   const handleStopSync = useCallback(() => {
     dispatch(cancelServicePlanningSync());
@@ -445,7 +466,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   const handleCreateClick = (title: string) => {
     navigate(
-      `/controller/create?type=song&name=${encodeURIComponent(title)}`,
+      `${controllerBasePath}/create?type=song&name=${encodeURIComponent(title)}`,
     );
   };
 
@@ -456,7 +477,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     if (item.parsedRef.version) {
       params.set("version", item.parsedRef.version);
     }
-    navigate(`/controller/bible?${params.toString()}`);
+    navigate(`${controllerBasePath}/bible?${params.toString()}`);
   };
 
   const visiblePlans = useMemo(
@@ -477,15 +498,24 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       })),
     [visiblePlans],
   );
+  const occurrenceOptions = useMemo(
+    () =>
+      occurrences.map((candidate) => ({
+        value: candidate.occurrenceId,
+        label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt)}`,
+      })),
+    [occurrences],
+  );
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping;
-  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => isSyncActive ? [
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => {
+    const items = isSyncActive ? [
     {
       id: "stop-sync",
       label: isSyncStopping ? "Stopping..." : "Stop syncing",
       disabled: isSyncStopping,
-      renderButton: (isMeasure) => (
+      renderButton: (isMeasure: boolean) => (
         <Button variant="tertiary" svg={Square} color="#ef4444" className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncStopping} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure || isSyncStopping ? undefined : handleStopSync}>{isSyncStopping ? "Stopping..." : "Stop syncing"}</Button>
       ),
       onOverflowSelect: isSyncStopping ? undefined : handleStopSync,
@@ -496,7 +526,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       id: "sync-all",
       label: "Sync All",
       disabled: isSyncActive || !canSyncAny,
-      renderButton: (isMeasure) => (
+      renderButton: (isMeasure: boolean) => (
         <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
       ),
       onOverflowSelect: () => handleSync("both"),
@@ -506,7 +536,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       id: "refresh",
       label: isRefreshing ? "Refreshing…" : "Refresh",
       disabled: isRefreshing || isSyncActive,
-      renderButton: (isMeasure) => (
+      renderButton: (isMeasure: boolean) => (
         <Button
           variant="tertiary"
           svg={RefreshCw}
@@ -527,7 +557,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       id: "sync-overlays",
       label: "Sync overlays",
       disabled: isSyncActive || !canSyncOverlays,
-      renderButton: (isMeasure) => (
+      renderButton: (isMeasure: boolean) => (
         <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
       ),
       onOverflowSelect: () => handleSync("overlays"),
@@ -537,7 +567,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       id: "sync-outline",
       label: "Sync outline",
       disabled: isSyncActive || !canSyncOutline,
-      renderButton: (isMeasure) => (
+      renderButton: (isMeasure: boolean) => (
         <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
@@ -547,7 +577,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       id: "import",
       label: "Import",
       disabled: isSyncActive,
-      renderButton: (isMeasure) => isMeasure ? (
+      renderButton: (isMeasure: boolean) => isMeasure ? (
         <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
       ) : (
         <Button
@@ -563,7 +593,11 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       onOverflowSelect: () => setIsImportOpen(true),
       renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
     },
-  ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
+    ];
+    return allowOverlaySync
+      ? items
+      : items.filter((item) => item.id !== "sync-all" && item.id !== "sync-overlays");
+  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
 
 
 
@@ -712,12 +746,19 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
             View all plans
           </Button>
         </div>
+        {!selectedPlan && occurrence ? (
+          <p className="text-[11px] text-amber-300">
+            No Service Plan yet for this service.
+          </p>
+        ) : null}
       </div>
     );
   } else {
     savedPlanControl = (
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-zinc-400">No saved plans yet.</p>
+        <p className="text-xs text-zinc-400">
+          {occurrence ? "No Service Plan yet for this service." : "No saved plans yet."}
+        </p>
         <Button
           type="button"
           variant="tertiary"
@@ -730,6 +771,48 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     );
   }
 
+  const occurrenceControl = occurrenceOptions.length > 0 || isManualSelection ? (
+    <div className="flex flex-col gap-1">
+      {occurrenceOptions.length > 0 ? (
+        <Select
+          label="Service occurrence"
+          selectClassName="h-8 text-xs"
+          disablePortal
+          value={selectedOccurrenceId || occurrence?.occurrenceId || ""}
+          onChange={selectOccurrence}
+          disabled={isSyncActive}
+          options={occurrenceOptions}
+        />
+      ) : null}
+      <div className="flex items-center justify-between gap-2">
+        <p
+          className={
+            isManualSelection ? "text-[11px] text-amber-300" : "text-[11px] text-zinc-400"
+          }
+          role="status"
+        >
+          {isManualSelection
+            ? "Manually selected"
+            : occurrence
+              ? `Following current service: ${occurrence.name}`
+              : "No scheduled service context"}
+        </p>
+        {isManualSelection ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={RotateCcw}
+            className="shrink-0 text-xs"
+            disabled={isSyncActive}
+            onClick={returnToCurrentService}
+          >
+            Return to current service
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
   let emptyPreviewMessage = "Choose a saved plan to review it in the controller.";
   if (isLoading) {
     emptyPreviewMessage = "Loading the selected plan…";
@@ -741,8 +824,8 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   const planContextControls = (
     <section className="rounded-lg border border-zinc-700 bg-zinc-950/35 p-2.5">
       <div className="flex flex-col gap-2">
+        {occurrenceControl}
         {savedPlanControl}
-
       </div>
     </section>
   );

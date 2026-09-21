@@ -74,6 +74,7 @@ import {
   TimerInfo,
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
+import { selectSongLibrary } from "./songLibrarySelectors";
 import { creditsSlice } from "./creditsSlice";
 import {
   timersSlice,
@@ -2047,6 +2048,7 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setTab,
       preferencesSlice.actions.setScrollbarWidth,
       preferencesSlice.actions.updatePreferencesFromRemote,
+      preferencesSlice.actions.replaceMediaReferencesInPreferences,
       preferencesSlice.actions.setIsInitialized,
     );
     return (
@@ -3290,14 +3292,33 @@ const store = configureStore({
     ),
 });
 
-// When a song is created, re-scan the service plan preview for unmatched songs
+const refreshServicePlanningPreviewSongMatches = (listenerApi: {
+  getState: () => unknown;
+  dispatch: (action: ReturnType<typeof refreshPreviewSongMatches>) => void;
+}) => {
+  const state = listenerApi.getState() as RootState;
+  if (!state.servicePlanningImport.preview) return;
+  listenerApi.dispatch(refreshPreviewSongMatches(selectSongLibrary(state).songs));
+};
+
+// Keep an existing preview aligned with the canonical song library as either
+// the lightweight index or durable song documents become available.
 listenerMiddleware.startListening({
   actionCreator: allItemsSlice.actions.addItemToAllItemsList,
   effect: (action, listenerApi) => {
     if (action.payload.type !== "song") return;
-    const state = listenerApi.getState() as RootState;
-    if (!state.servicePlanningImport.preview) return;
-    listenerApi.dispatch(refreshPreviewSongMatches(state.allItems.list));
+    refreshServicePlanningPreviewSongMatches(listenerApi);
+  },
+});
+
+listenerMiddleware.startListening({
+  matcher: isAnyOf(
+    allDocsSlice.actions.updateAllSongDocs,
+    allDocsSlice.actions.upsertItemInAllDocs,
+    allDocsSlice.actions.upsertItemsInAllDocs,
+  ),
+  effect: (_, listenerApi) => {
+    refreshServicePlanningPreviewSongMatches(listenerApi);
   },
 });
 

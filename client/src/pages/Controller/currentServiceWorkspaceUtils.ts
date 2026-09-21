@@ -17,6 +17,8 @@ export type LiveSlideProgress = {
   slideLabel: string;
 };
 
+export type LiveItemSource = Pick<Presentation, "name" | "itemId" | "listId">;
+
 /**
  * Compact producer chrome for the live item.
  * Returns null when there is nothing useful to show (cleared / incomplete).
@@ -51,6 +53,15 @@ export const resolveLiveSlideProgress = (
 ): LiveSlideProgress | null =>
   formatLiveSlideProgress(projectorInfo) ??
   formatLiveSlideProgress(monitorInfo);
+
+/** Use the projector's current item as the room-facing source when present. */
+export const resolveLiveItemSource = (
+  projectorInfo: LiveItemSource,
+  monitorInfo: LiveItemSource,
+): LiveItemSource =>
+  projectorInfo.name?.trim() || projectorInfo.itemId || projectorInfo.listId
+    ? projectorInfo
+    : monitorInfo;
 
 /** Weekday + time is enough to tell nearby services apart in a picker. */
 export const formatOccurrenceLabel = (startsAt: string): string => {

@@ -321,6 +321,87 @@ describe("store module", () => {
     localStorage.clear();
   });
 
+  it("repairs an unmatched service plan song when song docs load later", async () => {
+    let storeModule: any;
+    let allDocsSliceModule: any;
+    let servicePlanningImportSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      allDocsSliceModule = require("./allDocsSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      servicePlanningImportSliceModule = require("./servicePlanningImportSlice");
+    });
+
+    const store = storeModule.default;
+    const { updateAllSongDocs } = allDocsSliceModule;
+    const { setServicePlanningServiceOutline } =
+      servicePlanningImportSliceModule;
+    const unmatchedCandidate = {
+      sectionName: "Praise",
+      headingName: "Praise",
+      sourceRowIndex: 0,
+      elementType: "Song of Praise",
+      title: "How Great is Our God",
+      cleanedTitle: "How Great is Our God",
+      outlineItemType: "song",
+      overlayReady: true,
+      outlineAlreadyPresent: false,
+      matchedLibraryItem: null,
+      parsedRef: null,
+    };
+
+    store.dispatch(
+      setServicePlanningServiceOutline({
+        source: "servicePlanning",
+        loadedAt: "2026-09-20T12:00:00.000Z",
+        sourceUrl: "https://example.com/plan",
+        planLabel: "Sunday",
+        preview: {
+          overlayCandidates: [],
+          overlayPlan: [],
+          outlineCandidates: [unmatchedCandidate],
+          lineItems: [{ ...unmatchedCandidate, selectedForOutline: true, ledBy: "" }],
+          teamAssignments: [],
+        },
+      }),
+    );
+
+    store.dispatch(
+      updateAllSongDocs([
+        createSongDoc({
+          _id: "song-how-great",
+          name: "How Great is Our God",
+        }),
+      ]),
+    );
+    await flushListenerEffects();
+
+    const preview = store.getState().servicePlanningImport.preview;
+    expect(preview?.outlineCandidates[0]?.matchedLibraryItem?._id).toBe(
+      "song-how-great",
+    );
+    expect(preview?.lineItems[0]?.matchedLibraryItem?._id).toBe(
+      "song-how-great",
+    );
+  });
+
   it("broadcastCreditsUpdate posts docs with hostId when broadcast channel exists", () => {
     const postMessage = jest.fn();
 

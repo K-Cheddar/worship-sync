@@ -4,6 +4,7 @@ import {
   findCurrentServiceOccurrence,
   formatLiveSlideProgress,
   getOccurrenceServices,
+  resolveLiveItemSource,
   listCurrentServiceOccurrences,
   resolveLiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
@@ -235,5 +236,25 @@ describe("resolveLiveSlideProgress", () => {
       name: "Monitor Song",
       slideLabel: "2 of 4",
     });
+  });
+});
+
+describe("resolveLiveItemSource", () => {
+  it("prefers the projector item when the projector and monitor differ", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "Projector Song", itemId: "projector-item" },
+        { name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Projector Song", itemId: "projector-item" });
+  });
+
+  it("falls back to the monitor when the projector is blank", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "", itemId: undefined, listId: undefined },
+        { name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" });
   });
 });

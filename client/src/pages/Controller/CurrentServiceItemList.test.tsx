@@ -43,4 +43,11 @@ describe("CurrentServiceItemList", () => {
       expect.objectContaining({ shouldScrollToCenter: true }),
     );
   });
+
+  it("can highlight a projector item by name when it has no outline ids", () => {
+    render(<CurrentServiceItemList activeName="Current song" />);
+
+    expect(screen.getByText("Current song")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+  });
 });

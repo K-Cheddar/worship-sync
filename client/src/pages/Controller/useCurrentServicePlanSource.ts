@@ -2,9 +2,10 @@
  * Keeps the Controller connected to saved Service Plans while leaving every
  * live outline mutation behind the operator's explicit Sync action.
  *
- * Selection order is deliberate: the plan linked to the selected outline,
- * then the current scheduled occurrence when it has a saved plan, then the
- * nearest saved plan. A manual pick remains pinned for this Controller session.
+ * Selection order is deliberate: the current scheduled occurrence when it has
+ * a saved plan, then a clearly unassigned empty state. A nearest saved plan is
+ * used only when no scheduled occurrence can be resolved. A manual pick
+ * remains pinned for this Controller session.
  */
 import {
   useCallback,
@@ -46,9 +47,11 @@ import {
   servicePlanToSummary,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
+import { useActiveControllerId } from "../../context/activeController";
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
+  const activeControllerId = useActiveControllerId();
   const { canViewServices, canViewTeams, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
@@ -91,7 +94,9 @@ export const useCurrentServicePlanSource = () => {
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const reconciliationInFlightRef = useRef<{
+    controllerId: string;
     churchId: string;
+    selectedOutlineId: string | undefined;
     planKey: string | null;
     generation: number;
     refreshPlanList: boolean;
@@ -110,6 +115,15 @@ export const useCurrentServicePlanSource = () => {
   // revision changes only when the operator imports a URL in this visit.
   const previousUrlSelectionRevisionRef = useRef(urlSelectionRevision);
   const currentVisitUrlSelectionRef = useRef(false);
+  const selectedOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
+  const activeControllerIdRef = useRef(activeControllerId);
+  const previousOutlineContextRef = useRef({
+    controllerId: activeControllerId,
+    outlineId: selectedOutlineId,
+  });
+  const automaticSelectionContextRef = useRef<string | undefined>(undefined);
+  selectedOutlineIdRef.current = selectedOutlineId;
+  activeControllerIdRef.current = activeControllerId;
   const loadPlanPreviewRef = useRef(loadPlanPreview);
   useEffect(() => {
     loadPlanPreviewRef.current = loadPlanPreview;
@@ -119,8 +133,13 @@ export const useCurrentServicePlanSource = () => {
     () => serviceTimes.map(toTeamService),
     [serviceTimes],
   );
-  const { occurrences, occurrence: currentOccurrence } =
-    useCurrentServiceOccurrence(services);
+  const {
+    occurrences,
+    occurrence: currentOccurrence,
+    selectedOccurrenceId,
+    selectOccurrence: selectOccurrenceFromSchedule,
+    returnToCurrent: returnOccurrenceToCurrent,
+  } = useCurrentServiceOccurrence(services);
   const currentOccurrencePlanKey = currentOccurrence
     ? getServicePlanKey(currentOccurrence)
     : null;
@@ -143,14 +162,42 @@ export const useCurrentServicePlanSource = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const previous = previousOutlineContextRef.current;
+    if (
+      previous.controllerId === activeControllerId &&
+      previous.outlineId === selectedOutlineId
+    ) {
+      return;
+    }
+    previousOutlineContextRef.current = {
+      controllerId: activeControllerId,
+      outlineId: selectedOutlineId,
+    };
+    generationRef.current += 1;
+    reconciliationInFlightRef.current = null;
+    manualSelectionRef.current = false;
+    returnOccurrenceToCurrent();
+    automaticSelectionContextRef.current = undefined;
+    planRef.current = null;
+    selectedPlanKeyRef.current = null;
+    setSelectedPlanKey(null);
+    dispatch(clearServicePlanningPreview());
+  }, [
+    activeControllerId,
+    dispatch,
+    returnOccurrenceToCurrent,
+    selectedOutlineId,
+  ]);
+
   const clearUnavailablePlan = useCallback(
-    (planKey: string, allowAutomaticFallback = false) => {
+    (planKey: string) => {
       if (selectedPlanKeyRef.current !== planKey) return;
       generationRef.current += 1;
       // Missing detail/refresh results should leave an explicit empty choice;
-      // silently choosing another service's plan is unsafe. A live removal may
-      // opt into the existing contextual fallback behavior.
-      manualSelectionRef.current = !allowAutomaticFallback;
+      // silently choosing another service's plan is unsafe. Preserve whether
+      // the operator was already in a manual override so a deleted automatic
+      // plan does not masquerade as a manual choice.
       planRef.current = null;
       selectedPlanKeyRef.current = null;
       setSelectedPlanKey(null);
@@ -205,10 +252,12 @@ export const useCurrentServicePlanSource = () => {
       setSelectedPlanKey(null);
       setIsLoading(false);
       dispatch(clearServicePlanningPlanOutline());
+      returnOccurrenceToCurrent();
+      automaticSelectionContextRef.current = undefined;
       return;
     }
     void refreshPlans();
-  }, [dispatch, isEnabled, refreshPlans]);
+  }, [dispatch, isEnabled, refreshPlans, returnOccurrenceToCurrent]);
 
   // A URL pasted during this Controller visit is an explicit source choice.
   // A URL preview carried in from an earlier visit intentionally does not take
@@ -250,9 +299,8 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKey,
   ]);
 
-  /** Resolve the initial context only after the selected outline has loaded its
-   * binding. A fast default before that point would briefly fetch the wrong
-   * plan and replace it again when PouchDB answered. */
+  /** Resolve the initial plan only after the saved-plan list and current
+   * occurrence context are ready. */
   useEffect(() => {
     if (
       !plansLoaded ||
@@ -262,11 +310,18 @@ export const useCurrentServicePlanSource = () => {
     ) {
       return;
     }
+    const automaticContextKey = currentOccurrence?.occurrenceId ?? "none";
+    const contextChanged =
+      automaticSelectionContextRef.current !== automaticContextKey;
+    if (!contextChanged && selectedPlanKeyRef.current !== null) return;
+    if (!contextChanged && !currentOccurrence) return;
+
     const nextKey = chooseControllerServicePlanKey({
       plans: savedPlans,
-      boundPlanKey: outlinePlanBinding?.planKey,
       currentOccurrencePlanKey,
+      hasCurrentOccurrence: Boolean(currentOccurrence),
     });
+    automaticSelectionContextRef.current = automaticContextKey;
     if (selectedPlanKeyRef.current === nextKey) return;
     if (nextKey) {
       currentVisitUrlSelectionRef.current = false;
@@ -276,10 +331,10 @@ export const useCurrentServicePlanSource = () => {
     setSelectedPlanKey(nextKey);
   }, [
     currentOccurrencePlanKey,
+    currentOccurrence,
     dispatch,
     hasUrlSourcedPreview,
     itemListLoading,
-    outlinePlanBinding?.planKey,
     plansLoaded,
     savedPlans,
     selectedOutlineId,
@@ -289,14 +344,6 @@ export const useCurrentServicePlanSource = () => {
     () => savedPlans.find((plan) => plan.planKey === selectedPlanKey) ?? null,
     [savedPlans, selectedPlanKey],
   );
-  const occurrence = useMemo(
-    () =>
-      occurrences.find(
-        (candidate) => getServicePlanKey(candidate) === selectedPlanKey,
-      ) ?? null,
-    [occurrences, selectedPlanKey],
-  );
-
   const applyPlan = useCallback(
     async (
       plan: ServicePlan,
@@ -329,12 +376,16 @@ export const useCurrentServicePlanSource = () => {
       preserveOnFailure = false,
     }: ReconciliationOptions = {}) => {
       const churchIdAtStart = churchId;
+      const controllerIdAtStart = activeControllerId;
+      const selectedOutlineIdAtStart = selectedOutlineId;
       if (!isEnabled || !churchIdAtStart) return;
       const planKeyAtStart = selectedPlanKeyRef.current;
       const existing = reconciliationInFlightRef.current;
       if (
         existing &&
         existing.churchId === churchIdAtStart &&
+        existing.controllerId === controllerIdAtStart &&
+        existing.selectedOutlineId === selectedOutlineIdAtStart &&
         existing.planKey === planKeyAtStart &&
         existing.generation === generationRef.current &&
         (existing.refreshPlanList || !refreshPlanList) &&
@@ -355,6 +406,8 @@ export const useCurrentServicePlanSource = () => {
 
       const isCurrentRequest = () =>
         generation === generationRef.current &&
+        activeControllerIdRef.current === controllerIdAtStart &&
+        selectedOutlineIdRef.current === selectedOutlineIdAtStart &&
         selectedPlanKeyRef.current === planKeyAtStart &&
         churchIdRef.current === churchIdAtStart &&
         isEnabledRef.current &&
@@ -458,7 +511,9 @@ export const useCurrentServicePlanSource = () => {
       });
 
       reconciliationInFlightRef.current = {
+        controllerId: controllerIdAtStart,
         churchId: churchIdAtStart,
+        selectedOutlineId: selectedOutlineIdAtStart,
         planKey: planKeyAtStart,
         generation,
         refreshPlanList,
@@ -467,7 +522,7 @@ export const useCurrentServicePlanSource = () => {
       };
       return request;
     },
-    [applyPlan, churchId, clearUnavailablePlan, isEnabled],
+    [activeControllerId, applyPlan, churchId, clearUnavailablePlan, isEnabled, selectedOutlineId],
   );
 
   /**
@@ -493,14 +548,28 @@ export const useCurrentServicePlanSource = () => {
         planName: plan.name?.trim() || "Service plan",
         linkedAt: new Date().toISOString(),
       };
+      const controllerIdAtStart = activeControllerId;
+      const selectedOutlineIdAtStart = selectedOutlineId;
       try {
-        await persistItemListServicePlanBinding(db, selectedOutlineId, binding);
+        await persistItemListServicePlanBinding(db, selectedOutlineIdAtStart, binding);
+        if (
+          activeControllerIdRef.current !== controllerIdAtStart ||
+          selectedOutlineIdRef.current !== selectedOutlineIdAtStart
+        ) {
+          return;
+        }
         dispatch(setServicePlanningOutlinePlanBinding(binding));
       } catch (error) {
         console.error("Could not link this outline to its service plan:", error);
       }
     },
-    [db, dispatch, outlinePlanBinding?.planKey, selectedOutlineId],
+    [
+      activeControllerId,
+      db,
+      dispatch,
+      outlinePlanBinding?.planKey,
+      selectedOutlineId,
+    ],
   );
   // Read via ref (not a "load" effect dependency): persisting a binding
   // dispatches a Redux update that changes this callback's identity on every
@@ -535,6 +604,7 @@ export const useCurrentServicePlanSource = () => {
     });
   }, [
     churchId,
+    activeControllerId,
     clearUnavailablePlan,
     dispatch,
     hasUrlSourcedPreview,
@@ -569,6 +639,43 @@ export const useCurrentServicePlanSource = () => {
     [dispatch, persistManualPlanBinding, savedPlans],
   );
 
+  const selectOccurrence = useCallback(
+    (occurrenceId: string) => {
+      const nextOccurrence = occurrences.find(
+        (candidate) => candidate.occurrenceId === occurrenceId,
+      );
+      if (!nextOccurrence) return;
+
+      manualSelectionRef.current = true;
+      currentVisitUrlSelectionRef.current = false;
+      generationRef.current += 1;
+      planRef.current = null;
+      selectOccurrenceFromSchedule(occurrenceId);
+      const nextPlanKey = getServicePlanKey(nextOccurrence);
+      const hasSavedPlan = savedPlans.some(
+        (plan) => plan.planKey === nextPlanKey,
+      );
+      selectedPlanKeyRef.current = hasSavedPlan ? nextPlanKey : null;
+      setIsLoading(hasSavedPlan);
+      setSelectedPlanKey(hasSavedPlan ? nextPlanKey : null);
+      dispatch(clearServicePlanningPreview());
+    },
+    [dispatch, occurrences, savedPlans, selectOccurrenceFromSchedule],
+  );
+
+  const returnToCurrentService = useCallback(() => {
+    manualSelectionRef.current = false;
+    currentVisitUrlSelectionRef.current = false;
+    generationRef.current += 1;
+    planRef.current = null;
+    automaticSelectionContextRef.current = undefined;
+    selectedPlanKeyRef.current = null;
+    setSelectedPlanKey(null);
+    setIsLoading(false);
+    dispatch(clearServicePlanningPreview());
+    returnOccurrenceToCurrent();
+  }, [dispatch, returnOccurrenceToCurrent]);
+
   const pinSelectedPlan = useCallback(() => {
     if (selectedPlanKey) {
       manualSelectionRef.current = true;
@@ -599,7 +706,7 @@ export const useCurrentServicePlanSource = () => {
         planListActiveRequestIdRef.current = null;
         setIsLoadingPlans(false);
         if (removedKey === selectedPlanKeyRef.current) {
-          clearUnavailablePlan(removedKey, true);
+          clearUnavailablePlan(removedKey);
         } else {
           setSavedPlans((current) =>
             current.filter((plan) => plan.planKey !== removedKey),
@@ -713,8 +820,13 @@ export const useCurrentServicePlanSource = () => {
     selectedPlan,
     selectedPlanKey,
     selectPlan,
+    occurrences,
+    selectOccurrence,
+    selectedOccurrenceId,
+    returnToCurrentService,
+    isManualSelection: manualSelectionRef.current,
     pinSelectedPlan,
-    occurrence,
+    occurrence: currentOccurrence,
     isEnabled,
     isLoading,
     isLoadingPlans,

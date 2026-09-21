@@ -455,14 +455,14 @@ export const resolveOutlineScrollTopFromAnchor = (
 };
 
 /**
- * Zoom rebuilds row packing and tile height, so restore from a frozen identity
- * rather than a live scrollTop that the browser may have clamped.
+ * Row rebuilds can change packing and tile height, so restore from a frozen
+ * identity rather than a live scrollTop that the browser may have clamped.
  *
  * Prefer the selected slide whenever it can be resolved. When it was visible,
  * retain its approximate row-center position; when it was not visible, the
- * restore phase centers it so zooming cannot lose the selected slide.
+ * restore phase centers it so row rebuilds cannot lose the selected slide.
  */
-export type OutlineZoomFocalPoint =
+export type OutlineSlideFocalPoint =
   | {
       kind: "selected";
       listId: string;
@@ -475,7 +475,7 @@ export type OutlineZoomFocalPoint =
       anchor: OutlineScrollAnchor;
     };
 
-export const captureOutlineZoomFocalPoint = (
+export const captureOutlineSlideFocalPoint = (
   rows: OutlineVirtualRow[],
   getRowStart: (index: number) => number,
   getRowHeight: (index: number) => number,
@@ -484,7 +484,7 @@ export const captureOutlineZoomFocalPoint = (
   selectedListId: string | undefined,
   selectedSlide: number,
   sectionsByListId?: Map<string, OutlineSlideSection>,
-): OutlineZoomFocalPoint | null => {
+): OutlineSlideFocalPoint | null => {
   if (rows.length === 0) return null;
 
   if (selectedListId && selectedSlide >= 0 && viewportHeight > 0) {

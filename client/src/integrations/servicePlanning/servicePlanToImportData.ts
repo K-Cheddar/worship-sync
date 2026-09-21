@@ -71,13 +71,26 @@ const elementToRow = (element: ServicePlanElement): EventData => {
     }),
   );
 
+  const contentTitle =
+    element.sourceContentTitleRaw?.trim() ||
+    (songRefs[0]
+      ? songRefs[0].kind === "library"
+        ? songRefs[0].songName.trim()
+        : songRefs[0].title.trim()
+      : scriptureRefs[0]?.label.trim()) ||
+    "";
+  const sourceLedByRaw = element.sourceLedByRaw?.trim() || "";
+
   const base: EventData = {
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
-    ledBy:
-      element.sourceLedByRaw?.trim()
-      || assigneeNames.join(", "),
+    ledBy: assigneeNames.join(", ") || sourceLedByRaw,
     ...(assigneeNames.length ? { assigneeNames } : {}),
+    ...(contentTitle ? { contentTitle } : {}),
+    ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
+    ...(element.sourceLedByAssignments?.length
+      ? { ledByAssignments: element.sourceLedByAssignments }
+      : {}),
     ...(element.startTime ? { startTime: element.startTime } : {}),
     ...(typeof durationMinutes === "number" ? { durationMinutes } : {}),
     ...(notes ? { note: notes } : {}),

@@ -6,7 +6,7 @@ import {
   buildOutlineVirtualRows,
   captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
-  captureOutlineZoomFocalPoint,
+  captureOutlineSlideFocalPoint,
   getControllerItemPath,
   getOutlineVirtualRowKey,
   getPinnedListIdFromVirtualItems,
@@ -384,7 +384,7 @@ describe("outlineSlideSections", () => {
     const getHeight = () => 40;
 
     expect(
-      captureOutlineZoomFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
+      captureOutlineSlideFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
     ).toEqual({
       kind: "selected",
       listId: "l-1",
@@ -418,7 +418,7 @@ describe("outlineSlideSections", () => {
     const getStart = (index: number) => index * 40;
     const getHeight = () => 40;
     // label, tiles(a), label(b), tiles(b) — selected A1 is above the viewport.
-    const focal = captureOutlineZoomFocalPoint(
+    const focal = captureOutlineSlideFocalPoint(
       rows,
       getStart,
       getHeight,
@@ -469,7 +469,7 @@ describe("outlineSlideSections", () => {
         "item-20",
         selectedSlide,
       );
-      const focal = captureOutlineZoomFocalPoint(
+      const focal = captureOutlineSlideFocalPoint(
         beforeRows,
         getStart,
         getHeight,
@@ -518,7 +518,7 @@ describe("outlineSlideSections", () => {
       },
     ];
     const rows = buildOutlineVirtualRows(sections, 2);
-    const focal = captureOutlineZoomFocalPoint(
+    const focal = captureOutlineSlideFocalPoint(
       rows,
       (index) => index * 40,
       () => 40,
@@ -559,7 +559,7 @@ describe("outlineSlideSections", () => {
         "l-1",
         selectedSlide,
       );
-      const focal = captureOutlineZoomFocalPoint(
+      const focal = captureOutlineSlideFocalPoint(
         beforeRows,
         getStart,
         () => 40,

@@ -1,7 +1,8 @@
 import { buildServicePlanningPreview } from "./buildServicePlanningPreview";
 import type { EventData } from "../../containers/Overlays/eventParser";
-import type { ServiceItem } from "../../types";
+import type { DBItem, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
+import { mergeSongLibraryItems } from "../../utils/songLibrary";
 
 const song = (id: string, name: string): ServiceItem => ({
   _id: id,
@@ -9,6 +10,9 @@ const song = (id: string, name: string): ServiceItem => ({
   type: "song",
   listId: id,
 });
+
+const songDoc = (id: string, name: string): DBItem =>
+  ({ _id: id, name, type: "song" }) as DBItem;
 
 const servicePlanning: ServicePlanningConfig = {
   enabled: true,
@@ -35,7 +39,11 @@ const servicePlanning: ServicePlanningConfig = {
   ],
 };
 
-const buildPreview = (row: EventData, songs: ServiceItem[]) =>
+const buildPreview = (
+  row: EventData,
+  allItems: ServiceItem[],
+  allSongDocs: DBItem[] = [],
+) =>
   buildServicePlanningPreview({
     importData: {
       planLabel: "Sat, Aug 1",
@@ -44,7 +52,7 @@ const buildPreview = (row: EventData, songs: ServiceItem[]) =>
     },
     servicePlanning,
     overlays: [],
-    allItems: songs,
+    songLibrary: mergeSongLibraryItems(allItems, allSongDocs),
     activeOutlineList: [],
   });
 
@@ -86,6 +94,17 @@ describe("buildServicePlanningPreview song matching", () => {
     ]);
 
     expect(outlineCandidates[0].matchedLibraryItem?._id).toBe("song-42");
+  });
+
+  it("matches a song document when the lightweight allItems index is incomplete", () => {
+    const { outlineCandidates, lineItems } = buildPreview(
+      { ...baseRow, title: "How Great is Our God" },
+      [],
+      [songDoc("song-42", "How Great is Our God")],
+    );
+
+    expect(outlineCandidates[0].matchedLibraryItem?._id).toBe("song-42");
+    expect(lineItems[0].matchedLibraryItem?._id).toBe("song-42");
   });
 
   it("falls back to matching when the linked song has left the library", () => {

@@ -236,7 +236,7 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
-  it("prefers the plan linked to the selected outline", async () => {
+  it("prefers the current occurrence over an old outline binding", async () => {
     mockGetServicePlan.mockResolvedValue({
       servicePlan: {
         ...planFixture,
@@ -259,10 +259,29 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() =>
       expect(mockGetServicePlan).toHaveBeenCalledWith(
         "church-1",
-        "service-2@2026-08-01",
+        "service-1@2026-08-01",
       ),
     );
-    expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
+    expect(latestResult?.selectedPlanKey).toBe("service-1@2026-08-01");
+  });
+
+  it("leaves the selection empty when the current occurrence has no plan", async () => {
+    mockListServicePlans.mockResolvedValueOnce({
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
   });
 
   it("persists a manually selected plan before its detail request finishes", async () => {
@@ -294,6 +313,74 @@ describe("useCurrentServicePlanSource", () => {
         }),
       ),
     );
+  });
+
+  it("does not publish a late binding after the selected outline changes", async () => {
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          servicePlan:
+            planKey === "service-2@2026-08-01"
+              ? {
+                  ...planFixture,
+                  planKey,
+                  serviceId: "service-2",
+                  name: "Evening Service",
+                }
+              : planFixture,
+        }),
+    );
+    let resolveBinding: (() => void) | undefined;
+    mockPersistItemListServicePlanBinding.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveBinding = resolve;
+      }),
+    );
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: (
+          state: typeof undoableState = undoableState,
+          action: { type?: string },
+        ): typeof undoableState =>
+          action.type === "SWITCH_OUTLINE"
+            ? {
+                ...state,
+                present: {
+                  ...state.present,
+                  itemLists: {
+                    ...state.present.itemLists,
+                    selectedList: { _id: "outline-2", name: "Evening" },
+                  },
+                },
+              }
+            : state,
+      },
+    });
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        {},
+        "outline-1",
+        expect.objectContaining({ planKey: "service-2@2026-08-01" }),
+      ),
+    );
+
+    act(() => {
+      store.dispatch({ type: "SWITCH_OUTLINE" });
+    });
+    await act(async () => {
+      resolveBinding?.();
+    });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding).toBeNull();
   });
 
   it("loads the selected plan's scoped assignments", async () => {
@@ -455,7 +542,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
   });
 
-  it("keeps a pinned plan selected when a new unbound outline loads", async () => {
+  it("keeps an explicit manual plan selected when its binding is cleared", async () => {
     mockGetServicePlan.mockImplementation(
       (_churchId: string, planKey: string) =>
         Promise.resolve({
@@ -480,16 +567,16 @@ describe("useCurrentServicePlanSource", () => {
     );
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() =>
-      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
     );
 
     act(() => {
-      latestResult?.pinSelectedPlan();
+      latestResult?.selectPlan("service-2@2026-08-01");
       store.dispatch(setServicePlanningOutlinePlanBinding(null));
     });
 
     expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
   });
 
   it("does nothing without Services view access", async () => {
@@ -1111,5 +1198,32 @@ describe("useCurrentServicePlanSource", () => {
         "service-2@2026-08-01",
       ),
     );
+  });
+
+  it("returns a manually selected occurrence to the current service", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    const otherOccurrence = latestResult?.occurrences.find(
+      (candidate) => candidate.occurrenceId === mockOtherOccurrence.occurrenceId,
+    );
+    act(() => latestResult?.selectOccurrence(otherOccurrence?.occurrenceId ?? ""));
+
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBe(mockOtherOccurrence.occurrenceId),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+    );
+    expect(latestResult?.isManualSelection).toBe(true);
+
+    act(() => latestResult?.returnToCurrentService());
+
+    await waitFor(() => expect(latestResult?.selectedOccurrenceId).toBeNull());
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    expect(latestResult?.isManualSelection).toBe(false);
   });
 });
