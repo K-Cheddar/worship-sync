@@ -7,7 +7,22 @@ import {
   parseDevicePairingApprovalUrl,
 } from "../../utils/devicePairingQr";
 
-type ScannerStatus = "loading" | "ready" | "unavailable" | "denied";
+type ScannerStatus =
+  | "starting"
+  | "scanning"
+  | "scanning-long"
+  | "recovered-error"
+  | "stalled"
+  | "decoded-invalid"
+  | "unavailable"
+  | "denied";
+
+const SCAN_INTERVAL_MS = 200;
+const MAX_SCAN_DIMENSION = 1_280;
+const LONG_SCAN_THRESHOLD_MS = 4_000;
+const STALL_THRESHOLD_MS = 3_000;
+const HEALTH_CHECK_INTERVAL_MS = 500;
+const REPEATED_ERROR_THRESHOLD = 3;
 
 type DeviceQrScannerProps = {
   onAccepted: (requestId: string) => void;
@@ -19,15 +34,35 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameRef = useRef<number | null>(null);
+  const healthTimerRef = useRef<number | null>(null);
   const startVersionRef = useRef(0);
   const acceptedRef = useRef(false);
-  const [status, setStatus] = useState<ScannerStatus>("loading");
+  const scanStateRef = useRef<ScannerStatus>("starting");
+  const scanHealthRef = useRef({
+    startedAt: 0,
+    firstFrameAt: 0,
+    lastFrameAt: 0,
+    attempts: 0,
+    errors: 0,
+    consecutiveErrors: 0,
+    decodedResult: false,
+  });
+  const scanDiagnosticsRef = useRef({ attempts: 0, loggedResult: false, loggedDimensions: false, loggedWaiting: false });
+  const [status, setStatus] = useState<ScannerStatus>("starting");
   const [invalid, setInvalid] = useState(false);
+
+  const setScannerStatus = useCallback((nextStatus: ScannerStatus) => {
+    if (scanStateRef.current === nextStatus) return;
+    scanStateRef.current = nextStatus;
+    setStatus(nextStatus);
+  }, []);
 
   const stop = useCallback(() => {
     startVersionRef.current += 1;
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
+    if (healthTimerRef.current !== null) window.clearInterval(healthTimerRef.current);
+    healthTimerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -47,6 +82,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
           );
         }
         setInvalid(true);
+        setScannerStatus("decoded-invalid");
         return;
       }
       if (acceptedRef.current) return;
@@ -54,7 +90,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
       stop();
       onAccepted(parsed.requestId);
     },
-    [onAccepted, stop],
+    [onAccepted, setScannerStatus, stop],
   );
 
   const start = useCallback(async () => {
@@ -62,13 +98,22 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     const startVersion = startVersionRef.current;
     acceptedRef.current = false;
     setInvalid(false);
+    scanHealthRef.current = {
+      startedAt: 0,
+      firstFrameAt: 0,
+      lastFrameAt: 0,
+      attempts: 0,
+      errors: 0,
+      consecutiveErrors: 0,
+      decodedResult: false,
+    };
+    setScannerStatus("starting");
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus("unavailable");
+      setScannerStatus("unavailable");
       return;
     }
 
-    setStatus("loading");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
@@ -93,62 +138,156 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
         return;
       }
 
-      setStatus("ready");
+      setScannerStatus("scanning");
+      scanHealthRef.current.startedAt = performance.now();
+      scanDiagnosticsRef.current = { attempts: 0, loggedResult: false, loggedDimensions: false, loggedWaiting: false };
+      if (import.meta.env.DEV) {
+        const track = stream.getVideoTracks?.()[0];
+        console.debug("Device QR camera started", {
+          label: track?.label || "(no video track)",
+          settings: track?.getSettings(),
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+        });
+      }
       let lastScanAt = 0;
       const scan = (now: number) => {
         const activeVideo = videoRef.current;
         if (acceptedRef.current || startVersion !== startVersionRef.current || !activeVideo) return;
-        if (now - lastScanAt >= 200 && activeVideo.videoWidth && activeVideo.videoHeight) {
+        if (now - lastScanAt >= SCAN_INTERVAL_MS && activeVideo.videoWidth && activeVideo.videoHeight) {
           lastScanAt = now;
-          const canvas = canvasRef.current || document.createElement("canvas");
-          canvasRef.current = canvas;
-          canvas.width = activeVideo.videoWidth;
-          canvas.height = activeVideo.videoHeight;
-          const context = canvas.getContext("2d", { willReadFrequently: true });
-          if (context) {
-            context.drawImage(activeVideo, 0, 0, canvas.width, canvas.height);
-            const image = context.getImageData(0, 0, canvas.width, canvas.height);
-            const result = jsQR(image.data, canvas.width, canvas.height);
-            if (result) accept(result.data);
+          const scanHealth = scanHealthRef.current;
+          scanHealth.attempts += 1;
+          scanHealth.lastFrameAt = now;
+          if (!scanHealth.firstFrameAt) scanHealth.firstFrameAt = now;
+          const diagnostics = scanDiagnosticsRef.current;
+          diagnostics.attempts += 1;
+          if (import.meta.env.DEV && diagnostics.attempts % 25 === 0) {
+            console.debug("Device QR scan attempts", { attempts: diagnostics.attempts });
           }
+          try {
+            const canvas = canvasRef.current || document.createElement("canvas");
+            canvasRef.current = canvas;
+            const sourceWidth = activeVideo.videoWidth;
+            const sourceHeight = activeVideo.videoHeight;
+            const scale = Math.min(1, MAX_SCAN_DIMENSION / sourceWidth, MAX_SCAN_DIMENSION / sourceHeight);
+            canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+            canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+            const context = canvas.getContext("2d", { willReadFrequently: true });
+            if (import.meta.env.DEV && !diagnostics.loggedDimensions) {
+              diagnostics.loggedDimensions = true;
+              console.debug("Device QR scan frame", {
+                attempts: diagnostics.attempts,
+                sourceWidth,
+                sourceHeight,
+                canvasWidth: canvas.width,
+                canvasHeight: canvas.height,
+              });
+            }
+            if (context) {
+              context.drawImage(activeVideo, 0, 0, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+              const image = context.getImageData(0, 0, canvas.width, canvas.height);
+              const result = jsQR(image.data, canvas.width, canvas.height);
+              scanHealth.consecutiveErrors = 0;
+              if (import.meta.env.DEV && result && !diagnostics.loggedResult) {
+                diagnostics.loggedResult = true;
+                console.debug("Device QR decoder returned a result", { attempts: diagnostics.attempts });
+              }
+              if (result) {
+                scanHealth.decodedResult = true;
+                accept(result.data);
+              }
+              if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
+            }
+          } catch (error) {
+            scanHealth.errors += 1;
+            scanHealth.consecutiveErrors += 1;
+            if (scanHealth.consecutiveErrors >= REPEATED_ERROR_THRESHOLD && scanStateRef.current !== "decoded-invalid") {
+              setScannerStatus("recovered-error");
+            }
+            if (import.meta.env.DEV) console.debug("Device QR scan frame failed", error);
+          }
+        }
+        if (import.meta.env.DEV && !(activeVideo.videoWidth && activeVideo.videoHeight) && !scanDiagnosticsRef.current.loggedWaiting) {
+          scanDiagnosticsRef.current.loggedWaiting = true;
+          console.debug("Device QR scan waiting for video dimensions");
         }
         if (!acceptedRef.current && startVersion === startVersionRef.current) {
           frameRef.current = requestAnimationFrame(scan);
         }
       };
       frameRef.current = requestAnimationFrame(scan);
+      healthTimerRef.current = window.setInterval(() => {
+        const health = scanHealthRef.current;
+        const now = performance.now();
+        if (scanStateRef.current === "decoded-invalid" || (scanStateRef.current === "recovered-error" && health.consecutiveErrors >= REPEATED_ERROR_THRESHOLD)) return;
+        if (!health.lastFrameAt) {
+          if (now - health.startedAt >= STALL_THRESHOLD_MS) setScannerStatus("stalled");
+          return;
+        }
+        if (now - health.lastFrameAt >= STALL_THRESHOLD_MS) {
+          setScannerStatus("stalled");
+        } else if (!health.decodedResult && now - health.firstFrameAt >= LONG_SCAN_THRESHOLD_MS) {
+          setScannerStatus("scanning-long");
+        } else if (scanStateRef.current === "stalled" || scanStateRef.current === "scanning-long") {
+          setScannerStatus("scanning");
+        }
+      }, HEALTH_CHECK_INTERVAL_MS);
     } catch (error) {
       if (startVersion !== startVersionRef.current) return;
-      setStatus(error instanceof DOMException && error.name === "NotAllowedError" ? "denied" : "unavailable");
+      setScannerStatus(error instanceof DOMException && error.name === "NotAllowedError" ? "denied" : "unavailable");
       stop();
     }
-  }, [accept, stop]);
+  }, [accept, setScannerStatus, stop]);
 
   useEffect(() => {
     void start();
     return stop;
   }, [start, stop]);
 
+  const cameraLive = !["starting", "denied", "unavailable"].includes(status);
+  const statusMessages: Partial<Record<ScannerStatus, string>> = {
+    "scanning-long": "QR code not recognized yet.",
+    "recovered-error": "Having trouble reading the camera image.",
+    stalled: "Scanner paused.",
+  };
+  const statusSecondaryMessages: Partial<Record<ScannerStatus, string>> = {
+    "scanning-long": "Move closer, hold steady, and reduce glare.",
+    "recovered-error": "Try moving closer or restart the camera.",
+    stalled: "Restart the camera to resume scanning.",
+  };
+  const statusMessage = statusMessages[status] || "Scanning for a WorshipSync QR code…";
+  const statusSecondary = statusSecondaryMessages[status] || "Point the camera at the QR code.";
+  const canRestart = status === "denied"
+    || status === "unavailable"
+    || status === "recovered-error"
+    || status === "stalled";
+
   return (
     <div>
       <p className="text-sm text-gray-200">
         Scan the QR code shown on the device you want to link.
       </p>
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        className={`mt-4 aspect-square w-full rounded-xl bg-black object-cover ${status === "ready" ? "" : "hidden"}`}
-        aria-label="Device QR scanner camera"
-      />
-      {status === "ready" ? (
-        <p className="mt-2 flex items-center gap-2 text-sm text-gray-300" role="status">
-          <ScanLine className="size-4 shrink-0" aria-hidden="true" />
-          Scanning for a WorshipSync QR code…
-        </p>
+      <div className={`relative mt-4 overflow-hidden rounded-xl bg-black ${cameraLive ? "" : "hidden"}`}>
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          className="aspect-square w-full object-cover"
+          aria-label="Device QR scanner camera"
+        />
+      </div>
+      {cameraLive ? (
+        <div className="mt-2 text-sm text-gray-300" role="status">
+          <p className="flex items-center gap-2">
+            <ScanLine className="size-4 shrink-0" aria-hidden="true" />
+            {statusMessage}
+          </p>
+          <p className="mt-1 pl-6 text-gray-400">{statusSecondary}</p>
+        </div>
       ) : (
         <div className="mt-4 rounded-xl bg-gray-900 p-4 text-sm text-gray-200" role="status">
-          {status === "loading" && "Opening camera…"}
+          {status === "starting" && "Opening camera…"}
           {status === "denied" && (
             <>
               <p>Camera access was blocked. Allow camera access for WorshipSync, then try again.</p>
@@ -165,7 +304,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
       )}
       {invalid && <p className="mt-2 text-sm text-yellow-300" role="alert">That isn’t a WorshipSync device-link QR code.</p>}
       <div className="mt-4 flex gap-2">
-        {(status === "denied" || status === "unavailable") && (
+        {canRestart && (
           <Button className="flex-1 justify-center" svg={RefreshCw} onClick={() => void start()}>
             Restart camera
           </Button>
