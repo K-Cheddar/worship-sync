@@ -10,10 +10,12 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  MessageCircle,
   RotateCcw,
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Select from "../components/Select/Select";
+import { useChat } from "../chat/ChatContext";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useSelector } from "../hooks";
 import {
@@ -476,7 +478,41 @@ const useCurrentServiceViewerData = (
   };
 };
 
-const CurrentServiceViewerTopBar = ({
+const CurrentServiceViewerTeamChatAction = () => {
+  const chat = useChat();
+  if (!chat?.available) return null;
+
+  const unreadLabel = chat.unreadCount > 99 ? "99+" : String(chat.unreadCount);
+  const ariaLabel = chat.unreadCount
+    ? `Open Team Chat. ${chat.unreadCount} unread ${chat.unreadCount === 1 ? "message" : "messages"}.`
+    : "Open Team Chat";
+
+  return (
+    <Button
+      type="button"
+      variant="tertiary"
+      svg={MessageCircle}
+      iconSize="sm"
+      className="relative cursor-pointer border border-cyan-500/30 bg-cyan-950/30 text-neutral-100"
+      aria-label={ariaLabel}
+      onClick={() => {
+        chat.openChat();
+      }}
+    >
+      Team Chat
+      {chat.unreadCount > 0 ? (
+        <span
+          className="min-w-5 rounded-full bg-cyan-400 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none tabular-nums text-gray-950"
+          aria-hidden="true"
+        >
+          {unreadLabel}
+        </span>
+      ) : null}
+    </Button>
+  );
+};
+
+const CurrentServiceViewerToolbar = ({
   options,
   selectedOccurrenceId,
   selectedValue,
@@ -489,24 +525,33 @@ const CurrentServiceViewerTopBar = ({
   onSelect: (value: string) => void;
   onReturnToCurrent: () => void;
 }) => (
-  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg">
-    <Button
-      component="link"
-      to="/home"
-      variant="textLink"
-      svg={ArrowLeft}
-      className="cursor-pointer text-neutral-200"
-    >
-      Back to Home
-    </Button>
-    <div className="flex flex-wrap items-center gap-3">
+  <div
+    role="toolbar"
+    aria-label="Current service toolbar"
+    className="relative left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
+  >
+    <div className="order-1 shrink-0">
+      <Button
+        component="link"
+        to="/home"
+        variant="textLink"
+        svg={ArrowLeft}
+        className="shrink-0 cursor-pointer text-neutral-200"
+      >
+        Home
+      </Button>
+    </div>
+    <div className="order-3 flex w-full min-w-0 flex-wrap items-center justify-center gap-2 md:absolute md:left-1/2 md:order-2 md:w-auto md:-translate-x-1/2 md:flex-none md:flex-nowrap md:gap-3">
       {options.length > 0 ? (
         <Select
           label="Choose a service"
+          labelLayout="inline"
           options={options}
           value={selectedValue}
           onChange={onSelect}
-          selectClassName="min-w-64"
+          className="w-full min-w-0 max-w-full max-md:flex-col max-md:items-stretch md:w-auto"
+          labelClassName="max-md:w-full"
+          selectClassName="w-full min-w-0 md:w-auto md:min-w-64"
           contentClassName="max-h-80"
         />
       ) : null}
@@ -521,6 +566,9 @@ const CurrentServiceViewerTopBar = ({
         </Button>
       ) : null}
     </div>
+    <div className="order-2 ml-auto shrink-0 md:order-3">
+      <CurrentServiceViewerTeamChatAction />
+    </div>
   </div>
 );
 
@@ -531,7 +579,7 @@ const CurrentServiceViewerFrame = ({
   topBar: ReactNode;
   children: ReactNode;
 }) => (
-  <main className="min-h-dvh overflow-y-auto bg-neutral-950 text-neutral-100">
+  <main className="min-h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
     <div className="mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6">
       <div className="mb-4">{topBar}</div>
       {children}
@@ -596,7 +644,7 @@ const CurrentServiceViewer = () => {
     data.planError && data.planErrorKey === activePlanKey,
   );
   const topBar = (
-    <CurrentServiceViewerTopBar
+    <CurrentServiceViewerToolbar
       options={options}
       selectedOccurrenceId={selection.selectedOccurrenceId}
       selectedValue={selection.occurrence?.occurrenceId ?? ""}

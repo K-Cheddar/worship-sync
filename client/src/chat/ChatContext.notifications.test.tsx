@@ -115,7 +115,7 @@ describe("ChatProvider incoming notifications", () => {
     const showToast = jest.fn(() => "toast-chat");
 
     render(
-      <MemoryRouter initialEntries={["/home"]}>
+      <MemoryRouter initialEntries={["/current-service/view"]}>
         <GlobalInfoContext.Provider
           value={createMockGlobalInfo() as never}
         >
