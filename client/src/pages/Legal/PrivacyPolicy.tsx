@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import LegalDocumentPage from "./LegalDocumentPage";
 
-const PRIVACY_EFFECTIVE_DATE = "September 16, 2026";
+const PRIVACY_EFFECTIVE_DATE = "September 20, 2026";
 
 const PrivacyPolicy = () => {
   return (
@@ -62,6 +62,13 @@ const PrivacyPolicy = () => {
             roster fields (such as contact details and scheduling preferences),
             assignments, responses, and related notes that Organization admins
             choose to store.
+          </li>
+          <li>
+            <strong className="font-semibold text-gray-100">
+              Mobile and SMS information
+            </strong>{" "}
+            — mobile phone numbers, SMS consent status, SMS communication
+            preferences, and SMS delivery or status metadata where applicable.
           </li>
           <li>
             <strong className="font-semibold text-gray-100">
@@ -137,6 +144,11 @@ const PrivacyPolicy = () => {
             Send transactional messages such as invites, assignment notices,
             password resets, and security alerts
           </li>
+          <li>
+            Use mobile phone numbers to send transactional church or team
+            communications, such as volunteer availability requests, scheduling
+            updates, assignment notifications, and reminders
+          </li>
           <li>Support Organizations and diagnose problems</li>
           <li>Improve reliability and features</li>
           <li>Comply with law and enforce our Terms of Service</li>
@@ -144,6 +156,29 @@ const PrivacyPolicy = () => {
         <p>
           We do not sell personal information. We do not use Organization
           content to train public AI models.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="privacy-sms">
+        <h2 id="privacy-sms">SMS and mobile information</h2>
+        <p>
+          SMS messaging is opt-in and is used for transactional church or team
+          communications. Message frequency varies, and message and data rates
+          may apply. You can reply STOP to opt out or HELP for help.
+        </p>
+        <p>
+          SMS consent is not required to use the Service or participate through
+          other available communication methods. We do not sell or share your
+          SMS opt-in data, consent information, mobile phone number, or other
+          personal information with third parties or affiliates for their
+          marketing or promotional purposes.
+        </p>
+        <p>
+          We may share mobile or SMS information with service providers, such as
+          messaging providers, only as necessary to provide the messaging
+          service, including sending messages and processing delivery or status
+          information. These providers handle information under obligations to
+          handle data appropriately.
         </p>
       </section>
 
@@ -163,7 +198,7 @@ const PrivacyPolicy = () => {
               Service providers
             </strong>{" "}
             — vendors that host infrastructure, authentication, databases,
-            media storage, email delivery, or error monitoring, under
+            media storage, email or messaging delivery, or error monitoring, under
             obligations to handle data appropriately.
           </li>
           <li>

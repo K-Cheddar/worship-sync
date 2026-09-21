@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import LegalDocumentPage from "./LegalDocumentPage";
 
-const TERMS_EFFECTIVE_DATE = "September 16, 2026";
+const TERMS_EFFECTIVE_DATE = "September 20, 2026";
 
 const TermsOfService = () => {
   return (
@@ -72,6 +72,32 @@ const TermsOfService = () => {
             Will not use the Service for unlawful content or activity
           </li>
         </ul>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="terms-sms">
+        <h2 id="terms-sms">SMS Messaging</h2>
+        <p>
+          If you opt in to receive SMS messages, you may receive transactional
+          messages through WorshipSync related to church or team activity,
+          including volunteer availability requests, scheduling updates,
+          assignment notifications, and reminders. Message frequency varies,
+          and message and data rates may apply.
+        </p>
+        <p>
+          You may reply <strong className="font-semibold text-gray-100">STOP</strong> to opt out or{" "}
+          <strong className="font-semibold text-gray-100">HELP</strong> for assistance. For additional
+          support, contact <a href="mailto:support@worshipsync.net">support@worshipsync.net</a>.
+          Consent to SMS messages is optional and is not required to use
+          WorshipSync. Opting out of SMS does not prevent you from using other
+          WorshipSync features or other available communication methods.
+          Carriers are not liable for delayed or undelivered messages.
+        </p>
+        <p>
+          Participating Organizations are responsible for obtaining any consent
+          required by law before initiating SMS communications to their
+          volunteers or members. How we handle mobile and SMS information is
+          described in our <Link to="/privacy">Privacy Policy</Link>.
+        </p>
       </section>
 
       <section className="space-y-3" aria-labelledby="terms-acceptable">
