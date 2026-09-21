@@ -5,6 +5,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import TransmitHandler from "./TransmitHandler";
 import {
   presentationSlice,
+  setDisplayBoardAliasId,
   syncOutputSlots,
 } from "../../store/presentationSlice";
 import {
@@ -258,11 +259,11 @@ describe("mirror controls on an auxiliary controller", () => {
               itemLists: ReturnType<typeof itemListsReducer>;
             };
           } = {
-            present: {
-              preferences: preferencesSlice.getInitialState(),
-              itemLists: itemListsReducer(undefined, { type: "@@init" }),
+              present: {
+                preferences: preferencesSlice.getInitialState(),
+                itemLists: itemListsReducer(undefined, { type: "@@init" }),
+              },
             },
-          },
           action: { type: string },
         ) => ({
           present: {
@@ -371,12 +372,10 @@ describe("mirror controls on an auxiliary controller", () => {
   it("does not show the Presentation board takeover on an auxiliary controller", () => {
     const store = createAuxStore();
     store.dispatch(
-      syncOutputSlots([
-        { id: "projector", type: "projector" },
-        { id: "out_lobby", type: "projector" },
-        { id: "monitor", type: "monitor", boardAliasId: "live-board" },
-        { id: "stream", type: "stream" },
-      ]),
+      setDisplayBoardAliasId({
+        aliasId: "live-board",
+        outputIds: ["monitor"],
+      }),
     );
 
     render(
