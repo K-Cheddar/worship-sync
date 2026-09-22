@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import Hls from "hls.js";
 import { Box, VideoBackgroundPlaybackCue } from "../../types";
 import {
@@ -19,6 +19,14 @@ import {
   getVideoSourceKind,
   isHLSVideoSource,
 } from "../../utils/isInstantVideoSource";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
+import {
+  parseLocalVideoFileAssetId,
+} from "../../utils/localVideoFileAssets";
+import {
+  acquireLocalVideoFileUrl,
+  peekLocalVideoFileUrl,
+} from "../../utils/localVideoFileUrlCache";
 
 type HLSPlayerProps = {
   src: string;
@@ -114,8 +122,7 @@ const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
       });
       if (
         (e as Error)?.name === "AbortError" &&
-        expectedSrc &&
-        video.src !== expectedSrc
+        (!video.isConnected || (expectedSrc && video.src !== expectedSrc))
       ) {
         return;
       }
@@ -123,10 +130,49 @@ const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
     });
 };
 
+/**
+ * Resolve legacy local-video-file references before they reach a media element.
+ * Newer records normally arrive through useLocalVideoFileUrl, but HLSPlayer is
+ * also used by paths that only have the persisted URL. Keeping this guard at
+ * the player boundary prevents an opaque reference scheme from bypassing CSP.
+ */
+const useResolvedLocalVideoSource = (
+  value: string | undefined,
+): string | undefined => {
+  const assetId = parseLocalVideoFileAssetId(value) ?? undefined;
+  const [state, setState] = useState<{ value?: string; url?: string }>(() => ({
+    value,
+    url: assetId ? peekLocalVideoFileUrl(assetId) : undefined,
+  }));
+
+  useEffect(() => {
+    if (!assetId) {
+      setState({ value, url: undefined });
+      return;
+    }
+
+    let active = true;
+    const lease = acquireLocalVideoFileUrl(assetId);
+    setState({ value, url: peekLocalVideoFileUrl(assetId) });
+    void lease.url.then((url) => {
+      if (active) setState({ value, url });
+    });
+    return () => {
+      active = false;
+      lease.release();
+    };
+  }, [assetId, value]);
+
+  if (!isLocalMediaReferenceUrl(value)) return value;
+  if (!assetId || state.value !== value) return undefined;
+  return state.url;
+};
+
 const applyCueToVideo = (
   video: HTMLVideoElement,
   cue: VideoBackgroundPlaybackCue,
   options: { seek: boolean },
+  expectedSrc?: string,
 ) => {
   const shouldSeek = options.seek || cue.paused;
   if (shouldSeek) {
@@ -142,7 +188,7 @@ const applyCueToVideo = (
     video.pause();
     return;
   }
-  startPlayback(video);
+  startPlayback(video, expectedSrc);
 };
 
 const cueBelongsToMedia = (
@@ -170,10 +216,16 @@ const HLSPlayer = ({
 }: HLSPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const originalSrcRef = useRef(originalSrc);
-  originalSrcRef.current = originalSrc;
-  const srcRef = useRef(src);
-  srcRef.current = src;
+  const resolvedSrc = useResolvedLocalVideoSource(src);
+  const resolvedOriginalSrc = useResolvedLocalVideoSource(originalSrc);
+  const effectiveSrc = isLocalMediaReferenceUrl(src) ? resolvedSrc : src;
+  const effectiveOriginalSrc = isLocalMediaReferenceUrl(originalSrc)
+    ? resolvedOriginalSrc
+    : originalSrc;
+  const originalSrcRef = useRef(effectiveOriginalSrc);
+  originalSrcRef.current = effectiveOriginalSrc;
+  const srcRef = useRef<string | undefined>(effectiveSrc);
+  srcRef.current = effectiveSrc;
   const playbackRef = useRef(playback);
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
@@ -414,7 +466,7 @@ const HLSPlayer = ({
       target: targetPosition,
       duration: video.duration,
     });
-    applyCueToVideo(video, cue, { seek });
+    applyCueToVideo(video, cue, { seek }, activeSrc);
     syncedSrcRef.current = activeSrc;
     appliedGenerationRef.current = cue.generation;
     appliedWithoutDurationRef.current = seek && !hasDuration;
@@ -498,7 +550,8 @@ const HLSPlayer = ({
           !didFallback &&
           fallback &&
           fallback !== videoSrc &&
-          videoSrc.startsWith("media-cache://")
+          videoSrc.startsWith("media-cache://") &&
+          !isLocalMediaReferenceUrl(fallback)
         ) {
           didFallback = true;
           console.log(`[HLSPlayer] Falling back to original URL: ${fallback}`);
@@ -603,20 +656,20 @@ const HLSPlayer = ({
     appliedWithoutDurationRef.current = false;
     rateCorrectionStartedAtRef.current = null;
     if (video) video.playbackRate = 1;
-    if (!video || !src) return;
+    if (!video || !effectiveSrc) return;
 
     logVideoCue("player.mount", {
       role: playbackRoleRef.current,
       mediaKey: mediaKeyRef.current,
       outputId,
       windowRole,
-      src,
-      sourceKind: getVideoSourceKind(src),
+      src: effectiveSrc,
+      sourceKind: getVideoSourceKind(effectiveSrc),
     });
 
 
-    if (isHLSVideoSource(src)) {
-      const stopHls = playHLS(video, src);
+    if (isHLSVideoSource(effectiveSrc)) {
+      const stopHls = playHLS(video, effectiveSrc);
       return () => {
         clearPaintReadyWaits();
         paintReadyWaitGenerationRef.current += 1;
@@ -625,7 +678,7 @@ const HLSPlayer = ({
         rateCorrectionStartedAtRef.current = null;
       };
     }
-    const stopNative = playNative(video, src);
+    const stopNative = playNative(video, effectiveSrc);
     return () => {
       clearPaintReadyWaits();
       paintReadyWaitGenerationRef.current += 1;
@@ -633,7 +686,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
     };
-  }, [src, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
+  }, [effectiveSrc, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -679,7 +732,7 @@ const HLSPlayer = ({
   // which no-ops until the element has metadata for the current src.
   useEffect(() => {
     syncPlayback();
-  }, [playback, src, syncPlayback]);
+  }, [playback, effectiveSrc, syncPlayback]);
 
   // Hidden controller tabs keep the video element and decoded position alive,
   // but must not continue decoding or advancing a tile that is not visible.
@@ -876,7 +929,10 @@ const HLSPlayer = ({
     return subscribeVideoPreviewCommands(applyCommand);
   }, [playback, playbackRole]);
 
-  const preloadValue = getVideoPreload(src, preloadRole ?? playbackRole);
+  const preloadValue = getVideoPreload(
+    effectiveSrc ?? "",
+    preloadRole ?? playbackRole,
+  );
 
   return (
     <video

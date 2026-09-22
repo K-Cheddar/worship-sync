@@ -591,10 +591,14 @@ export const putCreditDoc = async (
   }
 };
 
-export const updateAllDocs = async (dispatch: Function) => {
-  if (!globalDb) return;
+export const updateAllDocs = async (
+  dispatch: Function,
+  db: PouchDB.Database | undefined = globalDb,
+  shouldApply: () => boolean = () => true,
+): Promise<boolean> => {
+  if (!db) return false;
   try {
-    const allDocs: allDocsType = (await globalDb.allDocs({
+    const allDocs: allDocsType = (await db.allDocs({
       include_docs: true,
     })) as allDocsType;
     const allSongs = allDocs.rows
@@ -613,12 +617,16 @@ export const updateAllDocs = async (dispatch: Function) => {
       .filter((row) => (row.doc as any)?.type === "bible")
       .map((row) => row.doc as DBItem);
 
+    if (!shouldApply()) return false;
+
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
     dispatch(updateAllTimerDocs(allTimers));
     dispatch(updateAllBibleDocs(allBibles));
+    return true;
   } catch (error) {
     console.error("Failed to save all docs", error);
+    return false;
   }
 };
 

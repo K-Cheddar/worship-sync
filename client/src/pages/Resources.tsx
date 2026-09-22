@@ -27,6 +27,7 @@ import { useDispatch, useSelector } from "../hooks";
 import { upsertItemInAllDocs } from "../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../store/allItemsSlice";
 import { broadcastItemUpdate } from "../store/store";
+import { updateAllDocs } from "../utils/dbUtils";
 import {
   buildChurchResourceLibraryEntries,
   resourceEntryContentType,
@@ -277,7 +278,10 @@ const ResourcesPage = () => {
   const [filter, setFilter] = useState<ResourceFilter>("all");
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [churchResourcesLoading, setChurchResourcesLoading] = useState(true);
+  const [songDocsLoading, setSongDocsLoading] = useState(true);
+  const [churchResourcesError, setChurchResourcesError] = useState("");
+  const [songDocsError, setSongDocsError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
@@ -285,27 +289,57 @@ const ResourcesPage = () => {
   const canEdit = access === "full";
 
   useEffect(() => {
-    if (!churchId || !canBrowse) {
-      setLoading(false);
+    if (!canBrowse) {
+      setChurchResourcesLoading(false);
+      setChurchResourcesError("");
+      return;
+    }
+    if (!churchId) {
+      setChurchResourcesLoading(true);
       return;
     }
     let active = true;
-    setLoading(true);
-    setError("");
+    setChurchResourcesLoading(true);
+    setChurchResourcesError("");
+    setResources([]);
     void listChurchResources(churchId)
       .then((result) => {
         if (active) setResources(result.resources);
       })
       .catch((loadError) => {
-        if (active) setError(errorMessage(loadError, "Resources could not be loaded."));
+        if (active) setChurchResourcesError(errorMessage(loadError, "Resources could not be loaded."));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setChurchResourcesLoading(false);
       });
     return () => {
       active = false;
     };
   }, [canBrowse, churchId]);
+
+  useEffect(() => {
+    if (!canBrowse) {
+      setSongDocsLoading(false);
+      setSongDocsError("");
+      return;
+    }
+    if (!db) {
+      setSongDocsLoading(true);
+      return;
+    }
+
+    let active = true;
+    setSongDocsLoading(true);
+    setSongDocsError("");
+    void updateAllDocs(dispatch, db, () => active).then((loaded) => {
+      if (!active) return;
+      setSongDocsLoading(false);
+      if (!loaded) setSongDocsError("The song library could not be loaded. Try again.");
+    });
+    return () => {
+      active = false;
+    };
+  }, [canBrowse, db, dispatch]);
 
   const entries = useMemo(
     () =>
@@ -317,6 +351,8 @@ const ResourcesPage = () => {
     [allSongDocs, filter, query, resources],
   );
   const selectedEntry = entries.find((entry) => entryKey(entry) === selectedKey) || null;
+  const loading = churchResourcesLoading || songDocsLoading;
+  const loadErrors = [churchResourcesError, songDocsError].filter(Boolean);
 
   const onUpload = async (file: File) => {
     if (!churchId) return;
@@ -391,9 +427,10 @@ const ResourcesPage = () => {
                 <Button key={value} type="button" variant="tertiary" isSelected={filter === value} onClick={() => setFilter(value)}>{value === "all" ? "All" : value === "document" ? "Documents" : "Audio"}</Button>
               ))}
             </div>
+            {loadErrors.map((loadError) => <div key={loadError} className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{loadError}</div>)}
             {error ? <div className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{error}</div> : null}
             {loading ? <p className="p-4 text-sm text-gray-400" role="status">Loading resources…</p> : null}
-            {!loading && !entries.length ? <div className="p-8 text-center text-sm text-gray-400"><FileText className="mx-auto mb-2 size-8 text-gray-600" aria-hidden />No resources match this view.</div> : null}
+            {!loading && !loadErrors.length && !entries.length ? <div className="p-8 text-center text-sm text-gray-400"><FileText className="mx-auto mb-2 size-8 text-gray-600" aria-hidden />No resources match this view.</div> : null}
             {!loading && entries.length ? (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
