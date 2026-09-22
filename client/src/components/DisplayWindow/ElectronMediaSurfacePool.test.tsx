@@ -17,6 +17,28 @@ const videoBox = {
   height: 100,
 } as unknown as Box;
 
+const makeCandidate = (mediaKey: string): ElectronMediaSurfaceCandidate => ({
+  mediaKey,
+  source: `https://cdn.example.com/${mediaKey.replaceAll(":", "-")}.mp4`,
+});
+
+const makeView = (
+  mediaKey: string,
+  source: string,
+  shouldPlay: boolean,
+  playback?: ElectronMediaSurfaceView["playback"],
+): ElectronMediaSurfaceView => ({
+  mediaKey,
+  source,
+  videoBox,
+  opacity: 1,
+  zIndex: 0,
+  shouldPlay,
+  muted: true,
+  volume: 1,
+  playback,
+});
+
 const view = (shouldPlay: boolean): ElectronMediaSurfaceView => ({
   mediaKey: candidate.mediaKey,
   source: candidate.source,
@@ -41,6 +63,10 @@ describe("ElectronMediaSurfacePool", () => {
     HTMLMediaElement.prototype,
     "currentSrc",
   );
+  const originalPaused = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "paused",
+  );
 
   beforeEach(() => {
     Object.defineProperty(window, "electronAPI", {
@@ -62,11 +88,26 @@ describe("ElectronMediaSurfacePool", () => {
     });
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
-      value: jest.fn().mockResolvedValue(undefined),
+      value: jest.fn(function play(this: HTMLMediaElement) {
+        (this as HTMLVideoElement & { __wsPlaying?: boolean }).__wsPlaying =
+          true;
+        return Promise.resolve();
+      }),
     });
     Object.defineProperty(HTMLMediaElement.prototype, "pause", {
       configurable: true,
-      value: jest.fn(),
+      value: jest.fn(function pause(this: HTMLMediaElement) {
+        (this as HTMLVideoElement & { __wsPlaying?: boolean }).__wsPlaying =
+          false;
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+      configurable: true,
+      get() {
+        return !(
+          this as HTMLVideoElement & { __wsPlaying?: boolean }
+        ).__wsPlaying;
+      },
     });
     Object.defineProperty(
       HTMLVideoElement.prototype,
@@ -109,6 +150,9 @@ describe("ElectronMediaSurfacePool", () => {
     });
     if (originalCurrentSrc) {
       Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", originalCurrentSrc);
+    }
+    if (originalPaused) {
+      Object.defineProperty(HTMLMediaElement.prototype, "paused", originalPaused);
     }
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
@@ -196,6 +240,180 @@ describe("ElectronMediaSurfacePool", () => {
     act(() => unmount());
     expect(readyChanges.at(-1)).toBe(false);
     expect(liveChanges.at(-1)).toBe(false);
+  });
+
+  it("promotes the current prepared surface without remounting its video element", async () => {
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(true)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    const video = await screen.findByTestId(
+      "electron-media-surface-video-remote:clip",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    expect(video).toBe(
+      screen.getByTestId("electron-media-surface-video-remote:clip"),
+    );
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+    expect(onFirstAdvancingFrameChange).toHaveBeenLastCalledWith(
+      candidate.mediaKey,
+      true,
+    );
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(true)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(
+      video,
+    );
+  });
+
+  it("keeps non-current prepared candidates paused while the current one plays", async () => {
+    const secondCandidate = makeCandidate("remote:other");
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate, secondCandidate]}
+        views={[view(true), makeView(secondCandidate.mediaKey, secondCandidate.source, false)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    expect(
+      screen.getByTestId("electron-media-surface-remote:other"),
+    ).toHaveAttribute("data-prepared-state", "ready");
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(3);
+  });
+
+  it("demotes the old surface and promotes the new one without remounting either element", async () => {
+    const secondCandidate = makeCandidate("remote:other");
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate, secondCandidate]}
+        views={[view(true), makeView(secondCandidate.mediaKey, secondCandidate.source, false)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    const firstVideo = screen.getByTestId("electron-media-surface-video-remote:clip");
+    const secondVideo = screen.getByTestId("electron-media-surface-video-remote:other");
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate, secondCandidate]}
+        views={[makeView(secondCandidate.mediaKey, secondCandidate.source, true)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+
+    expect(
+      (HTMLMediaElement.prototype.pause as jest.Mock).mock.calls.length,
+    ).toBeGreaterThan(2);
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:other")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(firstVideo);
+    expect(screen.getByTestId("electron-media-surface-video-remote:other")).toBe(secondVideo);
+  });
+
+  it("honors a paused cue during promotion and resumes on a new cue generation", async () => {
+    const pausedCue = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 0,
+      paused: true,
+      atServerMs: Date.now(),
+      generation: 1,
+      applySeek: false,
+    };
+    const resumedCue = { ...pausedCue, paused: false, generation: 2 };
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makeView(candidate.mediaKey, candidate.source, true, pausedCue)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makeView(candidate.mediaKey, candidate.source, true, resumedCue)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    expect(
+      (HTMLMediaElement.prototype.play as jest.Mock).mock.calls.length,
+    ).toBeGreaterThan(1);
   });
 
   it("does not claim HLS manifests as finite prepared surfaces", async () => {

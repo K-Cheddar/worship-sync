@@ -282,4 +282,37 @@ describe("Resources page", () => {
     expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove from song" })).not.toBeInTheDocument();
   });
+
+  it("uses the styled confirmation modal before deleting a church resource", async () => {
+    mockResources = [resource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    jest.mocked(deleteChurchResource).mockResolvedValue({ success: true });
+    renderPage();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: /Preview Guidelines\.pdf/i }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Delete" }));
+
+    const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
+    expect(confirmation).toHaveTextContent("Guidelines.pdf");
+    await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteChurchResource).toHaveBeenCalledWith({ churchId: "church-1", resourceId: "resource-1" }));
+  });
+
+  it("supports selecting multiple church resources for deletion", async () => {
+    const secondResource = { ...resource, id: "resource-2", name: "Second guide.pdf" };
+    mockResources = [resource, secondResource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    jest.mocked(deleteChurchResource).mockResolvedValue({ success: true });
+    renderPage();
+
+    expect(await screen.findByText("Second guide.pdf")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Select Guidelines.pdf" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Second guide.pdf" }));
+    await user.click(screen.getByRole("button", { name: "Delete selected (2)" }));
+
+    const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
+    expect(within(confirmation).getByText("Guidelines.pdf")).toBeInTheDocument();
+    expect(within(confirmation).getByText("Second guide.pdf")).toBeInTheDocument();
+  });
 });

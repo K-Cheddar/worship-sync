@@ -40,7 +40,7 @@ export const SERVICE_PLAN_RESOURCE_REGISTRY: Record<
   scripture: { label: "Scripture", icon: BookOpen, toneClassName: "text-violet-300", canEdit: false },
   youtube: { label: "YouTube", icon: SquarePlay, toneClassName: "text-red-300", canEdit: false },
   audio: { label: "Audio", icon: AudioLines, toneClassName: "text-amber-300", canEdit: false },
-  document: { label: "Church file", icon: FileText, toneClassName: "text-cyan-300", canEdit: false },
+  document: { label: "File", icon: FileText, toneClassName: "text-cyan-300", canEdit: false },
   url: { label: "Web link", icon: LinkIcon, toneClassName: "text-blue-300", canEdit: true },
   text: { label: "Notes", icon: StickyNote, toneClassName: "text-emerald-300", canEdit: true },
   generic: { label: "Other", icon: FileQuestion, toneClassName: "text-gray-300", canEdit: true },

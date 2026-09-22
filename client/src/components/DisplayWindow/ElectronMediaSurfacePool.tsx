@@ -297,6 +297,9 @@ const PreparedSurface = ({
   const generationRef = useRef(0);
   const preparationStartedAtRef = useRef<number | undefined>(undefined);
   const playingGenerationRef = useRef<number | undefined>(undefined);
+  const playbackAttemptRef = useRef(0);
+  const playbackInFlightRef = useRef(false);
+  const resetInFlightRef = useRef(false);
   const lastCueGenerationRef = useRef<number | undefined>(undefined);
   const correctionStartedAtRef = useRef<number | undefined>(undefined);
   const mountedRef = useRef(true);
@@ -305,7 +308,9 @@ const PreparedSurface = ({
   const frozenSourceRef = useRef<string | undefined>(undefined);
   const pendingSourceRef = useRef<string | undefined>(undefined);
   const shouldPlayRef = useRef(view?.shouldPlay);
+  const viewRef = useRef(view);
   shouldPlayRef.current = view?.shouldPlay;
+  viewRef.current = view;
   const onReadyChangeRef = useRef(onReadyChange);
   const onGeometryReadyChangeRef = useRef(onGeometryReadyChange);
   const onFirstAdvancingFrameChangeRef = useRef(onFirstAdvancingFrameChange);
@@ -415,6 +420,7 @@ const PreparedSurface = ({
     generationRef.current = loading.generation;
     preparationStartedAtRef.current = performance.now();
     playingGenerationRef.current = undefined;
+    playbackInFlightRef.current = false;
     onReadyChange(candidate.mediaKey, false);
     setFramePresentedReady(false);
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
@@ -496,7 +502,15 @@ const PreparedSurface = ({
 
   const reset = useCallback(async () => {
     const video = videoRef.current;
-    if (!video || stateRef.current.phase === "disposed") return;
+    if (
+      !video ||
+      stateRef.current.phase === "disposed" ||
+      resetInFlightRef.current
+    ) {
+      return;
+    }
+    resetInFlightRef.current = true;
+    playbackAttemptRef.current += 1;
     const generation = stateRef.current.generation;
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "resetting"),
@@ -505,6 +519,7 @@ const PreparedSurface = ({
     setFramePresentedReady(false);
     onReadyChange(candidate.mediaKey, false);
     playingGenerationRef.current = undefined;
+    playbackInFlightRef.current = false;
     correctionStartedAtRef.current = undefined;
     preparationStartedAtRef.current = performance.now();
     video.pause();
@@ -537,6 +552,8 @@ const PreparedSurface = ({
       );
       onReadyChange(candidate.mediaKey, false);
       onPreparationFailure?.(candidate.mediaKey, message);
+    } finally {
+      resetInFlightRef.current = false;
     }
   }, [
     candidate.mediaKey,
@@ -550,16 +567,27 @@ const PreparedSurface = ({
 
   const play = useCallback(async () => {
     const video = videoRef.current;
+    const phase = stateRef.current.phase;
     if (
       !video ||
-      stateRef.current.phase !== "ready" ||
-      playingGenerationRef.current === stateRef.current.generation
+      (phase !== "ready" && phase !== "playing") ||
+      !shouldPlayRef.current
+    ) {
+      return;
+    }
+    const cue = viewRef.current?.playback;
+    if (cue?.mediaKey === candidate.mediaKey && cue.paused) return;
+    if (
+      playingGenerationRef.current === stateRef.current.generation &&
+      (!video.paused || playbackInFlightRef.current)
     ) {
       return;
     }
     const generation = stateRef.current.generation;
+    const playbackAttempt = ++playbackAttemptRef.current;
+    playbackInFlightRef.current = true;
     const stateBeforeSend: SurfaceDiagnostic["sendStateBeforeRequest"] =
-      stateRef.current.phase === "ready" ? "READY" : "PREPARING";
+      phase === "ready" ? "READY" : "PREPARING";
     const sendRequestedAt = performance.now();
     const sendBufferedRanges: Array<[number, number]> = Array.from(
       { length: video.buffered.length },
@@ -594,6 +622,15 @@ const PreparedSurface = ({
         Promise.resolve(video.play()),
         "presented-frame",
       );
+      if (
+        playbackAttemptRef.current !== playbackAttempt ||
+        !shouldPlayRef.current ||
+        (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
+          viewRef.current.playback.paused)
+      ) {
+        playbackInFlightRef.current = false;
+        return;
+      }
       const playResolvedAt = performance.now();
       publishReady({
         playResolvedTimestamp: playResolvedAt,
@@ -602,7 +639,17 @@ const PreparedSurface = ({
       });
       debug("PLAY_RESOLVED", { mode: "live", playResolvedAt });
       await waitForPresentedFrame(video, debug);
-      if (stateRef.current.generation !== generation) return;
+      if (
+        stateRef.current.generation !== generation ||
+        playbackAttemptRef.current !== playbackAttempt ||
+        !shouldPlayRef.current ||
+        (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
+          viewRef.current.playback.paused)
+      ) {
+        playbackInFlightRef.current = false;
+        return;
+      }
+      playbackInFlightRef.current = false;
       const firstAdvancingFrameAt = performance.now();
       onFirstAdvancingFrameChange(candidate.mediaKey, true);
       publishReady({
@@ -614,6 +661,7 @@ const PreparedSurface = ({
         lastUsedAt: Date.now(),
       });
     } catch (error) {
+      playbackInFlightRef.current = false;
       if (stateRef.current.generation !== generation) return;
       debug("PLAY_REJECTED", { mode: "live", error: String(error) });
       const message = getPreparedVideoSurfaceErrorMessage("playback", error);
@@ -840,8 +888,24 @@ const PreparedSurface = ({
       }
       return;
     }
-    if (stateRef.current.phase === "ready") void play();
-  }, [enabled, hasView, play, reset, view?.shouldPlay, state.phase]);
+    if (stateRef.current.phase === "ready") {
+      const cue = view?.playback;
+      if (cue?.mediaKey === candidate.mediaKey && cue.paused) return;
+      if (cue?.mediaKey === candidate.mediaKey) {
+        lastCueGenerationRef.current = cue.generation;
+      }
+      void play();
+    }
+  }, [
+    candidate.mediaKey,
+    enabled,
+    hasView,
+    play,
+    reset,
+    state.phase,
+    view?.playback,
+    view?.shouldPlay,
+  ]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -869,9 +933,9 @@ const PreparedSurface = ({
       video.paused &&
       stateRef.current.phase === "playing"
     ) {
-      void video.play().catch(() => undefined);
+      void play();
     }
-  }, [candidate.mediaKey, view?.playback, view?.shouldPlay]);
+  }, [candidate.mediaKey, play, view?.playback, view?.shouldPlay]);
 
   useEffect(() => {
     if (!view?.shouldPlay || state.phase !== "playing") return;

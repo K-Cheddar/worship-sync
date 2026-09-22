@@ -75,7 +75,7 @@ describe("service-plan content resources", () => {
     });
     expect(getServicePlanChurchResourceId(reference)).toBe("churchResource_1");
     expect(isServicePlanChurchResourceReference(reference)).toBe(true);
-    expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("Church file");
+    expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("File");
     expect(
       getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label,
     ).toBe("Audio");

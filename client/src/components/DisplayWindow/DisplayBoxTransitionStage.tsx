@@ -761,16 +761,6 @@ const DisplayBoxTransitionStage = ({
       laneId,
       laneSnapshot.backgroundMedia,
     );
-    // Once Electron has selected a finite candidate for the incoming lane,
-    // the fallback may not start the crossfade first. The retained prepared
-    // frame is sufficient; playback advancement is diagnostic only.
-    if (
-      preparedCandidateSelected &&
-      (preparedMediaReady[preparedMediaKey] !== true ||
-        preparedMediaGeometryReady[preparedMediaKey] !== true)
-    ) {
-      return false;
-    }
     const mediaReady =
       mode === "content" ||
       mediaKey === "none" ||
@@ -802,14 +792,27 @@ const DisplayBoxTransitionStage = ({
     const incomingFileVideoMustBeLive =
       mode !== "content" &&
       laneSnapshot.backgroundMedia.kind === "fileVideo" &&
-      !usesPrepared &&
       outgoingFileVideoCanBeLive &&
       outgoingMediaKey !== mediaKey;
+    const incomingUsesPreparedSurface = preparedCandidateSelected || usesPrepared;
     const incomingLiveMedia = mediaLivePaintReadiness[laneId];
     const incomingLiveReady =
-      usesPrepared
-        ? preparedMediaReady[preparedMediaKey] === true
+      incomingUsesPreparedSurface
+        ? preparedMediaFirstAdvancingFrame[preparedMediaKey] === true
         : incomingLiveMedia?.mediaKey === mediaKey && incomingLiveMedia.ready;
+
+    // READY means the retained starting frame can paint while hidden. When a
+    // different prepared file video replaces a live outgoing file video, the
+    // incoming surface must also resume playback and present an advancing
+    // frame before it is allowed to cover the outgoing surface.
+    if (
+      preparedCandidateSelected &&
+      (preparedMediaReady[preparedMediaKey] !== true ||
+        preparedMediaGeometryReady[preparedMediaKey] !== true ||
+        (incomingFileVideoMustBeLive && !incomingLiveReady))
+    ) {
+      return false;
+    }
 
     // A poster is a legitimate first-paint fallback, but never a destination
     // for a live file-video replacement. Hold the valid outgoing video until
@@ -1542,6 +1545,13 @@ const DisplayBoxTransitionStage = ({
                 }}
               >
                 <div
+                  // Keep the lane wrapper stable so GSAP can own its opacity,
+                  // but make the rendered foreground identity explicit. A lane
+                  // may be reused for the newest request during an interrupted
+                  // fade; reconciling that subtree in place can retain a
+                  // renderer's old text/content node. Media is intentionally
+                  // outside this keyed subtree and remains mounted.
+                  key={`content-${laneId}:${foregroundIdentityOf(contentSnapshot)}`}
                   data-testid={`display-box-transition-lane-${laneId}`}
                   data-lane-role={
                     isPrevious ? "outgoing" : isActive ? "active" : "incoming"

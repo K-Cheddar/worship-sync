@@ -39,8 +39,8 @@ jest.mock("../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => 
 
 jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   __esModule: true,
-  default: ({ resource }: { resource: { url?: string } | null }) => resource ? (
-    <div role="dialog" aria-label="Content preview">{resource.url}</div>
+  default: ({ resource }: { resource: { title?: string; url?: string } | null }) => resource ? (
+    <div role="dialog" aria-label="Content preview">{resource.title || resource.url}</div>
   ) : null,
 }));
 
@@ -59,7 +59,21 @@ describe("ServicePlanContentPanel resources", () => {
     mockListChurchResources.mockReset();
   });
 
-  it("adds multiple generic resources and removes one without touching the other", async () => {
+  it("auto-expands the notes field while editing a text resource", async () => {
+    const user = userEvent.setup();
+    render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
+
+    const notes = screen.getByRole("textbox", { name: "Notes:" }) as HTMLTextAreaElement;
+    Object.defineProperty(notes, "scrollHeight", { configurable: true, value: 120 });
+    await user.type(notes, "A longer note");
+
+    expect(notes.style.height).toBe("122px");
+  });
+
+  it("adds multiple resources and removes one without touching the other", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
     const { rerender } = render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />);
@@ -80,14 +94,16 @@ describe("ServicePlanContentPanel resources", () => {
     rerender(<ServicePlanContentPanel element={element({ resources: firstResources })} allowEdit onUpdate={onUpdate} />);
 
     await user.click(screen.getByRole("button", { name: "Add resource" }));
-    await user.click(screen.getByRole("menuitem", { name: "Other" }));
+    await user.click(screen.getByRole("menuitem", { name: "Link" }));
     await user.type(screen.getByLabelText(/Title/), "Offering instructions");
+    await user.type(screen.getByLabelText(/URL/), "https://example.com/offering");
     await user.click(screen.getByRole("button", { name: "Add resource" }));
 
     const secondResources = onUpdate.mock.calls.at(-1)?.[0].resources;
     expect(secondResources).toHaveLength(2);
     expect(secondResources[0].title).toBe("Sermon notes");
     expect(secondResources[1].title).toBe("Offering instructions");
+    expect(secondResources[1].type).toBe("url");
 
     rerender(
       <ServicePlanContentPanel
@@ -172,6 +188,81 @@ describe("ServicePlanContentPanel resources", () => {
         type: "audio",
         mediaId: "audio-1",
         data: { songId: "song-1", audioId: "audio-1" },
+      })],
+    });
+  });
+
+  it("searches files and previews one before attaching it", async () => {
+    mockListChurchResources.mockResolvedValue({
+      success: true,
+      resources: [
+        {
+          id: "file-1",
+          churchId: "church-1",
+          name: "Service guide",
+          kind: "document",
+          storage: {
+            key: "churches/church-1/files/file-1/original",
+            fileName: "guide.pdf",
+            contentType: "application/pdf",
+            sizeBytes: 100,
+            uploadedAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdBy: "user-1",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          updatedBy: "user-1",
+        },
+        {
+          id: "file-2",
+          churchId: "church-1",
+          name: "Volunteer notes",
+          kind: "document",
+          storage: {
+            key: "churches/church-1/files/file-2/original",
+            fileName: "notes.txt",
+            contentType: "text/plain",
+            sizeBytes: 50,
+            uploadedAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdBy: "user-1",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          updatedBy: "user-1",
+        },
+      ],
+    });
+    mockGetChurchResourceUrl.mockResolvedValue({
+      url: "https://example.test/file-1.pdf",
+      expiresAt: "2026-01-01T00:15:00.000Z",
+    });
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+
+    expect(await screen.findByRole("dialog", { name: "Choose a file" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search files" })).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Search files" }), "guide");
+    expect(screen.getByRole("button", { name: /^Service guide/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Volunteer notes/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Preview file Service guide" }));
+    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveTextContent("Service guide");
+    expect(onUpdate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^Service guide/ }));
+    expect(onUpdate).toHaveBeenCalledWith({
+      resources: [expect.objectContaining({
+        type: "document",
+        data: { resourceId: "file-1" },
       })],
     });
   });

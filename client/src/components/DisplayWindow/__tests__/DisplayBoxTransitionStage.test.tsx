@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
-import { useEffect, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneRenderMediaOptions,
@@ -145,6 +145,39 @@ const readyRenderLane =
         laneMedia={laneMedia}
       />
     );
+
+const StatefulLaneContent = ({
+  snapshot,
+  reportPaintReady,
+}: {
+  snapshot: DisplayBoxTransitionSnapshot;
+  reportPaintReady: (index: number, ready: boolean) => void;
+}) => {
+  const [mountedWords] = useState(
+    snapshot.boxes.map((box) => box.words ?? "").join("|") || "empty",
+  );
+
+  useEffect(() => {
+    snapshot.boxes.forEach((_, index) => reportPaintReady(index, true));
+  }, [reportPaintReady, snapshot.boxes]);
+
+  return (
+    <div data-testid={`stateful-content-${mountedWords}`}>{mountedWords}</div>
+  );
+};
+
+const statefulRenderLane = (
+  snapshot: DisplayBoxTransitionSnapshot,
+  _isPrevious: boolean,
+  reportPaintReady: (index: number, ready: boolean) => void,
+  laneMedia: LaneRenderMediaOptions,
+) =>
+  laneMedia.paintForeground ? (
+    <StatefulLaneContent
+      snapshot={snapshot}
+      reportPaintReady={reportPaintReady}
+    />
+  ) : null;
 
 describe("DisplayBoxTransitionStage", () => {
   const originalLoad = HTMLMediaElement.prototype.load;
@@ -1485,6 +1518,59 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+  });
+
+  it("remounts reused foreground lanes so stale multi-box text cannot survive", () => {
+    const slide = (key: string, words: string[]) => ({
+      key,
+      boxes: words.map((value, index) => ({
+        id: `box-${index}`,
+        words: value,
+        width: 100,
+        height: 50,
+      })),
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    });
+    const first = slide("stateful-a", ["A1", "A2"]);
+    const middle = slide("stateful-b", ["B1", "B2"]);
+    const latest = slide("stateful-c", ["C1", "C2"]);
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={middle}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+    const firstTransitionComplete = mockTimelineComplete;
+
+    // Reuse the incoming lane before A → B completes. Its content subtree must
+    // become C rather than retaining B's mounted child state.
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+
+    expect(screen.queryByTestId("stateful-content-B1|B2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-A1|A2")).toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-C1|C2")).toBeInTheDocument();
+
+    act(() => firstTransitionComplete?.());
+    act(() => mockTimelineComplete?.());
+
+    expect(screen.queryByTestId("stateful-content-A1|A2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("stateful-content-B1|B2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-C1|C2")).toBeInTheDocument();
   });
 
   const assertContentCrossfadeContract = (

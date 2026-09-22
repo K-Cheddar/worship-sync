@@ -39,6 +39,12 @@ const item = (id: string, name: string, slides: ItemSlideType[]): DBItem =>
     slides,
   }) as unknown as DBItem;
 
+const heading = (id: string, name: string): DBItem =>
+  ({ _id: id, name, type: "heading" }) as unknown as DBItem;
+
+const itemWithoutSlides = (id: string, name: string): DBItem =>
+  ({ _id: id, name, type: "song", slides: undefined }) as unknown as DBItem;
+
 const renderCandidates = (
   docs: DBItem[],
   options: {
@@ -617,6 +623,92 @@ describe("useServiceVideoCandidates", () => {
 
     await waitFor(() => expect(result.current.discovery.outlineLoadState).toBe("retrying"));
     await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]), { timeout: 2000 });
+  });
+
+  it("skips headings, missing documents, and documents without slides when switching outlines", async () => {
+    const first = item("first", "First", [
+      slide("first-slide", [
+        {
+          id: "first-video",
+          mediaInfo: video("first-video", "https://cdn.example.com/first.mp4"),
+        },
+      ]),
+    ]);
+    const second = item("second", "Second", [
+      slide("second-slide", [
+        {
+          id: "second-video",
+          mediaInfo: video(
+            "second-video",
+            "https://cdn.example.com/second.mp4",
+          ),
+        },
+      ]),
+    ]);
+    const third = item("third", "Third", [
+      slide("third-slide", [
+        {
+          id: "third-video",
+          mediaInfo: video("third-video", "https://cdn.example.com/third.mp4"),
+        },
+      ]),
+    ]);
+    const { result, rerender, setOutlineId, db } = renderCandidates(
+      [
+        first,
+        second,
+        third,
+        heading("heading-b", "Heading"),
+        itemWithoutSlides("legacy-b", "Legacy item"),
+      ],
+      {
+        outlineId: "outline-a",
+        outlineItems: {
+          "outline-a": ["first"],
+          "outline-b": [
+            "second",
+            "heading-b",
+            "third",
+            "legacy-b",
+            "missing-b",
+          ],
+        },
+      },
+    );
+
+    await waitFor(() =>
+      expect(
+        result.current.candidates.map((candidate) => candidate.mediaKey),
+      ).toEqual(["remote:first-video"]),
+    );
+    setOutlineId("outline-b");
+    rerender();
+
+    await waitFor(() =>
+      expect(
+        result.current.candidates.map((candidate) => candidate.mediaKey),
+      ).toEqual(["remote:second-video", "remote:third-video"]),
+    );
+    expect(
+      result.current.discovery.items.map((entry) => ({
+        itemId: entry.itemId,
+        itemIndex: entry.itemIndex,
+      })),
+    ).toEqual([
+      { itemId: "second", itemIndex: 0 },
+      { itemId: "third", itemIndex: 2 },
+    ]);
+    expect(result.current.discovery).toMatchObject({
+      itemCount: 2,
+      loadedOutlineId: "outline-b",
+      outlineLoadState: "loaded",
+      outlineRetryAttempt: 0,
+    });
+    expect(result.current.discovery.outlineLoadError).toBeUndefined();
+    expect(db.allDocs).toHaveBeenLastCalledWith({
+      keys: ["second", "heading-b", "third", "legacy-b", "missing-b"],
+      include_docs: true,
+    });
   });
 
   it("does not warm the presentation outline when the output has no resolved scope outline", async () => {

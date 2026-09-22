@@ -32,6 +32,7 @@ const mockTimeline = {
 };
 
 let mockHoldInitialPreparedFrames = false;
+let mockAutoPresentFirstAdvancingFrame = true;
 let mockPreparedFrameCallbacks: Array<() => void> = [];
 
 jest.mock("gsap", () => ({
@@ -94,6 +95,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockHoldInitialPreparedFrames = false;
+    mockAutoPresentFirstAdvancingFrame = true;
     mockPreparedFrameCallbacks = [];
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
@@ -121,7 +123,9 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
           if (!mockHoldInitialPreparedFrames) callback();
         } else {
           mockFirstAdvancingFrameCallback = callback;
-          window.setTimeout(() => callback(), 250);
+          if (mockAutoPresentFirstAdvancingFrame) {
+            window.setTimeout(() => callback(), 250);
+          }
         }
         return preparationFrames;
       },
@@ -160,7 +164,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     mockFirstAdvancingFrameCallback = undefined;
   });
 
-  it("starts the fade while play and the first advancing frame are delayed", async () => {
+  it("keeps the outgoing video visible until the prepared video advances", async () => {
     const play = jest.fn(() => {
       if (play.mock.calls.length <= mockPoolCandidates.length) {
         return Promise.resolve();
@@ -173,6 +177,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       configurable: true,
       value: play,
     });
+    mockAutoPresentFirstAdvancingFrame = false;
 
     const first = snapshot("prepared-a", "A", "remote:prepared-a");
     const second = snapshot("prepared-b", "B", "remote:prepared-b");
@@ -219,6 +224,23 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       />,
     );
 
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(3));
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    expect(
+      screen.getByTestId("electron-media-surface-remote:prepared-b"),
+    ).toHaveStyle({ opacity: "0" });
+    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+
+    mockFirstAdvancingFrameCallback?.();
     await waitFor(() =>
       expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
         "data-transition-phase",
@@ -249,9 +271,6 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     );
     expect(incomingContentFade?.[3]).toBe("crossfade+=0.1");
     expect(play).toHaveBeenCalledTimes(3);
-    expect(mockFirstAdvancingFrameCallback).toBeUndefined();
-
-    await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
     let preparedB: {
       sendToTransitionStartMs?: number;
       sendToPlayResolvedMs?: number;
@@ -281,10 +300,12 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         }),
       );
     });
-    expect(preparedB?.sendToTransitionStartMs).toBeLessThan(50);
     expect(preparedB?.sendToPlayResolvedMs).toBeGreaterThanOrEqual(180);
     expect(preparedB?.sendToPlayResolvedMs).toBeLessThan(300);
-    expect(preparedB?.sendToFirstAdvancingFrameMs).toBeGreaterThanOrEqual(400);
+    expect(preparedB?.sendToFirstAdvancingFrameMs).toBeGreaterThanOrEqual(180);
+    expect(preparedB?.sendToTransitionStartMs).toBeGreaterThanOrEqual(
+      preparedB?.sendToFirstAdvancingFrameMs ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("keeps the outgoing visual until a cold incoming surface is frame-ready", async () => {

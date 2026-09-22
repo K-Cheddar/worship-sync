@@ -75,8 +75,29 @@ type PouchAllDocsResult = {
     id?: string;
     key?: string;
     error?: string;
-    doc?: DBItem;
+    doc?: unknown;
   }>;
+};
+
+type SlideBearingDocument = Pick<DBItem, "_id" | "name" | "slides">;
+
+const isSlideBearingDocument = (
+  doc: unknown,
+): doc is SlideBearingDocument => {
+  if (!doc || typeof doc !== "object") return false;
+  const candidate = doc as {
+    _id?: unknown;
+    name?: unknown;
+    type?: unknown;
+    slides?: unknown;
+  };
+  return (
+    typeof candidate._id === "string" &&
+    candidate._id.length > 0 &&
+    typeof candidate.name === "string" &&
+    candidate.type !== "heading" &&
+    Array.isArray(candidate.slides)
+  );
 };
 
 const getSourceKind = (source: string): ElectronMediaCandidateSourceKind => {
@@ -362,7 +383,7 @@ const buildCandidateDiscovery = async (
 
 const getLocalCaptureDiagnostic = (
   slide: ItemSlideType,
-  doc: DBItem,
+  doc: SlideBearingDocument,
   itemIndex: number,
 ): ElectronMediaSurfaceCandidateDiagnostic | undefined => {
   const source = slide.mediaSource;
@@ -383,28 +404,33 @@ const getLocalCaptureDiagnostic = (
 };
 
 const getItemMedia = async (
-  doc: DBItem,
+  doc: unknown,
   itemIndex: number,
   cacheMap?: Record<string, string>,
   cacheRequests?: Map<string, CacheRequestState>,
-): Promise<ServiceItemMedia> => {
+): Promise<ServiceItemMedia | undefined> => {
+  if (!isSlideBearingDocument(doc)) return undefined;
+
   const discoveries = await Promise.all(
-    doc.slides.flatMap((slide) => [
-      ...slide.boxes.map((box) =>
-        buildVideoDiscovery({
-          media: box.mediaInfo,
-          itemId: doc._id,
-          itemIndex,
-          itemName: doc.name,
-          cacheMap,
-          cacheRequests,
+    doc.slides.flatMap((slide) => {
+      if (!slide || !Array.isArray(slide.boxes)) return [];
+      return [
+        ...slide.boxes.map((box) =>
+          buildVideoDiscovery({
+            media: box.mediaInfo,
+            itemId: doc._id,
+            itemIndex,
+            itemName: doc.name,
+            cacheMap,
+            cacheRequests,
+          }),
+        ),
+        Promise.resolve({
+          candidate: undefined,
+          diagnostic: getLocalCaptureDiagnostic(slide, doc, itemIndex),
         }),
-      ),
-      Promise.resolve({
-        candidate: undefined,
-        diagnostic: getLocalCaptureDiagnostic(slide, doc, itemIndex),
-      }),
-    ]),
+      ];
+    }),
   );
   const candidates = discoveries
     .map((discovery) => discovery.candidate)
@@ -560,22 +586,25 @@ export const useServiceVideoCandidates = ({
           apply([]);
           return;
         }
-        const currentDoc = (await db.get(currentItemId)) as DBItem | undefined;
+        const currentDoc = await db.get(currentItemId);
         if (generation !== loadGenerationRef.current) return;
         activeListIdRef.current = undefined;
         serviceItemIdsRef.current = new Set([currentItemId]);
-        if (!currentDoc || !Array.isArray(currentDoc.slides)) {
+        if (!isSlideBearingDocument(currentDoc)) {
           apply([]);
           return;
         }
-        apply([
-          await getItemMedia(
-            currentDoc,
-            0,
-            cacheMapRef.current,
-            cacheRequestsRef.current,
-          ),
-        ]);
+        const currentItemMedia = await getItemMedia(
+          currentDoc,
+          0,
+          cacheMapRef.current,
+          cacheRequestsRef.current,
+        );
+        if (!currentItemMedia) {
+          apply([]);
+          return;
+        }
+        apply([currentItemMedia]);
         setOutlineLoad((current) => ({ ...current, state: "loaded", error: undefined }));
         return;
       }
@@ -634,27 +663,25 @@ export const useServiceVideoCandidates = ({
         include_docs: true,
       })) as PouchAllDocsResult;
       if (generation !== loadGenerationRef.current) return;
-      const docsById = new Map<string, DBItem>(
-        (response.rows ?? [])
-          .map((row) => row.doc)
-          .filter((doc): doc is DBItem => Boolean(doc?._id))
-          .map((doc) => [doc._id, doc]),
-      );
-      const nextServiceMedia = await Promise.all(
-        itemIds.flatMap((itemId, itemIndex) => {
-          const doc = docsById.get(itemId);
-          return doc
-            ? [
-                getItemMedia(
-                  doc,
-                  itemIndex,
-                  cacheMapRef.current,
-                  cacheRequestsRef.current,
-                ),
-              ]
-            : [];
-        }),
-      );
+      const docsById = new Map<string, SlideBearingDocument>();
+      for (const row of response.rows ?? []) {
+        if (row.error || !isSlideBearingDocument(row.doc)) continue;
+        docsById.set(row.doc._id, row.doc);
+      }
+      const nextServiceMedia = (
+        await Promise.all(
+          itemIds.map(async (itemId, itemIndex) => {
+            const doc = docsById.get(itemId);
+            if (!doc) return undefined;
+            return getItemMedia(
+              doc,
+              itemIndex,
+              cacheMapRef.current,
+              cacheRequestsRef.current,
+            );
+          }),
+        )
+      ).filter((media): media is ServiceItemMedia => Boolean(media));
       if (generation !== loadGenerationRef.current) return;
       activeListIdRef.current = activeListId;
       serviceItemIdsRef.current = new Set(itemIds);

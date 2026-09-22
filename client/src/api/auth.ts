@@ -603,11 +603,13 @@ export const uploadChurchResource = async ({
   file,
   name,
   description,
+  onProgress,
 }: {
   churchId: string;
   file: File;
   name?: string;
   description?: string;
+  onProgress?: (progress: number) => void;
 }): Promise<ChurchResource> => {
   if (isPackagedElectronRenderer()) {
     return uploadChurchResourceFromPackagedElectron({ churchId, file });
@@ -623,24 +625,28 @@ export const uploadChurchResource = async ({
       }),
     },
   );
-  let uploadResponse: Response;
-  try {
-    uploadResponse = await fetch(intent.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": intent.resourceUpload.contentType },
-      body: file,
+  await new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", intent.uploadUrl);
+    request.setRequestHeader("Content-Type", intent.resourceUpload.contentType);
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress?.((event.loaded / event.total) * 100);
     });
-  } catch {
-    throw new AuthApiError(
+    request.addEventListener("load", () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.(100);
+        resolve();
+        return;
+      }
+      reject(new AuthApiError("The file upload was not accepted. Try again.", { status: request.status }));
+    });
+    request.addEventListener("error", () => reject(new AuthApiError(
       "Could not upload this file. Check the connection and try again.",
       { isReachabilityError: true },
-    );
-  }
-  if (!uploadResponse.ok) {
-    throw new AuthApiError("The file upload was not accepted. Try again.", {
-      status: uploadResponse.status,
-    });
-  }
+    )));
+    request.addEventListener("abort", () => reject(new AuthApiError("The file upload was cancelled.")));
+    request.send(file);
+  });
   const completed = await apiFetch<{ success: boolean; resource: ChurchResource }>(
     `${churchResourcesPath(churchId)}/${encodeURIComponent(intent.resourceUpload.id)}/complete`,
     {

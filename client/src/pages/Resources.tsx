@@ -1,19 +1,20 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   AudioLines,
+  CheckCircle2,
   Download,
   FileText,
   FolderOpen,
   Pencil,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
+import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
 import Modal from "../components/Modal/Modal";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -25,7 +26,6 @@ import {
   getSongAudioUrl,
   listChurchResources,
   updateChurchResource,
-  uploadChurchResource,
 } from "../api/auth";
 import { useDispatch, useSelector } from "../hooks";
 import { upsertItemInAllDocs } from "../store/allDocsSlice";
@@ -48,6 +48,7 @@ import type {
   ChurchResource,
   ResourceLibraryEntry,
 } from "../types/churchResource";
+import ResourceUploadDialog from "./ResourceUploadDialog";
 
 type ResourceFilter = "all" | "document" | "audio";
 type ResourceSortKey = "name" | "type" | "size" | "updated" | "source";
@@ -274,18 +275,20 @@ const ResourcesPage = () => {
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector((state) => state.undoable.present.preferences.scrollbarWidth);
-  const inputRef = useRef<HTMLInputElement>(null);
   const [resources, setResources] = useState<ChurchResource[]>([]);
   const [filter, setFilter] = useState<ResourceFilter>("all");
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<ResourceSortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedResourceKeys, setSelectedResourceKeys] = useState<Set<string>>(new Set());
+  const [recentlyUploadedKeys, setRecentlyUploadedKeys] = useState<Set<string>>(new Set());
+  const [deleteCandidates, setDeleteCandidates] = useState<ResourceLibraryEntry[] | null>(null);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [churchResourcesLoading, setChurchResourcesLoading] = useState(true);
   const [songDocsLoading, setSongDocsLoading] = useState(true);
   const [churchResourcesError, setChurchResourcesError] = useState("");
   const [songDocsError, setSongDocsError] = useState("");
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
   const canBrowse = access === "full" || access === "music" || access === "view";
@@ -381,24 +384,17 @@ const ResourcesPage = () => {
     setSortDirection("asc");
   };
   const selectedEntry = entries.find((entry) => entryKey(entry) === selectedKey) || null;
+  const selectableEntries = entries.filter((entry) => entry.source === "church-resource");
+  const selectedEntries = selectableEntries.filter((entry) => selectedResourceKeys.has(entryKey(entry)));
+  const allSelectableEntriesSelected = selectableEntries.length > 0 && selectedEntries.length === selectableEntries.length;
   const loading = churchResourcesLoading || songDocsLoading;
   const loadErrors = [churchResourcesError, songDocsError].filter(Boolean);
 
-  const onUpload = async (file: File) => {
-    if (!churchId) return;
-    setUploading(true);
-    setError("");
-    try {
-      const resource = await uploadChurchResource({ churchId, file });
-      setResources((current) => [resource, ...current]);
-      setSelectedKey(`resource:${resource.id}`);
-    } catch (uploadError) {
-      setError(errorMessage(uploadError, "The file could not be uploaded."));
-    } finally {
-      setUploading(false);
-      if (inputRef.current) inputRef.current.value = "";
-    }
-  };
+  useEffect(() => {
+    if (recentlyUploadedKeys.size === 0) return;
+    const timeout = window.setTimeout(() => setRecentlyUploadedKeys(new Set()), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [recentlyUploadedKeys]);
 
   const renameResource = async (resource: ChurchResource, name: string) => {
     if (!churchId) return;
@@ -406,35 +402,66 @@ const ResourcesPage = () => {
     setResources((current) => current.map((item) => item.id === resource.id ? result.resource : item));
   };
 
-  const deleteEntry = async (entry: ResourceLibraryEntry) => {
-    if (!churchId || !window.confirm(resourceEntryDeleteConfirmation(entry))) return;
+  const requestDelete = async (entry: ResourceLibraryEntry) => {
+    setDeleteCandidates([entry]);
+  };
+
+  const toggleResourceSelection = (entry: ResourceLibraryEntry) => {
+    if (entry.source !== "church-resource") return;
+    const key = entryKey(entry);
+    setSelectedResourceKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleAllResourceSelection = () => {
+    setSelectedResourceKeys(allSelectableEntriesSelected ? new Set() : new Set(selectableEntries.map(entryKey)));
+  };
+
+  const requestDeleteSelected = () => {
+    if (selectedEntries.length) setDeleteCandidates(selectedEntries);
+  };
+
+  const confirmDelete = async () => {
+    const candidates = deleteCandidates;
+    if (!churchId || !candidates?.length) return;
+    setDeleteCandidates(null);
+    setDeletingKey("bulk");
     setError("");
     try {
-      if (entry.source === "church-resource") {
-        await deleteChurchResource({ churchId, resourceId: entry.resource.id });
-        setResources((current) => current.filter((resource) => resource.id !== entry.resource.id));
-      } else {
-        if (!db) throw new Error("The song library is not available. Try again.");
-        await deleteSongAudioBeforeClearingMetadata({
-          deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: entry.audio }),
-          clearMetadata: async () => {
-            const saved = await persistSongAudioAttachment({ db, songId: entry.songId, audio: null });
-            dispatch(upsertItemInAllDocs(saved));
-            dispatch(upsertItemInAllItemsList({
-              _id: saved._id,
-              name: saved.name,
-              type: saved.type,
-              listId: saved._id,
-              background: typeof saved.background === "string" ? saved.background : "",
-            }));
-            broadcastItemUpdate(saved);
-            return saved;
-          },
-        });
+      for (const entry of candidates) {
+        if (entry.source === "church-resource") {
+          await deleteChurchResource({ churchId, resourceId: entry.resource.id });
+          setResources((current) => current.filter((resource) => resource.id !== entry.resource.id));
+        } else {
+          if (!db) throw new Error("The song library is not available. Try again.");
+          await deleteSongAudioBeforeClearingMetadata({
+            deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: entry.audio }),
+            clearMetadata: async () => {
+              const saved = await persistSongAudioAttachment({ db, songId: entry.songId, audio: null });
+              dispatch(upsertItemInAllDocs(saved));
+              dispatch(upsertItemInAllItemsList({
+                _id: saved._id,
+                name: saved.name,
+                type: saved.type,
+                listId: saved._id,
+                background: typeof saved.background === "string" ? saved.background : "",
+              }));
+              broadcastItemUpdate(saved);
+              return saved;
+            },
+          });
+        }
       }
+      setSelectedResourceKeys(new Set());
       setSelectedKey(null);
     } catch (deleteError) {
       setError(errorMessage(deleteError, "The resource could not be deleted."));
+    } finally {
+      setDeletingKey(null);
     }
   };
 
@@ -447,10 +474,11 @@ const ResourcesPage = () => {
           <>
             <div className="flex flex-wrap items-end gap-3 border-b border-gray-700 p-4">
               <div className="min-w-[14rem] flex-1"><Input label="Search resources" hideLabel value={query} onChange={(value) => setQuery(String(value))} placeholder="Search..." /></div>
-              {canEdit ? <>
-                <input ref={inputRef} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void onUpload(file); }} />
-                <Button type="button" variant="cta" svg={Upload} isLoading={uploading} disabled={uploading} onClick={() => inputRef.current?.click()}>{uploading ? "Uploading..." : "Upload"}</Button>
-              </> : null}
+              {selectedEntries.length ? <Button type="button" variant="destructive" svg={Trash2} onClick={requestDeleteSelected}>Delete selected ({selectedEntries.length})</Button> : null}
+              {canEdit && churchId ? <ResourceUploadDialog churchId={churchId} onResourcesUploaded={(uploadedResources) => {
+                setResources((current) => [...uploadedResources, ...current]);
+                setRecentlyUploadedKeys(new Set(uploadedResources.map((resource) => `resource:${resource.id}`)));
+              }} /> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
               {(["all", "document", "audio"] as const).map((value) => (
@@ -468,8 +496,18 @@ const ResourcesPage = () => {
                     <caption className="sr-only">Resources</caption>
                     <thead className="sticky top-0 z-10 bg-gray-950 text-xs uppercase tracking-wide text-gray-400 shadow-sm shadow-black/20">
                       <tr>
+                        <th scope="col" className="w-12 px-4 py-3">
+                          <Checkbox
+                            label="Select all resources"
+                            hideLabel
+                            checked={allSelectableEntriesSelected}
+                            disabled={!selectableEntries.length}
+                            onCheckedChange={toggleAllResourceSelection}
+                            className="inline-flex"
+                          />
+                        </th>
                         {([
-                          ["name", "Name", "w-[38%]"],
+                          ["name", "Name", "w-[34%]"],
                           ["type", "Type", "w-[10%]"],
                           ["size", "Size", "w-[12%]"],
                           ["updated", "Updated", "w-[16%]"],
@@ -490,6 +528,9 @@ const ResourcesPage = () => {
                       {sortedEntries.map((entry) => {
                         const key = entryKey(entry);
                         const selected = selectedKey === key;
+                        const recentlyUploaded = recentlyUploadedKeys.has(key);
+                        const canSelect = entry.source === "church-resource";
+                        const selectedForDelete = selectedResourceKeys.has(key);
                         return (
                           <tr
                             key={key}
@@ -497,7 +538,7 @@ const ResourcesPage = () => {
                             role="button"
                             aria-label={`Preview ${resourceEntryName(entry)}`}
                             aria-pressed={selected}
-                            className={`cursor-pointer outline-none ${selected ? "bg-cyan-500/10" : "bg-gray-900/40 hover:bg-cyan-500/10"} focus-visible:bg-cyan-500/10`}
+                            className={`cursor-pointer outline-none ${recentlyUploaded ? "bg-green-500/10" : selected ? "bg-cyan-500/10" : "bg-gray-900/40 hover:bg-cyan-500/10"} focus-visible:bg-cyan-500/10`}
                             onClick={() => setSelectedKey(key)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
@@ -506,10 +547,24 @@ const ResourcesPage = () => {
                               }
                             }}
                           >
+                            <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                              {canSelect ? (
+                                <Checkbox
+                                  label={`Select ${resourceEntryName(entry)}`}
+                                  hideLabel
+                                  checked={selectedForDelete}
+                                  onCheckedChange={(checked) => {
+                                    if (checked !== selectedForDelete) toggleResourceSelection(entry);
+                                  }}
+                                  className="inline-flex"
+                                />
+                              ) : null}
+                            </td>
                             <td className="max-w-0 px-4 py-3">
                               <span className="flex w-full min-w-0 items-center gap-2 text-left text-gray-100">
                                 {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /> : <FileText className="size-4 shrink-0 text-cyan-300" aria-hidden />}
                                 <span className="truncate font-semibold">{resourceEntryName(entry)}</span>
+                                {recentlyUploaded ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-medium text-green-200"><CheckCircle2 className="size-3" aria-hidden />Uploaded</span> : null}
                               </span>
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-gray-300">{typeLabel(entry)}</td>
@@ -526,7 +581,19 @@ const ResourcesPage = () => {
             ) : null}
             {selectedEntry && churchId ? (
               <Modal isOpen onClose={() => setSelectedKey(null)} title={resourceEntryName(selectedEntry)} size="xl" contentPadding="p-0" description={`Preview of ${resourceEntryName(selectedEntry)}`}>
-                <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={deleteEntry} canEdit={canEdit} />
+                <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} />
+              </Modal>
+            ) : null}
+            {deleteCandidates?.length ? (
+              <Modal isOpen onClose={() => setDeleteCandidates(null)} title="Delete resource?" size="sm" zIndexLevel={2} description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}>
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-200">{deleteCandidates.length === 1 ? resourceEntryDeleteConfirmation(deleteCandidates[0]) : `Delete these ${deleteCandidates.length} resources?`}</p>
+                  {deleteCandidates.length > 1 ? <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-gray-300">{deleteCandidates.map((entry) => <li key={entryKey(entry)}>{resourceEntryName(entry)}</li>)}</ul> : null}
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={() => setDeleteCandidates(null)} disabled={deletingKey !== null}>Cancel</Button>
+                    <Button type="button" variant="destructive" svg={Trash2} isLoading={deletingKey !== null} disabled={deletingKey !== null} onClick={() => void confirmDelete()}>Delete</Button>
+                  </div>
+                </div>
               </Modal>
             ) : null}
           </>

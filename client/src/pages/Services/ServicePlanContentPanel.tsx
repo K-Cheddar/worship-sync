@@ -4,6 +4,7 @@ import {
   AudioLines,
   Download,
   BookOpen,
+  Eye,
   ExternalLink,
   FilePlus,
   FileText,
@@ -127,6 +128,7 @@ const ServicePlanContentPanel = ({
   const [scriptureAddOpen, setScriptureAddOpen] = useState(false);
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
   const [churchResourcePickerOpen, setChurchResourcePickerOpen] = useState(false);
+  const [churchResourceSearch, setChurchResourceSearch] = useState("");
   const [churchResources, setChurchResources] = useState<ChurchResource[]>([]);
   const [referencedChurchResources, setReferencedChurchResources] = useState<Record<string, ChurchResource | null>>({});
   const [churchResourceLoading, setChurchResourceLoading] = useState(false);
@@ -177,6 +179,14 @@ const ServicePlanContentPanel = ({
     () => allSongDocs.filter((song) => Boolean(song.songAudio)),
     [allSongDocs],
   );
+  const filteredChurchResources = useMemo(() => {
+    const query = churchResourceSearch.trim().toLowerCase();
+    if (!query) return churchResources;
+    return churchResources.filter((resource) =>
+      [resource.name, resource.storage.fileName]
+        .some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [churchResourceSearch, churchResources]);
   const updateSongs = (next: ServicePlanSongReference[]) =>
     onUpdate({ songRef: undefined, songRefs: next });
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
@@ -187,7 +197,7 @@ const ServicePlanContentPanel = ({
   const loadChurchResources = async () => {
     const requestId = ++churchResourcePickerRequestRef.current;
     if (!churchId) {
-      setChurchResourceError("Sign in to choose a church resource.");
+      setChurchResourceError("Sign in to choose a file.");
       setChurchResourceLoading(false);
       return;
     }
@@ -202,7 +212,7 @@ const ServicePlanContentPanel = ({
       setChurchResourceError(
         error instanceof Error
           ? error.message
-          : "Church resources could not be loaded.",
+          : "Files could not be loaded.",
       );
     } finally {
       if (requestId === churchResourcePickerRequestRef.current) {
@@ -276,7 +286,7 @@ const ServicePlanContentPanel = ({
         setChurchResourceError(
           error instanceof Error
             ? error.message
-            : "Church resources could not be loaded.",
+            : "Files could not be loaded.",
         );
       })
       .finally(() => {
@@ -389,6 +399,27 @@ const ServicePlanContentPanel = ({
     );
   };
 
+  const openChurchResourcePreview = (resource: ChurchResource) => {
+    const reference = createServicePlanChurchResourceReference({ resourceId: resource.id });
+    setPreviewResource(
+      normalizeServicePlanResourceForPreview(reference, {
+        churchResource: resource,
+        resolveSource: async () => {
+          const result = await getChurchResourceUrl({
+            churchId: resource.churchId,
+            resourceId: resource.id,
+            disposition: "inline",
+          });
+          return {
+            url: result.url,
+            mimeType: resource.storage.contentType,
+            fileName: resource.storage.fileName,
+          };
+        },
+      }),
+    );
+  };
+
   const renderResourceBody = (resource: ServicePlanContentResource) => {
     if (resource.type === "youtube") {
       return (
@@ -497,7 +528,7 @@ const ServicePlanContentPanel = ({
             Download
           </Button>
           {!churchResource && !churchResourceLoading ? (
-            <span className="text-xs text-amber-200">This church resource is unavailable.</span>
+            <span className="text-xs text-amber-200">This file is unavailable.</span>
           ) : null}
         </div>
       );
@@ -551,9 +582,9 @@ const ServicePlanContentPanel = ({
             <Input label="URL (optional)" value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
           ) : null}
           {resourceEditorMode === "text" ? (
-            <TextArea label="Notes" value={resourceText} onChange={setResourceText} />
+            <TextArea label="Notes" value={resourceText} onChange={setResourceText} autoResize />
           ) : (
-            <TextArea label="Notes (optional)" value={resourceNotes} onChange={setResourceNotes} />
+            <TextArea label="Notes (optional)" value={resourceNotes} onChange={setResourceNotes} autoResize />
           )}
           {resourceError ? <p className="text-sm text-red-300" role="alert">{resourceError}</p> : null}
           <Button variant="cta" className="w-full cursor-pointer justify-center" onClick={saveResource}>
@@ -645,10 +676,9 @@ const ServicePlanContentPanel = ({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-44">
               <DropdownMenuItem onSelect={() => setAudioPickerOpen(true)}><AudioLines className="size-4 text-amber-300" aria-hidden />Media / MP3</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => { setChurchResourcePickerOpen(true); void loadChurchResources(); }}><FileText className="size-4 text-cyan-300" aria-hidden />Church file</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { setChurchResourceSearch(""); setChurchResourcePickerOpen(true); void loadChurchResources(); }}><FileText className="size-4 text-cyan-300" aria-hidden />File</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => openResourceEditor("url")}><LinkIcon className="size-4 text-blue-300" aria-hidden />Link</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => openResourceEditor("text")}><StickyNote className="size-4 text-emerald-300" aria-hidden />Text / Notes</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => openResourceEditor("generic")}><FilePlus className="size-4 text-gray-300" aria-hidden />Other</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -668,17 +698,33 @@ const ServicePlanContentPanel = ({
         </div>
       ) : null}
       {churchResourcePickerOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose a church file">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose a file">
           <div className="max-h-[min(32rem,calc(100vh-2rem))] w-[min(30rem,100%)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-3 shadow-xl">
-            <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-white">Choose a church file</h3><Button type="button" variant="tertiary" iconSize="sm" svg={X} aria-label="Close church file picker" onClick={() => setChurchResourcePickerOpen(false)} /></div>
+            <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-white">Choose a file</h3><Button type="button" variant="tertiary" iconSize="sm" svg={X} aria-label="Close file picker" onClick={() => { setChurchResourcePickerOpen(false); setChurchResourceSearch(""); }} /></div>
+            <Input
+              label="Search files"
+              hideLabel
+              value={churchResourceSearch}
+              onChange={(value) => setChurchResourceSearch(String(value))}
+              placeholder="Search files..."
+              aria-label="Search files"
+              autoFocus
+              className="mb-3"
+              inputClassName="bg-gray-950"
+            />
             {churchResourceLoading ? <p className="text-sm text-gray-400" role="status">Loading resources…</p> : null}
             {churchResourceError ? <p className="text-sm text-red-300" role="alert">{churchResourceError}</p> : null}
-            {!churchResourceLoading && !churchResourceError && churchResources.length ? <div className="space-y-1">{churchResources.map((resource) => {
+            {!churchResourceLoading && !churchResourceError && filteredChurchResources.length ? <div className="space-y-1">{filteredChurchResources.map((resource) => {
               const alreadyAttached = resources.some((candidate) => getServicePlanChurchResourceId(candidate) === resource.id);
               const ResourceIcon = resource.kind === "audio" ? AudioLines : FileText;
-              return <Button key={resource.id} type="button" variant="tertiary" className="w-full justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto text-xs text-gray-500">{resource.storage.fileName}</span></Button>;
+              return (
+                <div key={resource.id} className="flex min-w-0 items-center gap-1 rounded-md border border-gray-800 bg-gray-950/50 px-1">
+                  <Button type="button" variant="tertiary" className="min-w-0 flex-1 justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto truncate text-xs text-gray-500">{resource.storage.fileName}</span></Button>
+                  <Button type="button" variant="tertiary" svg={Eye} iconSize="sm" padding="p-1" className="shrink-0" aria-label={`Preview file ${resource.name}`} onClick={() => openChurchResourcePreview(resource)} />
+                </div>
+              );
             })}</div> : null}
-            {!churchResourceLoading && !churchResourceError && !churchResources.length ? <p className="text-sm text-gray-400">No church resources are available yet.</p> : null}
+            {!churchResourceLoading && !churchResourceError && !filteredChurchResources.length ? <p className="text-sm text-gray-400">{churchResources.length ? "No files match your search." : "No files are available yet."}</p> : null}
           </div>
         </div>
       ) : null}
