@@ -180,6 +180,7 @@ const statefulRenderLane = (
   ) : null;
 
 describe("DisplayBoxTransitionStage", () => {
+  let presentedFrameCount = 0;
   const originalLoad = HTMLMediaElement.prototype.load;
   const originalPlay = HTMLMediaElement.prototype.play;
   const originalPause = HTMLMediaElement.prototype.pause;
@@ -196,6 +197,7 @@ describe("DisplayBoxTransitionStage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    presentedFrameCount = 0;
     mockTimelineComplete = undefined;
     mockTimelineCompletions.length = 0;
     mockMediaReady = true;
@@ -263,8 +265,21 @@ describe("DisplayBoxTransitionStage", () => {
     });
     Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
       configurable: true,
-      value: (callback: () => void) => {
-        callback();
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        presentedFrameCount += 1;
+        callback(performance.now(), {
+          width: 100,
+          height: 100,
+          presentationTime: performance.now(),
+          mediaTime: presentedFrameCount / 30,
+          presentedFrames: presentedFrameCount,
+          expectedDisplayTime: performance.now(),
+        });
         return 1;
       },
     });
@@ -342,7 +357,9 @@ describe("DisplayBoxTransitionStage", () => {
           };
         }
       ).__wsMediaSurfacePoolDiagnostics?.surfaces.find(
-        (surface) => surface.mediaKey === "remote:pool-a",
+        (surface) =>
+          surface.mediaKey === "remote:pool-a" ||
+          surface.mediaKey === "remote:pool-b",
       ),
     ).toEqual(
       expect.objectContaining({
@@ -387,8 +404,10 @@ describe("DisplayBoxTransitionStage", () => {
     await waitFor(() => {
       const value = screen
         .getByTestId("display-box-transition-stage")
-        .getAttribute("data-prepared-media-first-advancing-frame");
-      if (value !== "remote:pool-b") throw new Error(`live=${JSON.stringify(value)}`);
+        .getAttribute("data-prepared-media-status");
+      if (!value?.includes("remote:pool-b:active-playing")) {
+        throw new Error(`status=${JSON.stringify(value)}`);
+      }
     });
     await waitFor(() =>
       expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
@@ -569,8 +588,21 @@ describe("DisplayBoxTransitionStage", () => {
     });
     Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
       configurable: true,
-      value: (callback: () => void) => {
-        callback();
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        presentedFrameCount += 1;
+        callback(performance.now(), {
+          width: 100,
+          height: 100,
+          presentationTime: performance.now(),
+          mediaTime: presentedFrameCount / 30,
+          presentedFrames: presentedFrameCount,
+          expectedDisplayTime: performance.now(),
+        });
         return 1;
       },
     });

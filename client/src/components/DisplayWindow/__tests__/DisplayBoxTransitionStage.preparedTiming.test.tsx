@@ -114,17 +114,34 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       }),
     });
     let preparationFrames = 0;
+    let presentedFrames = 0;
     Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
       configurable: true,
-      value: (callback: () => void) => {
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        const emitFrame = () => {
+          presentedFrames += 1;
+          callback(performance.now(), {
+            width: 100,
+            height: 100,
+            presentationTime: performance.now(),
+            mediaTime: presentedFrames / 30,
+            presentedFrames,
+            expectedDisplayTime: performance.now(),
+          });
+        };
         if (preparationFrames < mockPoolCandidates.length) {
           preparationFrames += 1;
-          mockPreparedFrameCallbacks.push(callback);
-          if (!mockHoldInitialPreparedFrames) callback();
+          mockPreparedFrameCallbacks.push(emitFrame);
+          if (!mockHoldInitialPreparedFrames) emitFrame();
         } else {
-          mockFirstAdvancingFrameCallback = callback;
+          mockFirstAdvancingFrameCallback = emitFrame;
           if (mockAutoPresentFirstAdvancingFrame) {
-            window.setTimeout(() => callback(), 250);
+            window.setTimeout(emitFrame, 250);
           }
         }
         return preparationFrames;

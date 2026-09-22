@@ -495,8 +495,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
-    const [editorPreparedReady, setEditorPreparedReady] = useState(false);
-    const [editorPreparedReadyMediaKey, setEditorPreparedReadyMediaKey] =
+    const [editorPreparedActive, setEditorPreparedActive] = useState(false);
+    const [editorPreparedActiveMediaKey, setEditorPreparedActiveMediaKey] =
       useState<string>();
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
@@ -1233,10 +1233,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         currentItemId &&
         window.electronAPI,
     );
-    const reportEditorPreparedReady = useCallback(
-      (ready: boolean) => {
-        setEditorPreparedReady(ready);
-        setEditorPreparedReadyMediaKey(ready ? videoMediaKey : undefined);
+    const reportEditorPreparedActive = useCallback(
+      (active: boolean) => {
+        setEditorPreparedActive(active);
+        setEditorPreparedActiveMediaKey(active ? videoMediaKey : undefined);
       },
       [videoMediaKey],
     );
@@ -1288,8 +1288,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
     const editorPreparedVideoActive =
       editorPreparedPreviewEnabled &&
-      editorPreparedReady &&
-      editorPreparedReadyMediaKey === videoMediaKey;
+      editorPreparedActive &&
+      editorPreparedActiveMediaKey === videoMediaKey;
 
     // Underlay surfaces (editor, stream, next-slide monitor) use a single
     // current player — animated displays host media inside the transition stage.
@@ -1761,7 +1761,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               videoBox={videoBox}
               playback={activeVideoPlayback}
               volume={localVideoVolume}
-              onCurrentFrameReady={reportEditorPreparedReady}
+              onCurrentFrameReady={reportEditorPreparedActive}
             />
           )}
 

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { VideoBackgroundPlaybackCue, Box } from "../../types";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import {
@@ -6,6 +13,10 @@ import {
   type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
+import {
+  isMediaSurfaceVisible,
+  type MediaSurfaceStatus,
+} from "../../utils/mediaSurfaceLifecycle";
 import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
 
 type ElectronEditorPreparedMediaPreviewProps = {
@@ -27,8 +38,6 @@ type ElectronEditorPreparedMediaPreviewProps = {
   onCurrentFrameReady: (ready: boolean) => void;
 };
 
-const NOOP = () => undefined;
-
 const ElectronEditorPreparedMediaPreview = ({
   enabled,
   currentItemId,
@@ -39,11 +48,10 @@ const ElectronEditorPreparedMediaPreview = ({
   volume = 1,
   onCurrentFrameReady,
 }: ElectronEditorPreparedMediaPreviewProps) => {
-  const [readyByKey, setReadyByKey] = useState<Record<string, boolean>>({});
-  const readyByKeyRef = useRef<Record<string, boolean>>({});
-  const [geometryReadyByKey, setGeometryReadyByKey] = useState<
-    Record<string, boolean>
+  const [statusByKey, setStatusByKey] = useState<
+    Record<string, MediaSurfaceStatus>
   >({});
+  const statusByKeyRef = useRef<Record<string, MediaSurfaceStatus>>({});
   const candidateResult = useServiceVideoCandidates({
     enabled,
     currentItemId,
@@ -59,48 +67,67 @@ const ElectronEditorPreparedMediaPreview = ({
   });
 
   const currentMediaKey = currentMedia?.mediaKey;
-  const reportReady = useCallback(
-    (mediaKey: string, ready: boolean) => {
-      setReadyByKey((current) => {
-        if (current[mediaKey] === ready) return current;
-        const next = { ...current, [mediaKey]: ready };
-        readyByKeyRef.current = next;
-        return next;
-      });
-      if (mediaKey === currentMediaKey) onCurrentFrameReady(ready);
-    },
-    [currentMediaKey, onCurrentFrameReady],
-  );
-
-  const reportGeometryReady = useCallback(
-    (mediaKey: string, ready: boolean) => {
-      setGeometryReadyByKey((current) =>
-        current[mediaKey] === ready
-          ? current
-          : { ...current, [mediaKey]: ready },
-      );
-      if (mediaKey === currentMediaKey) {
-        onCurrentFrameReady(
-          readyByKeyRef.current[mediaKey] === true && ready === true,
-        );
+  useLayoutEffect(() => {
+    statusByKeyRef.current = {};
+    setStatusByKey({});
+    onCurrentFrameReady(false);
+  }, [
+    currentMedia?.source,
+    currentMediaKey,
+    onCurrentFrameReady,
+    preparedMediaContext?.outlineId,
+  ]);
+  const reportStatus = useCallback(
+    (status: MediaSurfaceStatus) => {
+      if (
+        status.route !== "editor" ||
+        status.role !== "editor-preview" ||
+        status.outlineId !== preparedMediaContext?.outlineId
+      ) {
+        return;
+      }
+      const previous = statusByKeyRef.current[status.mediaKey];
+      if (
+        previous &&
+        (status.generation < previous.generation ||
+          (status.generation === previous.generation &&
+            status.sourceIdentity !== previous.sourceIdentity))
+      ) {
+        return;
+      }
+      if (status.phase === "disposed") {
+        delete statusByKeyRef.current[status.mediaKey];
+        setStatusByKey((current) => {
+          if (!(status.mediaKey in current)) return current;
+          const next = { ...current };
+          delete next[status.mediaKey];
+          return next;
+        });
+      } else {
+        statusByKeyRef.current[status.mediaKey] = status;
+        setStatusByKey((current) => ({
+          ...current,
+          [status.mediaKey]: status,
+        }));
+      }
+      if (status.mediaKey === currentMediaKey) {
+        onCurrentFrameReady(isMediaSurfaceVisible(status));
       }
     },
-    [currentMediaKey, onCurrentFrameReady],
+    [
+      currentMediaKey,
+      onCurrentFrameReady,
+      preparedMediaContext?.outlineId,
+    ],
   );
 
   useEffect(() => {
     onCurrentFrameReady(
       currentMediaKey
-        ? readyByKey[currentMediaKey] === true &&
-            geometryReadyByKey[currentMediaKey] === true
+        ? isMediaSurfaceVisible(statusByKey[currentMediaKey])
         : false,
     );
-  }, [
-    currentMediaKey,
-    geometryReadyByKey,
-    onCurrentFrameReady,
-    readyByKey,
-  ]);
+  }, [currentMediaKey, onCurrentFrameReady, statusByKey]);
 
   const views = useMemo<ElectronMediaSurfaceView[]>(() => {
     if (!currentMedia || !videoBox) return [];
@@ -110,10 +137,7 @@ const ElectronEditorPreparedMediaPreview = ({
         source: currentMedia.source,
         videoBox,
         opacity:
-          readyByKey[currentMedia.mediaKey] &&
-          geometryReadyByKey[currentMedia.mediaKey] === true
-            ? 1
-            : 0,
+          isMediaSurfaceVisible(statusByKey[currentMedia.mediaKey]) ? 1 : 0,
         zIndex: 1,
         shouldPlay: true,
         muted: true,
@@ -123,9 +147,8 @@ const ElectronEditorPreparedMediaPreview = ({
     ];
   }, [
     currentMedia,
-    geometryReadyByKey,
     playback,
-    readyByKey,
+    statusByKey,
     videoBox,
     volume,
   ]);
@@ -138,10 +161,10 @@ const ElectronEditorPreparedMediaPreview = ({
         candidates={candidateResult.candidates}
         candidateDiagnostics={candidateResult.diagnostics}
         views={views}
-        onReadyChange={reportReady}
-        onGeometryReadyChange={reportGeometryReady}
-        onFirstAdvancingFrameChange={NOOP}
-        onSurfaceElement={NOOP}
+        onStatusChange={reportStatus}
+        route="editor"
+        role="editor-preview"
+        outlineId={preparedMediaContext?.outlineId}
         discovery={candidateResult.discovery}
         poolCapacity={candidateResult.poolCapacity}
         lastMediaKey={currentMediaKey}

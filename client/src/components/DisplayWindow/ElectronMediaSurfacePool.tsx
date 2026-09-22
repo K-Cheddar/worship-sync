@@ -42,6 +42,12 @@ import {
 } from "../../utils/mediaSource";
 import { parseLocalVideoFileAssetId } from "../../utils/localVideoFileAssets";
 import { acquireLocalVideoFileUrl } from "../../utils/localVideoFileUrlCache";
+import {
+  isAdvancingMediaFrame,
+  type MediaSurfaceFrameMetadata,
+  type MediaSurfaceLifecyclePhase,
+  type MediaSurfaceStatus,
+} from "../../utils/mediaSurfaceLifecycle";
 
 type SurfaceDiagnostic = ElectronMediaSurfaceDiagnostic;
 
@@ -50,11 +56,16 @@ type ElectronMediaSurfacePoolProps = {
   candidates: ElectronMediaSurfaceCandidate[];
   candidateDiagnostics?: ElectronMediaSurfaceCandidateDiagnostic[];
   views: ElectronMediaSurfaceView[];
-  onReadyChange: (mediaKey: string, ready: boolean) => void;
+  /** One authoritative lifecycle event stream shared by output and editor preview. */
+  onStatusChange?: (status: MediaSurfaceStatus) => void;
+  route?: string;
+  role?: string;
+  outlineId?: string | null;
+  onReadyChange?: (mediaKey: string, ready: boolean) => void;
   onGeometryReadyChange?: (mediaKey: string, ready: boolean) => void;
-  onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
+  onFirstAdvancingFrameChange?: (mediaKey: string, observed: boolean) => void;
   onPreparationFailure?: (mediaKey: string, reason: string) => void;
-  onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
+  onSurfaceElement?: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
   transitionStart?: { mediaKey: string; timestamp: number };
   transitionComplete?: { mediaKey: string; timestamp: number };
@@ -105,6 +116,15 @@ const surfaceStateForPhase = (
     return "PREPARING";
   }
   return "COLD";
+};
+
+const surfaceStateForLifecycle = (
+  phase: MediaSurfaceLifecyclePhase,
+): SurfaceDiagnostic["surfaceState"] => {
+  if (phase === "active-playing") return "ACTIVE";
+  if (phase === "ready-paused") return "READY";
+  if (phase === "candidate" || phase === "disposed") return "COLD";
+  return "PREPARING";
 };
 
 const isImmediateSurfaceSource = (source: string): boolean =>
@@ -161,6 +181,75 @@ const waitForPresentedFrame = (
     }
     debug?.("FALLBACK_TWO_RAF_REGISTERED");
     window.requestAnimationFrame(() => window.requestAnimationFrame(finish));
+  });
+
+type VideoWithFrameMetadata = HTMLVideoElement & {
+  requestVideoFrameCallback?: (
+    callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+  ) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+  getVideoPlaybackQuality?: () => { totalVideoFrames?: number };
+};
+
+const readFrameMetadata = (
+  video: HTMLVideoElement,
+  metadata?: Partial<VideoFrameCallbackMetadata>,
+): MediaSurfaceFrameMetadata => {
+  const quality = (video as VideoWithFrameMetadata).getVideoPlaybackQuality?.();
+  return {
+    mediaTime: metadata?.mediaTime,
+    expectedDisplayTime: metadata?.expectedDisplayTime,
+    presentedFrames:
+      metadata?.presentedFrames ?? quality?.totalVideoFrames,
+    currentTime: Number.isFinite(video.currentTime)
+      ? video.currentTime
+      : undefined,
+  };
+};
+
+/** A frame callback alone is not evidence that playback advanced. */
+const waitForAdvancingFrame = (
+  video: HTMLVideoElement,
+  debug?: PreparedSurfaceDebug,
+): Promise<MediaSurfaceFrameMetadata> =>
+  new Promise((resolve, reject) => {
+    const frameVideo = video as VideoWithFrameMetadata;
+    const baseline = readFrameMetadata(video);
+    let settled = false;
+    let frameRequest: number | undefined;
+    const timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (frameRequest != null) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+      reject(new Error("advancing-frame timeout"));
+    }, PRESENTED_FRAME_TIMEOUT_MS);
+
+    const finish = (metadata: MediaSurfaceFrameMetadata) => {
+      if (settled || !isAdvancingMediaFrame(baseline, metadata)) return false;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      debug?.("ADVANCING_FRAME_CONFIRMED", { metadata });
+      resolve(metadata);
+      return true;
+    };
+
+    const requestNext = () => {
+      if (settled) return;
+      if (frameVideo.requestVideoFrameCallback) {
+        frameRequest = frameVideo.requestVideoFrameCallback((_now, metadata) => {
+          if (!finish(readFrameMetadata(video, metadata))) requestNext();
+        });
+        return;
+      }
+      const check = () => {
+        if (!finish(readFrameMetadata(video)) && !settled) {
+          window.requestAnimationFrame(check);
+        }
+      };
+      window.requestAnimationFrame(check);
+    };
+
+    requestNext();
   });
 
 const seekToBeginning = async (video: HTMLVideoElement): Promise<void> => {
@@ -263,6 +352,10 @@ const PreparedSurface = ({
   candidate,
   view,
   enabled,
+  onStatusChange,
+  route,
+  role,
+  outlineId,
   onReadyChange,
   onGeometryReadyChange,
   onFirstAdvancingFrameChange,
@@ -274,6 +367,10 @@ const PreparedSurface = ({
   candidate: ElectronMediaSurfaceCandidate;
   view?: ElectronMediaSurfaceView;
   enabled: boolean;
+  onStatusChange?: (status: MediaSurfaceStatus) => void;
+  route: string;
+  role: string;
+  outlineId?: string | null;
   onReadyChange: (mediaKey: string, ready: boolean) => void;
   onGeometryReadyChange: (mediaKey: string, ready: boolean) => void;
   onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
@@ -294,7 +391,16 @@ const PreparedSurface = ({
   const [sourceKind, setSourceKind] = useState<"cache" | "local" | "remote">(
     "remote",
   );
+  const sourceKindRef = useRef<"cache" | "local" | "remote">("remote");
   const generationRef = useRef(0);
+  const lifecycleGenerationRef = useRef(0);
+  const lifecycleSourceRef = useRef(candidate.source);
+  const lifecyclePhaseRef = useRef<MediaSurfaceLifecyclePhase>("candidate");
+  const geometryReadyRef = useRef(false);
+  const advancingFrameRef = useRef(false);
+  const frameMetadataRef = useRef<MediaSurfaceFrameMetadata | undefined>(
+    undefined,
+  );
   const preparationStartedAtRef = useRef<number | undefined>(undefined);
   const playingGenerationRef = useRef<number | undefined>(undefined);
   const playbackAttemptRef = useRef(0);
@@ -316,12 +422,58 @@ const PreparedSurface = ({
   const onFirstAdvancingFrameChangeRef = useRef(onFirstAdvancingFrameChange);
   const onPreparationFailureRef = useRef(onPreparationFailure);
   const onDiagnosticChangeRef = useRef(onDiagnosticChange);
+  const onStatusChangeRef = useRef(onStatusChange);
   onReadyChangeRef.current = onReadyChange;
   onGeometryReadyChangeRef.current = onGeometryReadyChange;
   onFirstAdvancingFrameChangeRef.current = onFirstAdvancingFrameChange;
   onPreparationFailureRef.current = onPreparationFailure;
   onDiagnosticChangeRef.current = onDiagnosticChange;
+  onStatusChangeRef.current = onStatusChange;
+  sourceKindRef.current = sourceKind;
   resolvedSourceRef.current = resolvedSource;
+
+  const publishLifecycleStatus = useCallback(
+    (
+      phase: MediaSurfaceLifecyclePhase,
+      extra: Partial<Pick<MediaSurfaceStatus, "geometryReady" | "advancingFrame" | "frame" | "error">> = {},
+    ) => {
+      lifecyclePhaseRef.current = phase;
+      onStatusChangeRef.current?.({
+        mediaKey: candidate.mediaKey,
+        sourceIdentity: lifecycleSourceRef.current,
+        route,
+        role,
+        outlineId,
+        generation: lifecycleGenerationRef.current,
+        phase,
+        geometryReady: geometryReadyRef.current,
+        advancingFrame: advancingFrameRef.current,
+        frame: frameMetadataRef.current,
+        timestamp: performance.now(),
+        ...extra,
+      });
+      onDiagnosticChangeRef.current?.({
+        mediaKey: candidate.mediaKey,
+        source: lifecycleSourceRef.current,
+        phase: stateRef.current.phase,
+        sourceKind: sourceKindRef.current,
+        surfaceState: surfaceStateForLifecycle(phase),
+        lifecyclePhase: phase,
+        lifecycleRoute: route,
+        lifecycleRole: role,
+        lifecycleOutlineId: outlineId,
+        lifecycleGeneration: lifecycleGenerationRef.current,
+        lifecycleFrame: frameMetadataRef.current,
+        error: extra.error,
+      });
+    },
+    [
+      candidate.mediaKey,
+      outlineId,
+      role,
+      route,
+    ],
+  );
 
   const debug = useCallback<PreparedSurfaceDebug>(
     (event, details = {}) => {
@@ -362,42 +514,30 @@ const PreparedSurface = ({
     (next: PreparedVideoSurfaceState) => {
       stateRef.current = next;
       if (mountedRef.current) setState(next);
-      onDiagnosticChange?.({
+      onDiagnosticChangeRef.current?.({
         mediaKey: candidate.mediaKey,
-        source: resolvedSource ?? candidate.source,
+        source: resolvedSourceRef.current ?? candidate.source,
         phase: next.phase,
-        sourceKind,
+        sourceKind: sourceKindRef.current,
         surfaceState: surfaceStateForPhase(next.phase),
         error: next.error,
       });
     },
-    [
-      candidate.mediaKey,
-      candidate.source,
-      onDiagnosticChange,
-      resolvedSource,
-      sourceKind,
-    ],
+    [candidate.mediaKey, candidate.source],
   );
 
   const publishReady = useCallback(
     (extra: Partial<SurfaceDiagnostic> = {}) => {
-      onDiagnosticChange?.({
+      onDiagnosticChangeRef.current?.({
         mediaKey: candidate.mediaKey,
-        source: resolvedSource ?? candidate.source,
+        source: resolvedSourceRef.current ?? candidate.source,
         phase: stateRef.current.phase,
-        sourceKind,
+        sourceKind: sourceKindRef.current,
         surfaceState: surfaceStateForPhase(stateRef.current.phase),
         ...extra,
       });
     },
-    [
-      candidate.mediaKey,
-      candidate.source,
-      onDiagnosticChange,
-      resolvedSource,
-      sourceKind,
-    ],
+    [candidate.mediaKey, candidate.source],
   );
 
   const prepare = useCallback(async () => {
@@ -418,12 +558,18 @@ const PreparedSurface = ({
     }
     const loading = beginPreparedVideoSurface(stateRef.current);
     generationRef.current = loading.generation;
+    lifecycleGenerationRef.current = loading.generation;
+    lifecycleSourceRef.current = resolvedSource;
+    geometryReadyRef.current = false;
+    advancingFrameRef.current = false;
+    frameMetadataRef.current = undefined;
     preparationStartedAtRef.current = performance.now();
     playingGenerationRef.current = undefined;
     playbackInFlightRef.current = false;
     onReadyChange(candidate.mediaKey, false);
     setFramePresentedReady(false);
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
+    publishLifecycleStatus("preparing");
     debug("PREPARE_START", { source: resolvedSource });
     update(loading);
 
@@ -466,6 +612,7 @@ const PreparedSurface = ({
       update(ready);
       setFramePresentedReady(true);
       onReadyChange(candidate.mediaKey, true);
+      publishLifecycleStatus("ready-paused", { geometryReady: geometryReadyRef.current });
       publishReady({
         prepareToFrameReadyMs:
           performance.now() -
@@ -477,6 +624,7 @@ const PreparedSurface = ({
       debug("PREPARE_FAILED", { stage, error: String(error) });
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
       onReadyChange(candidate.mediaKey, false);
+      publishLifecycleStatus("preparing", { error: message });
       setFramePresentedReady(false);
       onPreparationFailure?.(candidate.mediaKey, message);
       update(
@@ -496,6 +644,7 @@ const PreparedSurface = ({
     onFirstAdvancingFrameChange,
     onReadyChange,
     publishReady,
+    publishLifecycleStatus,
     resolvedSource,
     update,
   ]);
@@ -515,6 +664,10 @@ const PreparedSurface = ({
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "resetting"),
     );
+    publishLifecycleStatus("retiring/resetting");
+    geometryReadyRef.current = false;
+    advancingFrameRef.current = false;
+    frameMetadataRef.current = undefined;
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
     setFramePresentedReady(false);
     onReadyChange(candidate.mediaKey, false);
@@ -531,6 +684,7 @@ const PreparedSurface = ({
       );
       setFramePresentedReady(true);
       onReadyChange(candidate.mediaKey, true);
+      publishLifecycleStatus("ready-paused");
       publishReady({
         prepareToFrameReadyMs:
           performance.now() -
@@ -562,6 +716,7 @@ const PreparedSurface = ({
     onPreparationFailure,
     onReadyChange,
     publishReady,
+    publishLifecycleStatus,
     update,
   ]);
 
@@ -599,6 +754,7 @@ const PreparedSurface = ({
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "playing"),
     );
+    publishLifecycleStatus("activation-requested");
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
     try {
       publishReady({
@@ -638,7 +794,7 @@ const PreparedSurface = ({
         sendToPlayResolvedMs: playResolvedAt - sendRequestedAt,
       });
       debug("PLAY_RESOLVED", { mode: "live", playResolvedAt });
-      await waitForPresentedFrame(video, debug);
+      const frame = await waitForAdvancingFrame(video, debug);
       if (
         stateRef.current.generation !== generation ||
         playbackAttemptRef.current !== playbackAttempt ||
@@ -651,12 +807,15 @@ const PreparedSurface = ({
       }
       playbackInFlightRef.current = false;
       const firstAdvancingFrameAt = performance.now();
+      frameMetadataRef.current = frame;
+      advancingFrameRef.current = true;
       onFirstAdvancingFrameChange(candidate.mediaKey, true);
       publishReady({
         firstAdvancingFrameTimestamp: firstAdvancingFrameAt,
         sendToFirstAdvancingFrameMs: firstAdvancingFrameAt - sendRequestedAt,
       });
       debug("FIRST_ADVANCING_FRAME", { mode: "live", firstAdvancingFrameAt });
+      if (geometryReadyRef.current) publishLifecycleStatus("active-playing", { frame });
       publishReady({
         lastUsedAt: Date.now(),
       });
@@ -683,6 +842,7 @@ const PreparedSurface = ({
     onPreparationFailure,
     onFirstAdvancingFrameChange,
     publishReady,
+    publishLifecycleStatus,
     update,
   ]);
 
@@ -699,14 +859,22 @@ const PreparedSurface = ({
         active = false;
       };
     }
+    publishLifecycleStatus("candidate");
     const loading = beginPreparedVideoSurface(stateRef.current);
     generationRef.current = loading.generation;
+    lifecycleGenerationRef.current = loading.generation;
+    lifecycleSourceRef.current = candidate.source;
+    lifecyclePhaseRef.current = "preparing";
+    geometryReadyRef.current = false;
+    advancingFrameRef.current = false;
+    frameMetadataRef.current = undefined;
     stateRef.current = loading;
     setState(loading);
     onReadyChangeRef.current(candidate.mediaKey, false);
     onGeometryReadyChangeRef.current(candidate.mediaKey, false);
     setFramePresentedReady(false);
     onFirstAdvancingFrameChangeRef.current(candidate.mediaKey, false);
+    publishLifecycleStatus("preparing");
     playingGenerationRef.current = undefined;
     setResolvedSource(undefined);
     void resolveSurfaceSource(candidate.source).then((result) => {
@@ -717,6 +885,7 @@ const PreparedSurface = ({
         sourceKind: result.sourceKind,
       });
       setSourceKind(result.sourceKind);
+      lifecycleSourceRef.current = result.source ?? candidate.source;
       setResolvedSource(result.source);
       if (!result.source) {
         const error = isHLSVideoSource(candidate.source)
@@ -738,6 +907,7 @@ const PreparedSurface = ({
           error,
         });
         onPreparationFailureRef.current?.(candidate.mediaKey, error);
+        publishLifecycleStatus("preparing", { error });
       }
     });
     return () => {
@@ -747,6 +917,7 @@ const PreparedSurface = ({
     candidate.mediaKey,
     candidate.source,
     debug,
+    publishLifecycleStatus,
   ]);
 
   useEffect(() => {
@@ -827,6 +998,7 @@ const PreparedSurface = ({
         surfaceSizeReady &&
         videoSizeReady,
     );
+    geometryReadyRef.current = geometryReady;
     const geometryReason = geometryReady
       ? undefined
       : !connected
@@ -845,6 +1017,19 @@ const PreparedSurface = ({
                     ? "stage-size-mismatch"
                     : undefined;
     onGeometryReadyChange(candidate.mediaKey, geometryReady);
+    if (advancingFrameRef.current) {
+      publishLifecycleStatus(
+        geometryReady ? "active-playing" : "activation-requested",
+        { geometryReady },
+      );
+    } else if (
+      framePresentedReady &&
+      lifecyclePhaseRef.current !== "activation-requested" &&
+      lifecyclePhaseRef.current !== "active-playing" &&
+      lifecyclePhaseRef.current !== "retiring/resetting"
+    ) {
+      publishLifecycleStatus("ready-paused", { geometryReady });
+    }
     onDiagnosticChange?.({
       mediaKey: candidate.mediaKey,
       source: resolvedSource ?? candidate.source,
@@ -870,6 +1055,7 @@ const PreparedSurface = ({
     candidate.source,
     onDiagnosticChange,
     onGeometryReadyChange,
+    publishLifecycleStatus,
     resolvedSource,
     sourceKind,
     stageRect,
@@ -999,6 +1185,7 @@ const PreparedSurface = ({
     return () => {
       debug("UNMOUNT");
       mountedRef.current = false;
+      publishLifecycleStatus("disposed");
       onReadyChange(candidate.mediaKey, false);
       onGeometryReadyChange(candidate.mediaKey, false);
       onFirstAdvancingFrameChange(candidate.mediaKey, false);
@@ -1015,6 +1202,7 @@ const PreparedSurface = ({
     onFirstAdvancingFrameChange,
     onGeometryReadyChange,
     onReadyChange,
+    publishLifecycleStatus,
   ]);
 
   const opacity = view?.opacity;
@@ -1033,6 +1221,7 @@ const PreparedSurface = ({
       data-testid={`electron-media-surface-${candidate.mediaKey}`}
       data-media-key={candidate.mediaKey}
       data-prepared-state={state.phase}
+      data-media-lifecycle={lifecyclePhaseRef.current}
       data-source-kind={sourceKind}
       style={{
         opacity: view ? opacity : 0,
@@ -1065,11 +1254,15 @@ const ElectronMediaSurfacePool = ({
   candidates,
   candidateDiagnostics,
   views,
-  onReadyChange,
+  onStatusChange,
+  route,
+  role,
+  outlineId,
+  onReadyChange = NOOP,
   onGeometryReadyChange = NOOP,
-  onFirstAdvancingFrameChange,
+  onFirstAdvancingFrameChange = NOOP,
   onPreparationFailure,
-  onSurfaceElement,
+  onSurfaceElement = NOOP,
   onDiagnosticChange,
   transitionStart,
   transitionComplete,
@@ -1081,6 +1274,8 @@ const ElectronMediaSurfacePool = ({
   discovery,
   poolCapacity,
 }: ElectronMediaSurfacePoolProps) => {
+  const lifecycleRoute = route ?? "display-window";
+  const lifecycleRole = role ?? windowRole ?? "output";
   const [diagnostics, setDiagnostics] = useState<
     Record<string, SurfaceDiagnostic>
   >({});
@@ -1363,6 +1558,12 @@ const ElectronMediaSurfacePool = ({
           protected: diagnostic?.protected ?? candidate.protected,
           prepareToFrameReadyMs: diagnostic?.prepareToFrameReadyMs,
           surfaceState: diagnostic?.surfaceState,
+          lifecyclePhase: diagnostic?.lifecyclePhase,
+          lifecycleRoute: diagnostic?.lifecycleRoute,
+          lifecycleRole: diagnostic?.lifecycleRole,
+          lifecycleOutlineId: diagnostic?.lifecycleOutlineId,
+          lifecycleGeneration: diagnostic?.lifecycleGeneration,
+          lifecycleFrame: diagnostic?.lifecycleFrame,
           sendStateBeforeRequest: diagnostic?.sendStateBeforeRequest,
           sendCurrentTime: diagnostic?.sendCurrentTime,
           sendReadyState: diagnostic?.sendReadyState,
@@ -1489,10 +1690,14 @@ const ElectronMediaSurfacePool = ({
     >
       {candidates.map((candidate) => (
         <PreparedSurface
-          key={candidate.mediaKey}
+          key={`${lifecycleRoute}:${lifecycleRole}:${outlineId ?? discovery?.outlineId ?? "none"}:${candidate.mediaKey}`}
           candidate={candidate}
           view={viewsByKey.get(candidate.mediaKey)}
           enabled={enabled}
+          onStatusChange={onStatusChange}
+          route={lifecycleRoute}
+          role={lifecycleRole}
+          outlineId={outlineId}
           onReadyChange={onReadyChange}
           onGeometryReadyChange={onGeometryReadyChange}
           onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}

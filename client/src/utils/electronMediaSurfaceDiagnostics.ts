@@ -110,6 +110,24 @@ export type ElectronMediaSurfaceDiagnostic = {
   sourceKind: "cache" | "local" | "remote";
   renderer?: ElectronMediaDiscoveryRenderer;
   surfaceState?: "COLD" | "PREPARING" | "READY" | "ACTIVE";
+  lifecyclePhase?:
+    | "candidate"
+    | "preparing"
+    | "ready-paused"
+    | "activation-requested"
+    | "active-playing"
+    | "retiring/resetting"
+    | "disposed";
+  lifecycleRoute?: string;
+  lifecycleRole?: string;
+  lifecycleOutlineId?: string | null;
+  lifecycleGeneration?: number;
+  lifecycleFrame?: {
+    mediaTime?: number;
+    presentedFrames?: number;
+    currentTime?: number;
+    expectedDisplayTime?: number;
+  };
   geometryReady?: boolean;
   geometryReason?: ElectronMediaSurfaceGeometryReason;
   framePresentedReady?: boolean;

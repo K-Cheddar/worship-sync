@@ -51,6 +51,7 @@ const view = (shouldPlay: boolean): ElectronMediaSurfaceView => ({
 });
 
 describe("ElectronMediaSurfacePool", () => {
+  let presentedFrameCount = 0;
   const originalLoad = HTMLMediaElement.prototype.load;
   const originalPlay = HTMLMediaElement.prototype.play;
   const originalPause = HTMLMediaElement.prototype.pause;
@@ -69,6 +70,7 @@ describe("ElectronMediaSurfacePool", () => {
   );
 
   beforeEach(() => {
+    presentedFrameCount = 0;
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
       value: {
@@ -114,8 +116,21 @@ describe("ElectronMediaSurfacePool", () => {
       "requestVideoFrameCallback",
       {
         configurable: true,
-        value: (callback: () => void) => {
-          callback();
+        value: (
+          callback: (
+            now: number,
+            metadata: VideoFrameCallbackMetadata,
+          ) => void,
+        ) => {
+          presentedFrameCount += 1;
+          callback(performance.now(), {
+            width: 100,
+            height: 100,
+            presentationTime: performance.now(),
+            mediaTime: presentedFrameCount / 30,
+            presentedFrames: presentedFrameCount,
+            expectedDisplayTime: performance.now(),
+          });
           return 1;
         },
       },
@@ -286,6 +301,102 @@ describe("ElectronMediaSurfacePool", () => {
     );
     expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(
       video,
+    );
+  });
+
+  it("does not activate on a retained frame callback", async () => {
+    const callbacks: Array<
+      (now: number, metadata: VideoFrameCallbackMetadata) => void
+    > = [];
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        callbacks.push(callback);
+        return callbacks.length;
+      },
+    });
+    const onStatusChange = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(false)]}
+        onStatusChange={onStatusChange}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(callbacks).toHaveLength(1));
+    act(() =>
+      callbacks.shift()?.(0, {
+        width: 100,
+        height: 100,
+        presentationTime: 0,
+        mediaTime: 0,
+        presentedFrames: 1,
+        expectedDisplayTime: 0,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-media-lifecycle",
+        "ready-paused",
+      ),
+    );
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(true)]}
+        onStatusChange={onStatusChange}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(onStatusChange.mock.calls.map(([event]) => event.phase)).toContain(
+        "activation-requested",
+      ),
+    );
+    await waitFor(() => expect(callbacks).toHaveLength(1));
+    act(() =>
+      callbacks.shift()?.(0, {
+        width: 100,
+        height: 100,
+        presentationTime: 0,
+        mediaTime: 0,
+        presentedFrames: 1,
+        expectedDisplayTime: 0,
+      }),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+      "data-media-lifecycle",
+      "activation-requested",
+    );
+    await waitFor(() => expect(callbacks).toHaveLength(1));
+    act(() =>
+      callbacks.shift()?.(0, {
+        width: 100,
+        height: 100,
+        presentationTime: 1,
+        mediaTime: 0.04,
+        presentedFrames: 2,
+        expectedDisplayTime: 1,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-media-lifecycle",
+        "active-playing",
+      ),
+    );
+    expect(onStatusChange.mock.calls.map(([event]) => event.phase)).toEqual(
+      expect.arrayContaining(["ready-paused", "activation-requested", "active-playing"]),
     );
   });
 
