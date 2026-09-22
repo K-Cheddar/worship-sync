@@ -1,6 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { getExternalResourceResolution } from "../../api/auth";
 import ContentPreviewDialog from "./ContentPreviewDialog";
+
+jest.mock("../../api/auth", () => ({
+  getExternalResourceResolution: jest.fn(),
+}));
+
+const mockGetExternalResourceResolution = jest.mocked(getExternalResourceResolution);
 
 const dropboxMp4Url =
   "https://www.dropbox.com/scl/fi/abc123/Pathfinder-Day-Ingles-1.mp4?rlkey=secret&st=abc&dl=0";
@@ -17,31 +24,64 @@ const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["res
 
 describe("ContentPreviewDialog", () => {
   beforeEach(() => {
-    jest.restoreAllMocks();
+    mockGetExternalResourceResolution.mockReset();
+    mockGetExternalResourceResolution.mockImplementation(async (url) => {
+      const isWeb = /page$/i.test(url);
+      const isDropbox = url.includes("dropbox.com");
+      const isYouTube = /youtube\.com|youtu\.be/i.test(url);
+      const isPdf = /\.pdf(?:$|\?)/i.test(url);
+      const filename = url.split("/").pop()?.split("?")[0] || "resource";
+      const mediaType = isWeb
+        ? "web"
+        : isPdf
+          ? "document"
+          : /\.(mp3|wav)(?:$|\?)/i.test(url)
+            ? "audio"
+            : /\.(png|jpe?g)(?:$|\?)/i.test(url)
+              ? "image"
+              : "video";
+      const previewType = mediaType === "web" ? "web" : mediaType;
+      return {
+        originalUrl: url,
+        externalUrl: url,
+        provider: isYouTube ? "youtube" : isDropbox ? "dropbox" : isWeb ? "web" : "direct",
+        title: isYouTube ? "YouTube video" : filename,
+        filename,
+        mimeType: mediaType === "document" ? "application/pdf" : undefined,
+        mediaType,
+        previewType: isYouTube ? "youtube" : previewType,
+        previewUrl: isWeb || isYouTube
+          ? url
+          : `https://worshipsync.test/api/resources/proxy?token=${encodeURIComponent(filename)}`,
+        requiresProxy: !isWeb && !isYouTube,
+        canPreview: true,
+        ...(isYouTube ? { mediaId: "dQw4w9WgXcQ" } : {}),
+      };
+    });
   });
 
-  it("uses the image renderer", () => {
+  it("uses the image renderer", async () => {
     renderPreview({ id: "image-1", title: "Slide", url: "https://example.test/slide.png" });
-    expect(screen.getByRole("img", { name: "Slide" })).toHaveAttribute(
+    expect(await screen.findByRole("img", { name: "Slide" })).toHaveAttribute(
       "src",
-      "https://example.test/slide.png",
+      "https://worshipsync.test/api/resources/proxy?token=slide.png",
     );
   });
 
-  it("uses video and audio renderers", () => {
+  it("uses video and audio renderers", async () => {
     const { rerender } = renderPreview({ id: "video-1", url: "https://example.test/clip.mp4" });
-    expect(screen.getByLabelText("clip.mp4")).toHaveAttribute("src", "https://example.test/clip.mp4");
+    expect(await screen.findByLabelText("clip.mp4")).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=clip.mp4");
 
     rerender(<ContentPreviewDialog resource={{ id: "audio-1", url: "https://example.test/track.mp3" }} onClose={jest.fn()} />);
-    expect(screen.getByLabelText("track.mp3")).toHaveAttribute("src", "https://example.test/track.mp3");
+    expect(await screen.findByLabelText("track.mp3")).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=track.mp3");
   });
 
-  it("renders Dropbox MP4 shares as resolved video and opens the original share link externally", () => {
+  it("renders Dropbox MP4 shares through the same-origin proxy and opens the original share link externally", async () => {
     const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
     renderPreview({ id: "dropbox-video", url: dropboxMp4Url });
 
-    const video = screen.getByLabelText("Pathfinder-Day-Ingles-1.mp4");
-    expect(new URL(video.getAttribute("src") || "").searchParams.get("raw")).toBe("1");
+    const video = await screen.findByLabelText("Pathfinder-Day-Ingles-1.mp4");
+    expect(video.getAttribute("src")).toContain("/api/resources/proxy");
     expect(screen.getByText("Dropbox • Video")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
@@ -59,18 +99,21 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByLabelText("YouTube player")).toBeInTheDocument();
   });
 
-  it("renders text and PDF/document previews internally", () => {
+  it("renders text and PDF/document previews internally", async () => {
     const { rerender } = renderPreview({ id: "text-1", title: "Notes", textContent: "Welcome." });
     expect(screen.getByText("Welcome.")).toBeInTheDocument();
 
     rerender(<ContentPreviewDialog resource={{ id: "pdf-1", title: "Guide", mimeType: "application/pdf", url: "https://example.test/guide.pdf" }} onClose={jest.fn()} />);
-    expect(screen.getByTitle("Guide")).toHaveAttribute("src", "https://example.test/guide.pdf");
+    expect(await screen.findByTitle("Guide")).toHaveAttribute("src", expect.stringContaining("/api/resources/proxy"));
   });
 
   it("shows a blocked-page fallback while keeping external actions available", async () => {
     const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
     jest.useFakeTimers();
     renderPreview({ id: "web-1", title: "Blocked page", url: "https://example.test/page" });
+    await act(async () => {
+      await Promise.resolve();
+    });
     act(() => jest.advanceTimersByTime(7000));
 
     expect(await screen.findByText("This site doesn’t allow an embedded preview.")).toBeInTheDocument();
@@ -79,10 +122,10 @@ describe("ContentPreviewDialog", () => {
     jest.useRealTimers();
   });
 
-  it("keeps a loaded embedded page available after the timeout window", () => {
+  it("keeps a loaded embedded page available after the timeout window", async () => {
     jest.useFakeTimers();
     renderPreview({ id: "web-1", title: "Loaded page", url: "https://example.test/page" });
-    fireEvent.load(screen.getByTitle("Loaded page"));
+    fireEvent.load(await screen.findByTitle("Loaded page"));
     act(() => jest.advanceTimersByTime(7000));
 
     expect(screen.getByTitle("Loaded page")).toBeInTheDocument();
@@ -130,5 +173,18 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
     expect(screen.getByText("The resource URL expired.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open in new tab" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the original public URL available when server resolution fails", async () => {
+    const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
+    mockGetExternalResourceResolution.mockRejectedValueOnce(
+      new Error("Preview service is unavailable."),
+    );
+    renderPreview({ id: "public-1", title: "Public file", url: "https://cdn.example.test/clip.mp4" });
+
+    expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.getByText("Preview service is unavailable.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
+    expect(open).toHaveBeenCalledWith("https://cdn.example.test/clip.mp4", "_blank", "noopener,noreferrer");
   });
 });

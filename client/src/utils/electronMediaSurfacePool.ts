@@ -6,17 +6,14 @@ import type { ElectronMediaCandidateSourceKind } from "./electronMediaSurfaceDia
  * may exceed this soft budget so a live transition is never evicted.
  */
 export const ELECTRON_MEDIA_SURFACE_POLICY = {
-  // The budget is a safety boundary. Keeping the small, common 11-video
-  // service inside it avoids evicting a prepared identity when priorities
-  // change between adjacent slides.
-  defaultBudget: 12,
+  // The budget is a resource safety ceiling, not a target preparation count.
+  // It leaves room for a normal multi-video service without making preparation
+  // unbounded on renderers with limited media resources.
+  defaultBudget: 24,
 } as const;
 
 export const DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET =
   ELECTRON_MEDIA_SURFACE_POLICY.defaultBudget;
-
-/** Smaller renderer-local budget for the Electron editor preview. */
-export const ELECTRON_EDITOR_MEDIA_SURFACE_BUDGET = 8;
 
 export type ElectronMediaSurfaceCandidate = {
   mediaKey: string;

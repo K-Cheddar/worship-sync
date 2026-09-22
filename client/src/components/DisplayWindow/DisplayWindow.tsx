@@ -70,7 +70,7 @@ import {
 } from "./laneBackgroundMedia";
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
-import { ELECTRON_EDITOR_MEDIA_SURFACE_BUDGET } from "../../utils/electronMediaSurfacePool";
+import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -558,24 +558,40 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const preparedMediaSelectedIds = useSelector(
       (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
     );
-    const preparedMediaOutlineId = useMemo(() => {
+    const preparedMediaContext = useMemo<
+      Pick<
+        ElectronMediaDiscovery,
+        | "controllerProfileId"
+        | "controllerProfileName"
+        | "outlineScope"
+        | "outlineId"
+        | "outlineName"
+      >
+    >(() => {
       const owner = outputId
         ? getOwningControllerProfile(controllerProfiles, outputId)
         : controllerProfiles.find((profile) => profile.type === "presentation");
-      if (!owner) return null;
-      return (
-        resolveOutlineForScope(
-          preparedMediaOutlines,
-          owner.outlineScope,
-          preparedMediaSelectedIds[owner.outlineScope],
-        )?._id ?? null
-      );
+      const outline = owner
+        ? resolveOutlineForScope(
+            preparedMediaOutlines,
+            owner.outlineScope,
+            preparedMediaSelectedIds[owner.outlineScope],
+          )
+        : undefined;
+      return {
+        controllerProfileId: owner?.id,
+        controllerProfileName: owner?.name,
+        outlineScope: owner?.outlineScope,
+        outlineId: outline?._id ?? null,
+        outlineName: outline?.name,
+      };
     }, [
       controllerProfiles,
       outputId,
       preparedMediaOutlines,
       preparedMediaSelectedIds,
     ]);
+    const preparedMediaOutlineId = preparedMediaContext.outlineId;
     const pairedDeviceSettings =
       useContext(GlobalInfoContext)?.device?.settings;
     // The built-in monitor keeps honouring the church-wide monitorSettings until
@@ -1237,14 +1253,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     } else if (localVideoFile.isLocalVideoFile) {
       desiredVideoUrl = localVideoFile.url;
     }
-    const editorPreparedCurrentMedia =
-      videoMediaKey && desiredVideoUrl
-        ? {
-            mediaKey: videoMediaKey,
-            source: desiredVideoUrl,
-            itemId: currentItemId,
-          }
-        : undefined;
+    const editorPreparedCurrentMedia = useMemo(
+      () =>
+        videoMediaKey && desiredVideoUrl
+          ? {
+              mediaKey: videoMediaKey,
+              source: desiredVideoUrl,
+              itemId: currentItemId,
+            }
+          : undefined,
+      [currentItemId, desiredVideoUrl, videoMediaKey],
+    );
     const editorPreparedVideoActive =
       editorPreparedPreviewEnabled &&
       editorPreparedReady &&
@@ -1344,13 +1363,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             : displayType ?? "unknown",
         currentItemId,
         preparedMediaOutlineId,
-        preparedSurfaceBudget: isEditor || videoPreloadRole === "preview"
-          ? ELECTRON_EDITOR_MEDIA_SURFACE_BUDGET
-          : undefined,
-        preparedMediaScope:
-          isEditor || videoPreloadRole === "preview"
-            ? "current-item"
-            : "service",
+        preparedMediaScope: "service",
+        preparedMediaContext,
         showBackground,
         fileVideoAudioEnabled: localVideoFileAudioEnabled,
         volume: localVideoVolume,
@@ -1393,6 +1407,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         outputId,
         currentItemId,
         preparedMediaOutlineId,
+        preparedMediaContext,
         showBackground,
       ],
     );
@@ -1720,6 +1735,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               enabled
               currentItemId={currentItemId}
               currentMedia={editorPreparedCurrentMedia}
+              preparedMediaContext={preparedMediaContext}
               videoBox={videoBox}
               playback={activeVideoPlayback}
               volume={localVideoVolume}

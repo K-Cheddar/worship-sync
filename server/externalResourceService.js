@@ -6,6 +6,10 @@ import net from "node:net";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import axios from "axios";
+import {
+  EXTERNAL_RESOURCE_PROVIDER_LABELS,
+  resolveExternalResourceProvider,
+} from "./externalResourceProviders.js";
 
 export const EXTERNAL_RESOURCE_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const EXTERNAL_RESOURCE_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -15,19 +19,6 @@ const MAX_REDIRECTS = 5;
 const RESOLVE_TIMEOUT_MS = 8_000;
 const MAX_CACHE_ENTRIES = 500;
 const MAX_RATE_BUCKETS = 2_000;
-
-const PROVIDER_LABELS = {
-  worshipsync: "WorshipSync",
-  youtube: "YouTube",
-  dropbox: "Dropbox",
-  "google-drive": "Google Drive",
-  onedrive: "OneDrive",
-  sharepoint: "SharePoint",
-  box: "Box",
-  direct: "Direct media",
-  web: "Web",
-  unknown: "Resource",
-};
 
 const IMAGE_MIME = /^image\//i;
 const AUDIO_MIME = /^audio\//i;
@@ -78,27 +69,6 @@ const EXTENSION_MEDIA_TYPES = {
   pptx: "document",
   txt: "document",
 };
-
-const YOUTUBE_HOSTS = new Set([
-  "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
-  "youtu.be",
-  "youtube-nocookie.com",
-  "www.youtube-nocookie.com",
-]);
-const DROPBOX_HOSTS = new Set([
-  "dropbox.com",
-  "www.dropbox.com",
-  "dl.dropboxusercontent.com",
-]);
-const GOOGLE_DRIVE_HOSTS = new Set([
-  "drive.google.com",
-  "drive.usercontent.google.com",
-  "docs.google.com",
-]);
-const ONEDRIVE_HOSTS = new Set(["1drv.ms", "onedrive.live.com"]);
-const BOX_HOSTS = new Set(["box.com", "www.box.com", "app.box.com", "public.boxcloud.com"]);
 
 const asString = (value) => (typeof value === "string" ? value : "");
 
@@ -313,59 +283,6 @@ const createSafeLookup = (lookup) => async (hostname, options, callback) => {
   }
 };
 
-const parseYouTubeId = (url) => {
-  const host = url.hostname.toLowerCase();
-  if (!YOUTUBE_HOSTS.has(host)) return "";
-  if (host === "youtu.be") return url.pathname.split("/").filter(Boolean)[0] || "";
-  if (url.pathname.startsWith("/embed/") || url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/live/")) {
-    return url.pathname.split("/").filter(Boolean)[1] || "";
-  }
-  return url.searchParams.get("v") || "";
-};
-
-const isSharePointHost = (hostname) => hostname === "sharepoint.com" || hostname.endsWith(".sharepoint.com");
-const isGoogleDriveHost = (hostname) => GOOGLE_DRIVE_HOSTS.has(hostname);
-
-const providerForUrl = (value) => {
-  const url = new URL(value);
-  const hostname = url.hostname.toLowerCase();
-  const youtubeId = parseYouTubeId(url);
-  if (youtubeId && /^[A-Za-z0-9_-]{11}$/.test(youtubeId)) {
-    return { provider: "youtube", candidateUrl: url.toString(), mediaId: youtubeId };
-  }
-  if (DROPBOX_HOSTS.has(hostname)) {
-    const candidate = new URL(url);
-    candidate.searchParams.delete("dl");
-    candidate.searchParams.set("raw", "1");
-    return { provider: "dropbox", candidateUrl: candidate.toString() };
-  }
-  if (isGoogleDriveHost(hostname)) {
-    const fileId = url.pathname.match(/\/file\/d\/([^/]+)/i)?.[1] || url.searchParams.get("id") || "";
-    if (fileId && hostname === "drive.google.com") {
-      return {
-        provider: "google-drive",
-        candidateUrl: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`,
-        mediaId: fileId,
-      };
-    }
-    return { provider: "google-drive", candidateUrl: url.toString() };
-  }
-  if (ONEDRIVE_HOSTS.has(hostname)) {
-    const candidate = new URL(url);
-    candidate.searchParams.set("download", "1");
-    return { provider: "onedrive", candidateUrl: candidate.toString() };
-  }
-  if (isSharePointHost(hostname)) {
-    const candidate = new URL(url);
-    candidate.searchParams.set("download", "1");
-    return { provider: "sharepoint", candidateUrl: candidate.toString() };
-  }
-  if (BOX_HOSTS.has(hostname) || hostname.endsWith(".boxcloud.com")) {
-    return { provider: "box", candidateUrl: url.toString() };
-  }
-  return { provider: "direct", candidateUrl: url.toString() };
-};
-
 const drainResponse = (response) => {
   const body = response?.data;
   if (body && typeof body.destroy === "function") body.destroy();
@@ -467,7 +384,7 @@ const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUr
     originalUrl,
     externalUrl: originalUrl,
     provider,
-    title: title || fileName || PROVIDER_LABELS[provider] || "Content preview",
+    title: title || fileName || EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "Content preview",
     ...(fileName ? { filename: fileName } : {}),
     ...(mimeType ? { mimeType } : {}),
     mediaType,
@@ -567,7 +484,7 @@ export const createExternalResourceService = ({
         mimeType,
         fileName,
         mediaType: "unknown",
-        reason: `The ${PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
+        reason: `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
       });
     }
     if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
@@ -587,7 +504,7 @@ export const createExternalResourceService = ({
   };
 
   const resolveBase = async (originalUrl) => {
-    const providerInfo = providerForUrl(originalUrl);
+    const providerInfo = resolveExternalResourceProvider(originalUrl);
     if (providerInfo.provider === "youtube") {
       return buildDescriptor({
         originalUrl,
@@ -656,8 +573,11 @@ export const createExternalResourceService = ({
   };
 
   const handleProxy = async (req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return res.status(405).json({ error: "Only GET and HEAD preview requests are supported." });
+    }
     const token = asString(req.query?.token);
-    const requester = `${req.ip || req.socket?.remoteAddress || "unknown"}:${crypto.createHash("sha1").update(token).digest("hex").slice(0, 12)}`;
+    const requester = req.appSession?.actorId || req.ip || req.socket?.remoteAddress || "unknown";
     if (!checkRate(`proxy:${requester}`, { limit: 120, windowMs: 60_000 })) {
       return res.status(429).json({ error: "Too many preview requests. Try again shortly." });
     }
@@ -668,7 +588,7 @@ export const createExternalResourceService = ({
       return res.status(403).json({ error: "HTML resources are not proxied." });
     }
     const targetUrl = await validateExternalResourceUrl(payload.t, { lookup });
-    const range = asString(req.headers.range);
+    const range = asString(req.headers?.range);
     if (range && !/^bytes=(?:\d+-\d*|\-\d+)(?:\s*)$/i.test(range)) {
       return res.status(416).json({ error: "Only one byte range can be requested." });
     }

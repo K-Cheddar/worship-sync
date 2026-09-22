@@ -292,6 +292,51 @@ describe("ElectronMediaSurfacePool", () => {
     expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
   });
 
+  it("invalidates a READY surface before re-preparing a changed source", async () => {
+    const onReadyChange = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(false)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    const falseCountBeforeChange = onReadyChange.mock.calls.filter(
+      ([, ready]) => ready === false,
+    ).length;
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: "https://cdn.example.com/next.mp4" }]}
+        views={[view(false)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    expect(
+      onReadyChange.mock.calls.filter(([, ready]) => ready === false).length,
+    ).toBeGreaterThan(falseCountBeforeChange);
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+  });
+
   it("uses the original finite URL when no local cache entry exists", async () => {
     (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(
       null,

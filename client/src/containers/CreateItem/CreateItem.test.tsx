@@ -30,6 +30,7 @@ import {
   createMockGlobalContext,
 } from "../../test/mocks";
 import type { ItemState, ServiceItem } from "../../types";
+import type { NormalizedLrclibTrack } from "../../utils/lrclib";
 import {
   createNewFreeForm,
   createNewSong,
@@ -661,11 +662,16 @@ describe("CreateItem", () => {
       match: null,
       candidates: [successfulCandidate, failedCandidate],
     });
+    let resolveSuccessfulHydration: (
+      candidate: NormalizedLrclibTrack,
+    ) => void = () => undefined;
+    const successfulHydration = new Promise<NormalizedLrclibTrack>(
+      (resolve) => {
+        resolveSuccessfulHydration = resolve;
+      },
+    );
     mockedFetchGeniusLyricsLocally
-      .mockResolvedValueOnce({
-        ...successfulCandidate,
-        plainLyrics: "Successful lyrics",
-      })
+      .mockReturnValueOnce(successfulHydration)
       .mockRejectedValueOnce(new Error("Genius page unavailable"));
 
     const store = createTestStore({
@@ -683,15 +689,27 @@ describe("CreateItem", () => {
     });
     expect(screen.getByText("Failed Song")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Use Lyrics" })).toHaveLength(2);
-    expect(store.getState().createItem.lyricsImportCandidates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          geniusId: 31,
-          plainLyrics: "Successful lyrics",
-        }),
-        expect.objectContaining({ geniusId: 32, plainLyrics: null }),
-      ]),
-    );
+    expect(screen.getByText("Lyrics loading from Genius...")).toBeInTheDocument();
+    expect(
+      screen.getByText("Genius lyrics are unavailable for this result."),
+    ).toBeInTheDocument();
+
+    resolveSuccessfulHydration({
+      ...successfulCandidate,
+      plainLyrics: "Successful lyrics",
+    });
+
+    await waitFor(() => {
+      expect(store.getState().createItem.lyricsImportCandidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            geniusId: 31,
+            plainLyrics: "Successful lyrics",
+          }),
+          expect.objectContaining({ geniusId: 32, plainLyrics: null }),
+        ]),
+      );
+    });
   });
 
   it("keeps the draft after adding an existing item to the outline", () => {

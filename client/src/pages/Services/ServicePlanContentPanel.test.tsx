@@ -37,6 +37,13 @@ jest.mock("../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => 
   default: () => <div aria-label="YouTube player" />,
 }));
 
+jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
+  __esModule: true,
+  default: ({ resource }: { resource: { url?: string } | null }) => resource ? (
+    <div role="dialog" aria-label="Content preview">{resource.url}</div>
+  ) : null,
+}));
+
 const element = (overrides: Partial<ServicePlanElement> = {}): ServicePlanElement => ({
   id: "element-1",
   type: "free",
@@ -118,6 +125,24 @@ describe("ServicePlanContentPanel resources", () => {
     expect(screen.getByText("YouTube")).toBeInTheDocument();
     expect(screen.getByText("Future resource")).toBeInTheDocument();
     expect(screen.getByText("Other")).toBeInTheDocument();
+  });
+
+  it("opens a linked resource in the viewer from the editable content panel", async () => {
+    const user = userEvent.setup();
+    const url = "https://www.dropbox.com/scl/fi/example/video.mp4";
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          resources: [{ id: "link-1", type: "url", title: url, url }],
+        })}
+        allowEdit
+        onUpdate={jest.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: `Preview ${url}` }));
+
+    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveTextContent(url);
   });
 
   it("attaches an existing song MP3 by reference", async () => {

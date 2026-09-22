@@ -19,6 +19,35 @@ export type ElectronMediaCandidateCacheStatus =
   | "not-cacheable"
   | "not-required";
 
+export type ElectronMediaDiscoveryRenderer = "projector" | "editor";
+
+export type ElectronMediaDiscoveryVideo = {
+  mediaKey: string;
+  source: string;
+  sourceKind: ElectronMediaCandidateSourceKind;
+  status: ElectronMediaCandidateStatus;
+  cacheStatus: ElectronMediaCandidateCacheStatus;
+};
+
+export type ElectronMediaDiscovery = {
+  renderer: ElectronMediaDiscoveryRenderer;
+  outputId?: string;
+  controllerProfileId?: string;
+  controllerProfileName?: string;
+  outlineScope?: string;
+  outlineId?: string | null;
+  outlineName?: string;
+  currentItemId?: string;
+  itemCount: number;
+  uniqueFiniteVideoCount: number;
+  items: Array<{
+    itemIndex: number;
+    itemId: string;
+    itemName: string;
+    videos: ElectronMediaDiscoveryVideo[];
+  }>;
+};
+
 export type ElectronMediaSurfaceCandidateDiagnostic = {
   mediaKey: string;
   originalSource: string;
@@ -32,6 +61,9 @@ export type ElectronMediaSurfaceCandidateDiagnostic = {
   itemName?: string;
   itemIndex?: number;
   isCurrentItem?: boolean;
+  priority?: number;
+  protected?: boolean;
+  surfaceState?: "COLD" | "PREPARING" | "READY" | "ACTIVE";
 };
 
 export type ElectronMediaSurfacePhase =
@@ -49,7 +81,14 @@ export type ElectronMediaSurfaceDiagnostic = {
   source: string;
   phase: ElectronMediaSurfacePhase;
   sourceKind: "cache" | "local" | "remote";
+  renderer?: ElectronMediaDiscoveryRenderer;
   surfaceState?: "COLD" | "PREPARING" | "READY" | "ACTIVE";
+  geometryReady?: boolean;
+  surfaceRect?: { x: number; y: number; width: number; height: number };
+  videoRect?: { x: number; y: number; width: number; height: number };
+  intrinsicVideoSize?: { width: number; height: number };
+  objectFit?: string;
+  sourceUnchanged?: boolean;
   priority?: number;
   protected?: boolean;
   prepareToFrameReadyMs?: number;
@@ -60,7 +99,10 @@ export type ElectronMediaSurfaceDiagnostic = {
   sendSeeking?: boolean;
   sendBufferedRanges?: Array<[number, number]>;
   sendRequestTimestamp?: number;
+  sendTimestamp?: number;
+  wasReadyBeforeSend?: boolean;
   playCalledTimestamp?: number;
+  playRequestTimestamp?: number;
   playResolvedTimestamp?: number;
   transitionStartTimestamp?: number;
   firstAdvancingFrameTimestamp?: number;
@@ -78,6 +120,12 @@ export type ElectronMediaSurfacePoolDiagnostics = {
   windowRole: string;
   candidateCount: number;
   discoveredCount: number;
+  finiteVideoCount?: number;
+  serviceItemCount?: number;
+  currentItemId?: string;
+  currentItemVideoCount?: number;
+  currentItemReadyCount?: number;
+  poolCapacity?: number;
   pendingCacheCount: number;
   surfaceCount: number;
   readyCount: number;
@@ -93,6 +141,7 @@ export type ElectronMediaSurfacePoolDiagnostics = {
   lastMediaKey?: string;
   posterShown?: boolean;
   rendererMetrics?: PreparedVideoMetrics;
+  discovery?: ElectronMediaDiscovery;
 };
 
 export type ElectronMediaSurfaceDiagnosticsMessage =
@@ -116,6 +165,13 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   lastMediaKey,
   posterShown,
   rendererMetrics,
+  discovery,
+  finiteVideoCount,
+  serviceItemCount,
+  currentItemId,
+  currentItemVideoCount,
+  currentItemReadyCount,
+  poolCapacity,
 }: Omit<
   ElectronMediaSurfacePoolDiagnostics,
   | "surfaceCount"
@@ -126,9 +182,23 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   | "errorCount"
   | "discoveredCount"
   | "pendingCacheCount"
+  | "finiteVideoCount"
+  | "serviceItemCount"
+  | "currentItemId"
+  | "currentItemVideoCount"
+  | "currentItemReadyCount"
+  | "poolCapacity"
+  | "discovery"
 > & {
   discoveredCount?: number;
   pendingCacheCount?: number;
+  finiteVideoCount?: number;
+  serviceItemCount?: number;
+  currentItemId?: string;
+  currentItemVideoCount?: number;
+  currentItemReadyCount?: number;
+  poolCapacity?: number;
+  discovery?: ElectronMediaDiscovery;
 }): ElectronMediaSurfacePoolDiagnostics => ({
   outputId,
   windowRole,
@@ -143,6 +213,12 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
         candidate.cacheStatus === "pending",
     ).length ??
     0,
+  finiteVideoCount,
+  serviceItemCount,
+  currentItemId,
+  currentItemVideoCount,
+  currentItemReadyCount,
+  poolCapacity,
   surfaceCount: surfaces.length,
   readyCount: surfaces.filter((surface) => surface.phase === "ready").length,
   preparingCount: surfaces.filter((surface) =>
@@ -159,6 +235,7 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   lastMediaKey,
   posterShown,
   rendererMetrics,
+  discovery,
 });
 
 const getDiagnosticsChannel = (): BroadcastChannel | undefined => {

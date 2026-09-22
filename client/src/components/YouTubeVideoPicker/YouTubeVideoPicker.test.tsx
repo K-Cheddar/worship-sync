@@ -15,7 +15,12 @@ jest.mock("../YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => {
         {
           queue,
           autoPlayEntryKey,
-        }: { queue: Array<{ videoId: string }>; autoPlayEntryKey?: string | null },
+          previewAction,
+        }: {
+          queue: Array<{ videoId: string }>;
+          autoPlayEntryKey?: string | null;
+          previewAction?: React.ReactNode;
+        },
         ref: React.ForwardedRef<{ playAll: () => void; playEntry: (entryKey: string) => void }>,
       ) => {
         React.useImperativeHandle(ref, () => ({
@@ -30,6 +35,7 @@ jest.mock("../YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => {
           "section",
           { role: "region", "aria-label": "YouTube video preview" },
           queue[0]?.videoId,
+          previewAction,
         );
       },
     ),
@@ -155,6 +161,25 @@ describe("YouTubeVideoPicker", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[1]);
     expect(mockPreviewPlayEntry).toHaveBeenLastCalledWith("aaaaaaaaaaa");
     openSpy.mockRestore();
+  });
+
+  it("links the video currently shown in the preview", async () => {
+    const onSelect = jest.fn().mockResolvedValue(undefined);
+    render(
+      <YouTubeVideoPicker
+        isOpen
+        onClose={jest.fn()}
+        title="Living Hope"
+        artist="Phil Wickham"
+        onSelect={onSelect}
+      />,
+    );
+
+    await screen.findByText("Living Hope (Official Video)");
+    fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Link video" })[0]);
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(secondResult));
   });
 
   it("destroys the preview player when the modal closes", async () => {

@@ -1062,9 +1062,11 @@ app.get("/api/resources/resolve", requireAppSession, async (req, res) => {
   }
 });
 
-// This endpoint is authorized by the short-lived, target-bound token issued by
-// /api/resources/resolve. It intentionally does not forward app cookies or
-// third-party credentials to the upstream resource.
+// Media elements cannot attach the workstation/bearer headers used by the
+// resolver request. Authorization therefore comes from the short-lived,
+// target-bound capability issued only by authenticated /resolve requests; this
+// is not an unrestricted URL proxy. It intentionally does not forward app
+// cookies or third-party credentials to the upstream resource.
 app.get("/api/resources/proxy", (req, res) => {
   void externalResourceService.handleProxy(req, res).catch((error) => {
     if (res.headersSent) {

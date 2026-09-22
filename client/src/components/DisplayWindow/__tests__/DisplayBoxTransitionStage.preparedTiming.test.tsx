@@ -225,6 +225,29 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         "animating",
       ),
     );
+    const mediaFadeCall = mockTimeline.fromTo.mock.calls.find(
+      (call) =>
+        call[0]?.getAttribute?.("data-testid") ===
+        "electron-media-surface-remote:prepared-b",
+    );
+    expect(mediaFadeCall?.[1]).toEqual({ opacity: 0 });
+    expect(mediaFadeCall?.[2]).toMatchObject({
+      opacity: 1,
+      duration: 0.5,
+    });
+    expect(
+      mockTimeline.fromTo.mock.calls.some(
+        (call) =>
+          call[0]?.getAttribute?.("data-testid") ===
+          "electron-media-surface-remote:prepared-a",
+      ),
+    ).toBe(false);
+    const incomingContentFade = mockTimeline.fromTo.mock.calls.find(
+      (call) =>
+        call[0]?.getAttribute?.("data-testid") ===
+        "display-box-transition-content-b",
+    );
+    expect(incomingContentFade?.[3]).toBe("crossfade+=0.1");
     expect(play).toHaveBeenCalledTimes(3);
     expect(mockFirstAdvancingFrameCallback).toBeUndefined();
 

@@ -55,6 +55,50 @@ test("resolves the first-class providers and uses provider-specific candidates",
   assert.equal(youtube.requiresProxy, false);
 });
 
+test("detects provider media types from metadata for images, audio, and documents", async () => {
+  const client = createMockClient((config) => {
+    const headers = config.url.includes("drive.google.com")
+      ? { "content-type": "application/pdf", "content-disposition": 'inline; filename="guide.pdf"' }
+      : config.url.includes("dropbox.com")
+        ? { "content-type": "image/png" }
+        : { "content-type": "audio/mpeg" };
+    return response(200, headers);
+  });
+  const service = createExternalResourceService({
+    httpClient: client,
+    lookup: publicLookup,
+    tokenSecret: "secret",
+  });
+
+  await assert.doesNotReject(async () => {
+    const [dropbox, drive, oneDrive] = await Promise.all([
+      service.resolve("https://www.dropbox.com/scl/fi/id/photo.png?dl=0"),
+      service.resolve("https://drive.google.com/file/d/guide/view"),
+      service.resolve("https://1drv.ms/u/s!audio"),
+    ]);
+    assert.equal(dropbox.previewType, "image");
+    assert.equal(drive.previewType, "document");
+    assert.equal(drive.filename, "guide.pdf");
+    assert.equal(oneDrive.previewType, "audio");
+  });
+});
+
+test("returns an external-only descriptor for private or inaccessible provider links", async () => {
+  const client = createMockClient(() => response(403, { "content-type": "text/html" }));
+  const service = createExternalResourceService({
+    httpClient: client,
+    lookup: publicLookup,
+    tokenSecret: "secret",
+  });
+
+  const descriptor = await service.resolve("https://app.box.com/s/private-file");
+  assert.equal(descriptor.provider, "box");
+  assert.equal(descriptor.canPreview, false);
+  assert.equal(descriptor.previewType, "unsupported");
+  assert.equal(descriptor.previewUrl, null);
+  assert.match(descriptor.reason, /Box/);
+});
+
 test("detects direct media and documents from HTTP metadata before URL extensions", async () => {
   const mimeByUrl = new Map([
     ["https://files.example.test/image", "image/png"],

@@ -7,10 +7,12 @@ import {
   useRef,
   useState,
   type ForwardedRef,
+  type ReactNode,
 } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
 import Button from "../Button/Button";
+import { cn } from "../../utils/cnHelper";
 import { formatYouTubeDuration } from "../../utils/youtubeSearch";
 import {
   findAvailablePlaylistIndex,
@@ -93,6 +95,7 @@ type YouTubePlaylistPlayerProps = {
   onPlayerReady?: () => void;
   onVideoUnavailable?: (entry: YouTubePlaylistEntry) => void;
   onCurrentEntryChange?: (entryKey: string) => void;
+  previewAction?: ReactNode;
 };
 
 const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
@@ -103,6 +106,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     onPlayerReady,
     onVideoUnavailable,
     onCurrentEntryChange,
+    previewAction,
   }: YouTubePlaylistPlayerProps,
   ref: ForwardedRef<YouTubePlaylistPlayerHandle>,
 ) {
@@ -335,22 +339,31 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
       className="border-b border-gray-700 bg-gray-900/70 p-3"
       aria-label={isPreview ? "YouTube video preview" : "YouTube rehearsal player"}
     >
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,18rem)_1fr]">
+      <div
+        data-testid="youtube-player-layout"
+        className={cn(
+          "grid gap-3",
+          isPreview ? "grid-cols-1" : "sm:grid-cols-[minmax(0,18rem)_1fr]",
+        )}
+      >
         <div className="aspect-video overflow-hidden rounded bg-black">
           <div ref={containerRef} className="h-full w-full" aria-label="YouTube player" />
         </div>
         <div className="flex min-w-0 flex-col justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-              {isPreview ? "Preview" : "Rehearsal playlist"}
-            </p>
-            <p className="truncate text-sm font-semibold text-white">{currentEntry?.title || "No song selected"}</p>
-            {currentEntry?.artist ? <p className="truncate text-xs text-gray-400">{currentEntry.artist}</p> : null}
-            {duration > 0 ? (
-              <p className="mt-1 text-xs tabular-nums text-gray-400">
-                {formatYouTubeDuration(position)} / {formatYouTubeDuration(duration)}
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                {isPreview ? "Preview" : "Rehearsal playlist"}
               </p>
-            ) : null}
+              <p className="truncate text-sm font-semibold text-white">{currentEntry?.title || "No song selected"}</p>
+              {currentEntry?.artist ? <p className="truncate text-xs text-gray-400">{currentEntry.artist}</p> : null}
+              {duration > 0 ? (
+                <p className="mt-1 text-xs tabular-nums text-gray-400">
+                  {formatYouTubeDuration(position)} / {formatYouTubeDuration(duration)}
+                </p>
+              ) : null}
+            </div>
+            {isPreview ? previewAction : null}
           </div>
           {!isPreview ? (
             <div className="flex flex-wrap items-center gap-1.5">

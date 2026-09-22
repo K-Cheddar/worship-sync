@@ -80,6 +80,13 @@ const MediaSurfaceDiagnostics = () => {
     entry.outputId ||
     entry.windowRole;
 
+  const sectionName = (entry: ReceivedDiagnostics): string =>
+    entry.windowRole === "editor"
+      ? "EDITOR PREVIEW"
+      : entry.windowRole === "projector"
+        ? "PROJECTOR"
+        : displayName(entry);
+
   return (
     <>
       <Button
@@ -107,17 +114,29 @@ const MediaSurfaceDiagnostics = () => {
           )}
           {entries.map((entry) => (
             <section key={`${entry.outputId || ""}:${entry.windowRole}`} className="rounded border border-gray-700 p-3">
-              <h2 className="mb-3 font-semibold text-white">{displayName(entry)}</h2>
+              <h2 className="mb-3 font-semibold text-white">{sectionName(entry)}</h2>
+              {sectionName(entry) !== displayName(entry) && (
+                <p className="mb-3 text-xs text-gray-400">{displayName(entry)}</p>
+              )}
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
-                <Metric label="Discovered" value={entry.discoveredCount ?? entry.candidateDetails?.length ?? entry.candidateCount} />
+                <Metric label="Controller/profile" value={entry.discovery?.controllerProfileName ? `${entry.discovery.controllerProfileName} (${entry.discovery.controllerProfileId || "—"})` : entry.discovery?.controllerProfileId || "—"} />
+                <Metric label="Outline" value={entry.discovery?.outlineName || "—"} />
+                <Metric label="Outline ID" value={entry.discovery?.outlineId || "—"} />
+                <Metric label="Outline scope" value={entry.discovery?.outlineScope || "—"} />
+                <Metric label="Service items" value={entry.serviceItemCount ?? entry.discovery?.itemCount ?? "—"} />
+                <Metric label="Finite videos discovered" value={entry.finiteVideoCount ?? entry.discoveredCount ?? entry.candidateDetails?.length ?? entry.candidateCount} />
                 <Metric label="Pending cache" value={entry.pendingCacheCount ?? 0} />
-                <Metric label="Candidates" value={entry.candidateCount} />
+                <Metric label="Candidates selected" value={entry.candidateCount} />
+                <Metric label="Pool capacity" value={entry.poolCapacity ?? "—"} />
                 <Metric label="Surfaces" value={entry.surfaceCount} />
                 <Metric label="Ready" value={entry.readyCount} />
                 <Metric label="Preparing" value={entry.preparingCount} />
                 <Metric label="Playing" value={entry.playingCount} />
                 <Metric label="Errors" value={entry.errorCount} />
                 <Metric label="Evictions" value={entry.evictions.length} />
+                <Metric label="Current item" value={entry.currentItemId || "—"} />
+                <Metric label="Current-item videos" value={entry.currentItemVideoCount ?? "—"} />
+                <Metric label="Current-item ready" value={entry.currentItemReadyCount ?? "—"} />
                 <Metric label="Last send path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
                 <Metric
                   label="Transition visual"
@@ -162,7 +181,10 @@ const MediaSurfaceDiagnostics = () => {
                         </div>
                       )}
                       <div className="text-gray-400">
-                        {candidate.itemName || candidate.itemId || "unknown item"} · {candidate.sourceKind}
+                        item {candidate.itemIndex ?? "—"} · {candidate.itemName || "unknown item"} · {candidate.itemId || "—"}
+                      </div>
+                      <div className="text-gray-400">
+                        source {candidate.sourceKind} · cache {candidate.cacheStatus || "unknown"} · surface {candidate.surfaceState || "—"}
                       </div>
                     </div>
                   ))}
@@ -175,13 +197,22 @@ const MediaSurfaceDiagnostics = () => {
                     <div key={surface.mediaKey} className="border-t border-gray-700 pt-2">
                       <div className="break-all font-medium text-white">{surface.mediaKey}</div>
                       <div>
-                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"}
+                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"} · geometry {surface.geometryReady == null ? "—" : surface.geometryReady ? "ready" : "not ready"}
                       </div>
                       <div className="text-gray-400">
                         prepare→frame ready {surface.prepareToFrameReadyMs?.toFixed(0) ?? "—"} ms · send→transition {surface.sendToTransitionStartMs?.toFixed(0) ?? "—"} ms · send→play {surface.sendToPlayRequestMs?.toFixed(0) ?? "—"} ms · send→resolved {surface.sendToPlayResolvedMs?.toFixed(0) ?? "—"} ms · send→advancing frame {surface.sendToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
                       </div>
                       <div className="text-gray-400">
                         send state {surface.sendStateBeforeRequest ?? "—"} · last used {surface.lastUsedAt ? new Date(surface.lastUsedAt).toLocaleTimeString() : "—"}
+                      </div>
+                      <div className="text-gray-400">
+                        send {surface.sendTimestamp?.toFixed(1) ?? "—"} · transition {surface.transitionStartTimestamp?.toFixed(1) ?? "—"} · play request {surface.playRequestTimestamp?.toFixed(1) ?? "—"} · play resolved {surface.playResolvedTimestamp?.toFixed(1) ?? "—"} · first advancing frame {surface.firstAdvancingFrameTimestamp?.toFixed(1) ?? "—"} · complete {surface.transitionCompleteTimestamp?.toFixed(1) ?? "—"}
+                      </div>
+                      <div className="text-gray-400">
+                        surface rect {surface.surfaceRect ? `${surface.surfaceRect.width.toFixed(0)}×${surface.surfaceRect.height.toFixed(0)}` : "—"} · video rect {surface.videoRect ? `${surface.videoRect.width.toFixed(0)}×${surface.videoRect.height.toFixed(0)}` : "—"} · intrinsic {surface.intrinsicVideoSize ? `${surface.intrinsicVideoSize.width}×${surface.intrinsicVideoSize.height}` : "—"}
+                      </div>
+                      <div className="text-gray-400">
+                        object-fit {surface.objectFit || "—"} · source {surface.sourceUnchanged == null ? "—" : surface.sourceUnchanged ? "unchanged" : "changed"}
                       </div>
                       <div className="text-gray-400">
                         send snapshot t={surface.sendCurrentTime?.toFixed(2) ?? "-"} · readyState {surface.sendReadyState ?? "-"} · paused {surface.sendPaused == null ? "-" : surface.sendPaused ? "yes" : "no"} · seeking {surface.sendSeeking == null ? "-" : surface.sendSeeking ? "yes" : "no"} · buffered {surface.sendBufferedRanges?.map(([start, end]) => `${start.toFixed(2)}-${end.toFixed(2)}`).join(", ") || "-"}

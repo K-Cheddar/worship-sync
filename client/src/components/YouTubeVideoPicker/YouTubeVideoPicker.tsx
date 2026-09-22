@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Search } from "lucide-react";
+import { Link, Play, Search } from "lucide-react";
 
 import { AuthApiError, searchYouTubeVideos, type YouTubeSearchResult } from "../../api/auth";
 import Button from "../Button/Button";
@@ -191,6 +191,22 @@ const YouTubeVideoPicker = ({
               queue={previewQueue}
               autoPlayEntryKey={previewResult?.videoId}
               onVideoUnavailable={() => setPreviewError("This video is unavailable or cannot be embedded.")}
+              previewAction={
+                previewResult ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={Link}
+                    padding="px-2 py-1"
+                    className="text-xs max-md:min-h-0"
+                    disabled={selectingVideoId !== null}
+                    isLoading={selectingVideoId === previewResult.videoId}
+                    onClick={() => void handleSelect(previewResult)}
+                  >
+                    Link video
+                  </Button>
+                ) : null
+              }
             />
           ) : null}
           {previewError ? (
@@ -231,20 +247,8 @@ const YouTubeVideoPicker = ({
                     <div className="mt-auto flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
-                        variant="primary"
                         svg={Play}
-                        padding="px-2 py-1"
-                        className="text-xs max-md:min-h-0"
-                        disabled={selectingVideoId !== null || result.embeddable === false}
-                        isLoading={selectingVideoId === result.videoId}
-                        onClick={() => void handleSelect(result)}
-                      >
-                        Link video
-                      </Button>
-                      <Button
-                        type="button"
                         variant="secondary"
-                        svg={Play}
                         padding="px-2 py-1"
                         className="text-xs max-md:min-h-0"
                         disabled={selectingVideoId !== null}
@@ -262,6 +266,18 @@ const YouTubeVideoPicker = ({
                         }}
                       >
                         Preview
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        svg={Link}
+                        padding="px-2 py-1"
+                        className="text-xs max-md:min-h-0"
+                        disabled={selectingVideoId !== null || result.embeddable === false}
+                        isLoading={selectingVideoId === result.videoId}
+                        onClick={() => void handleSelect(result)}
+                      >
+                        Link video
                       </Button>
                     </div>
                   </div>

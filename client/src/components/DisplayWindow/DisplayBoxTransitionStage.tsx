@@ -28,6 +28,7 @@ import type {
   ElectronMediaSurfaceCandidate,
   ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
+import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 
 type LaneId = "a" | "b";
 
@@ -62,6 +63,14 @@ export type LaneMediaPlaybackOptions = {
   currentItemId?: string;
   /** Resolved outline for this output's controller scope. */
   preparedMediaOutlineId?: string | null;
+  preparedMediaContext?: Pick<
+    ElectronMediaDiscovery,
+    | "controllerProfileId"
+    | "controllerProfileName"
+    | "outlineScope"
+    | "outlineId"
+    | "outlineName"
+  >;
   preparedSurfaceBudget?: number;
   preparedMediaScope?: "service" | "current-item";
   /** Resolved display setting; false means this surface does not paint backgrounds. */
@@ -107,7 +116,8 @@ type DisplayBoxTransitionStageProps = {
   ) => ReactNode;
 };
 
-const TRANSITION_SECONDS = 0.5;
+const TRANSITION_DURATION_SECONDS = 0.5;
+const CONTENT_INCOMING_OFFSET_SECONDS = 0.1;
 /** Front-loaded so the first frames of the fade are perceptible immediately. */
 const TRANSITION_EASE = "power2.out";
 /**
@@ -198,9 +208,13 @@ const DisplayBoxTransitionStage = ({
   const timelineRef = useRef<GSAPTimeline | null>(null);
   const preparedMediaRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const preparedMediaReadyRef = useRef<Record<string, boolean>>({});
+  const preparedMediaGeometryReadyRef = useRef<Record<string, boolean>>({});
   const preparedMediaFirstAdvancingFrameRef = useRef<Record<string, boolean>>({});
   const adoptedPreparedMediaKeysRef = useRef(new Set<string>());
   const [preparedMediaReady, setPreparedMediaReady] = useState<
+    Record<string, boolean>
+  >({});
+  const [preparedMediaGeometryReady, setPreparedMediaGeometryReady] = useState<
     Record<string, boolean>
   >({});
   const [preparedMediaFirstAdvancingFrame, setPreparedMediaFirstAdvancingFrame] = useState<
@@ -283,6 +297,13 @@ const DisplayBoxTransitionStage = ({
     protectedMediaKeys: protectedPoolMediaKeys,
     maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
     scope: mediaPlayback?.preparedMediaScope,
+    renderer: "projector",
+    controllerProfileId:
+      mediaPlayback?.preparedMediaContext?.controllerProfileId,
+    controllerProfileName:
+      mediaPlayback?.preparedMediaContext?.controllerProfileName,
+    outlineScope: mediaPlayback?.preparedMediaContext?.outlineScope,
+    outlineName: mediaPlayback?.preparedMediaContext?.outlineName,
   });
   const poolCandidates = poolCandidateResult.candidates;
   /**
@@ -601,6 +622,18 @@ const DisplayBoxTransitionStage = ({
     [],
   );
 
+  const reportPreparedMediaGeometryReady = useCallback(
+    (mediaKey: string, ready: boolean) => {
+      preparedMediaGeometryReadyRef.current[mediaKey] = ready;
+      setPreparedMediaGeometryReady((current) =>
+        current[mediaKey] === ready
+          ? current
+          : { ...current, [mediaKey]: ready },
+      );
+    },
+    [],
+  );
+
   const reportPreparedMediaFirstAdvancingFrame = useCallback(
     (mediaKey: string, ready: boolean) => {
       preparedMediaFirstAdvancingFrameRef.current[mediaKey] = ready;
@@ -632,7 +665,8 @@ const DisplayBoxTransitionStage = ({
       if (
         !poolEnabled ||
         preparedKey === "none" ||
-        !preparedMediaReady[preparedKey]
+        !preparedMediaReady[preparedKey] ||
+        !preparedMediaGeometryReady[preparedKey]
       ) {
         return false;
       }
@@ -643,7 +677,14 @@ const DisplayBoxTransitionStage = ({
       // A pool surface may take ownership only at an incoming transition boundary.
       return isIncoming;
     },
-    [poolEnabled, preparedMediaReady, state.activeLaneId, state.lanes, state.phase],
+    [
+      poolEnabled,
+      preparedMediaGeometryReady,
+      preparedMediaReady,
+      state.activeLaneId,
+      state.lanes,
+      state.phase,
+    ],
   );
 
   const isLanePaintReady = (
@@ -682,7 +723,8 @@ const DisplayBoxTransitionStage = ({
     // frame is sufficient; playback advancement is diagnostic only.
     if (
       preparedCandidateSelected &&
-      preparedMediaReady[preparedMediaKey] !== true
+      (preparedMediaReady[preparedMediaKey] !== true ||
+        preparedMediaGeometryReady[preparedMediaKey] !== true)
     ) {
       return false;
     }
@@ -836,6 +878,7 @@ const DisplayBoxTransitionStage = ({
     mediaPlayback?.outputId,
     mediaPlayback?.windowRole,
       preparedMediaReady,
+      preparedMediaGeometryReady,
     poolCandidates,
     poolEnabled,
     shouldAnimate,
@@ -1047,15 +1090,13 @@ const DisplayBoxTransitionStage = ({
       gsap.set(outgoingMedia, { opacity: 1 });
       gsap.set(incomingMedia, { opacity: 0 });
       timeline.fromTo(
-        outgoingMedia,
-        { opacity: 1 },
-        { opacity: 0, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
-        "crossfade",
-      );
-      timeline.fromTo(
         incomingMedia,
         { opacity: 0 },
-        { opacity: 1, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+        {
+          opacity: 1,
+          duration: TRANSITION_DURATION_SECONDS,
+          ease: TRANSITION_EASE,
+        },
         "crossfade",
       );
     }
@@ -1066,14 +1107,18 @@ const DisplayBoxTransitionStage = ({
       timeline.fromTo(
         outgoingContent,
         { opacity: 1 },
-        { opacity: 0, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
+        { opacity: 0, duration: TRANSITION_DURATION_SECONDS, ease: TRANSITION_EASE },
         "crossfade",
       );
       timeline.fromTo(
         incomingContent,
         { opacity: 0 },
-        { opacity: 1, duration: TRANSITION_SECONDS, ease: TRANSITION_EASE },
-        "crossfade",
+        {
+          opacity: 1,
+          duration: TRANSITION_DURATION_SECONDS,
+          ease: TRANSITION_EASE,
+        },
+        `crossfade+=${CONTENT_INCOMING_OFFSET_SECONDS}`,
       );
     }
 
@@ -1309,8 +1354,11 @@ const DisplayBoxTransitionStage = ({
           candidateDiagnostics={poolCandidateResult.diagnostics}
           views={poolViews}
           onReadyChange={reportPreparedMediaReady}
+          onGeometryReadyChange={reportPreparedMediaGeometryReady}
           onFirstAdvancingFrameChange={reportPreparedMediaFirstAdvancingFrame}
           onSurfaceElement={reportPreparedMediaElement}
+          discovery={poolCandidateResult.discovery}
+          poolCapacity={poolCandidateResult.poolCapacity}
           transitionStart={transitionStart}
           transitionComplete={transitionComplete}
           lastSendPath={lastSendPath}

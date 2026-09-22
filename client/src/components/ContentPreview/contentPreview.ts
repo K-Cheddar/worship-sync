@@ -143,12 +143,6 @@ const MEDIA_KIND_LABELS: Record<ContentPreviewKind, string> = {
   unsupported: "Resource",
 };
 
-const DROPBOX_HOSTS = new Set([
-  "dropbox.com",
-  "www.dropbox.com",
-  "dl.dropboxusercontent.com",
-]);
-
 const normalizedMimeType = (value?: string): string =>
   value?.split(";", 1)[0]?.trim().toLowerCase() || "";
 
@@ -186,7 +180,11 @@ export const getSafeHttpUrl = (value?: string): string | null => {
   if (!trimmed) return null;
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password
+    ) return null;
     return parsed.toString();
   } catch {
     return null;
@@ -197,55 +195,6 @@ export const getContentPreviewFileName = (value?: string): string | null => {
   const fileName = pathFileName(value);
   if (!fileName || !/\.[a-z0-9]{1,12}$/i.test(fileName)) return null;
   return fileName;
-};
-
-const isDropboxUrl = (value?: string): boolean => {
-  const safeUrl = getSafeHttpUrl(value);
-  if (!safeUrl) return false;
-  try {
-    return DROPBOX_HOSTS.has(new URL(safeUrl).hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-};
-
-type ProviderUrlResolution = {
-  provider: ContentPreviewProvider;
-  providerLabel: string;
-  resolvedUrl: string;
-  fileName?: string;
-  mediaType?: ContentPreviewKind;
-};
-
-/** Provider-specific URL normalization stays outside renderers and callers. */
-const resolveDropboxUrl = (value: string): ProviderUrlResolution | null => {
-  if (!isDropboxUrl(value)) return null;
-  const fileName = getContentPreviewFileName(value) || undefined;
-  const mediaType = kindForFileName(fileName) || undefined;
-  if (!mediaType || !["image", "audio", "video", "document"].includes(mediaType)) {
-    return {
-      provider: "dropbox",
-      providerLabel: PROVIDER_LABELS.dropbox,
-      resolvedUrl: value,
-      fileName,
-    };
-  }
-
-  const resolved = new URL(value);
-  resolved.searchParams.delete("dl");
-  resolved.searchParams.set("raw", "1");
-  return {
-    provider: "dropbox",
-    providerLabel: PROVIDER_LABELS.dropbox,
-    resolvedUrl: resolved.toString(),
-    fileName,
-    mediaType,
-  };
-};
-
-const resolveProviderUrl = (value?: string): ProviderUrlResolution | null => {
-  if (!value) return null;
-  return resolveDropboxUrl(value);
 };
 
 export const getContentPreviewKind = (
@@ -357,10 +306,6 @@ export const resolveExternalContentPreviewSource = async (
   const resourceUrl = getSafeHttpUrl(resource.url);
   if (!resourceUrl || resource.resolveSource) return null;
 
-  const localResolution = resolveContentPreviewResource(resource);
-  // YouTube is already a first-class embed provider and does not need a media proxy.
-  if (localResolution.provider === "youtube") return null;
-
   const resolved = await getExternalResourceResolution(resourceUrl);
   const previewUrl = toAbsolutePreviewUrl(resolved.previewUrl || resolved.externalUrl);
   return {
@@ -391,14 +336,8 @@ export const resolveContentPreviewResource = (
     : getSafeHttpUrl(source?.originalUrl)
       ? source?.originalUrl?.trim() || sourceUrl
       : sourceUrl;
-  const providerResolution = resolveProviderUrl(resourceUrl || sourceUrl || undefined);
-  const hasServerResolution = Boolean(
-    source?.provider || source?.previewType || source?.mediaType || source?.requiresProxy !== undefined,
-  );
-  const resolvedUrl = hasServerResolution
-    ? sourceUrl || originalUrl
-    : providerResolution?.resolvedUrl || sourceUrl || originalUrl;
-  const fileName = resource.fileName || source?.fileName || providerResolution?.fileName;
+  const resolvedUrl = sourceUrl || originalUrl;
+  const fileName = resource.fileName || source?.fileName;
   const mimeType = normalizedMimeType(source?.mimeType || resource.mimeType) || undefined;
   const candidate: ContentPreviewResource = {
     ...resource,
@@ -409,14 +348,17 @@ export const resolveContentPreviewResource = (
   const serverPreviewType = source?.previewType;
   const mediaType = source?.mediaType
     ? source.mediaType as ContentPreviewKind
-    : providerResolution?.mediaType || getContentPreviewKind(candidate, mimeType);
+    : getContentPreviewKind(candidate, mimeType);
   const youtubeVideoId = source?.mediaId || getYouTubePreviewVideoId(candidate);
   const explicitProvider = resource.provider?.trim().toLowerCase();
+  const normalizedExplicitProvider = isContentPreviewProvider(explicitProvider)
+    ? explicitProvider
+    : undefined;
   const sourceProvider = isContentPreviewProvider(source?.provider) ? source.provider : undefined;
   const provider: ContentPreviewProvider = sourceProvider || (
     youtubeVideoId || explicitProvider === "youtube"
       ? "youtube"
-      : providerResolution?.provider || (
+      : normalizedExplicitProvider || (
           resource.resolveSource || explicitProvider?.startsWith("worshipsync")
             ? "worshipsync"
             : mediaType === "web"
@@ -427,7 +369,7 @@ export const resolveContentPreviewResource = (
         )
   );
   const normalizedProvider = isContentPreviewProvider(provider) ? provider : "unknown";
-  const providerLabel = (sourceProvider ? PROVIDER_LABELS[sourceProvider] : null) || providerResolution?.providerLabel ||
+  const providerLabel = (sourceProvider ? PROVIDER_LABELS[sourceProvider] : null) ||
     getContentPreviewProviderLabel(provider, originalUrl || resolvedUrl || undefined);
   const renderer = serverPreviewType || mediaType;
   const canPreview = source?.canPreview ?? (mediaType !== "unsupported" && (

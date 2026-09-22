@@ -38,6 +38,7 @@ describe("content preview normalization", () => {
     const unsafeUrl = ["java", "script:alert(1)"].join("");
     expect(getSafeHttpUrl(unsafeUrl)).toBeNull();
     expect(getSafeHttpUrl("data:text/html,unsafe")).toBeNull();
+    expect(getSafeHttpUrl("https://user:password@example.test/file.mp4")).toBeNull();
   });
 
   it("uses a domain fallback when a resource has no title", () => {
@@ -46,7 +47,7 @@ describe("content preview normalization", () => {
     ).toBe("example.test");
   });
 
-  it("resolves Dropbox shared MP4 links to raw media while retaining the original URL", () => {
+  it("leaves provider URL normalization to the server resolver", () => {
     const resolution = resolveContentPreviewResource({
       id: "dropbox-video",
       url: dropboxMp4Url,
@@ -54,31 +55,13 @@ describe("content preview normalization", () => {
 
     expect(resolution).toMatchObject({
       originalUrl: dropboxMp4Url,
-      provider: "dropbox",
-      providerLabel: "Dropbox",
+      provider: "direct",
       mediaType: "video",
       renderer: "video",
       title: "Pathfinder-Day-Ingles-1.mp4",
       canPreview: true,
     });
-    expect(new URL(resolution.resolvedUrl || "").searchParams.get("raw")).toBe("1");
-    expect(new URL(resolution.resolvedUrl || "").searchParams.get("dl")).toBeNull();
-    expect(resolution.resolvedUrl).not.toBe(resolution.originalUrl);
-  });
-
-  it.each([
-    ["photo.jpg", "image"],
-    ["track.mp3", "audio"],
-    ["guide.pdf", "document"],
-  ])("recognizes Dropbox %s as %s", (fileName, expected) => {
-    const resolution = resolveContentPreviewResource({
-      id: `dropbox-${fileName}`,
-      url: `https://www.dropbox.com/scl/fi/abc123/${fileName}?rlkey=secret&dl=0`,
-    });
-
-    expect(resolution.mediaType).toBe(expected);
-    expect(resolution.provider).toBe("dropbox");
-    expect(resolution.title).toBe(fileName);
+    expect(resolution.resolvedUrl).toBe(dropboxMp4Url);
   });
 
   it("prefers an explicit title over an inferred Dropbox filename", () => {

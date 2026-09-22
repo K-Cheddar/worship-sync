@@ -29,10 +29,14 @@ import {
   type ElectronMediaCandidateCacheStatus,
   type ElectronMediaCandidateStatus,
   type ElectronMediaSurfaceCandidateDiagnostic,
+  type ElectronMediaDiscovery,
+  type ElectronMediaDiscoveryRenderer,
 } from "../utils/electronMediaSurfaceDiagnostics";
+import { DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET } from "../utils/electronMediaSurfacePool";
 
 type ServiceItemMedia = {
   itemId: string;
+  itemName: string;
   itemIndex: number;
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
@@ -41,6 +45,8 @@ type ServiceItemMedia = {
 export type ServiceVideoCandidateResult = {
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
+  discovery: ElectronMediaDiscovery;
+  poolCapacity: number;
 };
 
 type PouchAllDocsResult = {
@@ -321,7 +327,13 @@ const getItemMedia = async (
       (diagnostic): diagnostic is ElectronMediaSurfaceCandidateDiagnostic =>
         Boolean(diagnostic),
     );
-  return { itemId: doc._id, itemIndex, candidates, diagnostics };
+  return {
+    itemId: doc._id,
+    itemName: doc.name,
+    itemIndex,
+    candidates,
+    diagnostics,
+  };
 };
 
 const getChangedDocumentIds = (event: CustomEventInit): string[] => {
@@ -348,6 +360,11 @@ export const useServiceVideoCandidates = ({
   protectedMediaKeys,
   maxSurfaces,
   scope = "service",
+  renderer = "projector",
+  controllerProfileId,
+  controllerProfileName,
+  outlineScope,
+  outlineName,
 }: {
   enabled: boolean;
   outputId?: string;
@@ -358,6 +375,11 @@ export const useServiceVideoCandidates = ({
   protectedMediaKeys?: string[];
   maxSurfaces?: number;
   scope?: "service" | "current-item";
+  renderer?: ElectronMediaDiscoveryRenderer;
+  controllerProfileId?: string;
+  controllerProfileName?: string;
+  outlineScope?: string;
+  outlineName?: string;
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
@@ -435,6 +457,11 @@ export const useServiceVideoCandidates = ({
         apply([]);
         return;
       }
+      // Do not let a previous outline's prepared surfaces survive while the
+      // newly selected outline is being read. The live lane still contributes
+      // the current media candidate synchronously, so clearing here avoids
+      // cross-outline playback without creating a blank handoff.
+      if (activeListIdRef.current !== activeListId) apply([]);
 
       const list = (await db.get(activeListId)) as DBItemListDetails;
       if (generation !== loadGenerationRef.current) return;
@@ -594,7 +621,13 @@ export const useServiceVideoCandidates = ({
 
   const candidateResult = useMemo(() => {
     const candidates = serviceMedia.flatMap((item) => item.candidates);
-    const diagnostics = serviceMedia.flatMap((item) => item.diagnostics);
+    const diagnostics: ElectronMediaSurfaceCandidateDiagnostic[] = serviceMedia
+      .flatMap((item) => item.diagnostics)
+      .map((diagnostic) => ({
+        ...diagnostic,
+        isCurrentItem:
+          diagnostic.isCurrentItem ?? diagnostic.itemId === currentItemId,
+      }));
     // Finite current media is already known from the live lane. Include it
     // synchronously so a transition cannot begin on the fallback while the
     // asynchronous local-path lookup is still settling.
@@ -606,7 +639,12 @@ export const useServiceVideoCandidates = ({
       currentMediaDiscovery.candidate ?? immediateCurrentCandidate;
     if (currentCandidate) candidates.unshift(currentCandidate);
     if (currentMediaDiscovery.diagnostic) {
-      diagnostics.unshift(currentMediaDiscovery.diagnostic);
+      diagnostics.unshift({
+        ...currentMediaDiscovery.diagnostic,
+        isCurrentItem:
+          currentMediaDiscovery.diagnostic.isCurrentItem ??
+          currentMediaDiscovery.diagnostic.itemId === currentItemId,
+      });
     }
     const diagnosticsByKey = new Map<
       string,
@@ -628,17 +666,71 @@ export const useServiceVideoCandidates = ({
       protectedMediaKeys,
       maxSurfaces,
     });
+    const discoveryItems = serviceMedia.map((item) => {
+      const videos = new Map<string, ElectronMediaSurfaceCandidateDiagnostic>();
+      item.diagnostics.forEach((diagnostic) => {
+        const previous = videos.get(diagnostic.mediaKey);
+        if (
+          !previous ||
+          (diagnostic.status === "eligible" && previous.status !== "eligible")
+        ) {
+          videos.set(diagnostic.mediaKey, diagnostic);
+        }
+      });
+      return {
+        itemIndex: item.itemIndex,
+        itemId: item.itemId,
+        itemName: item.itemName,
+        videos: [...videos.values()].map((diagnostic) => ({
+          mediaKey: diagnostic.mediaKey,
+          source: diagnostic.resolvedSource ?? diagnostic.originalSource,
+          sourceKind: diagnostic.sourceKind,
+          status: diagnostic.status,
+          cacheStatus: diagnostic.cacheStatus,
+        })),
+      };
+    });
+    const finiteVideoKeys = new Set(
+      diagnostics
+        .filter((diagnostic) => diagnostic.status !== "excluded")
+        .map((diagnostic) => diagnostic.mediaKey),
+    );
+    const discovery: ElectronMediaDiscovery = {
+      renderer,
+      outputId,
+      controllerProfileId,
+      controllerProfileName,
+      outlineScope,
+      outlineId,
+      outlineName,
+      currentItemId,
+      itemCount: serviceMedia.length,
+      uniqueFiniteVideoCount: finiteVideoKeys.size,
+      items: discoveryItems,
+    };
     return {
       candidates: selected,
       diagnostics: [...diagnosticsByKey.values()],
+      discovery,
+      poolCapacity: Math.max(
+        0,
+        Math.floor(maxSurfaces ?? DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET),
+      ),
     };
   }, [
+    controllerProfileId,
+    controllerProfileName,
     currentItemId,
     currentMedia,
     maxSurfaces,
+    outlineId,
+    outlineName,
+    outlineScope,
+    outputId,
     protectedMediaKeys,
     serviceMedia,
     currentMediaDiscovery,
+    renderer,
   ]);
 
   const previousReconciliationRef = useRef<
@@ -648,6 +740,14 @@ export const useServiceVideoCandidates = ({
       }
     | undefined
   >(undefined);
+  const previousDiscoverySignatureRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const signature = JSON.stringify(candidateResult.discovery);
+    if (signature === previousDiscoverySignatureRef.current) return;
+    previousDiscoverySignatureRef.current = signature;
+    console.debug("[prepared-media] discovery", candidateResult.discovery);
+  }, [candidateResult.discovery]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const next = {

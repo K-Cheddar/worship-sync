@@ -16,14 +16,14 @@ const candidate = (
 });
 
 describe("electronMediaSurfacePool", () => {
-  it("uses the provisional twelve-surface default budget", () => {
+  it("uses a conservative safety ceiling without evicting a normal service", () => {
     const selected = selectElectronMediaSurfaceCandidates({
       candidates: Array.from({ length: 11 }, (_, index) =>
         candidate(`media-${index}`),
       ),
     });
 
-    expect(DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET).toBe(12);
+    expect(DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET).toBeGreaterThanOrEqual(11);
     expect(selected).toHaveLength(11);
   });
 

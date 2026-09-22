@@ -95,4 +95,38 @@ describe("YouTubePlaylistPlayer", () => {
     expect(player.destroy).toHaveBeenCalledTimes(1);
     delete (window as Window & { YT?: unknown }).YT;
   });
+
+  it("uses a full-width layout for preview mode and keeps playlist mode compact", async () => {
+    const player = {
+      playVideo: jest.fn(),
+      pauseVideo: jest.fn(),
+      stopVideo: jest.fn(),
+      cueVideoById: jest.fn(),
+      loadVideoById: jest.fn(),
+      seekTo: jest.fn(),
+      getCurrentTime: jest.fn(() => 0),
+      getDuration: jest.fn(() => 0),
+      setVolume: jest.fn(),
+      destroy: jest.fn(),
+    };
+    const Player = jest.fn((_element: HTMLElement, options: { events?: { onReady?: () => void } }) => {
+      queueMicrotask(() => options.events?.onReady?.());
+      return player;
+    });
+    (window as Window & { YT?: unknown }).YT = { Player };
+
+    const { rerender, unmount } = render(
+      <YouTubePlaylistPlayer mode="preview" queue={[queue[0]]} />,
+    );
+
+    await waitFor(() => expect(Player).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("region", { name: "YouTube video preview" })).toHaveClass("bg-gray-900/70");
+    expect(screen.getByTestId("youtube-player-layout")).toHaveClass("grid-cols-1");
+
+    rerender(<YouTubePlaylistPlayer queue={queue} />);
+    expect(screen.getByTestId("youtube-player-layout")).toHaveClass("sm:grid-cols-[minmax(0,18rem)_1fr]");
+
+    unmount();
+    delete (window as Window & { YT?: unknown }).YT;
+  });
 });

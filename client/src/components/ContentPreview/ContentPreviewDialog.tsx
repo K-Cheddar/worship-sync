@@ -109,8 +109,8 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
 
     let active = true;
     const directUrl = getSafeHttpUrl(resource.url);
-    setResolving(false);
-    setSource(directUrl ? { url: directUrl, mimeType: resource.mimeType, fileName: resource.fileName } : null);
+    setResolving(Boolean(directUrl && !resource.resolveSource));
+    setSource(null);
     setResolveError("");
     setActionError("");
     setCopyState("idle");
@@ -123,12 +123,23 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       if (directUrl) {
         void resolveExternalContentPreviewSource(resource)
           .then((resolved) => {
-            if (!active || !resolved) return;
+            if (!active) return;
+            if (!resolved) {
+              setResolveError("This resource could not be resolved for preview.");
+              return;
+            }
             setSource(resolved);
           })
-          .catch(() => {
-            // Keep the validated direct URL as a graceful fallback when the
-            // authenticated metadata/proxy service is temporarily unavailable.
+          .catch((error) => {
+            if (active) {
+              setResolveError(errorMessage(
+                error,
+                "This resource could not be resolved for preview.",
+              ));
+            }
+          })
+          .finally(() => {
+            if (active) setResolving(false);
           });
       }
       return () => {
@@ -206,7 +217,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
 
   const handleMediaError = () => setRenderStatus("error");
   const handleMediaReady = () => setRenderStatus("ready");
-  const waitingForSource = Boolean(resource?.url && !source && !resolveError);
+  const waitingForSource = Boolean(resource?.url && resolving && !source && !resolveError);
   const showFallback = Boolean(resolveError) || (
     !resolving && Boolean(resolution && !resolution.canPreview)
   ) || (!resolving && renderStatus === "error");
@@ -240,7 +251,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     }
     if (kind === "youtube" && youtubeQueue.length) {
       return (
-        <div className="relative aspect-video w-full bg-black p-2">
+        <div className="relative w-full bg-black p-2">
           {renderStatus === "loading" ? <LoadingState label="Loading video player…" /> : null}
           <YouTubePlaylistPlayer
             queue={youtubeQueue}

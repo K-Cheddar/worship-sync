@@ -25,6 +25,8 @@ import {
   summarizeElectronMediaSurfaceDiagnostics,
   type ElectronMediaSurfaceCandidateDiagnostic,
   type ElectronMediaSurfaceDiagnostic,
+  type ElectronMediaDiscovery,
+  type ElectronMediaDiscoveryRenderer,
 } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   resolveVideoCueDrift,
@@ -42,6 +44,7 @@ type ElectronMediaSurfacePoolProps = {
   candidateDiagnostics?: ElectronMediaSurfaceCandidateDiagnostic[];
   views: ElectronMediaSurfaceView[];
   onReadyChange: (mediaKey: string, ready: boolean) => void;
+  onGeometryReadyChange?: (mediaKey: string, ready: boolean) => void;
   onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
@@ -52,11 +55,32 @@ type ElectronMediaSurfacePoolProps = {
   posterShown?: boolean;
   outputId?: string;
   windowRole?: string;
+  discovery?: ElectronMediaDiscovery;
+  poolCapacity?: number;
 };
 
 const PRESENTED_FRAME_TIMEOUT_MS = 5000;
 
 let nextPreparedSurfaceInstanceId = 0;
+const NOOP = () => undefined;
+
+const rendererForWindowRole = (
+  windowRole: string | undefined,
+): ElectronMediaDiscoveryRenderer =>
+  windowRole === "editor" ? "editor" : "projector";
+
+type SurfaceRect = { x: number; y: number; width: number; height: number };
+
+const snapshotRect = (element: Element | null): SurfaceRect | undefined => {
+  if (!element) return undefined;
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  };
+};
 
 type PreparedSurfaceDebug = (
   event: string,
@@ -194,17 +218,21 @@ const PreparedSurface = ({
   view,
   enabled,
   onReadyChange,
+  onGeometryReadyChange,
   onFirstAdvancingFrameChange,
   onSurfaceElement,
   onDiagnosticChange,
+  stageRect,
 }: {
   candidate: ElectronMediaSurfaceCandidate;
   view?: ElectronMediaSurfaceView;
   enabled: boolean;
   onReadyChange: (mediaKey: string, ready: boolean) => void;
+  onGeometryReadyChange: (mediaKey: string, ready: boolean) => void;
   onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
+  stageRect?: SurfaceRect;
 }) => {
   const instanceIdRef = useRef(++nextPreparedSurfaceInstanceId);
   const mountedAtRef = useRef(performance.now());
@@ -223,7 +251,16 @@ const PreparedSurface = ({
   const lastCueGenerationRef = useRef<number | undefined>(undefined);
   const correctionStartedAtRef = useRef<number | undefined>(undefined);
   const mountedRef = useRef(true);
+  const surfaceElementRef = useRef<HTMLDivElement>(null);
   const resolvedSourceRef = useRef<string | undefined>(undefined);
+  const onReadyChangeRef = useRef(onReadyChange);
+  const onGeometryReadyChangeRef = useRef(onGeometryReadyChange);
+  const onFirstAdvancingFrameChangeRef = useRef(onFirstAdvancingFrameChange);
+  const onDiagnosticChangeRef = useRef(onDiagnosticChange);
+  onReadyChangeRef.current = onReadyChange;
+  onGeometryReadyChangeRef.current = onGeometryReadyChange;
+  onFirstAdvancingFrameChangeRef.current = onFirstAdvancingFrameChange;
+  onDiagnosticChangeRef.current = onDiagnosticChange;
   resolvedSourceRef.current = resolvedSource;
 
   const debug = useCallback<PreparedSurfaceDebug>(
@@ -461,6 +498,8 @@ const PreparedSurface = ({
     try {
       publishReady({
         sendRequestTimestamp: sendRequestedAt,
+        sendTimestamp: sendRequestedAt,
+        wasReadyBeforeSend: stateBeforeSend === "READY",
         sendStateBeforeRequest: stateBeforeSend,
         sendCurrentTime: video.currentTime,
         sendReadyState: video.readyState,
@@ -470,7 +509,10 @@ const PreparedSurface = ({
       });
       debug("PLAY_REQUESTED", { mode: "live", sendRequestedAt });
       const playCalledAt = performance.now();
-      publishReady({ playCalledTimestamp: playCalledAt });
+      publishReady({
+        playCalledTimestamp: playCalledAt,
+        playRequestTimestamp: playCalledAt,
+      });
       await video.play();
       const playResolvedAt = performance.now();
       publishReady({
@@ -517,6 +559,14 @@ const PreparedSurface = ({
   useEffect(() => {
     mountedRef.current = true;
     let active = true;
+    const loading = beginPreparedVideoSurface(stateRef.current);
+    generationRef.current = loading.generation;
+    stateRef.current = loading;
+    setState(loading);
+    onReadyChangeRef.current(candidate.mediaKey, false);
+    onGeometryReadyChangeRef.current(candidate.mediaKey, false);
+    onFirstAdvancingFrameChangeRef.current(candidate.mediaKey, false);
+    playingGenerationRef.current = undefined;
     setResolvedSource(undefined);
     void resolveSurfaceSource(candidate.source).then((result) => {
       if (!active) return;
@@ -539,7 +589,7 @@ const PreparedSurface = ({
         );
         stateRef.current = failed;
         if (mountedRef.current) setState(failed);
-        onDiagnosticChange?.({
+        onDiagnosticChangeRef.current?.({
           mediaKey: candidate.mediaKey,
           source: candidate.source,
           phase: failed.phase,
@@ -551,7 +601,11 @@ const PreparedSurface = ({
     return () => {
       active = false;
     };
-  }, [candidate.mediaKey, candidate.source, debug, onDiagnosticChange]);
+  }, [
+    candidate.mediaKey,
+    candidate.source,
+    debug,
+  ]);
 
   useEffect(() => {
     if (!enabled || !resolvedSource) return;
@@ -559,6 +613,75 @@ const PreparedSurface = ({
   }, [enabled, prepare, resolvedSource]);
 
   const hasView = view !== undefined;
+
+  useLayoutEffect(() => {
+    const surface = surfaceElementRef.current;
+    const video = videoRef.current;
+    const surfaceRect = snapshotRect(surface);
+    const videoRect = snapshotRect(video);
+    const surfaceStyles = surface
+      ? window.getComputedStyle(surface)
+      : undefined;
+    const videoStyles = video ? window.getComputedStyle(video) : undefined;
+    const sourceUnchanged = Boolean(
+      !resolvedSource || !video?.currentSrc || video.currentSrc === resolvedSource,
+    );
+    const stageHasLayout = Boolean(stageRect?.width && stageRect?.height);
+    const surfaceMatchesStage =
+      !stageHasLayout ||
+      (Boolean(surfaceRect?.width && surfaceRect?.height) &&
+        Math.abs((surfaceRect?.width ?? 0) - (stageRect?.width ?? 0)) <= 1 &&
+        Math.abs((surfaceRect?.height ?? 0) - (stageRect?.height ?? 0)) <= 1);
+    const hasObservableLayout = Boolean(
+      surfaceRect?.width ||
+        surfaceRect?.height ||
+        videoRect?.width ||
+        videoRect?.height ||
+        video?.videoWidth ||
+        video?.videoHeight,
+    );
+    const geometryReady = Boolean(
+      surface?.isConnected &&
+        video?.isConnected &&
+        surfaceStyles?.display !== "none" &&
+        surfaceStyles?.visibility !== "hidden" &&
+        videoStyles?.display !== "none" &&
+        videoStyles?.visibility !== "hidden" &&
+        sourceUnchanged &&
+        surfaceMatchesStage &&
+        (!hasObservableLayout ||
+          (Boolean(surfaceRect?.width && surfaceRect?.height) &&
+            Boolean(videoRect?.width && videoRect?.height) &&
+            (video?.videoWidth ?? 0) > 0 &&
+            (video?.videoHeight ?? 0) > 0)),
+    );
+    onGeometryReadyChange(candidate.mediaKey, geometryReady);
+    onDiagnosticChange?.({
+      mediaKey: candidate.mediaKey,
+      source: resolvedSource ?? candidate.source,
+      phase: stateRef.current.phase,
+      sourceKind,
+      geometryReady,
+      surfaceRect,
+      videoRect,
+      intrinsicVideoSize: {
+        width: video?.videoWidth ?? 0,
+        height: video?.videoHeight ?? 0,
+      },
+      objectFit: videoStyles?.objectFit,
+      sourceUnchanged,
+    });
+  }, [
+    candidate.mediaKey,
+    candidate.source,
+    onDiagnosticChange,
+    onGeometryReadyChange,
+    resolvedSource,
+    sourceKind,
+    stageRect,
+    state.phase,
+    view?.videoBox,
+  ]);
 
   useLayoutEffect(() => {
     if (!enabled || !view?.shouldPlay) {
@@ -666,6 +789,7 @@ const PreparedSurface = ({
       debug("UNMOUNT");
       mountedRef.current = false;
       onReadyChange(candidate.mediaKey, false);
+      onGeometryReadyChange(candidate.mediaKey, false);
       onFirstAdvancingFrameChange(candidate.mediaKey, false);
       if (video) {
         video.pause();
@@ -674,13 +798,21 @@ const PreparedSurface = ({
       }
       stateRef.current = disposePreparedVideoSurface(stateRef.current);
     };
-  }, [candidate.mediaKey, debug, onFirstAdvancingFrameChange, onReadyChange]);
+  }, [
+    candidate.mediaKey,
+    debug,
+    onFirstAdvancingFrameChange,
+    onGeometryReadyChange,
+    onReadyChange,
+  ]);
 
   const opacity = view?.opacity;
   const videoBox = view?.videoBox;
   const surfaceRef = useCallback(
-    (element: HTMLDivElement | null) =>
-      onSurfaceElement(candidate.mediaKey, element),
+    (element: HTMLDivElement | null) => {
+      surfaceElementRef.current = element;
+      onSurfaceElement(candidate.mediaKey, element);
+    },
     [candidate.mediaKey, onSurfaceElement],
   );
   return (
@@ -723,6 +855,7 @@ const ElectronMediaSurfacePool = ({
   candidateDiagnostics,
   views,
   onReadyChange,
+  onGeometryReadyChange = NOOP,
   onFirstAdvancingFrameChange,
   onSurfaceElement,
   onDiagnosticChange,
@@ -733,6 +866,8 @@ const ElectronMediaSurfacePool = ({
   posterShown,
   outputId,
   windowRole,
+  discovery,
+  poolCapacity,
 }: ElectronMediaSurfacePoolProps) => {
   const [diagnostics, setDiagnostics] = useState<
     Record<string, SurfaceDiagnostic>
@@ -741,12 +876,17 @@ const ElectronMediaSurfacePool = ({
     PreparedVideoMetrics | undefined
   >(undefined);
   const [mountedSurfaceKeys, setMountedSurfaceKeys] = useState<string[]>([]);
+  const poolElementRef = useRef<HTMLDivElement>(null);
+  const [stageRect, setStageRect] = useState<SurfaceRect | undefined>();
   const latestDiagnosticsRef = useRef<
     ReturnType<typeof summarizeElectronMediaSurfaceDiagnostics> | undefined
   >(undefined);
   const previousKeysRef = useRef<string[]>([]);
   const previousCandidatesRef = useRef(
     new Map<string, ElectronMediaSurfaceCandidate>(),
+  );
+  const previousDiscoveryRef = useRef<ElectronMediaDiscovery | undefined>(
+    undefined,
   );
   const evictionHistoryRef = useRef<string[]>([]);
   const candidateKeys = useMemo(
@@ -773,18 +913,46 @@ const ElectronMediaSurfacePool = ({
     () => new Set(mountedSurfaceKeys),
     [mountedSurfaceKeys],
   );
+
+  useLayoutEffect(() => {
+    const element = poolElementRef.current;
+    if (!element) return;
+    const updateRect = () => {
+      const next = snapshotRect(element);
+      setStageRect((current) => {
+        if (
+          current?.x === next?.x &&
+          current?.y === next?.y &&
+          current?.width === next?.width &&
+          current?.height === next?.height
+        ) {
+          return current;
+        }
+        return next;
+      });
+    };
+    updateRect();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateRect);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [candidateKeySignature]);
   const handleDiagnosticChange = useCallback(
     (diagnostic: SurfaceDiagnostic) => {
+      const withRenderer = {
+        ...diagnostic,
+        renderer: rendererForWindowRole(windowRole),
+      };
       setDiagnostics((current) => ({
         ...current,
-        [diagnostic.mediaKey]: {
-          ...current[diagnostic.mediaKey],
-          ...diagnostic,
+        [withRenderer.mediaKey]: {
+          ...current[withRenderer.mediaKey],
+          ...withRenderer,
         },
       }));
-      onDiagnosticChange?.(diagnostic);
+      onDiagnosticChange?.(withRenderer);
     },
-    [onDiagnosticChange],
+    [onDiagnosticChange, windowRole],
   );
 
   const handleSurfaceElement = useCallback(
@@ -815,21 +983,27 @@ const ElectronMediaSurfacePool = ({
       const detailsByKey = new Map(
         (candidateDiagnostics ?? []).map((detail) => [detail.mediaKey, detail]),
       );
+      const outlineChanged =
+        previousDiscoveryRef.current?.outlineId !== discovery?.outlineId;
       evictionHistoryRef.current = [
         ...evictionHistoryRef.current,
         ...evicted.map((mediaKey) => {
           const detail = detailsByKey.get(mediaKey);
           const previous = previousCandidates.get(mediaKey);
-          const reason =
-            detail?.status === "eligible"
-              ? "budget"
-              : previous?.itemId && detail?.itemId && previous.itemId !== detail.itemId
-                ? "outline changed"
+          const reason = outlineChanged
+            ? "outline switched"
+            : !detail
+              ? "service removed"
+            : detail?.status === "eligible" || detail?.status === "pending-cache"
+              ? "resource-budget eviction"
+              : previous?.source !== detail?.resolvedSource
+                ? "media identity/source changed"
                 : "service removed";
           return `${mediaKey} (${reason})`;
         }),
       ].slice(-64);
     }
+    previousDiscoveryRef.current = discovery;
     previousCandidatesRef.current = new Map(
       candidatesRef.current.map((candidate) => [candidate.mediaKey, candidate]),
     );
@@ -844,7 +1018,7 @@ const ElectronMediaSurfacePool = ({
         ? current
         : next;
     });
-  }, [candidateDiagnostics, candidateKeySignature]);
+  }, [candidateDiagnostics, candidateKeySignature, discovery]);
 
   useEffect(() => {
     if (!transitionStart) return;
@@ -937,8 +1111,21 @@ const ElectronMediaSurfacePool = ({
         itemIndex: candidate.itemIndex,
         isCurrentItem:
           candidate.itemId != null &&
-          candidate.itemId === currentCandidates[0]?.itemId,
-      }));
+          candidate.itemId === discovery?.currentItemId,
+        }));
+    const candidateByKey = new Map(
+      currentCandidates.map((candidate) => [candidate.mediaKey, candidate]),
+    );
+    const detailsWithSurfaceState = details.map((detail) => {
+      const candidate = candidateByKey.get(detail.mediaKey);
+      const surface = diagnostics[detail.mediaKey];
+      return {
+        ...detail,
+        priority: candidate?.priority,
+        protected: candidate?.protected,
+        surfaceState: surface?.surfaceState,
+      };
+    });
     const surfaceDiagnostics = currentCandidates
       .filter((candidate) => mountedKeySet.has(candidate.mediaKey))
       .map((candidate, index) => {
@@ -948,6 +1135,13 @@ const ElectronMediaSurfacePool = ({
           source: diagnostic?.source || candidate.source,
           phase: diagnostic?.phase ?? ("idle" as const),
           sourceKind: diagnostic?.sourceKind ?? ("remote" as const),
+          renderer: diagnostic?.renderer ?? rendererForWindowRole(windowRole),
+          geometryReady: diagnostic?.geometryReady,
+          surfaceRect: diagnostic?.surfaceRect,
+          videoRect: diagnostic?.videoRect,
+          intrinsicVideoSize: diagnostic?.intrinsicVideoSize,
+          objectFit: diagnostic?.objectFit,
+          sourceUnchanged: diagnostic?.sourceUnchanged,
           priority: diagnostic?.priority ?? candidate.priority ?? index,
           protected: diagnostic?.protected ?? candidate.protected,
           prepareToFrameReadyMs: diagnostic?.prepareToFrameReadyMs,
@@ -959,7 +1153,10 @@ const ElectronMediaSurfacePool = ({
           sendSeeking: diagnostic?.sendSeeking,
           sendBufferedRanges: diagnostic?.sendBufferedRanges,
           sendRequestTimestamp: diagnostic?.sendRequestTimestamp,
+          sendTimestamp: diagnostic?.sendTimestamp,
+          wasReadyBeforeSend: diagnostic?.wasReadyBeforeSend,
           playCalledTimestamp: diagnostic?.playCalledTimestamp,
+          playRequestTimestamp: diagnostic?.playRequestTimestamp,
           playResolvedTimestamp: diagnostic?.playResolvedTimestamp,
           transitionStartTimestamp: diagnostic?.transitionStartTimestamp,
           firstAdvancingFrameTimestamp:
@@ -977,13 +1174,13 @@ const ElectronMediaSurfacePool = ({
     const value = summarizeElectronMediaSurfaceDiagnostics({
       outputId,
       windowRole,
-      candidateCount: details.filter((detail) => detail.eligible).length,
+      candidateCount: currentCandidates.length,
       discoveredCount: details.length,
       pendingCacheCount: details.filter(
         (detail) =>
           detail.status === "pending-cache" || detail.cacheStatus === "pending",
       ).length,
-      candidateDetails: details,
+      candidateDetails: detailsWithSurfaceState,
       evictions: evictionHistoryRef.current,
       surfaces: surfaceDiagnostics,
       renderPath: lastSendPath,
@@ -991,6 +1188,35 @@ const ElectronMediaSurfacePool = ({
       lastMediaKey,
       posterShown,
       rendererMetrics,
+      discovery,
+      finiteVideoCount:
+        discovery?.uniqueFiniteVideoCount ??
+        new Set(
+          details
+            .filter((detail) => detail.status !== "excluded")
+            .map((detail) => detail.mediaKey),
+        ).size,
+      serviceItemCount: discovery?.itemCount,
+      currentItemId: discovery?.currentItemId,
+      currentItemVideoCount: new Set(
+        details
+          .filter(
+            (detail) =>
+              detail.isCurrentItem && detail.status !== "excluded",
+          )
+          .map((detail) => detail.mediaKey),
+      ).size,
+      currentItemReadyCount: new Set(
+        surfaceDiagnostics
+          .filter(
+            (surface) =>
+                details.find((detail) => detail.mediaKey === surface.mediaKey)
+                ?.isCurrentItem &&
+                (surface.phase === "ready" || surface.phase === "playing"),
+          )
+          .map((surface) => surface.mediaKey),
+      ).size,
+      poolCapacity,
     });
     latestDiagnosticsRef.current = value;
     (
@@ -1014,11 +1240,13 @@ const ElectronMediaSurfacePool = ({
     lastSendPath,
     mountedKeySet,
     outputId,
+    poolCapacity,
     posterShown,
     rendererMetrics,
     transitionComplete,
     transitionStart,
     windowRole,
+    discovery,
   ]);
 
   useEffect(() => {
@@ -1035,7 +1263,11 @@ const ElectronMediaSurfacePool = ({
 
   if (!enabled) return null;
   return (
-    <>
+    <div
+      ref={poolElementRef}
+      className="pointer-events-none absolute inset-0"
+      data-testid="electron-media-surface-pool"
+    >
       {candidates.map((candidate) => (
         <PreparedSurface
           key={candidate.mediaKey}
@@ -1043,12 +1275,14 @@ const ElectronMediaSurfacePool = ({
           view={viewsByKey.get(candidate.mediaKey)}
           enabled={enabled}
           onReadyChange={onReadyChange}
+          onGeometryReadyChange={onGeometryReadyChange}
           onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
           onSurfaceElement={handleSurfaceElement}
           onDiagnosticChange={handleDiagnosticChange}
+          stageRect={stageRect}
         />
       ))}
-    </>
+    </div>
   );
 };
 

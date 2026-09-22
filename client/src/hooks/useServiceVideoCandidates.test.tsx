@@ -48,6 +48,7 @@ const renderCandidates = (
     outlineItems?: Record<string, string[]>;
     maxSurfaces?: number;
     scope?: "service" | "current-item";
+    renderer?: "projector" | "editor";
     cacheMap?: Record<string, string>;
     getLocalMediaPath?: jest.Mock;
     ensureMediaCached?: jest.Mock;
@@ -121,6 +122,7 @@ const renderCandidates = (
         outlineId: options.outlineId,
         maxSurfaces: options.maxSurfaces,
         scope: options.scope,
+        renderer: options.renderer,
       }),
     { wrapper },
   );
@@ -174,19 +176,48 @@ describe("useServiceVideoCandidates", () => {
             id: "asset",
             mediaInfo: video("asset", "worshipsync-media://asset/video.mp4"),
           },
+          {
+            id: "local-file",
+            mediaInfo: video("local-file", "local-video-file://asset-1", {
+              source: "local",
+              localVideoFile: {
+                id: "asset-1",
+                ownerDeviceId: "device-1",
+                ownerLabel: "Device 1",
+                fileName: "asset.mp4",
+                contentType: "video/mp4",
+                storagePolicy: "local-only",
+              },
+            }),
+          },
+          {
+            id: "canva",
+            mediaInfo: video("canva", "https://cdn.example.com/canva.mp4", {
+              canvaImportKey: "canva:design:rev:1:mp4:1",
+              canvaSource: {
+                designId: "design",
+                designTitle: "Canva video",
+                revision: 1,
+                format: "mp4",
+                pageNumbers: [1],
+              },
+            }),
+          },
         ]),
       ]),
     ];
     const { result } = renderCandidates(docs, { maxSurfaces: 8 });
 
-    await waitFor(() => expect(result.current.candidates).toHaveLength(3));
-    expect(
-      result.current.candidates.map((candidate) => candidate.source),
-    ).toEqual([
-      "worshipsync-media://asset/video.mp4",
-      "media-cache://cached.mp4",
-      "https://cdn.example.com/one.mp4",
-    ]);
+    await waitFor(() => expect(result.current.candidates).toHaveLength(5));
+    expect(new Set(result.current.candidates.map((candidate) => candidate.source))).toEqual(
+      new Set([
+        "worshipsync-media://asset/video.mp4",
+        "media-cache://cached.mp4",
+        "https://cdn.example.com/one.mp4",
+        "local-video-file://asset-1",
+        "https://cdn.example.com/canva.mp4",
+      ]),
+    );
     expect(
       result.current.diagnostics.every((diagnostic) => diagnostic.eligible),
     ).toBe(true);
@@ -702,7 +733,63 @@ describe("useServiceVideoCandidates", () => {
     ).toBe(identityKey);
   });
 
-  it("limits the Electron editor scope to videos in the current item", async () => {
+  it("discovers the same complete service video set for projector and editor", async () => {
+    const videoOne = "https://cdn.example.com/video-1.mp4";
+    const docs = [
+      item("item-a", "Song A", [
+        slide("slide-a", [{ id: "video-1-a", mediaInfo: video("video-1", videoOne) }]),
+      ]),
+      item("item-b", "Song B", [
+        slide("slide-b", [{ id: "video-2-b", mediaInfo: video("video-2", "https://cdn.example.com/video-2.mp4") }]),
+      ]),
+      item("item-c", "Song C", [
+        slide("slide-c", [{ id: "video-3-c", mediaInfo: video("video-3", "https://cdn.example.com/video-3.mp4") }]),
+      ]),
+      item("item-d", "Song D", [
+        slide("slide-d", [{ id: "video-1-d", mediaInfo: video("video-1", videoOne) }]),
+      ]),
+    ];
+
+    const {
+      result: projectorResult,
+      unmount: unmountProjector,
+    } = renderCandidates(docs, {
+      currentItemId: "item-a",
+      renderer: "projector",
+    });
+    await waitFor(() => expect(projectorResult.current.candidates).toHaveLength(3));
+    expect(projectorResult.current.discovery).toMatchObject({
+      renderer: "projector",
+      itemCount: 4,
+      uniqueFiniteVideoCount: 3,
+    });
+    expect(projectorResult.current.discovery.items).toHaveLength(4);
+    expect(
+      projectorResult.current.diagnostics
+        .filter((diagnostic) => diagnostic.isCurrentItem)
+        .map((diagnostic) => diagnostic.mediaKey),
+    ).toEqual(["remote:video-1"]);
+    unmountProjector();
+
+    const { result: editorResult } = renderCandidates(docs, {
+      currentItemId: "item-a",
+      renderer: "editor",
+    });
+    await waitFor(() => expect(editorResult.current.candidates).toHaveLength(3));
+    expect(editorResult.current.discovery).toMatchObject({
+      renderer: "editor",
+      itemCount: 4,
+      uniqueFiniteVideoCount: 3,
+    });
+    expect(editorResult.current.discovery.items.map((entry) => entry.itemName)).toEqual([
+      "Song A",
+      "Song B",
+      "Song C",
+      "Song D",
+    ]);
+  });
+
+  it("supports an explicit current-item scope for generic callers", async () => {
     const { result } = renderCandidates(
       [
         item("item-1", "Other Song", [
