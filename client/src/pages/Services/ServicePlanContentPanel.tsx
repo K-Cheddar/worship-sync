@@ -616,9 +616,9 @@ const ServicePlanContentPanel = ({
                   {!canPreviewResource ? (
                     <p className="truncate text-sm text-gray-100" title={displayTitle}>{displayTitle}</p>
                   ) : (
-                    <button
+                  <button
                       type="button"
-                      className="block min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-cyan-100 hover:text-cyan-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                      className="block w-full min-w-0 flex-1 cursor-pointer truncate text-left text-sm text-cyan-100 hover:text-cyan-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
                       title={displayTitle}
                       aria-label={`Preview ${displayTitle}`}
                       onClick={(event) => {

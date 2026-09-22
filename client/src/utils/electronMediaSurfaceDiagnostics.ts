@@ -16,8 +16,26 @@ export type ElectronMediaCandidateStatus =
 export type ElectronMediaCandidateCacheStatus =
   | "cached"
   | "pending"
+  | "cache-in-progress"
+  | "unavailable"
+  | "retry-scheduled"
   | "not-cacheable"
   | "not-required";
+
+export type ElectronMediaSurfaceGeometryReason =
+  | "source-mismatch"
+  | "surface-size-zero"
+  | "video-size-zero"
+  | "stage-size-mismatch"
+  | "disconnected"
+  | "hidden"
+  | "no-presented-frame";
+
+export type ElectronMediaOutlineLoadState =
+  | "loading"
+  | "loaded"
+  | "error"
+  | "retrying";
 
 export type ElectronMediaDiscoveryRenderer = "projector" | "editor";
 
@@ -37,6 +55,14 @@ export type ElectronMediaDiscovery = {
   outlineScope?: string;
   outlineId?: string | null;
   outlineName?: string;
+  targetOutlineId?: string | null;
+  targetOutlineName?: string;
+  loadedOutlineId?: string;
+  loadedOutlineName?: string;
+  outlineLoadState?: ElectronMediaOutlineLoadState;
+  outlineLoadError?: string;
+  outlineRetryAttempt?: number;
+  outlineRetryAt?: number;
   contextSource?: "local runtime selection" | "persisted ItemLists fallback";
   currentItemId?: string;
   itemCount: number;
@@ -85,6 +111,11 @@ export type ElectronMediaSurfaceDiagnostic = {
   renderer?: ElectronMediaDiscoveryRenderer;
   surfaceState?: "COLD" | "PREPARING" | "READY" | "ACTIVE";
   geometryReady?: boolean;
+  geometryReason?: ElectronMediaSurfaceGeometryReason;
+  framePresentedReady?: boolean;
+  expectedSource?: string;
+  actualCurrentSrc?: string;
+  canonicalSourceMatch?: boolean;
   surfaceRect?: { x: number; y: number; width: number; height: number };
   videoRect?: { x: number; y: number; width: number; height: number };
   intrinsicVideoSize?: { width: number; height: number };
@@ -210,8 +241,9 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
     pendingCacheCount ??
     candidateDetails?.filter(
       (candidate) =>
-        candidate.status === "pending-cache" ||
-        candidate.cacheStatus === "pending",
+        candidate.cacheStatus === "pending" ||
+        candidate.cacheStatus === "cache-in-progress" ||
+        candidate.cacheStatus === "retry-scheduled",
     ).length ??
     0,
   finiteVideoCount,

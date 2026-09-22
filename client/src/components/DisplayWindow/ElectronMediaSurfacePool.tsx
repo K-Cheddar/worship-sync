@@ -37,6 +37,7 @@ import {
 import { isHLSVideoSource } from "../../utils/isInstantVideoSource";
 import {
   assignPlayableVideoSource,
+  areEquivalentMediaSources,
   isPlayableMediaSource,
 } from "../../utils/mediaSource";
 import { parseLocalVideoFileAssetId } from "../../utils/localVideoFileAssets";
@@ -166,7 +167,7 @@ const seekToBeginning = async (video: HTMLVideoElement): Promise<void> => {
   if (video.currentTime !== 0) {
     const seeked = waitForVideoEvent(video, "seeked");
     video.currentTime = 0;
-    await seeked;
+    await withPreparationWatchdog(seeked, "playback");
   }
 };
 
@@ -239,7 +240,7 @@ const resolveSurfaceSource = async (
 
 const withPreparationWatchdog = async <T,>(
   promise: Promise<T>,
-  stage: "metadata" | "presented-frame",
+  stage: "metadata" | "playback" | "presented-frame",
 ): Promise<T> =>
   new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(
@@ -286,6 +287,7 @@ const PreparedSurface = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(initialPreparedVideoSurfaceState);
   const [state, setState] = useState(initialPreparedVideoSurfaceState);
+  const [framePresentedReady, setFramePresentedReady] = useState(false);
   const [resolvedSource, setResolvedSource] = useState<string | undefined>(
     undefined,
   );
@@ -406,6 +408,7 @@ const PreparedSurface = ({
       );
       update(failed);
       onReadyChange(candidate.mediaKey, false);
+      onPreparationFailure?.(candidate.mediaKey, message);
       return;
     }
     const loading = beginPreparedVideoSurface(stateRef.current);
@@ -413,6 +416,7 @@ const PreparedSurface = ({
     preparationStartedAtRef.current = performance.now();
     playingGenerationRef.current = undefined;
     onReadyChange(candidate.mediaKey, false);
+    setFramePresentedReady(false);
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
     debug("PREPARE_START", { source: resolvedSource });
     update(loading);
@@ -454,6 +458,7 @@ const PreparedSurface = ({
         "ready",
       );
       update(ready);
+      setFramePresentedReady(true);
       onReadyChange(candidate.mediaKey, true);
       publishReady({
         prepareToFrameReadyMs:
@@ -466,6 +471,7 @@ const PreparedSurface = ({
       debug("PREPARE_FAILED", { stage, error: String(error) });
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
       onReadyChange(candidate.mediaKey, false);
+      setFramePresentedReady(false);
       onPreparationFailure?.(candidate.mediaKey, message);
       update(
         advancePreparedVideoSurface(
@@ -496,6 +502,7 @@ const PreparedSurface = ({
       advancePreparedVideoSurface(stateRef.current, generation, "resetting"),
     );
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
+    setFramePresentedReady(false);
     onReadyChange(candidate.mediaKey, false);
     playingGenerationRef.current = undefined;
     correctionStartedAtRef.current = undefined;
@@ -507,6 +514,7 @@ const PreparedSurface = ({
       update(
         advancePreparedVideoSurface(stateRef.current, generation, "ready"),
       );
+      setFramePresentedReady(true);
       onReadyChange(candidate.mediaKey, true);
       publishReady({
         prepareToFrameReadyMs:
@@ -633,25 +641,28 @@ const PreparedSurface = ({
   useEffect(() => {
     mountedRef.current = true;
     let active = true;
+    if (frozenSourceRef.current && shouldPlayRef.current) {
+      pendingSourceRef.current = candidate.source;
+      debug("SOURCE_DEFERRED_WHILE_ACTIVE", {
+        candidateSource: candidate.source,
+        activeSource: frozenSourceRef.current,
+      });
+      return () => {
+        active = false;
+      };
+    }
     const loading = beginPreparedVideoSurface(stateRef.current);
     generationRef.current = loading.generation;
     stateRef.current = loading;
     setState(loading);
     onReadyChangeRef.current(candidate.mediaKey, false);
     onGeometryReadyChangeRef.current(candidate.mediaKey, false);
+    setFramePresentedReady(false);
     onFirstAdvancingFrameChangeRef.current(candidate.mediaKey, false);
     playingGenerationRef.current = undefined;
     setResolvedSource(undefined);
     void resolveSurfaceSource(candidate.source).then((result) => {
       if (!active) return;
-      if (frozenSourceRef.current && shouldPlayRef.current) {
-        pendingSourceRef.current = candidate.source;
-        debug("SOURCE_DEFERRED_WHILE_ACTIVE", {
-          candidateSource: candidate.source,
-          activeSource: frozenSourceRef.current,
-        });
-        return;
-      }
       debug("SOURCE_CHANGE", {
         source: candidate.source,
         resolvedSource: result.source,
@@ -723,8 +734,13 @@ const PreparedSurface = ({
       ? window.getComputedStyle(surface)
       : undefined;
     const videoStyles = video ? window.getComputedStyle(video) : undefined;
+    const actualCurrentSrc = video?.currentSrc || video?.src || undefined;
+    const canonicalSourceMatch = areEquivalentMediaSources(
+      resolvedSource,
+      actualCurrentSrc,
+    );
     const sourceUnchanged = Boolean(
-      !resolvedSource || !video?.currentSrc || video.currentSrc === resolvedSource,
+      !resolvedSource || !actualCurrentSrc || canonicalSourceMatch,
     );
     const stageHasLayout = Boolean(stageRect?.width && stageRect?.height);
     const surfaceMatchesStage =
@@ -740,21 +756,46 @@ const PreparedSurface = ({
         video?.videoWidth ||
         video?.videoHeight,
     );
-    const geometryReady = Boolean(
-      surface?.isConnected &&
-        video?.isConnected &&
-        surfaceStyles?.display !== "none" &&
-        surfaceStyles?.visibility !== "hidden" &&
-        videoStyles?.display !== "none" &&
-        videoStyles?.visibility !== "hidden" &&
-        sourceUnchanged &&
-        surfaceMatchesStage &&
-        (!hasObservableLayout ||
-          (Boolean(surfaceRect?.width && surfaceRect?.height) &&
-            Boolean(videoRect?.width && videoRect?.height) &&
-            (video?.videoWidth ?? 0) > 0 &&
-            (video?.videoHeight ?? 0) > 0)),
+    const connected = Boolean(surface?.isConnected && video?.isConnected);
+    const hidden = Boolean(
+      surfaceStyles?.display === "none" ||
+        surfaceStyles?.visibility === "hidden" ||
+        videoStyles?.display === "none" ||
+        videoStyles?.visibility === "hidden",
     );
+    const surfaceSizeReady = Boolean(
+      !hasObservableLayout ||
+        (surfaceRect?.width && surfaceRect?.height),
+    );
+    const videoSizeReady = Boolean(
+      !hasObservableLayout || (videoRect?.width && videoRect?.height),
+    );
+    const geometryReady = Boolean(
+      connected &&
+        !hidden &&
+        sourceUnchanged &&
+        framePresentedReady &&
+        surfaceMatchesStage &&
+        surfaceSizeReady &&
+        videoSizeReady,
+    );
+    const geometryReason = geometryReady
+      ? undefined
+      : !connected
+        ? "disconnected"
+        : hidden
+          ? "hidden"
+          : !sourceUnchanged
+            ? "source-mismatch"
+            : !framePresentedReady
+              ? "no-presented-frame"
+              : !surfaceSizeReady
+                ? "surface-size-zero"
+                : !videoSizeReady
+                  ? "video-size-zero"
+                  : !surfaceMatchesStage
+                    ? "stage-size-mismatch"
+                    : undefined;
     onGeometryReadyChange(candidate.mediaKey, geometryReady);
     onDiagnosticChange?.({
       mediaKey: candidate.mediaKey,
@@ -762,6 +803,11 @@ const PreparedSurface = ({
       phase: stateRef.current.phase,
       sourceKind,
       geometryReady,
+      geometryReason,
+      framePresentedReady,
+      expectedSource: resolvedSource,
+      actualCurrentSrc,
+      canonicalSourceMatch,
       surfaceRect,
       videoRect,
       intrinsicVideoSize: {
@@ -780,6 +826,7 @@ const PreparedSurface = ({
     sourceKind,
     stageRect,
     state.phase,
+    framePresentedReady,
     view?.videoBox,
   ]);
 
@@ -1238,6 +1285,11 @@ const ElectronMediaSurfacePool = ({
           sourceKind: diagnostic?.sourceKind ?? ("remote" as const),
           renderer: diagnostic?.renderer ?? rendererForWindowRole(windowRole),
           geometryReady: diagnostic?.geometryReady,
+          geometryReason: diagnostic?.geometryReason,
+          framePresentedReady: diagnostic?.framePresentedReady,
+          expectedSource: diagnostic?.expectedSource,
+          actualCurrentSrc: diagnostic?.actualCurrentSrc,
+          canonicalSourceMatch: diagnostic?.canonicalSourceMatch,
           surfaceRect: diagnostic?.surfaceRect,
           videoRect: diagnostic?.videoRect,
           intrinsicVideoSize: diagnostic?.intrinsicVideoSize,
@@ -1279,7 +1331,9 @@ const ElectronMediaSurfacePool = ({
       discoveredCount: details.length,
       pendingCacheCount: details.filter(
         (detail) =>
-          detail.status === "pending-cache" || detail.cacheStatus === "pending",
+          detail.cacheStatus === "pending" ||
+          detail.cacheStatus === "cache-in-progress" ||
+          detail.cacheStatus === "retry-scheduled",
       ).length,
       candidateDetails: detailsWithSurfaceState,
       evictions: evictionHistoryRef.current,

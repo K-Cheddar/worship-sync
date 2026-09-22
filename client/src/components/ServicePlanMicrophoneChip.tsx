@@ -69,7 +69,7 @@ export const ServicePlanMicrophoneChip = ({
         color={microphone.color}
         className={cn("size-3.5 shrink-0", iconClassName)}
       />
-      <span className="min-w-0 truncate">{microphone.name}</span>
+      <span className="min-w-0 flex-1 truncate">{microphone.name}</span>
       {detailLabel ? (
         <span className="min-w-0 truncate font-normal opacity-80">· {detailLabel}</span>
       ) : null}

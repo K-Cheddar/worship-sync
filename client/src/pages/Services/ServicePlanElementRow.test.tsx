@@ -1157,6 +1157,36 @@ describe("assignees and their microphones", () => {
     );
   });
 
+  it("swaps an assigned microphone from its chip", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: [orange, lapel],
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Pastor John", microphoneIds: [orange.id] }],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /Lapel 1/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      {
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-lapel"] },
+        ],
+      },
+      undefined,
+    );
+  });
+
   it("clears the lead name without promoting the next assignee", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();

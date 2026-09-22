@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -69,15 +69,15 @@ const song = (withAudio = true): DBItem => ({
   type: "song",
   ...(withAudio
     ? {
-        songAudio: {
-          id: "audio-1",
-          key: "churches/church-1/songs/song-1/audio-1.mp3",
-          fileName: "rehearsal.mp3",
-          contentType: "audio/mpeg" as const,
-          sizeBytes: 200,
-          uploadedAt: "2026-09-21T00:00:00.000Z",
-        },
-      }
+      songAudio: {
+        id: "audio-1",
+        key: "churches/church-1/songs/song-1/audio-1.mp3",
+        fileName: "rehearsal.mp3",
+        contentType: "audio/mpeg" as const,
+        sizeBytes: 200,
+        uploadedAt: "2026-09-21T00:00:00.000Z",
+      },
+    }
     : {}),
 } as DBItem);
 
@@ -149,7 +149,7 @@ describe("Resources page", () => {
     renderPage();
 
     expect(await screen.findByText("rehearsal.mp3")).toBeInTheDocument();
-    expect(screen.getByText("Song attachment · Trust and Obey")).toBeInTheDocument();
+    expect(screen.getByText("Song attachment - Trust and Obey")).toBeInTheDocument();
     expect(mockUpdateAllDocs).toHaveBeenCalledWith(
       mockDispatch,
       mockDb,
@@ -179,6 +179,25 @@ describe("Resources page", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Documents" }));
     expect(screen.queryByText("rehearsal.mp3")).not.toBeInTheDocument();
     expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
+  });
+
+  it("sorts resources by the selected column and toggles direction", async () => {
+    mockResources = [resource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    renderPage();
+
+    expect(await screen.findByText("rehearsal.mp3")).toBeInTheDocument();
+    const getResourceRows = () => screen.getAllByRole("button", { name: /^Preview / });
+    expect(within(getResourceRows()[0]).getByText("Guidelines.pdf")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Size/ }));
+    expect(within(getResourceRows()[0]).getByText("Guidelines.pdf")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Size/ }));
+    expect(within(getResourceRows()[0]).getByText("rehearsal.mp3")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Size/ }));
+    expect(within(getResourceRows()[0]).getByText("Guidelines.pdf")).toBeInTheDocument();
   });
 
   it("keeps loading while song documents are unresolved", async () => {
@@ -234,11 +253,32 @@ describe("Resources page", () => {
     expect(screen.getByText("No resources match this view.")).toBeInTheDocument();
   });
 
+  it("previews a PDF with the signed resource URL", async () => {
+    mockResources = [resource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    jest.mocked(getChurchResourceUrl).mockResolvedValue({
+      url: "https://abc.r2.cloudflarestorage.com/worshipsync-resources/guide.pdf",
+      expiresAt: "2026-09-22T00:00:00.000Z",
+    });
+    renderPage();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: /guidelines\.pdf/i }));
+
+    expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute(
+      "src",
+      "https://abc.r2.cloudflarestorage.com/worshipsync-resources/guide.pdf",
+    );
+    expect(getChurchResourceUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ churchId: "church-1", resourceId: "resource-1" }),
+    );
+  });
+
   it("keeps song-audio removal and uploads restricted to full access", async () => {
     renderPage("view");
     expect(await screen.findByText("rehearsal.mp3")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("button", { name: /rehearsal\.mp3/i }));
 
+    expect(await screen.findByRole("dialog", { name: "rehearsal.mp3" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove from song" })).not.toBeInTheDocument();
   });

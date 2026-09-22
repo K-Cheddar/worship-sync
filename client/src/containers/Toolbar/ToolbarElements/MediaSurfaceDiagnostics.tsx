@@ -129,6 +129,10 @@ const MediaSurfaceDiagnostics = () => {
                 <Metric label="Controller selected ID" value={selectedOutline?._id || "—"} />
                 <Metric label="Controller selected scope" value={selectedOutlineScope || "—"} />
                 <Metric label="Controller/profile" value={entry.discovery?.controllerProfileName ? `${entry.discovery.controllerProfileName} (${entry.discovery.controllerProfileId || "—"})` : entry.discovery?.controllerProfileId || "—"} />
+                <Metric label="Target preparation outline" value={entry.discovery?.targetOutlineName || entry.discovery?.targetOutlineId || "—"} />
+                <Metric label="Loaded preparation outline" value={entry.discovery?.loadedOutlineName || entry.discovery?.loadedOutlineId || "—"} />
+                <Metric label="Outline load state" value={entry.discovery?.outlineLoadState || "—"} />
+                <Metric label="Outline load error/retry" value={entry.discovery?.outlineLoadError ? `${entry.discovery.outlineLoadError} (attempt ${entry.discovery.outlineRetryAttempt ?? 0})` : entry.discovery?.outlineRetryAt ? `retry at ${new Date(entry.discovery.outlineRetryAt).toLocaleTimeString()}` : "—"} />
                 <Metric label="Prepared outline" value={entry.discovery?.outlineName || "—"} />
                 <Metric label="Prepared outline ID" value={entry.discovery?.outlineId || "—"} />
                 <Metric label="Prepared outline scope" value={entry.discovery?.outlineScope || "—"} />
@@ -207,7 +211,10 @@ const MediaSurfaceDiagnostics = () => {
                     <div key={surface.mediaKey} className="border-t border-gray-700 pt-2">
                       <div className="break-all font-medium text-white">{surface.mediaKey}</div>
                       <div>
-                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"} · geometry {surface.geometryReady == null ? "—" : surface.geometryReady ? "ready" : "not ready"}
+                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"} · geometry {surface.geometryReady == null ? "—" : surface.geometryReady ? "ready" : `not ready (${surface.geometryReason || "unknown"})`}
+                      </div>
+                      <div className="text-gray-400">
+                        frame presented {surface.framePresentedReady == null ? "—" : surface.framePresentedReady ? "yes" : "no"} · canonical source {surface.canonicalSourceMatch == null ? "—" : surface.canonicalSourceMatch ? "match" : "mismatch"}
                       </div>
                       <div className="text-gray-400">
                         prepare→frame ready {surface.prepareToFrameReadyMs?.toFixed(0) ?? "—"} ms · send→transition {surface.sendToTransitionStartMs?.toFixed(0) ?? "—"} ms · send→play {surface.sendToPlayRequestMs?.toFixed(0) ?? "—"} ms · send→resolved {surface.sendToPlayResolvedMs?.toFixed(0) ?? "—"} ms · send→advancing frame {surface.sendToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
@@ -223,6 +230,9 @@ const MediaSurfaceDiagnostics = () => {
                       </div>
                       <div className="text-gray-400">
                         object-fit {surface.objectFit || "—"} · source {surface.sourceUnchanged == null ? "—" : surface.sourceUnchanged ? "unchanged" : "changed"}
+                      </div>
+                      <div className="break-all text-gray-400">
+                        expected: {surface.expectedSource || "—"} · currentSrc: {surface.actualCurrentSrc || "—"}
                       </div>
                       <div className="text-gray-400">
                         send snapshot t={surface.sendCurrentTime?.toFixed(2) ?? "-"} · readyState {surface.sendReadyState ?? "-"} · paused {surface.sendPaused == null ? "-" : surface.sendPaused ? "yes" : "no"} · seeking {surface.sendSeeking == null ? "-" : surface.sendSeeking ? "yes" : "no"} · buffered {surface.sendBufferedRanges?.map(([start, end]) => `${start.toFixed(2)}-${end.toFixed(2)}`).join(", ") || "-"}

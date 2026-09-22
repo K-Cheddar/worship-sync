@@ -36,6 +36,11 @@ describe("ElectronMediaSurfacePool", () => {
     HTMLMediaElement.prototype,
     "currentTime",
   );
+  const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  const originalCurrentSrc = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "currentSrc",
+  );
 
   beforeEach(() => {
     Object.defineProperty(window, "electronAPI", {
@@ -97,6 +102,13 @@ describe("ElectronMediaSurfacePool", () => {
       );
     } else {
       Reflect.deleteProperty(HTMLMediaElement.prototype, "currentTime");
+    }
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: originalGetBoundingClientRect,
+    });
+    if (originalCurrentSrc) {
+      Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", originalCurrentSrc);
     }
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
@@ -213,6 +225,84 @@ describe("ElectronMediaSurfacePool", () => {
       ).toHaveAttribute("data-prepared-state", "error"),
     );
     expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  });
+
+  it("reports a hard HLS preparation failure to the coordinator", async () => {
+    const onPreparationFailure = jest.fn();
+    const getLocalMediaPath = window.electronAPI
+      ?.getLocalMediaPath as jest.Mock;
+    getLocalMediaPath.mockResolvedValue("media-cache://clip.m3u8");
+
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: "https://cdn.example.com/clip.m3u8" }]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onPreparationFailure={onPreparationFailure}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(onPreparationFailure).toHaveBeenCalledTimes(1));
+    expect(onPreparationFailure).toHaveBeenCalledWith(
+      candidate.mediaKey,
+      "HLS source is not a finite prepared video",
+    );
+  });
+
+  it("accepts rendered geometry with zero intrinsic dimensions after a presented frame", async () => {
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 860,
+        bottom: 483,
+        width: 860,
+        height: 483,
+        toJSON: () => undefined,
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", {
+      configurable: true,
+      get() {
+        return this.src ? `${this.src}/` : "";
+      },
+    });
+    const onGeometryReadyChange = jest.fn();
+    const diagnostics: Array<Record<string, unknown>> = [];
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onGeometryReadyChange={onGeometryReadyChange}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onDiagnosticChange={(diagnostic) => diagnostics.push(diagnostic)}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    await waitFor(() => expect(onGeometryReadyChange).toHaveBeenCalledWith(candidate.mediaKey, true));
+    expect(diagnostics.at(-1)).toEqual(
+      expect.objectContaining({
+        geometryReady: true,
+        framePresentedReady: true,
+        canonicalSourceMatch: true,
+        intrinsicVideoSize: { width: 0, height: 0 },
+      }),
+    );
   });
 
   it("reports READY only after the final starting frame is presented and retained", async () => {
@@ -353,12 +443,13 @@ describe("ElectronMediaSurfacePool", () => {
       muted: true,
       volume: 1,
     });
+    const onReadyChange = jest.fn();
     const { rerender } = render(
       <ElectronMediaSurfacePool
         enabled
         candidates={[{ ...candidate, source: firstSource }]}
         views={[makeView(firstSource, true)]}
-        onReadyChange={jest.fn()}
+        onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={jest.fn()}
         onSurfaceElement={jest.fn()}
       />,
@@ -378,26 +469,30 @@ describe("ElectronMediaSurfacePool", () => {
         enabled
         candidates={[{ ...candidate, source: secondSource }]}
         views={[makeView(secondSource, true)]}
-        onReadyChange={jest.fn()}
+        onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={jest.fn()}
         onSurfaceElement={jest.fn()}
       />,
     );
 
     await waitFor(() => expect(video.getAttribute("src")).toBe(firstResolvedSource));
+    const falseCountAfterStart = onReadyChange.mock.calls.filter(([, ready]) => ready === false).length;
+    expect(onReadyChange.mock.calls.at(-1)?.[1]).toBe(true);
+    expect(onReadyChange.mock.calls.filter(([, ready]) => ready === false).length).toBe(falseCountAfterStart);
 
     rerender(
       <ElectronMediaSurfacePool
         enabled
         candidates={[{ ...candidate, source: secondSource }]}
         views={[makeView(secondSource, false)]}
-        onReadyChange={jest.fn()}
+        onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={jest.fn()}
         onSurfaceElement={jest.fn()}
       />,
     );
 
     await waitFor(() => expect(video.getAttribute("src")).toBe(secondSource));
+    expect(onReadyChange.mock.calls.filter(([, ready]) => ready === false).length).toBeGreaterThan(falseCountAfterStart);
   });
 
   it("resolves local file references before assigning a video source", async () => {
@@ -523,5 +618,54 @@ describe("ElectronMediaSurfacePool", () => {
         screen.getByTestId("electron-media-surface-remote:clip"),
       ).toHaveAttribute("data-prepared-state", "ready"),
     );
+  });
+
+  it("releases a preparation attempt when seeked never arrives", async () => {
+    jest.useFakeTimers();
+    let currentTime = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+      },
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn(() => {
+        currentTime = 1;
+        return Promise.resolve();
+      }),
+    });
+    const onPreparationFailure = jest.fn();
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onPreparationFailure={onPreparationFailure}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await act(async () => {
+      jest.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(onPreparationFailure).toHaveBeenCalledWith(
+      candidate.mediaKey,
+      expect.stringContaining("preparation watchdog timeout"),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+      "data-prepared-state",
+      "error",
+    );
+    jest.useRealTimers();
   });
 });

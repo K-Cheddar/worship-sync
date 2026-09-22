@@ -1705,7 +1705,7 @@ const ServicePlanElementRow = ({
           placement === "manager"
             ? "w-full flex-col items-stretch gap-0.5 overflow-hidden p-0"
             : placement === "summary"
-              ? "min-w-0 flex-1 overflow-hidden p-0"
+              ? "min-w-0 flex-1 overflow-hidden p-0 md:p-0"
               : allowEdit ? "pl-9" : "pl-1.5",
         )}
       >
@@ -1780,7 +1780,7 @@ const ServicePlanElementRow = ({
                     : SERVICE_PLAN_SONG_ICON_CLASS,
                 )}
               />
-              <span className="min-w-0 flex-1 truncate leading-none">
+              <span className="min-w-0 flex-1 truncate leading-5">
                 {label}
               </span>
               {summaryOpensContent ? (
@@ -1805,7 +1805,8 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "box-border flex !h-full !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded py-0 text-left leading-none focus-visible:outline-none focus-visible:ring-1",
+                "box-border flex !h-[2rem] !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded py-0 text-left leading-none focus-visible:outline-none focus-visible:ring-1",
+                placement === "summary" && "px-1.5",
                 isSongUnlinked
                   ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
                   : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
@@ -1830,7 +1831,9 @@ const ServicePlanElementRow = ({
               {songChipContent}
             </button>
           ) : (
-            <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
+            <span className={cn("flex h-[2rem] min-w-0 items-center gap-0.5", placement === "summary" && "self-stretch px-1.5")}>
+              {songChipContent}
+            </span>
           );
 
           return (
@@ -1840,7 +1843,7 @@ const ServicePlanElementRow = ({
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
                 placement === "summary" && cn(
                   SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                  "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                  "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
                 ),
                 isSongUnlinked
                   ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
@@ -1919,7 +1922,7 @@ const ServicePlanElementRow = ({
               SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
               placement === "summary" && cn(
                 SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
               ),
             )}
           >
@@ -1942,7 +1945,10 @@ const ServicePlanElementRow = ({
                 anchor={(
                   <button
                     type="button"
-                    className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                    className={cn(
+                      "flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300",
+                      placement === "summary" && "px-1.5",
+                    )}
                     aria-label={`Edit scripture ${scriptureLabel}`}
                     onClick={(event) => {
                       if (usesContentPanel) openContent(event.currentTarget);
@@ -1953,7 +1959,7 @@ const ServicePlanElementRow = ({
                       size="xs"
                       className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                     />
-                    <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
+                    <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
                   </button>
                 )}
               />
@@ -1964,7 +1970,7 @@ const ServicePlanElementRow = ({
                   size="xs"
                   className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                 />
-                <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
+                <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
               </>
             )}
             {allowEdit ? (
@@ -2012,21 +2018,21 @@ const ServicePlanElementRow = ({
                   anchor={(
                     <button
                       type="button"
-                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                       aria-label={`Edit scripture ${additionalScripture.label}`}
                       onClick={(event) => {
                         if (usesContentPanel) openContent(event.currentTarget);
                       }}
                     >
                       <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
-                      <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
+                      <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
                     </button>
                   )}
                 />
               ) : (
                 <>
                   <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-                  <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
+                  <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
                 </>
               )}
               {allowEdit ? (
@@ -2060,13 +2066,16 @@ const ServicePlanElementRow = ({
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
                 placement === "summary" && cn(
                   SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                  "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                  "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
                 ),
               )}
             >
               <button
                 type="button"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                className={cn(
+                  "box-border flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300",
+                  placement === "summary" && "px-1.5",
+                )}
                 aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${getServicePlanResourceDisplayLabel(resource)}`}
                 title={getServicePlanResourceDisplayLabel(resource)}
                 onClick={(event) => {
@@ -2080,7 +2089,7 @@ const ServicePlanElementRow = ({
                 }}
               >
                 <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
-                <span className="min-w-0 flex-1 truncate leading-none">{getServicePlanResourceDisplayLabel(resource)}</span>
+                <span className="min-w-0 flex-1 truncate leading-5">{getServicePlanResourceDisplayLabel(resource)}</span>
               </button>
               {allowEdit ? (
                 <Button

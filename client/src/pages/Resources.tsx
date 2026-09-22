@@ -1,5 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   AudioLines,
   Download,
   FileText,
@@ -12,6 +15,7 @@ import {
 import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
+import Modal from "../components/Modal/Modal";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
@@ -46,6 +50,8 @@ import type {
 } from "../types/churchResource";
 
 type ResourceFilter = "all" | "document" | "audio";
+type ResourceSortKey = "name" | "type" | "size" | "updated" | "source";
+type SortDirection = "asc" | "desc";
 
 const formatBytes = (sizeBytes: number) => {
   if (sizeBytes < 1024) return `${sizeBytes} B`;
@@ -79,20 +85,24 @@ const entryKey = (entry: ResourceLibraryEntry) =>
     ? `resource:${entry.resource.id}`
     : `song-audio:${entry.songId}:${entry.audio.id}`;
 
+const entrySize = (entry: ResourceLibraryEntry) =>
+  entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes;
+
+const entrySource = (entry: ResourceLibraryEntry) =>
+  entry.source === "song-audio" ? `Song attachment ${entry.songName}` : "Reusable church resource";
+
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
 const ResourcePreview = ({
   churchId,
   entry,
-  onClose,
   onRename,
   onDelete,
   canEdit,
 }: {
   churchId: string;
   entry: ResourceLibraryEntry;
-  onClose: () => void;
   onRename: (resource: ChurchResource, name: string) => Promise<void>;
   onDelete: (entry: ResourceLibraryEntry) => Promise<void>;
   canEdit: boolean;
@@ -208,36 +218,27 @@ const ResourcePreview = ({
   const contentType = resourceEntryContentType(entry);
   return (
     <aside className="flex min-h-0 flex-col gap-3 border-t border-gray-700 bg-gray-950/50 p-4" aria-label="Resource details">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          {editingName && resource ? (
-            <div className="flex items-center gap-2">
-              <Input
-                label="Resource name"
-                value={nameDraft}
-                onChange={(value) => setNameDraft(String(value))}
-                className="min-w-0 flex-1"
-                autoFocus
-              />
-              <Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button>
-              <Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} />
-            </div>
-          ) : (
-            <>
-              <h2 className="truncate text-base font-semibold text-white">{resourceEntryName(entry)}</h2>
-          <p className="text-xs text-gray-400">
-            {typeLabel(entry)} · {formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)}
-            {` · Updated ${formatDate(entryUpdatedAt(entry))}`}
-            {entry.source === "song-audio" ? ` · Song attachment: ${entry.songName}` : " · Reusable church resource"}
-          </p>
-            </>
-          )}
+      {editingName && resource ? (
+        <div className="flex items-center gap-2">
+          <Input
+            label="Resource name"
+            value={nameDraft}
+            onChange={(value) => setNameDraft(String(value))}
+            className="min-w-0 flex-1"
+            autoFocus
+          />
+          <Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button>
+          <Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} />
         </div>
-        <Button type="button" variant="tertiary" svg={X} aria-label="Close resource details" onClick={onClose} />
-      </div>
-
+      ) : (
+        <p className="text-xs text-gray-400">
+          {typeLabel(entry)} - {formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)}
+          {` - Updated ${formatDate(entryUpdatedAt(entry))}`}
+          {entry.source === "song-audio" ? ` - Song attachment: ${entry.songName}` : " - Reusable church resource"}
+        </p>
+      )}
       {resource?.description ? <p className="text-sm text-gray-300">{resource.description}</p> : null}
-      {loading ? <p className="text-sm text-gray-400" role="status">Opening resource…</p> : null}
+      {loading ? <p className="text-sm text-gray-400" role="status">Opening resource...</p> : null}
       {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
 
       {!loading && !error && contentType === "application/pdf" && url ? (
@@ -261,7 +262,7 @@ const ResourcePreview = ({
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={loading || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button>
         {resource && canEdit ? <Button type="button" variant="tertiary" svg={Pencil} disabled={savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
-        {canEdit ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{resourceEntryDeleteActionLabel(entry)}</Button> : null}
+        {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{resourceEntryDeleteActionLabel(entry)}</Button> : null}
       </div>
     </aside>
   );
@@ -277,6 +278,8 @@ const ResourcesPage = () => {
   const [resources, setResources] = useState<ChurchResource[]>([]);
   const [filter, setFilter] = useState<ResourceFilter>("all");
   const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState<ResourceSortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [churchResourcesLoading, setChurchResourcesLoading] = useState(true);
   const [songDocsLoading, setSongDocsLoading] = useState(true);
@@ -350,6 +353,33 @@ const ResourcesPage = () => {
       }),
     [allSongDocs, filter, query, resources],
   );
+  const sortedEntries = useMemo(() => {
+    const sorted = [...entries];
+    if (!sortKey || !sortDirection) return sorted;
+    sorted.sort((left, right) => {
+      let comparison = 0;
+      if (sortKey === "name") comparison = resourceEntryName(left).localeCompare(resourceEntryName(right), undefined, { numeric: true, sensitivity: "base" });
+      if (sortKey === "type") comparison = typeLabel(left).localeCompare(typeLabel(right), undefined, { sensitivity: "base" });
+      if (sortKey === "size") comparison = entrySize(left) - entrySize(right);
+      if (sortKey === "updated") comparison = new Date(entryUpdatedAt(left)).getTime() - new Date(entryUpdatedAt(right)).getTime();
+      if (sortKey === "source") comparison = entrySource(left).localeCompare(entrySource(right), undefined, { sensitivity: "base" });
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+    return sorted;
+  }, [entries, sortDirection, sortKey]);
+  const changeSort = (nextKey: ResourceSortKey) => {
+    if (sortKey === nextKey && sortDirection === "asc") {
+      setSortDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    if (sortKey === nextKey && sortDirection === "desc") {
+      setSortKey(null);
+      setSortDirection(null);
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection("asc");
+  };
   const selectedEntry = entries.find((entry) => entryKey(entry) === selectedKey) || null;
   const loading = churchResourcesLoading || songDocsLoading;
   const loadErrors = [churchResourcesError, songDocsError].filter(Boolean);
@@ -416,38 +446,89 @@ const ResourcesPage = () => {
         ) : (
           <>
             <div className="flex flex-wrap items-end gap-3 border-b border-gray-700 p-4">
-              <div className="min-w-[14rem] flex-1"><Input label="Search resources" value={query} onChange={(value) => setQuery(String(value))} placeholder="Search…" /></div>
+              <div className="min-w-[14rem] flex-1"><Input label="Search resources" hideLabel value={query} onChange={(value) => setQuery(String(value))} placeholder="Search..." /></div>
               {canEdit ? <>
                 <input ref={inputRef} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void onUpload(file); }} />
-                <Button type="button" variant="cta" svg={Upload} isLoading={uploading} disabled={uploading} onClick={() => inputRef.current?.click()}>{uploading ? "Uploading…" : "Upload"}</Button>
+                <Button type="button" variant="cta" svg={Upload} isLoading={uploading} disabled={uploading} onClick={() => inputRef.current?.click()}>{uploading ? "Uploading..." : "Upload"}</Button>
               </> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
               {(["all", "document", "audio"] as const).map((value) => (
-                <Button key={value} type="button" variant="tertiary" isSelected={filter === value} onClick={() => setFilter(value)}>{value === "all" ? "All" : value === "document" ? "Documents" : "Audio"}</Button>
+                <Button key={value} type="button" variant="tertiary" isSelected={filter === value} aria-pressed={filter === value} className={filter === value ? "border-cyan-400 bg-cyan-500/20 text-white" : "border-transparent text-gray-300 hover:border-gray-500 hover:bg-gray-800"} onClick={() => setFilter(value)}>{value === "all" ? "All" : value === "document" ? "Documents" : "Audio"}</Button>
               ))}
             </div>
             {loadErrors.map((loadError) => <div key={loadError} className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{loadError}</div>)}
             {error ? <div className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{error}</div> : null}
-            {loading ? <p className="p-4 text-sm text-gray-400" role="status">Loading resources…</p> : null}
+            {loading ? <p className="p-4 text-sm text-gray-400" role="status">Loading resources...</p> : null}
             {!loading && !loadErrors.length && !entries.length ? <div className="p-8 text-center text-sm text-gray-400"><FileText className="mx-auto mb-2 size-8 text-gray-600" aria-hidden />No resources match this view.</div> : null}
-            {!loading && entries.length ? (
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {entries.map((entry) => {
-                    const key = entryKey(entry);
-                    const selected = selectedKey === key;
-                    return (
-                      <button key={key} type="button" className={`flex min-w-0 cursor-pointer items-center gap-3 rounded border p-3 text-left transition-colors ${selected ? "border-cyan-400/60 bg-cyan-500/10" : "border-gray-700 bg-gray-900/70 hover:border-gray-500"}`} onClick={() => setSelectedKey(key)}>
-                        {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-5 shrink-0 text-amber-300" aria-hidden /> : <FileText className="size-5 shrink-0 text-cyan-300" aria-hidden />}
-                        <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-gray-100">{resourceEntryName(entry)}</span><span className="block truncate text-xs text-gray-400">{typeLabel(entry)} · {formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)} · Updated {formatDate(entryUpdatedAt(entry))}</span>{entry.source === "song-audio" ? <span className="block truncate text-xs text-amber-200">Song attachment · {entry.songName}</span> : <span className="block truncate text-xs text-gray-500">Reusable church resource</span>}</span>
-                      </button>
-                    );
-                  })}
+            {!loading && sortedEntries.length ? (
+              <div className="min-h-0 flex-1 overflow-auto pb-4">
+                <div className="rounded border border-gray-700">
+                  <table className="w-full min-w-[48rem] table-fixed text-left text-sm">
+                    <caption className="sr-only">Resources</caption>
+                    <thead className="sticky top-0 z-10 bg-gray-950 text-xs uppercase tracking-wide text-gray-400 shadow-sm shadow-black/20">
+                      <tr>
+                        {([
+                          ["name", "Name", "w-[38%]"],
+                          ["type", "Type", "w-[10%]"],
+                          ["size", "Size", "w-[12%]"],
+                          ["updated", "Updated", "w-[16%]"],
+                          ["source", "Source", "w-[24%]"],
+                        ] as const).map(([key, label, width]) => (
+                          <th key={key} scope="col" aria-sort={sortKey === key ? sortDirection === "asc" ? "ascending" : "descending" : "none"} className={`${width} px-4 py-3`}>
+                            <button type="button" className="flex cursor-pointer items-center gap-1 text-left hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" onClick={() => changeSort(key)}>
+                              {label}
+                              {sortKey === key && sortDirection === "asc" ? <ArrowUp className="size-3.5" aria-hidden /> : null}
+                              {sortKey === key && sortDirection === "desc" ? <ArrowDown className="size-3.5" aria-hidden /> : null}
+                              {sortKey !== key ? <ArrowUpDown className="size-3.5" aria-hidden /> : null}
+                            </button>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700">
+                      {sortedEntries.map((entry) => {
+                        const key = entryKey(entry);
+                        const selected = selectedKey === key;
+                        return (
+                          <tr
+                            key={key}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`Preview ${resourceEntryName(entry)}`}
+                            aria-pressed={selected}
+                            className={`cursor-pointer outline-none ${selected ? "bg-cyan-500/10" : "bg-gray-900/40 hover:bg-cyan-500/10"} focus-visible:bg-cyan-500/10`}
+                            onClick={() => setSelectedKey(key)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedKey(key);
+                              }
+                            }}
+                          >
+                            <td className="max-w-0 px-4 py-3">
+                              <span className="flex w-full min-w-0 items-center gap-2 text-left text-gray-100">
+                                {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /> : <FileText className="size-4 shrink-0 text-cyan-300" aria-hidden />}
+                                <span className="truncate font-semibold">{resourceEntryName(entry)}</span>
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-gray-300">{typeLabel(entry)}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-gray-300">{formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-gray-300">{formatDate(entryUpdatedAt(entry))}</td>
+                            <td className="max-w-0 px-4 py-3 text-gray-400"><span className="block truncate">{entry.source === "song-audio" ? `Song attachment - ${entry.songName}` : "Reusable church resource"}</span></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             ) : null}
-            {selectedEntry && churchId ? <ResourcePreview churchId={churchId} entry={selectedEntry} onClose={() => setSelectedKey(null)} onRename={renameResource} onDelete={deleteEntry} canEdit={canEdit} /> : null}
+            {selectedEntry && churchId ? (
+              <Modal isOpen onClose={() => setSelectedKey(null)} title={resourceEntryName(selectedEntry)} size="xl" contentPadding="p-0" description={`Preview of ${resourceEntryName(selectedEntry)}`}>
+                <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={deleteEntry} canEdit={canEdit} />
+              </Modal>
+            ) : null}
           </>
         )}
       </section>

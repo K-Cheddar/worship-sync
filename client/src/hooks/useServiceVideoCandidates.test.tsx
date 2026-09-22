@@ -56,6 +56,7 @@ const renderCandidates = (
 ) => {
   const cacheMap = options.cacheMap ?? {};
   let currentDocs = docs;
+  let selectedOutlineId = options.outlineId;
   const configuredOutlineItems = options.outlineItems;
   if (options.getLocalMediaPath) {
     Object.defineProperty(window, "electronAPI", {
@@ -119,7 +120,7 @@ const renderCandidates = (
         enabled: true,
         currentItemId,
         currentMedia,
-        outlineId: options.outlineId,
+        outlineId: selectedOutlineId,
         maxSurfaces: options.maxSurfaces,
         scope: options.scope,
         renderer: options.renderer,
@@ -142,6 +143,9 @@ const renderCandidates = (
       nextMedia: { mediaKey: string; source: string } | undefined,
     ) => {
       currentMedia = nextMedia;
+    },
+    setOutlineId: (nextOutlineId: string | null | undefined) => {
+      selectedOutlineId = nextOutlineId;
     },
   };
 };
@@ -325,7 +329,7 @@ describe("useServiceVideoCandidates", () => {
     );
   });
 
-  it("marks uncached Mux HLS as pending and requests one additive cache warmup", async () => {
+  it("makes an uncached Mux HLS attempt explicit instead of leaving it pending forever", async () => {
     const ensureMediaCached = jest.fn().mockResolvedValue({
       requested: 1,
       cacheable: 1,
@@ -367,22 +371,24 @@ describe("useServiceVideoCandidates", () => {
       },
     );
 
+    await waitFor(() => expect(ensureMediaCached).toHaveBeenCalledTimes(3), {
+      timeout: 4000,
+    });
+    expect(ensureMediaCached).toHaveBeenCalledWith([
+      "https://stream.mux.com/playback-id.m3u8",
+      "https://stream.mux.com/second-id.m3u8",
+    ]);
     await waitFor(() =>
       expect(result.current.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             mediaKey: "remote:mux",
-            status: "pending-cache",
-            cacheStatus: "pending",
+            status: "excluded",
+            cacheStatus: "unavailable",
           }),
         ]),
       ),
     );
-    await waitFor(() => expect(ensureMediaCached).toHaveBeenCalledTimes(1));
-    expect(ensureMediaCached).toHaveBeenCalledWith([
-      "https://stream.mux.com/playback-id.m3u8",
-      "https://stream.mux.com/second-id.m3u8",
-    ]);
     expect(result.current.candidates).toHaveLength(0);
   });
 
@@ -416,7 +422,14 @@ describe("useServiceVideoCandidates", () => {
       getLocalMediaPath: jest.fn().mockResolvedValue(null),
     });
 
-    await waitFor(() => expect(ensureMediaCached).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(ensureMediaCached).toHaveBeenCalledWith([
+        "https://stream.mux.com/current.m3u8",
+        "https://stream.mux.com/current-item.m3u8",
+        "https://stream.mux.com/nearby.m3u8",
+        "https://stream.mux.com/remaining.m3u8",
+      ]),
+    );
     expect(ensureMediaCached).toHaveBeenCalledWith([
       "https://stream.mux.com/current.m3u8",
       "https://stream.mux.com/current-item.m3u8",
@@ -454,8 +467,8 @@ describe("useServiceVideoCandidates", () => {
     );
     expect(result.current.diagnostics[0]).toMatchObject({
       status: "eligible",
-      cacheStatus: "pending",
-      reason: "finite video source available; cache warmup queued",
+      cacheStatus: "unavailable",
+      reason: "finite cache unavailable; fallback-only",
     });
   });
 
@@ -550,7 +563,60 @@ describe("useServiceVideoCandidates", () => {
     await waitFor(() => expect(result.current.candidates).toHaveLength(1));
     expect(result.current.candidates[0].mediaKey).toBe("remote:lobby-video");
     expect(db.get).toHaveBeenCalledWith("list-lobby");
+    expect(db.get).not.toHaveBeenCalledWith("ItemLists");
     expect(db.get).not.toHaveBeenCalledWith("list-1");
+  });
+
+  it("atomically replaces the prepared set when the selected outline changes", async () => {
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const second = item("second", "Second", [
+      slide("second-slide", [
+        { id: "second-video", mediaInfo: video("second-video", "https://cdn.example.com/second.mp4") },
+      ]),
+    ]);
+    const { result, rerender, setOutlineId, db } = renderCandidates([first, second], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first"], "outline-b": ["second"] },
+    });
+
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]));
+    db.get.mockRejectedValueOnce(new Error("temporary outline read failure"));
+    setOutlineId("outline-b");
+    rerender();
+
+    expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]);
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]));
+    expect(result.current.discovery.loadedOutlineId).toBe("outline-b");
+    expect(result.current.discovery.outlineLoadState).toBe("loaded");
+  });
+
+  it("retries a transient selected-outline read without becoming permanently empty", async () => {
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const second = item("second", "Second", [
+      slide("second-slide", [
+        { id: "second-video", mediaInfo: video("second-video", "https://cdn.example.com/second.mp4") },
+      ]),
+    ]);
+    const { result, rerender, setOutlineId, db } = renderCandidates([first, second], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first"], "outline-b": ["second"] },
+    });
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(1));
+    db.get.mockRejectedValueOnce(new Error("temporary outline read failure"));
+    setOutlineId("outline-b");
+    rerender();
+
+    await waitFor(() => expect(result.current.discovery.outlineLoadState).toBe("retrying"));
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]), { timeout: 2000 });
   });
 
   it("does not warm the presentation outline when the output has no resolved scope outline", async () => {

@@ -23,9 +23,29 @@ describe("buildAppCspHeader", () => {
     expect(directives.get("connect-src")).not.toContain("https://*.canva.com");
     expect(directives.get("img-src")).toContain("worshipsync-media:");
     expect(directives.get("media-src")).toContain("worshipsync-media:");
-    expect(directives.get("media-src")).toContain("https://www.worshipsync.net");
+    expect(directives.get("media-src")).toContain(
+      "https://www.worshipsync.net",
+    );
     expect(directives.get("media-src")).not.toContain("https:");
     expect(directives.get("media-src")).not.toContain("*");
+  });
+
+  it("allows R2 document previews in iframes without widening script or default sources", () => {
+    const directives = parseCspDirectives(buildAppCspHeader(true));
+
+    expect(directives.get("frame-src")).toContain(
+      "https://*.r2.cloudflarestorage.com",
+    );
+    expect(directives.get("img-src")).toContain(
+      "https://*.r2.cloudflarestorage.com",
+    );
+    expect(directives.get("media-src")).toContain(
+      "https://*.r2.cloudflarestorage.com",
+    );
+    expect(directives.get("script-src")).not.toContain(
+      "https://*.r2.cloudflarestorage.com",
+    );
+    expect(directives.get("default-src")).toEqual(["'self'"]);
   });
 });
 

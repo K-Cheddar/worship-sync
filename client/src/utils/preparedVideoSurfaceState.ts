@@ -29,6 +29,8 @@ export const getPreparedVideoSurfaceErrorMessage = (
     reason = message;
   } else if (stage === "metadata") {
     reason = "metadata load failed";
+  } else if (stage === "playback") {
+    reason = "seek/playback preparation failed";
   }
   return message && message !== reason ? `${reason}: ${message}` : reason;
 };

@@ -48,6 +48,21 @@ type ServiceItemMedia = {
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
 };
 
+type CacheRequestState = {
+  state:
+    | "in-flight"
+    | "succeeded"
+    | "unavailable"
+    | "retry-scheduled"
+    | "retry-ready";
+  attempt: number;
+  lastResult: string;
+  retryAt?: number;
+};
+
+const CACHE_RETRY_DELAYS_MS = [250, 500, 1000];
+const MAX_CACHE_ATTEMPTS = CACHE_RETRY_DELAYS_MS.length;
+
 export type ServiceVideoCandidateResult = {
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
@@ -143,12 +158,14 @@ const buildVideoDiscovery = async ({
   itemIndex,
   itemName,
   cacheMap,
+  cacheRequests,
 }: {
   media: MediaType | undefined;
   itemId: string;
   itemIndex: number;
   itemName: string;
   cacheMap?: Record<string, string>;
+  cacheRequests?: Map<string, CacheRequestState>;
 }): Promise<{
   candidate?: ElectronMediaSurfaceCandidate;
   diagnostic?: ElectronMediaSurfaceCandidateDiagnostic;
@@ -179,17 +196,28 @@ const buildVideoDiscovery = async ({
   if (!resolvedSource) {
     const isCacheableMux =
       isMuxVideoSource(originalSource) && isHLSVideoSource(originalSource);
-    const state = isCacheableMux
+    const cacheRequest = cacheRequests?.get(mediaKey);
+    const state = !isCacheableMux
       ? getCandidateState(
-          "pending-cache",
-          "pending",
-          "finite Mux rendition is being cached",
-        )
-      : getCandidateState(
           "excluded",
           "not-cacheable",
           "no finite/cacheable rendition",
-        );
+        )
+      : cacheRequest?.state === "unavailable"
+        ? getCandidateState("excluded", "unavailable", cacheRequest.lastResult)
+        : cacheRequest?.state === "retry-scheduled"
+          ? getCandidateState(
+              "pending-cache",
+              "retry-scheduled",
+              cacheRequest.lastResult,
+            )
+          : getCandidateState(
+              "pending-cache",
+              "cache-in-progress",
+              cacheRequest
+                ? `Mux finite rendition cache attempt ${cacheRequest.attempt}/${MAX_CACHE_ATTEMPTS} in progress`
+                : "Mux finite rendition cache is being requested",
+            );
     return {
       diagnostic: {
         mediaKey,
@@ -205,17 +233,27 @@ const buildVideoDiscovery = async ({
 
   const sourceKind = getSourceKind(resolvedSource);
   const wasResolvedFromCache = resolvedSource !== originalSource;
+  const cacheRequest = cacheRequests?.get(mediaKey);
   const shouldWarmRemoteCache =
     sourceKind === "remote" && !wasResolvedFromCache;
+  const cacheStatus: ElectronMediaCandidateCacheStatus = wasResolvedFromCache
+    ? "cached"
+    : cacheRequest?.state === "unavailable"
+      ? "unavailable"
+      : cacheRequest?.state === "retry-scheduled"
+        ? "retry-scheduled"
+        : shouldWarmRemoteCache
+          ? "pending"
+          : "not-required";
   const state = getCandidateState(
     "eligible",
-    wasResolvedFromCache
-      ? "cached"
-      : shouldWarmRemoteCache
-        ? "pending"
-        : "not-required",
+    cacheStatus,
     wasResolvedFromCache
       ? "cached finite MP4 available"
+      : cacheRequest?.state === "unavailable"
+        ? cacheRequest.lastResult
+        : cacheRequest?.state === "retry-scheduled"
+          ? cacheRequest.lastResult
       : shouldWarmRemoteCache
         ? "finite video source available; cache warmup queued"
         : "finite video source available",
@@ -249,25 +287,38 @@ const buildVideoDiscovery = async ({
 const buildCandidateDiscovery = async (
   candidate: ElectronMediaSurfaceCandidate,
   currentItemId: string | undefined,
+  cacheMap?: Record<string, string>,
+  cacheRequests?: Map<string, CacheRequestState>,
 ): Promise<{
   candidate?: ElectronMediaSurfaceCandidate;
   diagnostic: ElectronMediaSurfaceCandidateDiagnostic;
 }> => {
-  const resolvedSource = await resolveFiniteSource(candidate.source);
+  const resolvedSource = await resolveFiniteSource(candidate.source, cacheMap);
   if (!resolvedSource) {
     const isCacheableMux =
       isMuxVideoSource(candidate.source) && isHLSVideoSource(candidate.source);
-    const state = isCacheableMux
+    const cacheRequest = cacheRequests?.get(candidate.mediaKey);
+    const state = !isCacheableMux
       ? getCandidateState(
-          "pending-cache",
-          "pending",
-          "finite Mux rendition is being cached",
-        )
-      : getCandidateState(
           "excluded",
           "not-cacheable",
           "no finite/cacheable rendition",
-        );
+        )
+      : cacheRequest?.state === "unavailable"
+        ? getCandidateState("excluded", "unavailable", cacheRequest.lastResult)
+        : cacheRequest?.state === "retry-scheduled"
+          ? getCandidateState(
+              "pending-cache",
+              "retry-scheduled",
+              cacheRequest.lastResult,
+            )
+          : getCandidateState(
+              "pending-cache",
+              "cache-in-progress",
+              cacheRequest
+                ? `Mux finite rendition cache attempt ${cacheRequest.attempt}/${MAX_CACHE_ATTEMPTS} in progress`
+                : "Mux finite rendition cache is being requested",
+            );
     return {
       diagnostic: {
         mediaKey: candidate.mediaKey,
@@ -335,6 +386,7 @@ const getItemMedia = async (
   doc: DBItem,
   itemIndex: number,
   cacheMap?: Record<string, string>,
+  cacheRequests?: Map<string, CacheRequestState>,
 ): Promise<ServiceItemMedia> => {
   const discoveries = await Promise.all(
     doc.slides.flatMap((slide) => [
@@ -345,6 +397,7 @@ const getItemMedia = async (
           itemIndex,
           itemName: doc.name,
           cacheMap,
+          cacheRequests,
         }),
       ),
       Promise.resolve({
@@ -427,10 +480,27 @@ export const useServiceVideoCandidates = ({
     diagnostic?: ElectronMediaSurfaceCandidateDiagnostic;
   }>({});
   const loadGenerationRef = useRef(0);
-  const requestedCacheMediaKeysRef = useRef(new Set<string>());
+  const cacheRequestsRef = useRef(new Map<string, CacheRequestState>());
   const cacheMapRef = useRef<Record<string, string>>({});
+  const [cacheRevision, setCacheRevision] = useState(0);
   const activeListIdRef = useRef<string | undefined>(undefined);
   const serviceItemIdsRef = useRef<Set<string>>(new Set());
+  const retryTimerRef = useRef<number | undefined>(undefined);
+  const cacheRetryTimerRef = useRef<number | undefined>(undefined);
+  const loadServiceMediaRef = useRef<
+    ((isRetry?: boolean) => Promise<void>) | undefined
+  >(undefined);
+  const outlineRetryAttemptRef = useRef(0);
+  const lastLoadTargetRef = useRef<string | undefined>(undefined);
+  const [outlineLoad, setOutlineLoad] = useState<{
+    targetOutlineId?: string | null;
+    loadedOutlineId?: string;
+    loadedOutlineName?: string;
+    state: "loading" | "loaded" | "error" | "retrying";
+    error?: string;
+    retryAttempt: number;
+    retryAt?: number;
+  }>({ state: "loading", retryAttempt: 0 });
 
   useEffect(() => {
     let active = true;
@@ -440,15 +510,25 @@ export const useServiceVideoCandidates = ({
         active = false;
       };
     }
-    void buildCandidateDiscovery(currentMedia, currentItemId).then((result) => {
+    void buildCandidateDiscovery(
+      currentMedia,
+      currentItemId,
+      cacheMapRef.current,
+      cacheRequestsRef.current,
+    ).then((result) => {
       if (active) setCurrentMediaDiscovery(result);
     });
     return () => {
       active = false;
     };
-  }, [currentItemId, currentMedia]);
+  }, [cacheRevision, currentItemId, currentMedia]);
 
-  const loadServiceMedia = useCallback(async () => {
+  const loadServiceMedia = useCallback(async (isRetry = false) => {
+    const loadTarget = `${scope}:${outlineId === undefined ? "fallback" : outlineId ?? "none"}`;
+    if (!isRetry && lastLoadTargetRef.current !== loadTarget) {
+      outlineRetryAttemptRef.current = 0;
+      lastLoadTargetRef.current = loadTarget;
+    }
     const generation = ++loadGenerationRef.current;
     const apply = (next: ServiceItemMedia[]) => {
       if (generation === loadGenerationRef.current) setServiceMedia(next);
@@ -460,7 +540,17 @@ export const useServiceVideoCandidates = ({
       return;
     }
 
-    if (scope === "current-item") apply([]);
+    if (scope === "current-item") {
+      setOutlineLoad((current) => ({ ...current, state: "loading", error: undefined }));
+      apply([]);
+    } else {
+      setOutlineLoad((current) => ({
+        ...current,
+        state: isRetry ? "retrying" : "loading",
+        error: undefined,
+        retryAt: undefined,
+      }));
+    }
 
     try {
       if (scope === "current-item") {
@@ -479,38 +569,63 @@ export const useServiceVideoCandidates = ({
           return;
         }
         apply([
-          await getItemMedia(currentDoc, 0, cacheMapRef.current),
+          await getItemMedia(
+            currentDoc,
+            0,
+            cacheMapRef.current,
+            cacheRequestsRef.current,
+          ),
         ]);
+        setOutlineLoad((current) => ({ ...current, state: "loaded", error: undefined }));
         return;
       }
-      const lists = (await db.get("ItemLists")) as ItemLists | undefined;
+      const lists =
+        outlineId === undefined
+          ? ((await db.get("ItemLists")) as ItemLists | undefined)
+          : undefined;
       if (generation !== loadGenerationRef.current) return;
       // A display must warm the outline owned by its controller. The legacy
       // activeList is only the presentation fallback; using it for every
       // output leaks sanctuary media into auxiliary screens.
       const activeListId =
         outlineId === undefined ? lists?.activeList?._id : outlineId;
+      setOutlineLoad((current) => ({
+        ...current,
+        targetOutlineId: activeListId,
+      }));
       if (!activeListId) {
         activeListIdRef.current = undefined;
         serviceItemIdsRef.current = new Set();
         apply([]);
+        setOutlineLoad((current) => ({
+          ...current,
+          state: "loaded",
+          loadedOutlineId: undefined,
+          loadedOutlineName: undefined,
+          error: undefined,
+        }));
         return;
       }
-      // Do not let a previous outline's prepared surfaces survive while the
-      // newly selected outline is being read. The live lane still contributes
-      // the current media candidate synchronously, so clearing here avoids
-      // cross-outline playback without creating a blank handoff.
-      if (activeListIdRef.current !== activeListId) apply([]);
 
       const list = (await db.get(activeListId)) as DBItemListDetails;
       if (generation !== loadGenerationRef.current) return;
+      if (!list || !Array.isArray(list.items)) {
+        throw new Error("selected preparation outline is unavailable");
+      }
       const itemIds = list.items
         .map((item) => item._id)
         .filter((itemId): itemId is string => Boolean(itemId));
-      activeListIdRef.current = activeListId;
-      serviceItemIdsRef.current = new Set(itemIds);
       if (itemIds.length === 0) {
+        activeListIdRef.current = activeListId;
+        serviceItemIdsRef.current = new Set();
         apply([]);
+        setOutlineLoad((current) => ({
+          ...current,
+          state: "loaded",
+          loadedOutlineId: activeListId,
+          loadedOutlineName: list.name,
+          error: undefined,
+        }));
         return;
       }
 
@@ -528,23 +643,85 @@ export const useServiceVideoCandidates = ({
       const nextServiceMedia = await Promise.all(
         itemIds.flatMap((itemId, itemIndex) => {
           const doc = docsById.get(itemId);
-          return doc ? [getItemMedia(doc, itemIndex, cacheMapRef.current)] : [];
+          return doc
+            ? [
+                getItemMedia(
+                  doc,
+                  itemIndex,
+                  cacheMapRef.current,
+                  cacheRequestsRef.current,
+                ),
+              ]
+            : [];
         }),
       );
       if (generation !== loadGenerationRef.current) return;
+      activeListIdRef.current = activeListId;
+      serviceItemIdsRef.current = new Set(itemIds);
       apply(nextServiceMedia);
-    } catch {
-      // Preparation is optional. The existing lane path remains authoritative
-      // when local outline discovery is unavailable or still syncing. A
-      // current-item preview must not retain a previous item's candidates.
-      if (scope === "current-item") apply([]);
+      setOutlineLoad((current) => ({
+        ...current,
+        state: "loaded",
+        loadedOutlineId: activeListId,
+        loadedOutlineName: list.name,
+        error: undefined,
+        retryAttempt: 0,
+      }));
+      outlineRetryAttemptRef.current = 0;
+    } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
+      if (scope === "current-item") {
+        apply([]);
+        setOutlineLoad((current) => ({
+          ...current,
+          state: "error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const attempt = outlineRetryAttemptRef.current + 1;
+      outlineRetryAttemptRef.current = attempt;
+      const retryDelay = CACHE_RETRY_DELAYS_MS[Math.min(attempt - 1, CACHE_RETRY_DELAYS_MS.length - 1)] ?? 1000;
+      if (attempt <= MAX_CACHE_ATTEMPTS) {
+        const retryAt = Date.now() + retryDelay;
+        setOutlineLoad((current) => ({
+          ...current,
+          state: "retrying",
+          error: message,
+          retryAttempt: attempt,
+          retryAt,
+        }));
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = undefined;
+          void loadServiceMediaRef.current?.(true);
+        }, retryDelay);
+      } else {
+        setOutlineLoad((current) => ({
+          ...current,
+          state: "error",
+          error: message,
+          retryAttempt: attempt,
+          retryAt: undefined,
+        }));
+      }
     }
   }, [currentItemId, db, enabled, outlineId, scope]);
+
+  loadServiceMediaRef.current = loadServiceMedia;
 
   useEffect(() => {
     void loadServiceMedia();
     return () => {
       loadGenerationRef.current += 1;
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+      if (cacheRetryTimerRef.current !== undefined) {
+        window.clearTimeout(cacheRetryTimerRef.current);
+        cacheRetryTimerRef.current = undefined;
+      }
     };
   }, [loadServiceMedia]);
 
@@ -588,17 +765,24 @@ export const useServiceVideoCandidates = ({
       .filter(
         (diagnostic): diagnostic is ElectronMediaSurfaceCandidateDiagnostic =>
           Boolean(
-            diagnostic &&
-              diagnostic.cacheStatus === "pending" &&
+              diagnostic &&
+              (diagnostic.cacheStatus === "pending" ||
+                diagnostic.cacheStatus === "cache-in-progress") &&
               (diagnostic.sourceKind === "hls" ||
                 diagnostic.sourceKind === "remote"),
           ),
       );
     const requests = pending.filter((diagnostic) => {
-      if (requestedCacheMediaKeysRef.current.has(diagnostic.mediaKey)) {
+      const current = cacheRequestsRef.current.get(diagnostic.mediaKey);
+      if (current?.state === "in-flight" || current?.state === "succeeded") {
         return false;
       }
-      requestedCacheMediaKeysRef.current.add(diagnostic.mediaKey);
+      const attempt = (current?.attempt ?? 0) + 1;
+      cacheRequestsRef.current.set(diagnostic.mediaKey, {
+        state: "in-flight",
+        attempt,
+        lastResult: `cache request in progress (attempt ${attempt}/${MAX_CACHE_ATTEMPTS})`,
+      });
       return true;
     });
     if (!requests.length) return;
@@ -607,20 +791,109 @@ export const useServiceVideoCandidates = ({
     const ensure = window.electronAPI.ensureMediaCached([
       ...new Set(requests.map((diagnostic) => diagnostic.originalSource)),
     ]);
+    const scheduleCacheRetry = () => {
+      const retryRequests = requests.filter(
+        (request) =>
+          cacheRequestsRef.current.get(request.mediaKey)?.state ===
+          "retry-scheduled",
+      );
+      if (!retryRequests.length) return false;
+      const retryAt = Math.min(
+        ...retryRequests.map(
+          (request) =>
+            cacheRequestsRef.current.get(request.mediaKey)?.retryAt ??
+            Date.now(),
+        ),
+      );
+      if (cacheRetryTimerRef.current !== undefined) {
+        window.clearTimeout(cacheRetryTimerRef.current);
+      }
+      cacheRetryTimerRef.current = window.setTimeout(() => {
+        cacheRetryTimerRef.current = undefined;
+        retryRequests.forEach((request) => {
+          const current = cacheRequestsRef.current.get(request.mediaKey);
+          if (current?.state === "retry-scheduled") {
+            cacheRequestsRef.current.set(request.mediaKey, {
+              ...current,
+              state: "retry-ready",
+            });
+          }
+        });
+        void loadServiceMediaRef.current?.();
+      }, Math.max(0, retryAt - Date.now()));
+      return true;
+    };
     void ensure
       .then((result) => {
-        if (!active) return;
-        cacheMapRef.current = result.cacheMap;
-        // The Electron result includes a fresh map; rerunning discovery makes
-        // the cache-backed source visible to the pool without a page reload.
-        void loadServiceMedia();
+        cacheMapRef.current = { ...cacheMapRef.current, ...result.cacheMap };
+        if (active) setCacheRevision((revision) => revision + 1);
+        requests.forEach((request) => {
+          const resolved = result.cacheMap[request.originalSource];
+          const current = cacheRequestsRef.current.get(request.mediaKey);
+          if (resolved && isPlayableMediaSource(resolved) && !isHLSVideoSource(resolved)) {
+            cacheRequestsRef.current.set(request.mediaKey, {
+              state: "succeeded",
+              attempt: current?.attempt ?? 1,
+              lastResult: "cached finite rendition available",
+            });
+            return;
+          }
+          const isMux =
+            isMuxVideoSource(request.originalSource) &&
+            isHLSVideoSource(request.originalSource);
+          const attempt = current?.attempt ?? 1;
+          if (isMux && attempt < MAX_CACHE_ATTEMPTS) {
+            const retryAt = Date.now() + CACHE_RETRY_DELAYS_MS[attempt - 1];
+            cacheRequestsRef.current.set(request.mediaKey, {
+              state: "retry-scheduled",
+              attempt,
+              retryAt,
+              lastResult: `Mux finite rendition returned no cache entry; retry ${attempt}/${MAX_CACHE_ATTEMPTS} scheduled`,
+            });
+          } else {
+            cacheRequestsRef.current.set(request.mediaKey, {
+              state: "unavailable",
+              attempt,
+              lastResult: isMux
+                ? `Mux finite rendition unavailable after ${attempt}/${MAX_CACHE_ATTEMPTS} attempts; fallback-only`
+                : "finite cache unavailable; fallback-only",
+            });
+          }
+        });
+        if (active) {
+          scheduleCacheRetry();
+          // The Electron result includes a fresh map; rerunning discovery makes
+          // the cache-backed source visible to the pool without a page reload.
+          void loadServiceMedia();
+        }
       })
       .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        requests.forEach((request) => {
+          const current = cacheRequestsRef.current.get(request.mediaKey);
+          const attempt = current?.attempt ?? 1;
+          const isMux =
+            isMuxVideoSource(request.originalSource) &&
+            isHLSVideoSource(request.originalSource);
+          if (isMux && attempt < MAX_CACHE_ATTEMPTS) {
+            cacheRequestsRef.current.set(request.mediaKey, {
+              state: "retry-scheduled",
+              attempt,
+              retryAt: Date.now() + CACHE_RETRY_DELAYS_MS[attempt - 1],
+              lastResult: `cache request failed (${message}); retry ${attempt}/${MAX_CACHE_ATTEMPTS} scheduled`,
+            });
+          } else {
+            cacheRequestsRef.current.set(request.mediaKey, {
+              state: "unavailable",
+              attempt,
+              lastResult: `cache unavailable (${message}); fallback-only`,
+            });
+          }
+        });
         if (active) {
-          requests.forEach((request) =>
-            requestedCacheMediaKeysRef.current.delete(request.mediaKey),
-          );
+          scheduleCacheRetry();
           console.error("Unable to ensure service video cache:", error);
+          void loadServiceMedia();
         }
       });
     return () => {
@@ -742,8 +1015,17 @@ export const useServiceVideoCandidates = ({
       controllerProfileId,
       controllerProfileName,
       outlineScope,
-      outlineId,
-      outlineName,
+      outlineId: outlineLoad.loadedOutlineId,
+      outlineName: outlineLoad.loadedOutlineName,
+      targetOutlineId:
+        outlineId === undefined ? outlineLoad.targetOutlineId : outlineId,
+      targetOutlineName: outlineName,
+      loadedOutlineId: outlineLoad.loadedOutlineId,
+      loadedOutlineName: outlineLoad.loadedOutlineName,
+      outlineLoadState: outlineLoad.state,
+      outlineLoadError: outlineLoad.error,
+      outlineRetryAttempt: outlineLoad.retryAttempt,
+      outlineRetryAt: outlineLoad.retryAt,
       contextSource,
       currentItemId,
       itemCount: serviceMedia.length,
@@ -767,6 +1049,7 @@ export const useServiceVideoCandidates = ({
     maxSurfaces,
     outlineId,
     outlineName,
+    outlineLoad,
     contextSource,
     outlineScope,
     outputId,

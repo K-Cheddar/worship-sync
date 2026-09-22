@@ -788,13 +788,17 @@ const DisplayBoxTransitionStage = ({
     const outgoingPreparedMediaKey = getLanePreparedMediaKey(
       activeSnapshot?.backgroundMedia,
     );
+    const outgoingAdoptedPrepared =
+      adoptedPreparedMediaKeysRef.current.has(outgoingPreparedMediaKey) &&
+      !preparedMediaFailures[outgoingPreparedMediaKey];
     const outgoingLiveMedia = mediaLivePaintReadiness[state.activeLaneId];
     const outgoingFileVideoCanBeLive =
       activeSnapshot?.backgroundMedia.kind === "fileVideo" &&
-      (outgoingUsesPrepared
+      (outgoingAdoptedPrepared ||
+        (outgoingUsesPrepared
         ? preparedMediaReady[outgoingPreparedMediaKey] === true
         : outgoingLiveMedia?.mediaKey !== outgoingMediaKey ||
-          outgoingLiveMedia.ready);
+          outgoingLiveMedia.ready));
     const incomingFileVideoMustBeLive =
       mode !== "content" &&
       laneSnapshot.backgroundMedia.kind === "fileVideo" &&
