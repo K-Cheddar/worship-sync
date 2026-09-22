@@ -15,6 +15,9 @@ export const buildAppCspHeader = (isPackaged: boolean): string => {
   const devConnectSrc = isPackaged
     ? ""
     : "https://local.worshipsync.net:5000 https://localhost:5000 ";
+  const devMediaSrc = isPackaged
+    ? ""
+    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
 
   return (
     "default-src 'self'; " +
@@ -22,7 +25,9 @@ export const buildAppCspHeader = (isPackaged: boolean): string => {
     "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
     "font-src 'self' data:; " +
     "img-src 'self' data: blob: media-cache: worshipsync-media: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.r2.cloudflarestorage.com https://*.canva.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
-    "media-src 'self' blob: media-cache: worshipsync-media: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
+    "media-src 'self' blob: media-cache: worshipsync-media: https://www.worshipsync.net " +
+    devMediaSrc +
+    "https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
     "connect-src 'self' blob: media-cache: worshipsync-media: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
     devConnectSrc +
     "https://*.worshipsync.net " +

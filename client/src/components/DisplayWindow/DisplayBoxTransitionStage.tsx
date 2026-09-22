@@ -63,6 +63,7 @@ export type LaneMediaPlaybackOptions = {
   /** Resolved outline for this output's controller scope. */
   preparedMediaOutlineId?: string | null;
   preparedSurfaceBudget?: number;
+  preparedMediaScope?: "service" | "current-item";
   /** Resolved display setting; false means this surface does not paint backgrounds. */
   showBackground?: boolean;
   fileVideoAudioEnabled?: boolean;
@@ -197,19 +198,25 @@ const DisplayBoxTransitionStage = ({
   const timelineRef = useRef<GSAPTimeline | null>(null);
   const preparedMediaRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const preparedMediaReadyRef = useRef<Record<string, boolean>>({});
-  const preparedMediaLiveReadyRef = useRef<Record<string, boolean>>({});
+  const preparedMediaFirstAdvancingFrameRef = useRef<Record<string, boolean>>({});
   const adoptedPreparedMediaKeysRef = useRef(new Set<string>());
   const [preparedMediaReady, setPreparedMediaReady] = useState<
     Record<string, boolean>
   >({});
-  const [preparedMediaLiveReady, setPreparedMediaLiveReady] = useState<
+  const [preparedMediaFirstAdvancingFrame, setPreparedMediaFirstAdvancingFrame] = useState<
     Record<string, boolean>
   >({});
   const [lastSendPath, setLastSendPath] = useState<"pool" | "fallback">(
     "fallback",
   );
   const [lastMediaKey, setLastMediaKey] = useState<string | undefined>();
-  const [posterShown, setPosterShown] = useState(false);
+  const [posterShown, setPosterShown] = useState<boolean | undefined>();
+  const [transitionStart, setTransitionStart] = useState<
+    { mediaKey: string; timestamp: number } | undefined
+  >();
+  const [transitionComplete, setTransitionComplete] = useState<
+    { mediaKey: string; timestamp: number } | undefined
+  >();
   const requestGenerationRef = useRef(0);
   const [state, setState] = useState<TransitionState>(() => ({
     activeLaneId: "a",
@@ -235,8 +242,9 @@ const DisplayBoxTransitionStage = ({
   laneSnapshotsRef.current = state.lanes;
 
   const poolEnabled = Boolean(
-    mediaPlayback?.playbackRole === "output" &&
-      mediaPlayback.outputId &&
+    (mediaPlayback?.playbackRole === "output" ||
+      (mediaPlayback?.playbackRole === "preview" && mediaPlayback.isEditor)) &&
+      (mediaPlayback.playbackRole === "preview" || mediaPlayback.outputId) &&
       mediaPlayback.showBackground !== false &&
       window.electronAPI,
   );
@@ -274,6 +282,7 @@ const DisplayBoxTransitionStage = ({
     currentMedia: currentPoolMedia,
     protectedMediaKeys: protectedPoolMediaKeys,
     maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
+    scope: mediaPlayback?.preparedMediaScope,
   });
   const poolCandidates = poolCandidateResult.candidates;
   /**
@@ -592,10 +601,10 @@ const DisplayBoxTransitionStage = ({
     [],
   );
 
-  const reportPreparedMediaLiveReady = useCallback(
+  const reportPreparedMediaFirstAdvancingFrame = useCallback(
     (mediaKey: string, ready: boolean) => {
-      preparedMediaLiveReadyRef.current[mediaKey] = ready;
-      setPreparedMediaLiveReady((current) =>
+      preparedMediaFirstAdvancingFrameRef.current[mediaKey] = ready;
+      setPreparedMediaFirstAdvancingFrame((current) =>
         current[mediaKey] === ready ? current : { ...current, [mediaKey]: ready },
       );
     },
@@ -637,25 +646,6 @@ const DisplayBoxTransitionStage = ({
     [poolEnabled, preparedMediaReady, state.activeLaneId, state.lanes, state.phase],
   );
 
-  useLayoutEffect(() => {
-    const media = snapshot.backgroundMedia;
-    if (media.kind !== "fileVideo") {
-      setLastMediaKey(undefined);
-      setLastSendPath("fallback");
-      setPosterShown(false);
-      return;
-    }
-    const laneId = (Object.keys(state.lanes) as LaneId[]).find(
-      (candidateLaneId) => state.lanes[candidateLaneId]?.key === snapshot.key,
-    );
-    const pooled = Boolean(
-      laneId && usesPreparedSurface(laneId, media),
-    );
-    setLastMediaKey(media.mediaKey);
-    setLastSendPath(pooled ? "pool" : "fallback");
-    setPosterShown(!pooled);
-  }, [snapshot, state.lanes, usesPreparedSurface]);
-
   const isLanePaintReady = (
     laneId: LaneId,
     laneSnapshot: DisplayBoxTransitionSnapshot,
@@ -688,12 +678,11 @@ const DisplayBoxTransitionStage = ({
       laneSnapshot.backgroundMedia,
     );
     // Once Electron has selected a finite candidate for the incoming lane,
-    // the fallback may not start the crossfade first. Otherwise the prepared
-    // surface could arrive during the fade and replace only its media plane.
+    // the fallback may not start the crossfade first. The retained prepared
+    // frame is sufficient; playback advancement is diagnostic only.
     if (
       preparedCandidateSelected &&
-      (preparedMediaReady[preparedMediaKey] !== true ||
-        preparedMediaLiveReady[preparedMediaKey] !== true)
+      preparedMediaReady[preparedMediaKey] !== true
     ) {
       return false;
     }
@@ -701,7 +690,7 @@ const DisplayBoxTransitionStage = ({
       mode === "content" ||
       mediaKey === "none" ||
       (usesPrepared
-        ? preparedMediaLiveReady[preparedMediaKey] === true
+        ? preparedMediaReady[preparedMediaKey] === true
         : mediaState?.mediaKey === mediaKey && mediaState.ready);
     const activeSnapshot = state.lanes[state.activeLaneId];
     const outgoingMediaKey = getLaneBackgroundMediaKey(
@@ -718,18 +707,19 @@ const DisplayBoxTransitionStage = ({
     const outgoingFileVideoCanBeLive =
       activeSnapshot?.backgroundMedia.kind === "fileVideo" &&
       (outgoingUsesPrepared
-        ? preparedMediaLiveReady[outgoingPreparedMediaKey] !== false
+        ? preparedMediaReady[outgoingPreparedMediaKey] === true
         : outgoingLiveMedia?.mediaKey !== outgoingMediaKey ||
           outgoingLiveMedia.ready);
     const incomingFileVideoMustBeLive =
       mode !== "content" &&
       laneSnapshot.backgroundMedia.kind === "fileVideo" &&
+      !usesPrepared &&
       outgoingFileVideoCanBeLive &&
       outgoingMediaKey !== mediaKey;
     const incomingLiveMedia = mediaLivePaintReadiness[laneId];
     const incomingLiveReady =
       usesPrepared
-        ? preparedMediaLiveReady[preparedMediaKey] === true
+        ? preparedMediaReady[preparedMediaKey] === true
         : incomingLiveMedia?.mediaKey === mediaKey && incomingLiveMedia.ready;
 
     // A poster is a legitimate first-paint fallback, but never a destination
@@ -770,8 +760,7 @@ const DisplayBoxTransitionStage = ({
         const preparedKey = getLanePreparedMediaKey(incomingMedia);
         if (
           preparedKey !== "none" &&
-          preparedMediaReadyRef.current[preparedKey] === true &&
-          preparedMediaLiveReadyRef.current[preparedKey] === true
+          preparedMediaReadyRef.current[preparedKey] === true
         ) {
           adoptedPreparedMediaKeysRef.current.add(preparedKey);
         }
@@ -789,6 +778,33 @@ const DisplayBoxTransitionStage = ({
         };
       });
       return;
+    }
+
+    const incomingMedia = incomingSnapshot?.backgroundMedia;
+    const incomingPreparedKey = getLanePreparedMediaKey(incomingMedia);
+    const incomingUsesPrepared = usesPreparedSurface(
+      incomingLaneId,
+      incomingMedia,
+    );
+    const incomingFallbackLiveReady =
+      incomingMedia?.kind === "fileVideo" &&
+      mediaLivePaintReadiness[incomingLaneId]?.mediaKey ===
+        getLaneBackgroundMediaKey(incomingMedia) &&
+      mediaLivePaintReadiness[incomingLaneId]?.ready === true;
+    if (incomingMedia?.kind === "fileVideo") {
+      setLastMediaKey(incomingMedia.mediaKey);
+      setLastSendPath(incomingUsesPrepared ? "pool" : "fallback");
+      setPosterShown(!incomingUsesPrepared && !incomingFallbackLiveReady);
+      if (incomingUsesPrepared) {
+        setTransitionStart({
+          mediaKey: incomingPreparedKey,
+          timestamp: performance.now(),
+        });
+      }
+    } else {
+      setLastMediaKey(undefined);
+      setLastSendPath("fallback");
+      setPosterShown(false);
     }
 
     setState((current) => {
@@ -819,8 +835,7 @@ const DisplayBoxTransitionStage = ({
     mediaPaintReadiness,
     mediaPlayback?.outputId,
     mediaPlayback?.windowRole,
-    preparedMediaLiveReady,
-    preparedMediaReady,
+      preparedMediaReady,
     poolCandidates,
     poolEnabled,
     shouldAnimate,
@@ -871,6 +886,16 @@ const DisplayBoxTransitionStage = ({
           incomingKey,
           mode,
         });
+        const completedMedia = incomingSnapshot.backgroundMedia;
+        if (
+          completedMedia.kind === "fileVideo" &&
+          usesPreparedSurface(incomingLaneId, completedMedia)
+        ) {
+          setTransitionComplete({
+            mediaKey: getLanePreparedMediaKey(completedMedia),
+            timestamp: performance.now(),
+          });
+        }
         // Do NOT clearProps("opacity") here. Clearing restores default opacity
         // 1 on the outgoing wrapper while old content is still mounted, which
         // paints a one-frame flash of the previous lyrics before React
@@ -895,8 +920,7 @@ const DisplayBoxTransitionStage = ({
           if (
             current.mode !== "content" &&
             completedPreparedKey !== "none" &&
-            preparedMediaReadyRef.current[completedPreparedKey] === true &&
-            preparedMediaLiveReadyRef.current[completedPreparedKey] === true
+            preparedMediaReadyRef.current[completedPreparedKey] === true
           ) {
             adoptedPreparedMediaKeysRef.current.add(completedPreparedKey);
           }
@@ -1066,7 +1090,6 @@ const DisplayBoxTransitionStage = ({
     state.lanes,
     state.mode,
     state.phase,
-    preparedMediaLiveReady,
     preparedMediaReady,
     poolCandidates,
     mediaPlayback?.outputId,
@@ -1156,7 +1179,7 @@ const DisplayBoxTransitionStage = ({
     const liveVideoPaintReady =
       mediaKey !== "none" &&
       (usesPrepared
-        ? preparedMediaLiveReady[preparedMediaKey] === true
+        ? preparedMediaFirstAdvancingFrame[preparedMediaKey] === true
         : liveMediaState?.mediaKey === mediaKey && liveMediaState.ready);
     // Keep the current audience owner audible while a replacement prepares,
     // keep incoming media muted until the coordinated fade starts, and avoid
@@ -1269,8 +1292,8 @@ const DisplayBoxTransitionStage = ({
       data-prepared-media-ready={Object.keys(preparedMediaReady)
         .filter((key) => preparedMediaReady[key])
         .join(",")}
-      data-prepared-media-live-ready={Object.keys(preparedMediaLiveReady)
-        .filter((key) => preparedMediaLiveReady[key])
+      data-prepared-media-first-advancing-frame={Object.keys(preparedMediaFirstAdvancingFrame)
+        .filter((key) => preparedMediaFirstAdvancingFrame[key])
         .join(",")}
     >
       {/* Media below content globally — never nest under a lane z-index shell. */}
@@ -1286,8 +1309,10 @@ const DisplayBoxTransitionStage = ({
           candidateDiagnostics={poolCandidateResult.diagnostics}
           views={poolViews}
           onReadyChange={reportPreparedMediaReady}
-          onLiveReadyChange={reportPreparedMediaLiveReady}
+          onFirstAdvancingFrameChange={reportPreparedMediaFirstAdvancingFrame}
           onSurfaceElement={reportPreparedMediaElement}
+          transitionStart={transitionStart}
+          transitionComplete={transitionComplete}
           lastSendPath={lastSendPath}
           lastMediaKey={lastMediaKey}
           posterShown={posterShown}

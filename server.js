@@ -87,6 +87,10 @@ import {
   createRichLinkPreviewService,
 } from "./server/richLinkPreview.js";
 import {
+  ExternalResourceError,
+  createExternalResourceService,
+} from "./server/externalResourceService.js";
+import {
   buildPublicShareImageUrl,
   isLinkPreviewCrawler,
   matchPublicShareRoute,
@@ -339,6 +343,9 @@ const parseChatImageBytes = express.raw({
 const guardChatImageUpload = createChatImageUploadGuard();
 const guardChatImageFinalize = createChatImageFinalizeGuard();
 const richLinkPreviewService = createRichLinkPreviewService({
+  httpClient: axios,
+});
+const externalResourceService = createExternalResourceService({
   httpClient: axios,
 });
 const youtubeSearchService = createYouTubeSearchService({
@@ -1037,6 +1044,40 @@ app.get("/api/link-previews", requireAppSession, async (req, res) => {
   } catch (error) {
     return respondRichLinkPreviewError(res, error);
   }
+});
+
+app.get("/api/resources/resolve", requireAppSession, async (req, res) => {
+  try {
+    const descriptor = await externalResourceService.resolveRateLimited(
+      req.query.url,
+      req.appSession.actorId || req.ip || "unknown",
+    );
+    return res.json({ resource: descriptor });
+  } catch (error) {
+    if (error instanceof ExternalResourceError) {
+      return res.status(error.statusCode).json({ error: error.message, code: error.code });
+    }
+    console.error("External resource resolution error:", error);
+    return res.status(502).json({ error: "That resource could not be resolved." });
+  }
+});
+
+// This endpoint is authorized by the short-lived, target-bound token issued by
+// /api/resources/resolve. It intentionally does not forward app cookies or
+// third-party credentials to the upstream resource.
+app.get("/api/resources/proxy", (req, res) => {
+  void externalResourceService.handleProxy(req, res).catch((error) => {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    if (error instanceof ExternalResourceError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    console.error("External resource proxy error:", error);
+    res.status(502).json({ error: "That resource could not be loaded." });
+  });
 });
 
 const respondYouTubeSearchError = (res, error) => {

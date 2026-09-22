@@ -1474,6 +1474,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
                 onChange(onChangeInfo);
               }}
               displayType="editor"
+              currentItemId={_id}
               selectedBox={selectedBox}
               isBoxLocked={isBoxLocked}
               showEditorBoxBorder={!isPresentMode}

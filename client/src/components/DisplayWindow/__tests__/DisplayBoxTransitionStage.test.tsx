@@ -298,7 +298,7 @@ describe("DisplayBoxTransitionStage", () => {
     await waitFor(() => {
       const value = screen
         .getByTestId("display-box-transition-stage")
-        .getAttribute("data-prepared-media-live-ready");
+        .getAttribute("data-prepared-media-first-advancing-frame");
       if (value !== "remote:pool-b") throw new Error(`live=${JSON.stringify(value)}`);
     });
     await waitFor(() =>

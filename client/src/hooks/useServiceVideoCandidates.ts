@@ -347,6 +347,7 @@ export const useServiceVideoCandidates = ({
   outlineId,
   protectedMediaKeys,
   maxSurfaces,
+  scope = "service",
 }: {
   enabled: boolean;
   outputId?: string;
@@ -356,6 +357,7 @@ export const useServiceVideoCandidates = ({
   outlineId?: string | null;
   protectedMediaKeys?: string[];
   maxSurfaces?: number;
+  scope?: "service" | "current-item";
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
@@ -397,7 +399,29 @@ export const useServiceVideoCandidates = ({
       return;
     }
 
+    if (scope === "current-item") apply([]);
+
     try {
+      if (scope === "current-item") {
+        if (!currentItemId) {
+          activeListIdRef.current = undefined;
+          serviceItemIdsRef.current = new Set();
+          apply([]);
+          return;
+        }
+        const currentDoc = (await db.get(currentItemId)) as DBItem | undefined;
+        if (generation !== loadGenerationRef.current) return;
+        activeListIdRef.current = undefined;
+        serviceItemIdsRef.current = new Set([currentItemId]);
+        if (!currentDoc || !Array.isArray(currentDoc.slides)) {
+          apply([]);
+          return;
+        }
+        apply([
+          await getItemMedia(currentDoc, 0, cacheMapRef.current),
+        ]);
+        return;
+      }
       const lists = (await db.get("ItemLists")) as ItemLists | undefined;
       if (generation !== loadGenerationRef.current) return;
       // A display must warm the outline owned by its controller. The legacy
@@ -445,11 +469,11 @@ export const useServiceVideoCandidates = ({
       apply(nextServiceMedia);
     } catch {
       // Preparation is optional. The existing lane path remains authoritative
-      // when local outline discovery is unavailable or still syncing. Keep the
-      // last service-wide set so a transient read cannot collapse the pool to
-      // only the live/current-item candidate.
+      // when local outline discovery is unavailable or still syncing. A
+      // current-item preview must not retain a previous item's candidates.
+      if (scope === "current-item") apply([]);
     }
-  }, [db, enabled, outlineId]);
+  }, [currentItemId, db, enabled, outlineId, scope]);
 
   useEffect(() => {
     void loadServiceMedia();
@@ -542,6 +566,7 @@ export const useServiceVideoCandidates = ({
     enabled,
     loadServiceMedia,
     serviceMedia,
+    scope,
   ]);
 
   const handleUpdate = useCallback(

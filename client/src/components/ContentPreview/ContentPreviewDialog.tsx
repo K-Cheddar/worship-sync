@@ -19,6 +19,7 @@ import {
   getSafeHttpUrl,
   getYouTubePreviewVideoId,
   resolveContentPreviewResource,
+  resolveExternalContentPreviewSource,
   type ContentPreviewKind,
   type ContentPreviewResource,
   type ContentPreviewResolvedSource,
@@ -100,7 +101,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
   const metadataLabel = resolution
     ? `${resolution.providerLabel} • ${getContentPreviewMediaLabel(resolution.mediaType)}`
     : "";
-  const youtubeVideoId = resource ? getYouTubePreviewVideoId(resource) : null;
+  const youtubeVideoId = resolution?.mediaId || (resource ? getYouTubePreviewVideoId(resource) : null);
   const canOpenExternally = Boolean(getSafeHttpUrl(externalUrl));
 
   useEffect(() => {
@@ -118,6 +119,17 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     if (!resource.resolveSource) {
       if (!directUrl && resource.textContent === undefined) {
         setResolveError("This resource does not contain a previewable link.");
+      }
+      if (directUrl) {
+        void resolveExternalContentPreviewSource(resource)
+          .then((resolved) => {
+            if (!active || !resolved) return;
+            setSource(resolved);
+          })
+          .catch(() => {
+            // Keep the validated direct URL as a graceful fallback when the
+            // authenticated metadata/proxy service is temporarily unavailable.
+          });
       }
       return () => {
         active = false;

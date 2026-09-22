@@ -71,6 +71,7 @@ import type {
 import type { SongAudio } from "../types";
 import type { ChurchResource } from "../types/churchResource";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
+import type { ExternalResourceResolution } from "./externalResource";
 
 export type RichLinkPreview = {
   provider: "youtube" | "spotify";
@@ -305,6 +306,13 @@ export const getRichLinkPreview = async (url: string) => {
     `api/link-previews?${new URLSearchParams({ url }).toString()}`,
   );
   return result.preview;
+};
+
+export const getExternalResourceResolution = async (url: string) => {
+  const result = await apiFetch<{ resource: ExternalResourceResolution }>(
+    `api/resources/resolve?${new URLSearchParams({ url }).toString()}`,
+  );
+  return result.resource;
 };
 
 export const searchYouTubeVideos = async ({

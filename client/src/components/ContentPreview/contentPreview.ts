@@ -1,4 +1,10 @@
+import { getExternalResourceResolution } from "../../api/auth";
+import { getApiBasePath } from "../../utils/environment";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import type {
+  ExternalResourceMediaType,
+  ExternalResourcePreviewType,
+} from "../../api/externalResource";
 
 export type ContentPreviewKind =
   | "image"
@@ -8,12 +14,17 @@ export type ContentPreviewKind =
   | "youtube"
   | "text"
   | "web"
+  | "unknown"
   | "unsupported";
 
 export type ContentPreviewProvider =
   | "worshipsync"
   | "youtube"
   | "dropbox"
+  | "google-drive"
+  | "onedrive"
+  | "sharepoint"
+  | "box"
   | "direct"
   | "web"
   | "unknown";
@@ -25,6 +36,13 @@ export type ContentPreviewResolvedSource = {
   fileName?: string;
   title?: string;
   provider?: ContentPreviewProvider;
+  externalUrl?: string;
+  previewType?: ExternalResourcePreviewType;
+  mediaType?: ExternalResourceMediaType;
+  canPreview?: boolean;
+  requiresProxy?: boolean;
+  mediaId?: string;
+  reason?: string;
 };
 
 export type ContentPreviewResolution = {
@@ -38,6 +56,9 @@ export type ContentPreviewResolution = {
   renderer: ContentPreviewKind;
   canPreview: boolean;
   fileName?: string;
+  mediaId?: string;
+  requiresProxy?: boolean;
+  reason?: string;
 };
 
 /**
@@ -101,6 +122,10 @@ const PROVIDER_LABELS: Record<ContentPreviewProvider, string> = {
   worshipsync: "WorshipSync",
   youtube: "YouTube",
   dropbox: "Dropbox",
+  "google-drive": "Google Drive",
+  onedrive: "OneDrive",
+  sharepoint: "SharePoint",
+  box: "Box",
   direct: "Direct media",
   web: "Web",
   unknown: "Resource",
@@ -114,6 +139,7 @@ const MEDIA_KIND_LABELS: Record<ContentPreviewKind, string> = {
   youtube: "Video",
   text: "Text",
   web: "Web page",
+  unknown: "Resource",
   unsupported: "Resource",
 };
 
@@ -306,6 +332,54 @@ export const getContentPreviewProviderLabel = (
   }
 };
 
+const toAbsolutePreviewUrl = (value?: string): string | null => {
+  const safeUrl = getSafeHttpUrl(value);
+  if (safeUrl) return safeUrl;
+  if (!value?.trim() || !value.trim().startsWith("/")) return null;
+  try {
+    const apiBase = getApiBasePath();
+    const base = getSafeHttpUrl(apiBase) || (
+      typeof window !== "undefined" ? getSafeHttpUrl(window.location.origin) : null
+    );
+    return base ? getSafeHttpUrl(new URL(value.trim(), base).toString()) : null;
+  } catch {
+    return null;
+  }
+};
+
+const isContentPreviewProvider = (value?: string): value is ContentPreviewProvider =>
+  Boolean(value && value in PROVIDER_LABELS);
+
+/** Resolve public URLs through the authenticated, provider-neutral server boundary. */
+export const resolveExternalContentPreviewSource = async (
+  resource: ContentPreviewResource,
+): Promise<ContentPreviewResolvedSource | null> => {
+  const resourceUrl = getSafeHttpUrl(resource.url);
+  if (!resourceUrl || resource.resolveSource) return null;
+
+  const localResolution = resolveContentPreviewResource(resource);
+  // YouTube is already a first-class embed provider and does not need a media proxy.
+  if (localResolution.provider === "youtube") return null;
+
+  const resolved = await getExternalResourceResolution(resourceUrl);
+  const previewUrl = toAbsolutePreviewUrl(resolved.previewUrl || resolved.externalUrl);
+  return {
+    url: previewUrl || resourceUrl,
+    originalUrl: resolved.originalUrl || resourceUrl,
+    externalUrl: resolved.externalUrl || resolved.originalUrl || resourceUrl,
+    provider: resolved.provider,
+    title: resolved.title,
+    mimeType: resolved.mimeType,
+    fileName: resolved.filename,
+    previewType: resolved.previewType,
+    mediaType: resolved.mediaType,
+    canPreview: resolved.canPreview,
+    requiresProxy: resolved.requiresProxy,
+    mediaId: resolved.mediaId,
+    reason: resolved.reason,
+  };
+};
+
 export const resolveContentPreviewResource = (
   resource: ContentPreviewResource,
   source?: ContentPreviewResolvedSource | null,
@@ -318,7 +392,12 @@ export const resolveContentPreviewResource = (
       ? source?.originalUrl?.trim() || sourceUrl
       : sourceUrl;
   const providerResolution = resolveProviderUrl(resourceUrl || sourceUrl || undefined);
-  const resolvedUrl = providerResolution?.resolvedUrl || sourceUrl || originalUrl;
+  const hasServerResolution = Boolean(
+    source?.provider || source?.previewType || source?.mediaType || source?.requiresProxy !== undefined,
+  );
+  const resolvedUrl = hasServerResolution
+    ? sourceUrl || originalUrl
+    : providerResolution?.resolvedUrl || sourceUrl || originalUrl;
   const fileName = resource.fileName || source?.fileName || providerResolution?.fileName;
   const mimeType = normalizedMimeType(source?.mimeType || resource.mimeType) || undefined;
   const candidate: ContentPreviewResource = {
@@ -327,25 +406,33 @@ export const resolveContentPreviewResource = (
     fileName,
     mimeType,
   };
-  const mediaType = providerResolution?.mediaType || getContentPreviewKind(candidate, mimeType);
-  const youtubeVideoId = getYouTubePreviewVideoId(candidate);
+  const serverPreviewType = source?.previewType;
+  const mediaType = source?.mediaType
+    ? source.mediaType as ContentPreviewKind
+    : providerResolution?.mediaType || getContentPreviewKind(candidate, mimeType);
+  const youtubeVideoId = source?.mediaId || getYouTubePreviewVideoId(candidate);
   const explicitProvider = resource.provider?.trim().toLowerCase();
-  const provider: ContentPreviewProvider = youtubeVideoId || explicitProvider === "youtube"
-    ? "youtube"
-    : providerResolution?.provider || source?.provider || (
-      resource.resolveSource || explicitProvider?.startsWith("worshipsync")
-        ? "worshipsync"
-        : mediaType === "web"
-          ? "web"
-          : resolvedUrl
-            ? "direct"
-            : "unknown"
-    );
-  const providerLabel = providerResolution?.providerLabel ||
-    getContentPreviewProviderLabel(provider, originalUrl || resolvedUrl || undefined);
-  const canPreview = mediaType !== "unsupported" && (
-    mediaType === "text" || Boolean(resolvedUrl)
+  const sourceProvider = isContentPreviewProvider(source?.provider) ? source.provider : undefined;
+  const provider: ContentPreviewProvider = sourceProvider || (
+    youtubeVideoId || explicitProvider === "youtube"
+      ? "youtube"
+      : providerResolution?.provider || (
+          resource.resolveSource || explicitProvider?.startsWith("worshipsync")
+            ? "worshipsync"
+            : mediaType === "web"
+              ? "web"
+              : resolvedUrl
+                ? "direct"
+                : "unknown"
+        )
   );
+  const normalizedProvider = isContentPreviewProvider(provider) ? provider : "unknown";
+  const providerLabel = (sourceProvider ? PROVIDER_LABELS[sourceProvider] : null) || providerResolution?.providerLabel ||
+    getContentPreviewProviderLabel(provider, originalUrl || resolvedUrl || undefined);
+  const renderer = serverPreviewType || mediaType;
+  const canPreview = source?.canPreview ?? (mediaType !== "unsupported" && (
+    mediaType === "text" || Boolean(resolvedUrl)
+  ));
 
   return {
     originalUrl,
@@ -355,12 +442,15 @@ export const resolveContentPreviewResource = (
       resolvedTitle: source?.title,
       providerLabel,
     }),
-    provider,
+    provider: normalizedProvider,
     providerLabel,
     mediaType,
     mimeType,
-    renderer: mediaType,
+    renderer,
     canPreview,
     ...(fileName ? { fileName } : {}),
+    ...(youtubeVideoId ? { mediaId: youtubeVideoId } : {}),
+    ...(source?.requiresProxy !== undefined ? { requiresProxy: source.requiresProxy } : {}),
+    ...(source?.reason ? { reason: source.reason } : {}),
   };
 };

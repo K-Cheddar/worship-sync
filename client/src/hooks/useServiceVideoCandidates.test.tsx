@@ -47,6 +47,7 @@ const renderCandidates = (
     outlineId?: string | null;
     outlineItems?: Record<string, string[]>;
     maxSurfaces?: number;
+    scope?: "service" | "current-item";
     cacheMap?: Record<string, string>;
     getLocalMediaPath?: jest.Mock;
     ensureMediaCached?: jest.Mock;
@@ -78,6 +79,8 @@ const renderCandidates = (
       if (id === "ItemLists") {
         return { activeList: { _id: "list-1" } } as ItemLists;
       }
+      const currentDoc = currentDocs.find((doc) => doc._id === id);
+      if (currentDoc) return currentDoc;
       return {
         _id: id,
         items: (
@@ -117,6 +120,7 @@ const renderCandidates = (
         currentMedia,
         outlineId: options.outlineId,
         maxSurfaces: options.maxSurfaces,
+        scope: options.scope,
       }),
     { wrapper },
   );
@@ -696,5 +700,30 @@ describe("useServiceVideoCandidates", () => {
         videoBox: {} as never,
       }),
     ).toBe(identityKey);
+  });
+
+  it("limits the Electron editor scope to videos in the current item", async () => {
+    const { result } = renderCandidates(
+      [
+        item("item-1", "Other Song", [
+          slide("slide-1", [
+            { id: "other", mediaInfo: video("other", "https://cdn.example.com/other.mp4") },
+          ]),
+        ]),
+        item("item-2", "Current Song", [
+          slide("slide-2", [
+            { id: "current-a", mediaInfo: video("current-a", "https://cdn.example.com/current-a.mp4") },
+            { id: "current-b", mediaInfo: video("current-b", "https://cdn.example.com/current-b.mp4") },
+          ]),
+        ]),
+      ],
+      { currentItemId: "item-2", scope: "current-item", maxSurfaces: 8 },
+    );
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(2));
+    expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual([
+      "remote:current-a",
+      "remote:current-b",
+    ]);
   });
 });

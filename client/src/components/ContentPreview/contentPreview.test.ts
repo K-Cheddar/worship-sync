@@ -88,4 +88,35 @@ describe("content preview normalization", () => {
       url: dropboxMp4Url,
     }).title).toBe("Pathfinder video");
   });
+
+  it("consumes a server descriptor without moving provider logic into the caller", () => {
+    const resolution = resolveContentPreviewResource(
+      {
+        id: "drive-video",
+        title: "Rehearsal clip",
+        url: "https://drive.google.com/file/d/drive-file/view",
+      },
+      {
+        url: "https://www.worshipsync.net/api/resources/proxy?token=short-lived",
+        originalUrl: "https://drive.google.com/file/d/drive-file/view",
+        externalUrl: "https://drive.google.com/file/d/drive-file/view",
+        provider: "google-drive",
+        previewType: "video",
+        mediaType: "video",
+        canPreview: true,
+        requiresProxy: true,
+        mediaId: "drive-file",
+        fileName: "rehearsal.mp4",
+      },
+    );
+
+    expect(resolution).toMatchObject({
+      provider: "google-drive",
+      renderer: "video",
+      resolvedUrl: "https://www.worshipsync.net/api/resources/proxy?token=short-lived",
+      originalUrl: "https://drive.google.com/file/d/drive-file/view",
+      mediaId: "drive-file",
+      requiresProxy: true,
+    });
+  });
 });

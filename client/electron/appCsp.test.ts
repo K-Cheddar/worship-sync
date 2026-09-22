@@ -23,6 +23,9 @@ describe("buildAppCspHeader", () => {
     expect(directives.get("connect-src")).not.toContain("https://*.canva.com");
     expect(directives.get("img-src")).toContain("worshipsync-media:");
     expect(directives.get("media-src")).toContain("worshipsync-media:");
+    expect(directives.get("media-src")).toContain("https://www.worshipsync.net");
+    expect(directives.get("media-src")).not.toContain("https:");
+    expect(directives.get("media-src")).not.toContain("*");
   });
 });
 
@@ -45,6 +48,11 @@ describe("index.html meta CSP", () => {
     expect(directives.get("connect-src")).toEqual(
       expect.arrayContaining(["media-cache:", "worshipsync-media:"]),
     );
+    expect(directives.get("media-src")).toEqual(
+      expect.arrayContaining(["https://www.worshipsync.net"]),
+    );
+    expect(directives.get("media-src")).not.toContain("https:");
+    expect(directives.get("media-src")).not.toContain("*");
   });
 });
 

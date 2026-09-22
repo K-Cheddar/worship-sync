@@ -20,8 +20,6 @@ import ContentPreviewDialog from "../../components/ContentPreview/ContentPreview
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
-import YouTubePlaylistPlayer from "../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer";
-import type { YouTubePlaylistEntry } from "../../components/YouTubePlaylistPlayer/youtubePlaylist";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 import {
@@ -133,7 +131,6 @@ const ServicePlanContentPanel = ({
   const [referencedChurchResources, setReferencedChurchResources] = useState<Record<string, ChurchResource | null>>({});
   const [churchResourceLoading, setChurchResourceLoading] = useState(false);
   const [churchResourceError, setChurchResourceError] = useState("");
-  const [activeYouTubeResourceId, setActiveYouTubeResourceId] = useState<string | null>(null);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
   const [resourceEditorMode, setResourceEditorMode] = useState<ResourceEditorMode | null>(null);
   const [resourceTitle, setResourceTitle] = useState("");
@@ -154,7 +151,6 @@ const ServicePlanContentPanel = ({
     setScriptureAddOpen(false);
     setAudioPickerOpen(false);
     setChurchResourcePickerOpen(false);
-    setActiveYouTubeResourceId(null);
     setOpeningResourceId(null);
     resetResourceEditor();
     onScriptureAttachModeChange?.(false);
@@ -181,20 +177,6 @@ const ServicePlanContentPanel = ({
     () => allSongDocs.filter((song) => Boolean(song.songAudio)),
     [allSongDocs],
   );
-  const activeYouTubeResource = resources.find(
-    (resource) => resource.id === activeYouTubeResourceId && resource.type === "youtube",
-  );
-  const activeYouTubeQueue = useMemo<YouTubePlaylistEntry[]>(() => {
-    if (!activeYouTubeResource?.mediaId) return [];
-    return [{
-      entryKey: activeYouTubeResource.id,
-      songId: activeYouTubeResource.id,
-      title: activeYouTubeResource.title,
-      artist: "",
-      videoId: activeYouTubeResource.mediaId,
-    }];
-  }, [activeYouTubeResource]);
-
   const updateSongs = (next: ServicePlanSongReference[]) =>
     onUpdate({ songRef: undefined, songRefs: next });
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
@@ -416,7 +398,7 @@ const ServicePlanContentPanel = ({
             variant="tertiary"
             svg={Play}
             className="max-md:min-h-0"
-            onClick={() => setActiveYouTubeResourceId(resource.id)}
+            onClick={() => openResourcePreview(resource)}
           >
             Play
           </Button>
@@ -584,8 +566,6 @@ const ServicePlanContentPanel = ({
 
   return (
     <div className="space-y-4" aria-label={`Content for ${itemLabel}`}>
-      {activeYouTubeQueue.length ? <YouTubePlaylistPlayer queue={activeYouTubeQueue} /> : null}
-
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Songs</h3>
         {songs.length ? songs.map((song, index) => {

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { PreparedVideoMetrics } from "../../types/electron";
 import {
   advancePreparedVideoSurface,
@@ -35,9 +42,11 @@ type ElectronMediaSurfacePoolProps = {
   candidateDiagnostics?: ElectronMediaSurfaceCandidateDiagnostic[];
   views: ElectronMediaSurfaceView[];
   onReadyChange: (mediaKey: string, ready: boolean) => void;
-  onLiveReadyChange: (mediaKey: string, ready: boolean) => void;
+  onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
+  transitionStart?: { mediaKey: string; timestamp: number };
+  transitionComplete?: { mediaKey: string; timestamp: number };
   lastSendPath?: "pool" | "fallback";
   lastMediaKey?: string;
   posterShown?: boolean;
@@ -53,6 +62,17 @@ type PreparedSurfaceDebug = (
   event: string,
   details?: Record<string, unknown>,
 ) => void;
+
+const surfaceStateForPhase = (
+  phase: PreparedVideoSurfaceState["phase"],
+): SurfaceDiagnostic["surfaceState"] => {
+  if (phase === "ready") return "READY";
+  if (phase === "playing") return "ACTIVE";
+  if (["loading", "preparing", "resetting"].includes(phase)) {
+    return "PREPARING";
+  }
+  return "COLD";
+};
 
 const isImmediateSurfaceSource = (source: string): boolean =>
   source.startsWith("media-cache://") ||
@@ -118,6 +138,23 @@ const seekToBeginning = async (video: HTMLVideoElement): Promise<void> => {
   }
 };
 
+/**
+ * Establishes the frame that READY promises to retain. The seek, decode, and
+ * presentation all happen before the pause; pausing and then seeking again
+ * would invalidate the exact frame used to establish readiness.
+ */
+const settlePreparedStartingFrame = async (
+  video: HTMLVideoElement,
+  debug?: PreparedSurfaceDebug,
+): Promise<void> => {
+  await seekToBeginning(video);
+  debug?.("PREPARED_FRAME_PLAY_REQUESTED");
+  await video.play();
+  debug?.("PREPARED_FRAME_PLAY_RESOLVED");
+  await waitForPresentedFrame(video, debug);
+  video.pause();
+};
+
 const resolveSurfaceSource = async (
   source: string,
 ): Promise<{ source?: string; sourceKind: "cache" | "local" | "remote" }> => {
@@ -157,7 +194,7 @@ const PreparedSurface = ({
   view,
   enabled,
   onReadyChange,
-  onLiveReadyChange,
+  onFirstAdvancingFrameChange,
   onSurfaceElement,
   onDiagnosticChange,
 }: {
@@ -165,7 +202,7 @@ const PreparedSurface = ({
   view?: ElectronMediaSurfaceView;
   enabled: boolean;
   onReadyChange: (mediaKey: string, ready: boolean) => void;
-  onLiveReadyChange: (mediaKey: string, ready: boolean) => void;
+  onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
 }) => {
@@ -233,6 +270,7 @@ const PreparedSurface = ({
         source: resolvedSource ?? candidate.source,
         phase: next.phase,
         sourceKind,
+        surfaceState: surfaceStateForPhase(next.phase),
         error: next.error,
       });
     },
@@ -252,6 +290,7 @@ const PreparedSurface = ({
         source: resolvedSource ?? candidate.source,
         phase: stateRef.current.phase,
         sourceKind,
+        surfaceState: surfaceStateForPhase(stateRef.current.phase),
         ...extra,
       });
     },
@@ -267,12 +306,24 @@ const PreparedSurface = ({
   const prepare = useCallback(async () => {
     const video = videoRef.current;
     if (!video || !resolvedSource || !enabled) return;
+    if (isHLSVideoSource(resolvedSource)) {
+      const message = "HLS source is not a finite prepared video";
+      const failed = advancePreparedVideoSurface(
+        stateRef.current,
+        stateRef.current.generation,
+        "error",
+        message,
+      );
+      update(failed);
+      onReadyChange(candidate.mediaKey, false);
+      return;
+    }
     const loading = beginPreparedVideoSurface(stateRef.current);
     generationRef.current = loading.generation;
     preparationStartedAtRef.current = performance.now();
     playingGenerationRef.current = undefined;
     onReadyChange(candidate.mediaKey, false);
-    onLiveReadyChange(candidate.mediaKey, false);
+    onFirstAdvancingFrameChange(candidate.mediaKey, false);
     debug("PREPARE_START", { source: resolvedSource });
     update(loading);
 
@@ -287,26 +338,9 @@ const PreparedSurface = ({
       update(
         advancePreparedVideoSurface(loading, loading.generation, "preparing"),
       );
-      if (video.currentTime !== 0) {
-        const seeked = waitForVideoEvent(video, "seeked");
-        video.currentTime = 0;
-        await seeked;
-      }
       stage = "playback";
-      debug("PLAY_REQUESTED");
-      await video.play();
-      debug("PLAY_RESOLVED");
       stage = "presented-frame";
-      await waitForPresentedFrame(video, debug);
-      if (stateRef.current.generation !== loading.generation) {
-        debug("GENERATION_INVALIDATED", {
-          expected: loading.generation,
-          actual: stateRef.current.generation,
-        });
-        return;
-      }
-      video.pause();
-      await seekToBeginning(video);
+      await settlePreparedStartingFrame(video, debug);
       if (stateRef.current.generation !== loading.generation) {
         debug("GENERATION_INVALIDATED", {
           expected: loading.generation,
@@ -322,10 +356,7 @@ const PreparedSurface = ({
       update(ready);
       onReadyChange(candidate.mediaKey, true);
       publishReady({
-        preparationDurationMs:
-          performance.now() -
-          (preparationStartedAtRef.current ?? performance.now()),
-        readyToPlayPresentedFrameMs:
+        prepareToFrameReadyMs:
           performance.now() -
           (preparationStartedAtRef.current ?? performance.now()),
       });
@@ -348,7 +379,7 @@ const PreparedSurface = ({
     candidate.mediaKey,
     debug,
     enabled,
-    onLiveReadyChange,
+    onFirstAdvancingFrameChange,
     onReadyChange,
     publishReady,
     resolvedSource,
@@ -362,17 +393,24 @@ const PreparedSurface = ({
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "resetting"),
     );
-    onLiveReadyChange(candidate.mediaKey, false);
+    onFirstAdvancingFrameChange(candidate.mediaKey, false);
+    onReadyChange(candidate.mediaKey, false);
     playingGenerationRef.current = undefined;
     correctionStartedAtRef.current = undefined;
+    preparationStartedAtRef.current = performance.now();
     video.pause();
     try {
-      await seekToBeginning(video);
+      await settlePreparedStartingFrame(video, debug);
       if (stateRef.current.generation !== generation) return;
       update(
         advancePreparedVideoSurface(stateRef.current, generation, "ready"),
       );
       onReadyChange(candidate.mediaKey, true);
+      publishReady({
+        prepareToFrameReadyMs:
+          performance.now() -
+          (preparationStartedAtRef.current ?? performance.now()),
+      });
     } catch (error) {
       if (stateRef.current.generation !== generation) return;
       const message = getPreparedVideoSurfaceErrorMessage(
@@ -389,7 +427,14 @@ const PreparedSurface = ({
       );
       onReadyChange(candidate.mediaKey, false);
     }
-  }, [candidate.mediaKey, onLiveReadyChange, onReadyChange, update]);
+  }, [
+    candidate.mediaKey,
+    debug,
+    onFirstAdvancingFrameChange,
+    onReadyChange,
+    publishReady,
+    update,
+  ]);
 
   const play = useCallback(async () => {
     const video = videoRef.current;
@@ -401,30 +446,49 @@ const PreparedSurface = ({
       return;
     }
     const generation = stateRef.current.generation;
+    const stateBeforeSend: SurfaceDiagnostic["sendStateBeforeRequest"] =
+      stateRef.current.phase === "ready" ? "READY" : "PREPARING";
+    const sendRequestedAt = performance.now();
+    const sendBufferedRanges: Array<[number, number]> = Array.from(
+      { length: video.buffered.length },
+      (_, index) => [video.buffered.start(index), video.buffered.end(index)],
+    );
     playingGenerationRef.current = generation;
-    const startedAt = performance.now();
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "playing"),
     );
-    onLiveReadyChange(candidate.mediaKey, false);
+    onFirstAdvancingFrameChange(candidate.mediaKey, false);
     try {
-      const cue = view?.playback;
-      if (cue?.mediaKey === candidate.mediaKey) {
-        video.currentTime = resolveVideoPlaybackPosition(
-          cue,
-          Number.isFinite(video.duration) ? video.duration : undefined,
-        );
-        lastCueGenerationRef.current = cue.generation;
-      }
-      debug("PLAY_REQUESTED", { mode: "live" });
+      publishReady({
+        sendRequestTimestamp: sendRequestedAt,
+        sendStateBeforeRequest: stateBeforeSend,
+        sendCurrentTime: video.currentTime,
+        sendReadyState: video.readyState,
+        sendPaused: video.paused,
+        sendSeeking: video.seeking,
+        sendBufferedRanges,
+      });
+      debug("PLAY_REQUESTED", { mode: "live", sendRequestedAt });
+      const playCalledAt = performance.now();
+      publishReady({ playCalledTimestamp: playCalledAt });
       await video.play();
-      debug("PLAY_RESOLVED", { mode: "live" });
+      const playResolvedAt = performance.now();
+      publishReady({
+        playResolvedTimestamp: playResolvedAt,
+        sendToPlayRequestMs: playCalledAt - sendRequestedAt,
+        sendToPlayResolvedMs: playResolvedAt - sendRequestedAt,
+      });
+      debug("PLAY_RESOLVED", { mode: "live", playResolvedAt });
       await waitForPresentedFrame(video, debug);
       if (stateRef.current.generation !== generation) return;
-      onLiveReadyChange(candidate.mediaKey, true);
-      debug("LIVE_READY", { mode: "live" });
+      const firstAdvancingFrameAt = performance.now();
+      onFirstAdvancingFrameChange(candidate.mediaKey, true);
       publishReady({
-        playToPresentedFrameMs: performance.now() - startedAt,
+        firstAdvancingFrameTimestamp: firstAdvancingFrameAt,
+        sendToFirstAdvancingFrameMs: firstAdvancingFrameAt - sendRequestedAt,
+      });
+      debug("FIRST_ADVANCING_FRAME", { mode: "live", firstAdvancingFrameAt });
+      publishReady({
         lastUsedAt: Date.now(),
       });
     } catch (error) {
@@ -440,17 +504,14 @@ const PreparedSurface = ({
           message,
         ),
       );
-      onLiveReadyChange(candidate.mediaKey, false);
-      onReadyChange(candidate.mediaKey, false);
+      onFirstAdvancingFrameChange(candidate.mediaKey, false);
     }
   }, [
     candidate.mediaKey,
     debug,
-    onLiveReadyChange,
-    onReadyChange,
+    onFirstAdvancingFrameChange,
     publishReady,
     update,
-    view?.playback,
   ]);
 
   useEffect(() => {
@@ -497,13 +558,20 @@ const PreparedSurface = ({
     void prepare();
   }, [enabled, prepare, resolvedSource]);
 
-  useEffect(() => {
+  const hasView = view !== undefined;
+
+  useLayoutEffect(() => {
     if (!enabled || !view?.shouldPlay) {
-      if (stateRef.current.phase === "playing") void reset();
+      if (
+        stateRef.current.phase === "playing" ||
+        (stateRef.current.phase === "error" && hasView)
+      ) {
+        void reset();
+      }
       return;
     }
     if (stateRef.current.phase === "ready") void play();
-  }, [enabled, play, reset, view?.shouldPlay, state.phase]);
+  }, [enabled, hasView, play, reset, view?.shouldPlay, state.phase]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -511,7 +579,11 @@ const PreparedSurface = ({
     if (!video || !cue || cue.mediaKey !== candidate.mediaKey) return;
     if (lastCueGenerationRef.current === cue.generation) return;
     lastCueGenerationRef.current = cue.generation;
-    if (cue.applySeek) {
+    // A READY surface already owns the retained starting frame. Applying a
+    // synchronization seek here would invalidate that frame between the
+    // operator request and the transition; the playback-rate correction loop
+    // can reconcile a later cue without blocking the handoff.
+    if (cue.applySeek && stateRef.current.phase === "idle") {
       video.currentTime = resolveVideoPlaybackPosition(
         cue,
         Number.isFinite(video.duration) ? video.duration : undefined,
@@ -594,7 +666,7 @@ const PreparedSurface = ({
       debug("UNMOUNT");
       mountedRef.current = false;
       onReadyChange(candidate.mediaKey, false);
-      onLiveReadyChange(candidate.mediaKey, false);
+      onFirstAdvancingFrameChange(candidate.mediaKey, false);
       if (video) {
         video.pause();
         video.removeAttribute("src");
@@ -602,7 +674,7 @@ const PreparedSurface = ({
       }
       stateRef.current = disposePreparedVideoSurface(stateRef.current);
     };
-  }, [candidate.mediaKey, debug, onLiveReadyChange, onReadyChange]);
+  }, [candidate.mediaKey, debug, onFirstAdvancingFrameChange, onReadyChange]);
 
   const opacity = view?.opacity;
   const videoBox = view?.videoBox;
@@ -651,9 +723,11 @@ const ElectronMediaSurfacePool = ({
   candidateDiagnostics,
   views,
   onReadyChange,
-  onLiveReadyChange,
+  onFirstAdvancingFrameChange,
   onSurfaceElement,
   onDiagnosticChange,
+  transitionStart,
+  transitionComplete,
   lastSendPath,
   lastMediaKey,
   posterShown,
@@ -671,6 +745,9 @@ const ElectronMediaSurfacePool = ({
     ReturnType<typeof summarizeElectronMediaSurfaceDiagnostics> | undefined
   >(undefined);
   const previousKeysRef = useRef<string[]>([]);
+  const previousCandidatesRef = useRef(
+    new Map<string, ElectronMediaSurfaceCandidate>(),
+  );
   const evictionHistoryRef = useRef<string[]>([]);
   const candidateKeys = useMemo(
     () => candidates.map((candidate) => candidate.mediaKey),
@@ -729,16 +806,33 @@ const ElectronMediaSurfacePool = ({
 
   useEffect(() => {
     const nextKeys = new Set(candidateKeysRef.current);
+    const previousCandidates = previousCandidatesRef.current;
     const evicted = previousKeysRef.current.filter(
       (mediaKey) => !nextKeys.has(mediaKey),
     );
     previousKeysRef.current = candidateKeysRef.current;
     if (evicted.length > 0) {
+      const detailsByKey = new Map(
+        (candidateDiagnostics ?? []).map((detail) => [detail.mediaKey, detail]),
+      );
       evictionHistoryRef.current = [
         ...evictionHistoryRef.current,
-        ...evicted,
+        ...evicted.map((mediaKey) => {
+          const detail = detailsByKey.get(mediaKey);
+          const previous = previousCandidates.get(mediaKey);
+          const reason =
+            detail?.status === "eligible"
+              ? "budget"
+              : previous?.itemId && detail?.itemId && previous.itemId !== detail.itemId
+                ? "outline changed"
+                : "service removed";
+          return `${mediaKey} (${reason})`;
+        }),
       ].slice(-64);
     }
+    previousCandidatesRef.current = new Map(
+      candidatesRef.current.map((candidate) => [candidate.mediaKey, candidate]),
+    );
     setDiagnostics((current) => {
       const candidateSet = new Set(candidateKeysRef.current);
       const next = Object.fromEntries(
@@ -750,7 +844,49 @@ const ElectronMediaSurfacePool = ({
         ? current
         : next;
     });
-  }, [candidateKeySignature]);
+  }, [candidateDiagnostics, candidateKeySignature]);
+
+  useEffect(() => {
+    if (!transitionStart) return;
+    setDiagnostics((current) => {
+      const diagnostic = current[transitionStart.mediaKey] ?? {
+        mediaKey: transitionStart.mediaKey,
+        source: "",
+        phase: "idle" as const,
+        sourceKind: "remote" as const,
+      };
+      return {
+        ...current,
+        [transitionStart.mediaKey]: {
+          ...diagnostic,
+          transitionStartTimestamp: transitionStart.timestamp,
+          sendToTransitionStartMs:
+            diagnostic.sendRequestTimestamp == null
+              ? undefined
+              : transitionStart.timestamp - diagnostic.sendRequestTimestamp,
+        },
+      };
+    });
+  }, [transitionStart]);
+
+  useEffect(() => {
+    if (!transitionComplete) return;
+    setDiagnostics((current) => {
+      const diagnostic = current[transitionComplete.mediaKey] ?? {
+        mediaKey: transitionComplete.mediaKey,
+        source: "",
+        phase: "idle" as const,
+        sourceKind: "remote" as const,
+      };
+      return {
+        ...current,
+        [transitionComplete.mediaKey]: {
+          ...diagnostic,
+          transitionCompleteTimestamp: transitionComplete.timestamp,
+        },
+      };
+    });
+  }, [transitionComplete]);
 
   useEffect(() => {
     const api = window.electronAPI as
@@ -809,14 +945,31 @@ const ElectronMediaSurfacePool = ({
         const diagnostic = diagnostics[candidate.mediaKey];
         return {
           mediaKey: candidate.mediaKey,
-          source: diagnostic?.source ?? candidate.source,
+          source: diagnostic?.source || candidate.source,
           phase: diagnostic?.phase ?? ("idle" as const),
           sourceKind: diagnostic?.sourceKind ?? ("remote" as const),
           priority: diagnostic?.priority ?? candidate.priority ?? index,
           protected: diagnostic?.protected ?? candidate.protected,
-          preparationDurationMs: diagnostic?.preparationDurationMs,
-          readyToPlayPresentedFrameMs: diagnostic?.readyToPlayPresentedFrameMs,
-          playToPresentedFrameMs: diagnostic?.playToPresentedFrameMs,
+          prepareToFrameReadyMs: diagnostic?.prepareToFrameReadyMs,
+          surfaceState: diagnostic?.surfaceState,
+          sendStateBeforeRequest: diagnostic?.sendStateBeforeRequest,
+          sendCurrentTime: diagnostic?.sendCurrentTime,
+          sendReadyState: diagnostic?.sendReadyState,
+          sendPaused: diagnostic?.sendPaused,
+          sendSeeking: diagnostic?.sendSeeking,
+          sendBufferedRanges: diagnostic?.sendBufferedRanges,
+          sendRequestTimestamp: diagnostic?.sendRequestTimestamp,
+          playCalledTimestamp: diagnostic?.playCalledTimestamp,
+          playResolvedTimestamp: diagnostic?.playResolvedTimestamp,
+          transitionStartTimestamp: diagnostic?.transitionStartTimestamp,
+          firstAdvancingFrameTimestamp:
+            diagnostic?.firstAdvancingFrameTimestamp,
+          transitionCompleteTimestamp: diagnostic?.transitionCompleteTimestamp,
+          sendToTransitionStartMs: diagnostic?.sendToTransitionStartMs,
+          sendToPlayRequestMs: diagnostic?.sendToPlayRequestMs,
+          sendToPlayResolvedMs: diagnostic?.sendToPlayResolvedMs,
+          sendToFirstAdvancingFrameMs:
+            diagnostic?.sendToFirstAdvancingFrameMs,
           lastUsedAt: diagnostic?.lastUsedAt,
           error: diagnostic?.error,
         };
@@ -863,6 +1016,8 @@ const ElectronMediaSurfacePool = ({
     outputId,
     posterShown,
     rendererMetrics,
+    transitionComplete,
+    transitionStart,
     windowRole,
   ]);
 
@@ -888,7 +1043,7 @@ const ElectronMediaSurfacePool = ({
           view={viewsByKey.get(candidate.mediaKey)}
           enabled={enabled}
           onReadyChange={onReadyChange}
-          onLiveReadyChange={onLiveReadyChange}
+          onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
           onSurfaceElement={handleSurfaceElement}
           onDiagnosticChange={handleDiagnosticChange}
         />

@@ -32,6 +32,10 @@ describe("ElectronMediaSurfacePool", () => {
   const originalLoad = HTMLMediaElement.prototype.load;
   const originalPlay = HTMLMediaElement.prototype.play;
   const originalPause = HTMLMediaElement.prototype.pause;
+  const originalCurrentTime = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "currentTime",
+  );
 
   beforeEach(() => {
     Object.defineProperty(window, "electronAPI", {
@@ -85,6 +89,15 @@ describe("ElectronMediaSurfacePool", () => {
       configurable: true,
       value: originalPause,
     });
+    if (originalCurrentTime) {
+      Object.defineProperty(
+        HTMLMediaElement.prototype,
+        "currentTime",
+        originalCurrentTime,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLMediaElement.prototype, "currentTime");
+    }
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
 
@@ -93,7 +106,7 @@ describe("ElectronMediaSurfacePool", () => {
     const liveChanges: boolean[] = [];
     const onReadyChange = (_: string, ready: boolean) =>
       readyChanges.push(ready);
-    const onLiveReadyChange = (_: string, ready: boolean) =>
+    const onFirstAdvancingFrameChange = (_: string, ready: boolean) =>
       liveChanges.push(ready);
     const onSurfaceElement = jest.fn();
     const { rerender, unmount } = render(
@@ -104,7 +117,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[candidate]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
-        onLiveReadyChange={onLiveReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
@@ -140,7 +153,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[{ ...candidate }]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
-        onLiveReadyChange={onLiveReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
@@ -160,7 +173,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[candidate]}
         views={[view(true)]}
         onReadyChange={onReadyChange}
-        onLiveReadyChange={onLiveReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
@@ -189,7 +202,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[hlsCandidate]}
         views={[]}
         onReadyChange={jest.fn()}
-        onLiveReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
         onSurfaceElement={jest.fn()}
       />,
     );
@@ -202,6 +215,83 @@ describe("ElectronMediaSurfacePool", () => {
     expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   });
 
+  it("reports READY only after the final starting frame is presented and retained", async () => {
+    let currentTime = 0;
+    let framePresented = false;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        if (framePresented) {
+          throw new Error("final presented frame was invalidated");
+        }
+        currentTime = value;
+      },
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (callback: () => void) => {
+        currentTime = 0.25;
+        framePresented = true;
+        callback();
+        return 1;
+      },
+    });
+
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    expect(framePresented).toBe(true);
+  });
+
+  it("keeps the same video element when candidate priority and item context change", async () => {
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, itemId: "item-a", priority: 4 }]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, itemId: "item-b", priority: 0 }]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+  });
+
   it("uses the original finite URL when no local cache entry exists", async () => {
     (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(
       null,
@@ -212,7 +302,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[candidate]}
         views={[]}
         onReadyChange={jest.fn()}
-        onLiveReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
         onSurfaceElement={jest.fn()}
       />,
     );
@@ -250,7 +340,7 @@ describe("ElectronMediaSurfacePool", () => {
     );
     const pause = HTMLMediaElement.prototype.pause as jest.Mock;
     const onReadyChange = jest.fn();
-    const onLiveReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
     const onSurfaceElement = jest.fn();
     const { rerender } = render(
       <ElectronMediaSurfacePool
@@ -258,7 +348,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[candidate]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
-        onLiveReadyChange={onLiveReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
@@ -271,7 +361,7 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[candidate]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
-        onLiveReadyChange={onLiveReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );

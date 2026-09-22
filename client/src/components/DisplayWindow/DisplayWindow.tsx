@@ -63,12 +63,14 @@ import DisplayBoxTransitionStage, {
   type LaneMediaPlaybackOptions,
   getDisplayBoxesLayerKey,
 } from "./DisplayBoxTransitionStage";
+import ElectronEditorPreparedMediaPreview from "./ElectronEditorPreparedMediaPreview";
 import {
   getLaneBackgroundMediaKey,
   resolveLaneBackgroundMedia,
 } from "./laneBackgroundMedia";
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
+import { ELECTRON_EDITOR_MEDIA_SURFACE_BUDGET } from "../../utils/electronMediaSurfacePool";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -486,6 +488,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
+    const [editorPreparedReady, setEditorPreparedReady] = useState(false);
+    const [editorPreparedReadyMediaKey, setEditorPreparedReadyMediaKey] =
+      useState<string>();
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
     const localVideoTransitionKey = `${localVideoInput?.sourceId ?? ""}::${prevLocalVideoInput?.sourceId ?? ""
@@ -1183,6 +1188,20 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       () => getVideoBackgroundMediaKey(videoBox?.mediaInfo),
       [videoBox?.mediaInfo],
     );
+    const editorPreparedPreviewEnabled = Boolean(
+      isEditor &&
+        showBackground &&
+        shouldPlayVideo &&
+        currentItemId &&
+        window.electronAPI,
+    );
+    const reportEditorPreparedReady = useCallback(
+      (ready: boolean) => {
+        setEditorPreparedReady(ready);
+        setEditorPreparedReadyMediaKey(ready ? videoMediaKey : undefined);
+      },
+      [videoMediaKey],
+    );
     const activeVideoPlayback = useMemo(() => {
       const matched =
         videoPlayback?.mediaKey && videoMediaKey
@@ -1218,6 +1237,18 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     } else if (localVideoFile.isLocalVideoFile) {
       desiredVideoUrl = localVideoFile.url;
     }
+    const editorPreparedCurrentMedia =
+      videoMediaKey && desiredVideoUrl
+        ? {
+            mediaKey: videoMediaKey,
+            source: desiredVideoUrl,
+            itemId: currentItemId,
+          }
+        : undefined;
+    const editorPreparedVideoActive =
+      editorPreparedPreviewEnabled &&
+      editorPreparedReady &&
+      editorPreparedReadyMediaKey === videoMediaKey;
 
     // Underlay surfaces (editor, stream, next-slide monitor) use a single
     // current player — animated displays host media inside the transition stage.
@@ -1306,9 +1337,20 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const laneMediaPlayback = useMemo<LaneMediaPlaybackOptions>(
       () => ({
         outputId,
-        windowRole: displayType ?? "unknown",
+        windowRole: isEditor
+          ? "editor"
+          : videoPreloadRole === "preview"
+            ? `${displayType ?? "unknown"}-preview`
+            : displayType ?? "unknown",
         currentItemId,
         preparedMediaOutlineId,
+        preparedSurfaceBudget: isEditor || videoPreloadRole === "preview"
+          ? ELECTRON_EDITOR_MEDIA_SURFACE_BUDGET
+          : undefined,
+        preparedMediaScope:
+          isEditor || videoPreloadRole === "preview"
+            ? "current-item"
+            : "service",
         showBackground,
         fileVideoAudioEnabled: localVideoFileAudioEnabled,
         volume: localVideoVolume,
@@ -1432,7 +1474,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       shouldPlayVideo &&
       !localVideoInput &&
       Boolean(desiredVideoUrl) &&
-      !isAwaitingLocalVideoUrl;
+      !isAwaitingLocalVideoUrl &&
+      !editorPreparedVideoActive;
     const underlayIsLocalProtocol = Boolean(
       desiredVideoUrl?.startsWith("worshipsync-media://") ||
         desiredVideoUrl?.startsWith("blob:") ||
@@ -1490,7 +1533,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ? stageBackgroundMedia.originalSrc
         : desiredVideoUrl;
     const isWindowVideoLoaded =
-      hostsBackgroundMediaInStage || underlayPaintReady;
+      hostsBackgroundMediaInStage || underlayPaintReady || editorPreparedVideoActive;
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
@@ -1671,6 +1714,18 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       const innerContent = (
         <>
           {!hostsBackgroundMediaInStage && fileVideoMediaLayers}
+
+          {editorPreparedPreviewEnabled && (
+            <ElectronEditorPreparedMediaPreview
+              enabled
+              currentItemId={currentItemId}
+              currentMedia={editorPreparedCurrentMedia}
+              videoBox={videoBox}
+              playback={activeVideoPlayback}
+              volume={localVideoVolume}
+              onCurrentFrameReady={reportEditorPreparedReady}
+            />
+          )}
 
           {!isStream && !hostsBackgroundMediaInStage && localVideoMediaLayers}
 

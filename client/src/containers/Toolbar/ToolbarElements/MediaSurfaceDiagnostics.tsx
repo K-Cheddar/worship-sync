@@ -36,7 +36,7 @@ const MediaSurfaceDiagnostics = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToElectronMediaSurfaceDiagnostics((next) => {
-      const key = next.outputId || next.windowRole;
+      const key = `${next.outputId || ""}:${next.windowRole}`;
       setDiagnostics((current) => ({
         ...current,
         [key]: { ...next, receivedAt: Date.now() },
@@ -67,6 +67,15 @@ const MediaSurfaceDiagnostics = () => {
   const label = entries.length === 1 ? `Videos ${ready}/${candidates}` : "Videos";
 
   const displayName = (entry: ReceivedDiagnostics): string =>
+    entry.windowRole === "editor"
+      ? "Editor Preview"
+      : entry.windowRole.endsWith("-preview")
+        ? `${
+            displayOutputs.find((output) => output.id === entry.outputId)?.name ||
+            entry.outputId ||
+            entry.windowRole.replace(/-preview$/, "")
+          } Preview`
+      :
     displayOutputs.find((output) => output.id === entry.outputId)?.name ||
     entry.outputId ||
     entry.windowRole;
@@ -97,7 +106,7 @@ const MediaSurfaceDiagnostics = () => {
             <p className="text-gray-400">No connected Electron display has reported readiness yet.</p>
           )}
           {entries.map((entry) => (
-            <section key={entry.outputId || entry.windowRole} className="rounded border border-gray-700 p-3">
+            <section key={`${entry.outputId || ""}:${entry.windowRole}`} className="rounded border border-gray-700 p-3">
               <h2 className="mb-3 font-semibold text-white">{displayName(entry)}</h2>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
                 <Metric label="Discovered" value={entry.discoveredCount ?? entry.candidateDetails?.length ?? entry.candidateCount} />
@@ -110,13 +119,29 @@ const MediaSurfaceDiagnostics = () => {
                 <Metric label="Errors" value={entry.errorCount} />
                 <Metric label="Evictions" value={entry.evictions.length} />
                 <Metric label="Last send path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
-                <Metric label="Poster shown" value={entry.posterShown ? "yes" : "no"} />
+                <Metric
+                  label="Transition visual"
+                  value={
+                    entry.lastSendPath === "pool"
+                      ? "prepared frame"
+                      : entry.posterShown == null
+                        ? "not recorded"
+                        : entry.posterShown
+                          ? "poster/fallback"
+                          : "fallback video frame"
+                  }
+                />
                 <Metric label="Renderer memory" value={formatMetric(entry.rendererMetrics, "memory")} />
                 <Metric label="CPU" value={formatMetric(entry.rendererMetrics, "cpu")} />
               </dl>
               <p className="mt-3 break-all text-xs text-gray-400">
                 Last media: {entry.lastMediaKey || "—"}
               </p>
+              {entry.evictions.length > 0 && (
+                <p className="mt-2 break-all text-xs text-gray-400">
+                  Eviction reasons: {entry.evictions.join(", ")}
+                </p>
+              )}
               <details className="mt-3">
                 <summary className="cursor-pointer text-xs text-gray-300">
                   Candidate details ({entry.candidateDetails?.length ?? 0})
@@ -150,10 +175,16 @@ const MediaSurfaceDiagnostics = () => {
                     <div key={surface.mediaKey} className="border-t border-gray-700 pt-2">
                       <div className="break-all font-medium text-white">{surface.mediaKey}</div>
                       <div>
-                        {surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"}
+                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"}
                       </div>
                       <div className="text-gray-400">
-                        prepare {surface.preparationDurationMs?.toFixed(0) ?? "—"} ms · ready→play {surface.playToPresentedFrameMs?.toFixed(0) ?? "—"} ms · last used {surface.lastUsedAt ? new Date(surface.lastUsedAt).toLocaleTimeString() : "—"}
+                        prepare→frame ready {surface.prepareToFrameReadyMs?.toFixed(0) ?? "—"} ms · send→transition {surface.sendToTransitionStartMs?.toFixed(0) ?? "—"} ms · send→play {surface.sendToPlayRequestMs?.toFixed(0) ?? "—"} ms · send→resolved {surface.sendToPlayResolvedMs?.toFixed(0) ?? "—"} ms · send→advancing frame {surface.sendToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
+                      </div>
+                      <div className="text-gray-400">
+                        send state {surface.sendStateBeforeRequest ?? "—"} · last used {surface.lastUsedAt ? new Date(surface.lastUsedAt).toLocaleTimeString() : "—"}
+                      </div>
+                      <div className="text-gray-400">
+                        send snapshot t={surface.sendCurrentTime?.toFixed(2) ?? "-"} · readyState {surface.sendReadyState ?? "-"} · paused {surface.sendPaused == null ? "-" : surface.sendPaused ? "yes" : "no"} · seeking {surface.sendSeeking == null ? "-" : surface.sendSeeking ? "yes" : "no"} · buffered {surface.sendBufferedRanges?.map(([start, end]) => `${start.toFixed(2)}-${end.toFixed(2)}`).join(", ") || "-"}
                       </div>
                       {surface.error && <div className="text-red-300">{surface.error}</div>}
                     </div>
