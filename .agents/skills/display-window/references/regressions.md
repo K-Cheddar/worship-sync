@@ -14,6 +14,19 @@ Focused coverage belongs in `DisplayBoxTransitionStage.test.tsx`.
 - Content settles do not re-expose stale lyrics.
 - The content plane stays above media after either A/B lane wins.
 - Do not clear outgoing opacity before React removes old content; that is the known one-frame flash regression.
+- An opaque `local-video-file://` reference is resolved before candidate
+  eligibility and never reaches a prepared `<video>`.
+- An unresolvable prepared candidate reports failure and releases the stage to
+  the live fallback; the stage must not remain in `preparing` indefinitely.
+- Adopted prepared ownership survives transient readiness and geometry changes.
+- A source improvement from a remote URL to `media-cache://` does not reload an
+  active prepared video; the improved source is used after ownership ends.
+- Controller outline changes update projector/editor preparation immediately,
+  with presentation and auxiliary scopes isolated.
+- A failed media-document read does not call destructive cache cleanup, while a
+  successful empty document still does.
+- Media cache redirects 301, 302, 303, 307, and 308 are followed with each
+  redirect response disposed.
 
 When readiness changes, also cover image, local-video-input, and non-animated paths.
 

@@ -17,7 +17,8 @@ export const useMediaCache = () => {
 
     try {
       const mediaUrls = await getMediaUrlsFromMediaDoc(db);
-      const urlArray = Array.from(mediaUrls);
+      if (mediaUrls.status === "unavailable") return;
+      const urlArray = Array.from(mediaUrls.urls);
 
       if (urlArray.length === 0) {
         await (window.electronAPI as unknown as { syncMediaCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }> }).syncMediaCache([]);

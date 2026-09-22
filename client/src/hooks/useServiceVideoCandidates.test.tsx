@@ -206,6 +206,13 @@ describe("useServiceVideoCandidates", () => {
         ]),
       ]),
     ];
+    const getLocalAsset = jest.fn().mockResolvedValue({
+      url: "worshipsync-media://asset/asset-1/file.mp4",
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalAsset },
+    });
     const { result } = renderCandidates(docs, { maxSurfaces: 8 });
 
     await waitFor(() => expect(result.current.candidates).toHaveLength(5));
@@ -214,7 +221,7 @@ describe("useServiceVideoCandidates", () => {
         "worshipsync-media://asset/video.mp4",
         "media-cache://cached.mp4",
         "https://cdn.example.com/one.mp4",
-        "local-video-file://asset-1",
+        "worshipsync-media://asset/asset-1/file.mp4",
         "https://cdn.example.com/canva.mp4",
       ]),
     );

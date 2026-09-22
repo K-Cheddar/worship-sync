@@ -20,6 +20,12 @@ import {
   getVideoSourceKind,
   isHLSVideoSource,
 } from "../utils/isInstantVideoSource";
+import { isPlayableMediaSource } from "../utils/mediaSource";
+import { parseLocalVideoFileAssetId } from "../utils/localVideoFileAssets";
+import {
+  acquireLocalVideoFileUrl,
+  peekLocalVideoFileUrl,
+} from "../utils/localVideoFileUrlCache";
 import {
   selectElectronMediaSurfaceCandidates,
   type ElectronMediaSurfaceCandidate,
@@ -82,19 +88,50 @@ const resolveFiniteSource = async (
   cacheMap?: Record<string, string>,
 ): Promise<string | undefined> => {
   const mappedSource = cacheMap?.[source];
-  if (mappedSource && !isHLSVideoSource(mappedSource)) return mappedSource;
+  if (
+    mappedSource &&
+    !isHLSVideoSource(mappedSource) &&
+    isPlayableMediaSource(mappedSource)
+  ) {
+    return mappedSource;
+  }
+
+  const localVideoAssetId = parseLocalVideoFileAssetId(source);
+  if (localVideoAssetId) {
+    const cachedSource = peekLocalVideoFileUrl(localVideoAssetId);
+    if (cachedSource && isPlayableMediaSource(cachedSource)) return cachedSource;
+    const lease = acquireLocalVideoFileUrl(localVideoAssetId);
+    try {
+      const resolved = await lease.url;
+      return resolved && isPlayableMediaSource(resolved) ? resolved : undefined;
+    } finally {
+      lease.release();
+    }
+  }
 
   const sourceKind = getSourceKind(source);
-  if (!isHLSVideoSource(source) && sourceKind !== "remote") return source;
+  if (!isHLSVideoSource(source) && sourceKind !== "remote") {
+    return isPlayableMediaSource(source) ? source : undefined;
+  }
 
   const getLocalMediaPath = window.electronAPI?.getLocalMediaPath;
   if (!getLocalMediaPath) {
-    return isHLSVideoSource(source) ? undefined : source;
+    return isHLSVideoSource(source) || !isPlayableMediaSource(source)
+      ? undefined
+      : source;
   }
   try {
     const localSource = await getLocalMediaPath(source);
-    if (localSource && !isHLSVideoSource(localSource)) return localSource;
-    return isHLSVideoSource(source) ? undefined : source;
+    if (
+      localSource &&
+      !isHLSVideoSource(localSource) &&
+      isPlayableMediaSource(localSource)
+    ) {
+      return localSource;
+    }
+    return isHLSVideoSource(source) || !isPlayableMediaSource(source)
+      ? undefined
+      : source;
   } catch {
     return undefined;
   }
@@ -365,6 +402,7 @@ export const useServiceVideoCandidates = ({
   controllerProfileName,
   outlineScope,
   outlineName,
+  contextSource,
 }: {
   enabled: boolean;
   outputId?: string;
@@ -380,6 +418,7 @@ export const useServiceVideoCandidates = ({
   controllerProfileName?: string;
   outlineScope?: string;
   outlineName?: string;
+  contextSource?: "local runtime selection" | "persisted ItemLists fallback";
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
@@ -632,7 +671,9 @@ export const useServiceVideoCandidates = ({
     // synchronously so a transition cannot begin on the fallback while the
     // asynchronous local-path lookup is still settling.
     const immediateCurrentCandidate =
-      currentMedia && !isHLSVideoSource(currentMedia.source)
+      currentMedia &&
+      !isHLSVideoSource(currentMedia.source) &&
+      isPlayableMediaSource(currentMedia.source)
         ? currentMedia
         : undefined;
     const currentCandidate =
@@ -703,6 +744,7 @@ export const useServiceVideoCandidates = ({
       outlineScope,
       outlineId,
       outlineName,
+      contextSource,
       currentItemId,
       itemCount: serviceMedia.length,
       uniqueFiniteVideoCount: finiteVideoKeys.size,
@@ -725,6 +767,7 @@ export const useServiceVideoCandidates = ({
     maxSurfaces,
     outlineId,
     outlineName,
+    contextSource,
     outlineScope,
     outputId,
     protectedMediaKeys,

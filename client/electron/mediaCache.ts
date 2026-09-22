@@ -29,6 +29,29 @@ export type EnsureMediaCachedResult = {
 /** Bound background cache warming so a service scan cannot saturate the booth. */
 export const MEDIA_CACHE_WARM_CONCURRENCY = 3;
 
+export const resolveMediaCacheRedirect = (
+  response: {
+    statusCode?: number;
+    headers: { location?: string };
+    resume: () => void;
+  },
+  targetUrl: string,
+  redirectsLeft: number,
+): { targetUrl: string; redirectsLeft: number } | undefined => {
+  if (
+    ![301, 302, 303, 307, 308].includes(response.statusCode ?? 0) ||
+    !response.headers.location
+  ) {
+    return undefined;
+  }
+  if (redirectsLeft <= 0) throw new Error("Too many redirects");
+  response.resume();
+  return {
+    targetUrl: new URL(response.headers.location, targetUrl).toString(),
+    redirectsLeft: redirectsLeft - 1,
+  };
+};
+
 export class MediaCacheManager {
   private cacheDir: string;
   private cacheIndexPath: string;
@@ -294,18 +317,21 @@ export class MediaCacheManager {
             { headers: { "User-Agent": "WorshipSync/1.0", Accept: "*/*" } },
             (response) => {
               // Follow redirects while preserving cache key context
-              if (
-                (response.statusCode === 301 ||
-                  response.statusCode === 302) &&
-                response.headers.location
-              ) {
-                if (redirectsLeft <= 0) {
-                  file.close();
-                  this.cleanupFile(localPath);
-                  reject(new Error("Too many redirects"));
-                  return;
-                }
-                makeRequest(response.headers.location, redirectsLeft - 1);
+              let redirect: ReturnType<typeof resolveMediaCacheRedirect>;
+              try {
+                redirect = resolveMediaCacheRedirect(
+                  response,
+                  targetUrl,
+                  redirectsLeft,
+                );
+              } catch (error) {
+                file.close();
+                this.cleanupFile(localPath);
+                reject(error);
+                return;
+              }
+              if (redirect) {
+                makeRequest(redirect.targetUrl, redirect.redirectsLeft);
                 return;
               }
 

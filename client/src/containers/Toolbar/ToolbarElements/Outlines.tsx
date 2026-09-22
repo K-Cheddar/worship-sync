@@ -38,6 +38,8 @@ import {
   filterOutlinesByScope,
   isOutlineInScope,
 } from "../../../utils/outlineScope";
+import { useActiveControllerProfile } from "../../../context/activeController";
+import { publishPreparedMediaContext } from "../../../utils/preparedMediaContext";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -74,12 +76,29 @@ const Services = ({
   const heading = `Current Outlines (${scopedLists.length})`;
 
   const dispatch = useDispatch();
+  const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
+  const activeControllerProfile = useActiveControllerProfile();
+  const selectOutline = useCallback(
+    (outlineId: string) => {
+      dispatch(selectItemList(outlineId));
+      setOutlinePopoverOpen(false);
+      const outline = currentLists.find((list) => list._id === outlineId);
+      publishPreparedMediaContext({
+        controllerProfileId: activeControllerProfile.id,
+        controllerProfileName: activeControllerProfile.name,
+        outlineScope: activeControllerProfile.outlineScope,
+        outlineId,
+        outlineName: outline?.name,
+        contextSource: "local runtime selection",
+      });
+    },
+    [activeControllerProfile, currentLists, dispatch],
+  );
 
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
-  const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
   const currentListsRef = useRef(currentLists);
   currentListsRef.current = currentLists;
   /** One aux bootstrap create per scope — avoids duplicate empties under Strict Mode / remount. */
@@ -180,7 +199,7 @@ const Services = ({
         );
         if (!scopeStillEmpty) return;
         dispatch(updateItemLists([...latestLists, newList]));
-        dispatch(selectItemList(newList._id));
+        selectOutline(newList._id);
       } catch (e) {
         console.error(e);
       } finally {
@@ -191,7 +210,7 @@ const Services = ({
     return () => {
       cancelled = true;
     };
-  }, [itemListsReady, db, access, scope, scopedLists.length, dispatch]);
+  }, [itemListsReady, db, access, scope, scopedLists.length, dispatch, selectOutline]);
 
   const updateItemListsFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -233,7 +252,7 @@ const Services = ({
       ),
     );
     if (list._id === selectedList?._id) {
-      dispatch(selectItemList(list._id));
+      selectOutline(list._id);
     }
   };
 
@@ -246,7 +265,7 @@ const Services = ({
     });
     setJustAdded(true);
     dispatch(updateItemLists([...currentLists, newList]));
-    dispatch(selectItemList(newList._id));
+    selectOutline(newList._id);
     setTimeout(() => setJustAdded(false), 2000);
   };
 
@@ -301,6 +320,7 @@ const Services = ({
         )}
       >
         <PopOver
+          open={outlinePopoverOpen}
           onOpenChange={setOutlinePopoverOpen}
           TriggeringButton={
             <Button
@@ -341,9 +361,7 @@ const Services = ({
                         canEdit={access === "full"}
                         disableDrag={access !== "full"}
                         isSelected={list._id === selectedList?._id}
-                        selectList={(listId: string) =>
-                          dispatch(selectItemList(listId))
-                        }
+                        selectList={(listId: string) => selectOutline(listId)}
                         showSetActive={canSetActive}
                         setActiveList={
                           canSetActive
@@ -363,7 +381,7 @@ const Services = ({
                             dispatch(
                               updateItemLists([...currentLists, newList]),
                             );
-                            dispatch(selectItemList(newList._id));
+                            selectOutline(newList._id);
                           }
                         }}
                         deleteList={
@@ -380,7 +398,7 @@ const Services = ({
                                     (l) => l._id !== id,
                                   );
                                   if (next) {
-                                    dispatch(selectItemList(next._id));
+                                    selectOutline(next._id);
                                   }
                                 }
                                 if (canSetActive && activeList?._id === id) {

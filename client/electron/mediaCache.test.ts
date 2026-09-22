@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
-import { MediaCacheManager } from "./mediaCache";
+import {
+  MediaCacheManager,
+  resolveMediaCacheRedirect,
+} from "./mediaCache";
 
 const mockGetPath = jest.fn();
 
@@ -201,5 +204,44 @@ describe("MediaCacheManager", () => {
         contentType: "video/mp4",
       },
     ]);
+  });
+
+  it.each([301, 302, 303, 307, 308])(
+    "resolves %s redirects and releases the response before retrying",
+    (statusCode) => {
+      const resume = jest.fn();
+      const result = resolveMediaCacheRedirect(
+        {
+          statusCode,
+          headers: { location: "/final.mp4" },
+          resume,
+        },
+        "https://cdn.example.com/start.mp4",
+        5,
+      );
+
+      expect(result).toEqual({
+        targetUrl: "https://cdn.example.com/final.mp4",
+        redirectsLeft: 4,
+      });
+      expect(resume).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects an exhausted redirect chain without opening another request", () => {
+    const resume = jest.fn();
+
+    expect(() =>
+      resolveMediaCacheRedirect(
+        {
+          statusCode: 308,
+          headers: { location: "/final.mp4" },
+          resume,
+        },
+        "https://cdn.example.com/start.mp4",
+        0,
+      ),
+    ).toThrow("Too many redirects");
+    expect(resume).not.toHaveBeenCalled();
   });
 });

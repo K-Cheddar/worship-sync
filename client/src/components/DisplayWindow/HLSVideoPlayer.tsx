@@ -20,6 +20,7 @@ import {
   isHLSVideoSource,
 } from "../../utils/isInstantVideoSource";
 import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
+import { assignPlayableVideoSource } from "../../utils/mediaSource";
 import {
   parseLocalVideoFileAssetId,
 } from "../../utils/localVideoFileAssets";
@@ -510,7 +511,15 @@ const HLSPlayer = ({
     (video: HTMLVideoElement, videoSrc: string) => {
       // Assign the next URL directly. Clearing to "" first blanks the element
       // for a frame before the new source can paint.
-      video.src = videoSrc;
+      if (
+        !assignPlayableVideoSource(video, videoSrc, {
+          mediaKey: mediaKeyRef.current,
+          renderer: windowRole,
+          path: "HLSVideoPlayer.playNative",
+        })
+      ) {
+        return () => {};
+      }
       let didFallback = false;
 
       const handleLoadedMetadata = () => handleMediaReady(videoSrc);
@@ -560,8 +569,15 @@ const HLSPlayer = ({
           rateCorrectionStartedAtRef.current = null;
           readySrcRef.current = null;
           syncedSrcRef.current = null;
-          video.src = fallback;
-          video.load();
+          if (
+            assignPlayableVideoSource(video, fallback, {
+              mediaKey: mediaKeyRef.current,
+              renderer: windowRole,
+              path: "HLSVideoPlayer.playNative.fallback",
+            })
+          ) {
+            video.load();
+          }
         }
       };
 
@@ -577,7 +593,7 @@ const HLSPlayer = ({
         video.removeEventListener("ended", handleEnded);
       };
     },
-    [handleEnded, handleMediaReady],
+    [handleEnded, handleMediaReady, windowRole],
   );
 
   const playHLS = useCallback(
@@ -628,8 +644,15 @@ const HLSPlayer = ({
       }
 
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = videoSrc;
-        video.load();
+        if (
+          assignPlayableVideoSource(video, videoSrc, {
+            mediaKey: mediaKeyRef.current,
+            renderer: windowRole,
+            path: "HLSVideoPlayer.playHLS.native",
+          })
+        ) {
+          video.load();
+        }
 
         video.addEventListener("loadedmetadata", handleLoadedMetadata);
         video.addEventListener("ended", handleEnded);
@@ -642,7 +665,7 @@ const HLSPlayer = ({
 
       return () => {};
     },
-    [handleEnded, handleMediaReady],
+    [handleEnded, handleMediaReady, windowRole],
   );
 
   useEffect(() => {

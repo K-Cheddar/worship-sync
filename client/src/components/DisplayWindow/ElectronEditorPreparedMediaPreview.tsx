@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VideoBackgroundPlaybackCue, Box } from "../../types";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import {
@@ -19,6 +19,7 @@ type ElectronEditorPreparedMediaPreviewProps = {
     | "outlineScope"
     | "outlineId"
     | "outlineName"
+    | "contextSource"
   >;
   videoBox?: Box;
   playback?: VideoBackgroundPlaybackCue;
@@ -39,6 +40,7 @@ const ElectronEditorPreparedMediaPreview = ({
   onCurrentFrameReady,
 }: ElectronEditorPreparedMediaPreviewProps) => {
   const [readyByKey, setReadyByKey] = useState<Record<string, boolean>>({});
+  const readyByKeyRef = useRef<Record<string, boolean>>({});
   const [geometryReadyByKey, setGeometryReadyByKey] = useState<
     Record<string, boolean>
   >({});
@@ -52,17 +54,19 @@ const ElectronEditorPreparedMediaPreview = ({
     controllerProfileName: preparedMediaContext?.controllerProfileName,
     outlineScope: preparedMediaContext?.outlineScope,
     outlineName: preparedMediaContext?.outlineName,
+    contextSource: preparedMediaContext?.contextSource,
     scope: "service",
   });
 
   const currentMediaKey = currentMedia?.mediaKey;
   const reportReady = useCallback(
     (mediaKey: string, ready: boolean) => {
-      setReadyByKey((current) =>
-        current[mediaKey] === ready
-          ? current
-          : { ...current, [mediaKey]: ready },
-      );
+      setReadyByKey((current) => {
+        if (current[mediaKey] === ready) return current;
+        const next = { ...current, [mediaKey]: ready };
+        readyByKeyRef.current = next;
+        return next;
+      });
       if (mediaKey === currentMediaKey) onCurrentFrameReady(ready);
     },
     [currentMediaKey, onCurrentFrameReady],
@@ -76,10 +80,12 @@ const ElectronEditorPreparedMediaPreview = ({
           : { ...current, [mediaKey]: ready },
       );
       if (mediaKey === currentMediaKey) {
-        onCurrentFrameReady(readyByKey[mediaKey] === true && ready === true);
+        onCurrentFrameReady(
+          readyByKeyRef.current[mediaKey] === true && ready === true,
+        );
       }
     },
-    [currentMediaKey, onCurrentFrameReady, readyByKey],
+    [currentMediaKey, onCurrentFrameReady],
   );
 
   useEffect(() => {

@@ -33,6 +33,12 @@ const MediaSurfaceDiagnostics = () => {
   const [open, setOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Record<string, ReceivedDiagnostics>>({});
   const displayOutputs = useSelector(selectDisplayOutputs);
+  const selectedOutline = useSelector(
+    (state) => state.undoable.present.itemLists.selectedList,
+  );
+  const selectedOutlineScope = useSelector(
+    (state) => state.undoable.present.itemLists.scope,
+  );
 
   useEffect(() => {
     const unsubscribe = subscribeToElectronMediaSurfaceDiagnostics((next) => {
@@ -119,10 +125,14 @@ const MediaSurfaceDiagnostics = () => {
                 <p className="mb-3 text-xs text-gray-400">{displayName(entry)}</p>
               )}
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                <Metric label="Controller selected outline" value={selectedOutline?.name || "—"} />
+                <Metric label="Controller selected ID" value={selectedOutline?._id || "—"} />
+                <Metric label="Controller selected scope" value={selectedOutlineScope || "—"} />
                 <Metric label="Controller/profile" value={entry.discovery?.controllerProfileName ? `${entry.discovery.controllerProfileName} (${entry.discovery.controllerProfileId || "—"})` : entry.discovery?.controllerProfileId || "—"} />
-                <Metric label="Outline" value={entry.discovery?.outlineName || "—"} />
-                <Metric label="Outline ID" value={entry.discovery?.outlineId || "—"} />
-                <Metric label="Outline scope" value={entry.discovery?.outlineScope || "—"} />
+                <Metric label="Prepared outline" value={entry.discovery?.outlineName || "—"} />
+                <Metric label="Prepared outline ID" value={entry.discovery?.outlineId || "—"} />
+                <Metric label="Prepared outline scope" value={entry.discovery?.outlineScope || "—"} />
+                <Metric label="Preparation context" value={entry.discovery?.contextSource || "—"} />
                 <Metric label="Service items" value={entry.serviceItemCount ?? entry.discovery?.itemCount ?? "—"} />
                 <Metric label="Finite videos discovered" value={entry.finiteVideoCount ?? entry.discoveredCount ?? entry.candidateDetails?.length ?? entry.candidateCount} />
                 <Metric label="Pending cache" value={entry.pendingCacheCount ?? 0} />

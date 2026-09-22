@@ -37,6 +37,7 @@ export type ElectronMediaDiscovery = {
   outlineScope?: string;
   outlineId?: string | null;
   outlineName?: string;
+  contextSource?: "local runtime selection" | "persisted ItemLists fallback";
   currentItemId?: string;
   itemCount: number;
   uniqueFiniteVideoCount: number;

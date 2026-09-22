@@ -71,6 +71,10 @@ import {
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
+import {
+  usePreparedMediaContext,
+  type PreparedMediaContext,
+} from "../../utils/preparedMediaContext";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -260,6 +264,8 @@ type DisplayWindowProps = {
   outputId?: string;
   /** Current outline item used only as a local media-preparation priority hint. */
   currentItemId?: string;
+  /** Explicit controller-owned preparation context, used by editor surfaces. */
+  preparedMediaContext?: PreparedMediaContext;
   /**
    * Opt in to the high-quality local video path (direct capture and/or relay).
    * Live outputs and same-machine operator previews set this so the booth
@@ -344,6 +350,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       outputId,
       currentItemId,
+      preparedMediaContext: preparedMediaContextOverride,
 
       canCaptureLocalVideo = false,
       directLocalVideoCapture = false,
@@ -558,7 +565,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const preparedMediaSelectedIds = useSelector(
       (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
     );
-    const preparedMediaContext = useMemo<
+    const preparedMediaContextFallback = useMemo<
       Pick<
         ElectronMediaDiscovery,
         | "controllerProfileId"
@@ -591,6 +598,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       preparedMediaOutlines,
       preparedMediaSelectedIds,
     ]);
+    const preparedMediaContextFallbackValue = useMemo<PreparedMediaContext>(
+      () => ({
+        controllerProfileId:
+          preparedMediaContextFallback.controllerProfileId ?? "presentation",
+        controllerProfileName: preparedMediaContextFallback.controllerProfileName,
+        outlineScope: preparedMediaContextFallback.outlineScope ?? "presentation",
+        outlineId: preparedMediaContextFallback.outlineId ?? null,
+        outlineName: preparedMediaContextFallback.outlineName,
+        contextSource: "persisted ItemLists fallback",
+      }),
+      [preparedMediaContextFallback],
+    );
+    const preparedMediaContext = usePreparedMediaContext(
+      preparedMediaContextOverride ?? preparedMediaContextFallbackValue,
+    );
     const preparedMediaOutlineId = preparedMediaContext.outlineId;
     const pairedDeviceSettings =
       useContext(GlobalInfoContext)?.device?.settings;

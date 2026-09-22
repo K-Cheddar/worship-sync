@@ -35,6 +35,12 @@ import {
   VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
 } from "../../utils/videoBackgroundPlayback";
 import { isHLSVideoSource } from "../../utils/isInstantVideoSource";
+import {
+  assignPlayableVideoSource,
+  isPlayableMediaSource,
+} from "../../utils/mediaSource";
+import { parseLocalVideoFileAssetId } from "../../utils/localVideoFileAssets";
+import { acquireLocalVideoFileUrl } from "../../utils/localVideoFileUrlCache";
 
 type SurfaceDiagnostic = ElectronMediaSurfaceDiagnostic;
 
@@ -46,6 +52,7 @@ type ElectronMediaSurfacePoolProps = {
   onReadyChange: (mediaKey: string, ready: boolean) => void;
   onGeometryReadyChange?: (mediaKey: string, ready: boolean) => void;
   onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
+  onPreparationFailure?: (mediaKey: string, reason: string) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
   transitionStart?: { mediaKey: string; timestamp: number };
@@ -60,6 +67,7 @@ type ElectronMediaSurfacePoolProps = {
 };
 
 const PRESENTED_FRAME_TIMEOUT_MS = 5000;
+const PREPARATION_WATCHDOG_MS = PRESENTED_FRAME_TIMEOUT_MS;
 
 let nextPreparedSurfaceInstanceId = 0;
 const NOOP = () => undefined;
@@ -173,7 +181,10 @@ const settlePreparedStartingFrame = async (
 ): Promise<void> => {
   await seekToBeginning(video);
   debug?.("PREPARED_FRAME_PLAY_REQUESTED");
-  await video.play();
+  await withPreparationWatchdog(
+    Promise.resolve(video.play()),
+    "presented-frame",
+  );
   debug?.("PREPARED_FRAME_PLAY_RESOLVED");
   await waitForPresentedFrame(video, debug);
   video.pause();
@@ -182,6 +193,18 @@ const settlePreparedStartingFrame = async (
 const resolveSurfaceSource = async (
   source: string,
 ): Promise<{ source?: string; sourceKind: "cache" | "local" | "remote" }> => {
+  const localAssetId = parseLocalVideoFileAssetId(source);
+  if (localAssetId) {
+    const lease = acquireLocalVideoFileUrl(localAssetId);
+    try {
+      const localSource = await lease.url;
+      return localSource && isPlayableMediaSource(localSource)
+        ? { source: localSource, sourceKind: "local" }
+        : { sourceKind: "local" };
+    } finally {
+      lease.release();
+    }
+  }
   if (isImmediateSurfaceSource(source)) {
     if (isHLSVideoSource(source)) return { sourceKind: "cache" };
     return {
@@ -189,6 +212,7 @@ const resolveSurfaceSource = async (
       sourceKind: source.startsWith("media-cache://") ? "cache" : "local",
     };
   }
+  if (!isPlayableMediaSource(source)) return { sourceKind: "remote" };
   if (!window.electronAPI?.getLocalMediaPath) {
     return isHLSVideoSource(source)
       ? { sourceKind: "remote" }
@@ -201,17 +225,38 @@ const resolveSurfaceSource = async (
         ? { sourceKind: "remote" }
         : { source, sourceKind: "remote" };
     }
-    if (isHLSVideoSource(localSource)) return { sourceKind: "cache" };
+    if (isHLSVideoSource(localSource) || !isPlayableMediaSource(localSource)) {
+      return { sourceKind: "remote" };
+    }
     return {
       source: localSource,
       sourceKind: localSource.startsWith("media-cache://") ? "cache" : "local",
     };
   } catch {
-    return isHLSVideoSource(source)
-      ? { sourceKind: "remote" }
-      : { source, sourceKind: "remote" };
+    return isHLSVideoSource(source) ? { sourceKind: "remote" } : { source, sourceKind: "remote" };
   }
 };
+
+const withPreparationWatchdog = async <T,>(
+  promise: Promise<T>,
+  stage: "metadata" | "presented-frame",
+): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(
+      () => reject(new Error(`${stage} preparation watchdog timeout`)),
+      PREPARATION_WATCHDOG_MS,
+    );
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
 
 const PreparedSurface = ({
   candidate,
@@ -220,6 +265,7 @@ const PreparedSurface = ({
   onReadyChange,
   onGeometryReadyChange,
   onFirstAdvancingFrameChange,
+  onPreparationFailure,
   onSurfaceElement,
   onDiagnosticChange,
   stageRect,
@@ -230,6 +276,7 @@ const PreparedSurface = ({
   onReadyChange: (mediaKey: string, ready: boolean) => void;
   onGeometryReadyChange: (mediaKey: string, ready: boolean) => void;
   onFirstAdvancingFrameChange: (mediaKey: string, observed: boolean) => void;
+  onPreparationFailure?: (mediaKey: string, reason: string) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
   stageRect?: SurfaceRect;
@@ -253,13 +300,19 @@ const PreparedSurface = ({
   const mountedRef = useRef(true);
   const surfaceElementRef = useRef<HTMLDivElement>(null);
   const resolvedSourceRef = useRef<string | undefined>(undefined);
+  const frozenSourceRef = useRef<string | undefined>(undefined);
+  const pendingSourceRef = useRef<string | undefined>(undefined);
+  const shouldPlayRef = useRef(view?.shouldPlay);
+  shouldPlayRef.current = view?.shouldPlay;
   const onReadyChangeRef = useRef(onReadyChange);
   const onGeometryReadyChangeRef = useRef(onGeometryReadyChange);
   const onFirstAdvancingFrameChangeRef = useRef(onFirstAdvancingFrameChange);
+  const onPreparationFailureRef = useRef(onPreparationFailure);
   const onDiagnosticChangeRef = useRef(onDiagnosticChange);
   onReadyChangeRef.current = onReadyChange;
   onGeometryReadyChangeRef.current = onGeometryReadyChange;
   onFirstAdvancingFrameChangeRef.current = onFirstAdvancingFrameChange;
+  onPreparationFailureRef.current = onPreparationFailure;
   onDiagnosticChangeRef.current = onDiagnosticChange;
   resolvedSourceRef.current = resolvedSource;
 
@@ -368,14 +421,24 @@ const PreparedSurface = ({
     try {
       video.pause();
       video.currentTime = 0;
-      video.src = resolvedSource;
+      if (
+        !assignPlayableVideoSource(video, resolvedSource, {
+          mediaKey: candidate.mediaKey,
+          renderer: "electron-media-surface-pool",
+          path: "PreparedSurface.prepare",
+        })
+      ) {
+        throw new Error("opaque media source rejected");
+      }
       video.load();
-      await waitForVideoEvent(video, "loadedmetadata");
+      await withPreparationWatchdog(
+        waitForVideoEvent(video, "loadedmetadata"),
+        "metadata",
+      );
       if (stateRef.current.generation !== loading.generation) return;
       update(
         advancePreparedVideoSurface(loading, loading.generation, "preparing"),
       );
-      stage = "playback";
       stage = "presented-frame";
       await settlePreparedStartingFrame(video, debug);
       if (stateRef.current.generation !== loading.generation) {
@@ -403,6 +466,7 @@ const PreparedSurface = ({
       debug("PREPARE_FAILED", { stage, error: String(error) });
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
       onReadyChange(candidate.mediaKey, false);
+      onPreparationFailure?.(candidate.mediaKey, message);
       update(
         advancePreparedVideoSurface(
           stateRef.current,
@@ -415,6 +479,7 @@ const PreparedSurface = ({
   }, [
     candidate.mediaKey,
     debug,
+    onPreparationFailure,
     enabled,
     onFirstAdvancingFrameChange,
     onReadyChange,
@@ -463,11 +528,13 @@ const PreparedSurface = ({
         ),
       );
       onReadyChange(candidate.mediaKey, false);
+      onPreparationFailure?.(candidate.mediaKey, message);
     }
   }, [
     candidate.mediaKey,
     debug,
     onFirstAdvancingFrameChange,
+    onPreparationFailure,
     onReadyChange,
     publishReady,
     update,
@@ -491,6 +558,8 @@ const PreparedSurface = ({
       (_, index) => [video.buffered.start(index), video.buffered.end(index)],
     );
     playingGenerationRef.current = generation;
+    frozenSourceRef.current = resolvedSourceRef.current;
+    pendingSourceRef.current = undefined;
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "playing"),
     );
@@ -513,7 +582,10 @@ const PreparedSurface = ({
         playCalledTimestamp: playCalledAt,
         playRequestTimestamp: playCalledAt,
       });
-      await video.play();
+      await withPreparationWatchdog(
+        Promise.resolve(video.play()),
+        "presented-frame",
+      );
       const playResolvedAt = performance.now();
       publishReady({
         playResolvedTimestamp: playResolvedAt,
@@ -547,10 +619,12 @@ const PreparedSurface = ({
         ),
       );
       onFirstAdvancingFrameChange(candidate.mediaKey, false);
+      onPreparationFailure?.(candidate.mediaKey, message);
     }
   }, [
     candidate.mediaKey,
     debug,
+    onPreparationFailure,
     onFirstAdvancingFrameChange,
     publishReady,
     update,
@@ -570,6 +644,14 @@ const PreparedSurface = ({
     setResolvedSource(undefined);
     void resolveSurfaceSource(candidate.source).then((result) => {
       if (!active) return;
+      if (frozenSourceRef.current && shouldPlayRef.current) {
+        pendingSourceRef.current = candidate.source;
+        debug("SOURCE_DEFERRED_WHILE_ACTIVE", {
+          candidateSource: candidate.source,
+          activeSource: frozenSourceRef.current,
+        });
+        return;
+      }
       debug("SOURCE_CHANGE", {
         source: candidate.source,
         resolvedSource: result.source,
@@ -596,6 +678,7 @@ const PreparedSurface = ({
           sourceKind: result.sourceKind,
           error,
         });
+        onPreparationFailureRef.current?.(candidate.mediaKey, error);
       }
     });
     return () => {
@@ -611,6 +694,23 @@ const PreparedSurface = ({
     if (!enabled || !resolvedSource) return;
     void prepare();
   }, [enabled, prepare, resolvedSource]);
+
+  useEffect(() => {
+    if (view?.shouldPlay || !frozenSourceRef.current) return;
+    const pendingSource = pendingSourceRef.current;
+    frozenSourceRef.current = undefined;
+    pendingSourceRef.current = undefined;
+    if (!pendingSource) return;
+    let active = true;
+    void resolveSurfaceSource(pendingSource).then((result) => {
+      if (!active) return;
+      setSourceKind(result.sourceKind);
+      setResolvedSource(result.source);
+    });
+    return () => {
+      active = false;
+    };
+  }, [candidate.source, view?.shouldPlay]);
 
   const hasView = view !== undefined;
 
@@ -857,6 +957,7 @@ const ElectronMediaSurfacePool = ({
   onReadyChange,
   onGeometryReadyChange = NOOP,
   onFirstAdvancingFrameChange,
+  onPreparationFailure,
   onSurfaceElement,
   onDiagnosticChange,
   transitionStart,
@@ -1277,6 +1378,7 @@ const ElectronMediaSurfacePool = ({
           onReadyChange={onReadyChange}
           onGeometryReadyChange={onGeometryReadyChange}
           onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+          onPreparationFailure={onPreparationFailure}
           onSurfaceElement={handleSurfaceElement}
           onDiagnosticChange={handleDiagnosticChange}
           stageRect={stageRect}

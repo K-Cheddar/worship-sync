@@ -114,6 +114,24 @@ type OutlineActiveItemSource = {
   shouldSendTo?: ShouldSendTo;
 };
 
+type PendingDirectSlideClick = {
+  listId: string;
+  slideIndex: number;
+  wasVisible: boolean;
+};
+
+const isElementFullyVisibleWithinParent = (
+  child: HTMLElement,
+  parent: HTMLElement,
+) => {
+  const parentRect = parent.getBoundingClientRect();
+  const childRect = child.getBoundingClientRect();
+  return (
+    childRect.top >= parentRect.top &&
+    childRect.bottom <= parentRect.bottom
+  );
+};
+
 const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
   const slide = slides[index];
   if (!slide) return { title: "", text: "" };
@@ -375,6 +393,8 @@ const OutlineItemSlidesScroller = ({
   const pendingFocalPointRef = useRef<OutlineSlideFocalPoint | null>(null);
   const isFocalPointRestoringRef = useRef(false);
   const focalPointRestoreTimerRef = useRef<number | null>(null);
+  const pendingDirectSlideClickRef =
+    useRef<PendingDirectSlideClick | null>(null);
 
   const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
   const tileRowHeightRef = useRef(tileRowHeight);
@@ -398,36 +418,45 @@ const OutlineItemSlidesScroller = ({
     rowsRef.current !== rows &&
     (previousRenderInputs.cols !== cols || contentChanged)
   ) {
-    const element = scrollRef.current;
-    const previousVirtualizer = virtualizerRef.current;
-    if (
-      element &&
-      previousVirtualizer &&
-      didInitialScrollRef.current &&
-      rowsRef.current.length > 0
-    ) {
-      const getRowStart = (index: number) =>
-        previousVirtualizer.getOffsetForIndex(index)?.[0] ?? 0;
-      const getRowHeight = (index: number) => {
-        const start = getRowStart(index);
-        const next = previousVirtualizer.getOffsetForIndex(index + 1)?.[0];
-        if (next != null) return Math.max(1, next - start - ROW_GAP);
-        const row = rowsRef.current[index];
-        if (row?.type === "sectionLabel") return SECTION_LABEL_HEIGHT;
-        if (row?.type === "empty") return EMPTY_ROW_HEIGHT;
-        return tileRowHeightRef.current;
-      };
-      pendingFocalPointRef.current = captureOutlineSlideFocalPoint(
-        rowsRef.current,
-        getRowStart,
-        getRowHeight,
-        element.scrollTop,
-        element.clientHeight,
-        selectedItemListId || activeItemListId,
-        selectedSlide,
-        sectionsByListId,
-      );
-      isFocalPointRestoringRef.current = pendingFocalPointRef.current != null;
+    if (pendingDirectSlideClickRef.current != null) {
+      // A direct click can cause an intermediate local browse-pin render before
+      // the active-item selection arrives. The selection effect below owns
+      // visibility for the whole direct-click lifecycle.
+      pendingFocalPointRef.current = null;
+      isFocalPointRestoringRef.current = false;
+    } else {
+      const element = scrollRef.current;
+      const previousVirtualizer = virtualizerRef.current;
+      if (
+        element &&
+        previousVirtualizer &&
+        didInitialScrollRef.current &&
+        rowsRef.current.length > 0
+      ) {
+        const getRowStart = (index: number) =>
+          previousVirtualizer.getOffsetForIndex(index)?.[0] ?? 0;
+        const getRowHeight = (index: number) => {
+          const start = getRowStart(index);
+          const next = previousVirtualizer.getOffsetForIndex(index + 1)?.[0];
+          if (next != null) return Math.max(1, next - start - ROW_GAP);
+          const row = rowsRef.current[index];
+          if (row?.type === "sectionLabel") return SECTION_LABEL_HEIGHT;
+          if (row?.type === "empty") return EMPTY_ROW_HEIGHT;
+          return tileRowHeightRef.current;
+        };
+        pendingFocalPointRef.current = captureOutlineSlideFocalPoint(
+          rowsRef.current,
+          getRowStart,
+          getRowHeight,
+          element.scrollTop,
+          element.clientHeight,
+          selectedItemListId || activeItemListId,
+          selectedSlide,
+          sectionsByListId,
+        );
+        isFocalPointRestoringRef.current =
+          pendingFocalPointRef.current != null;
+      }
     }
   }
   rowsRef.current = rows;
@@ -949,11 +978,17 @@ const OutlineItemSlidesScroller = ({
 
   // After the initial anchor window, restore the frozen selected-slide focal
   // point when virtual geometry rebuilds (zoom or remote content updates).
-  // Missing selections still fall back to the existing viewport anchor.
+  // Direct slide selection owns visibility during its active-item rebuild;
+  // missing selections still fall back to the existing viewport anchor.
   useLayoutEffect(() => {
     if (!didInitialScrollRef.current) return;
 
     const restore = () => {
+      if (pendingDirectSlideClickRef.current != null) {
+        captureViewportAnchor({ force: true });
+        return true;
+      }
+
       const focalPoint = pendingFocalPointRef.current;
       if (isFocalPointRestoringRef.current && focalPoint) {
         return applyFocalPoint(focalPoint);
@@ -1029,12 +1064,31 @@ const OutlineItemSlidesScroller = ({
       selectionScrollCleanupRef.current = null;
 
       if (!didInitialScrollRef.current) return;
-      if (isInitialAnchoringRef.current && !options?.force) return;
 
       const slideIndex = selectedSlideRef.current;
       if (slideIndex < 0) return;
       const listId = activeItemListId || selectedItemListIdRef.current;
       if (!listId) return;
+      const pendingDirectSlideClick = pendingDirectSlideClickRef.current;
+      const isPendingDirectSlideClick =
+        pendingDirectSlideClick?.listId === listId &&
+        pendingDirectSlideClick.slideIndex === slideIndex;
+      const clearPendingDirectSlideClick = () => {
+        const current = pendingDirectSlideClickRef.current;
+        if (
+          current?.listId === listId &&
+          current.slideIndex === slideIndex
+        ) {
+          pendingDirectSlideClickRef.current = null;
+        }
+      };
+      if (
+        isInitialAnchoringRef.current &&
+        !options?.force &&
+        !isPendingDirectSlideClick
+      ) {
+        return;
+      }
 
       const scrollKey = `${listId}:${slideIndex}`;
       if (!options?.force && lastSelectionScrollKeyRef.current === scrollKey) {
@@ -1056,6 +1110,7 @@ const OutlineItemSlidesScroller = ({
           shouldScrollToCenter: true,
         });
         captureViewportAnchor();
+        clearPendingDirectSlideClick();
         return;
       }
 
@@ -1065,14 +1120,19 @@ const OutlineItemSlidesScroller = ({
         slideIndex,
         rowIndexDataRef.current,
       );
-      if (rowIndex < 0) return;
+      if (rowIndex < 0) {
+        clearPendingDirectSlideClick();
+        return;
+      }
 
       virtualizerRef.current?.scrollToIndex(rowIndex, {
         align: "center",
         behavior: "auto",
       });
 
+      let settled = false;
       const runKeepInView = () => {
+        if (settled) return;
         const scrollParent = scrollRef.current;
         const child = document.getElementById(childId);
         if (!scrollParent || !child) return;
@@ -1082,13 +1142,18 @@ const OutlineItemSlidesScroller = ({
           shouldScrollToCenter: true,
         });
         captureViewportAnchor();
+        settled = true;
+        clearPendingDirectSlideClick();
       };
 
       const outerRaf = window.requestAnimationFrame(() => {
         window.requestAnimationFrame(runKeepInView);
       });
-      const retryTimer = window.setTimeout(runKeepInView, 80);
+      const retryTimer = window.setTimeout(() => {
+        if (!settled) runKeepInView();
+      }, 80);
       selectionScrollCleanupRef.current = () => {
+        settled = true;
         window.cancelAnimationFrame(outerRaf);
         window.clearTimeout(retryTimer);
       };
@@ -1097,7 +1162,8 @@ const OutlineItemSlidesScroller = ({
   );
 
   // Single scroll authority for selection changes after the initial anchor.
-  // Avoid stacking virtualizer smooth + keepElementInView smooth.
+  // Direct slide selection owns slide visibility; item-list navigation owns
+  // item navigation; viewport restoration only preserves layout geometry.
   useEffect(() => {
     scrollSelectedSlideIntoView();
     return () => {
@@ -1119,6 +1185,18 @@ const OutlineItemSlidesScroller = ({
       index: number,
     ) => {
       if (!section.isActive) {
+        const parent = scrollRef.current;
+        const clickedSlide = document.getElementById(
+          `item-slide-${section.listId}-${index}`,
+        );
+        pendingDirectSlideClickRef.current = {
+          listId: section.listId,
+          slideIndex: index,
+          wasVisible:
+            parent != null &&
+            clickedSlide != null &&
+            isElementFullyVisibleWithinParent(clickedSlide, parent),
+        };
         // Transmit from the already available section before activating the
         // editor item. This keeps the live path independent of navigation and
         // the pending-selection effect.
@@ -1139,7 +1217,13 @@ const OutlineItemSlidesScroller = ({
       }
       onSlideGridClick(event, index);
     },
-    [activateItem, onSlideGridClick, selectSlide, timersByItemId],
+    [
+      activateItem,
+      onSlideGridClick,
+      scrollRef,
+      selectSlide,
+      timersByItemId,
+    ],
   );
 
   const activeSlideIds = useMemo(

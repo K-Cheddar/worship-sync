@@ -99,6 +99,8 @@ import {
   buildLocalVideoInputPresentation,
 } from "../../utils/localVideoInput";
 import type { PresentationControllerMode } from "../../context/presentationControllerMode";
+import { resolveOutlineForScope } from "../../utils/outlineScope";
+import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -188,6 +190,22 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   );
   const isPresentMode = presentationMode === "present";
   const activeControllerProfile = useActiveControllerProfile();
+  const editorPreparedMediaContext = useSelector((state): PreparedMediaContext => {
+    const itemLists = state.undoable.present.itemLists;
+    const outline = resolveOutlineForScope(
+      itemLists.currentLists,
+      activeControllerProfile.outlineScope,
+      itemLists.selectedIdByScope[activeControllerProfile.outlineScope],
+    );
+    return {
+      controllerProfileId: activeControllerProfile.id,
+      controllerProfileName: activeControllerProfile.name,
+      outlineScope: activeControllerProfile.outlineScope,
+      outlineId: outline?._id ?? null,
+      outlineName: outline?.name,
+      contextSource: "persisted ItemLists fallback",
+    };
+  });
   const canRelinkVideoInputInPresentMode =
     canEdit &&
     (activeControllerProfile.type === "aux-presentation" ||
@@ -1474,6 +1492,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
                 onChange(onChangeInfo);
               }}
               displayType="editor"
+              preparedMediaContext={editorPreparedMediaContext}
               currentItemId={_id}
               selectedBox={selectedBox}
               isBoxLocked={isBoxLocked}

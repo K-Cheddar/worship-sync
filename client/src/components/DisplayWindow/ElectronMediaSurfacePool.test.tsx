@@ -337,6 +337,109 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
+  it("keeps the active source frozen until playback intent ends", async () => {
+    (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(
+      null,
+    );
+    const firstSource = "https://cdn.example.com/first.mp4";
+    const secondSource = "media-cache://second.mp4";
+    const makeView = (source: string, shouldPlay: boolean) => ({
+      mediaKey: candidate.mediaKey,
+      source,
+      videoBox,
+      opacity: 1,
+      zIndex: 0,
+      shouldPlay,
+      muted: true,
+      volume: 1,
+    });
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: firstSource }]}
+        views={[makeView(firstSource, true)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+    const firstResolvedSource = video.getAttribute("src");
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: secondSource }]}
+        views={[makeView(secondSource, true)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(video.getAttribute("src")).toBe(firstResolvedSource));
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: secondSource }]}
+        views={[makeView(secondSource, false)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(video.getAttribute("src")).toBe(secondSource));
+  });
+
+  it("resolves local file references before assigning a video source", async () => {
+    const getLocalAsset = jest.fn().mockResolvedValue({
+      url: "worshipsync-media://asset/local-file.mp4",
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalAsset,
+        getLocalMediaPath: jest.fn().mockResolvedValue(null),
+        isDev: jest.fn().mockResolvedValue(false),
+      },
+    });
+    const localCandidate = {
+      ...candidate,
+      source: "local-video-file://local-file",
+    };
+
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[localCandidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toHaveAttribute(
+        "src",
+        "worshipsync-media://asset/local-file.mp4",
+      ),
+    );
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).not.toHaveAttribute(
+      "src",
+      "local-video-file://local-file",
+    );
+  });
+
   it("uses the original finite URL when no local cache entry exists", async () => {
     (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(
       null,
