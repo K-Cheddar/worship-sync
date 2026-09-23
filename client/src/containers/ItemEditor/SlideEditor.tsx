@@ -190,8 +190,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   );
   const isPresentMode = presentationMode === "present";
   const activeControllerProfile = useActiveControllerProfile();
-  const editorPreparedMediaContext = useSelector((state): PreparedMediaContext => {
-    const itemLists = state.undoable.present.itemLists;
+  const itemLists = useSelector(
+    (state: RootState) => state.undoable.present.itemLists,
+  );
+  const editorPreparedMediaContext = useMemo<PreparedMediaContext>(() => {
     const outline = resolveOutlineForScope(
       itemLists.currentLists,
       activeControllerProfile.outlineScope,
@@ -205,7 +207,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       outlineName: outline?.name,
       contextSource: "persisted ItemLists fallback",
     };
-  });
+  }, [
+    itemLists,
+    activeControllerProfile.id,
+    activeControllerProfile.name,
+    activeControllerProfile.outlineScope,
+  ]);
   const canRelinkVideoInputInPresentMode =
     canEdit &&
     (activeControllerProfile.type === "aux-presentation" ||

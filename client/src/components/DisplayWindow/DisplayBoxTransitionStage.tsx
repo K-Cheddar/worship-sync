@@ -317,10 +317,12 @@ const DisplayBoxTransitionStage = ({
   >({ a: snapshot, b: null });
   laneSnapshotsRef.current = state.lanes;
 
+  // Controller tiles already play the current video in their fallback lane.
+  // A service-wide pool per tile competes with the editor and output windows
+  // for Electron video decoders and can leave tile transitions waiting on it.
   const poolEnabled = Boolean(
-    (mediaPlayback?.playbackRole === "output" ||
-      mediaPlayback?.playbackRole === "preview") &&
-      (mediaPlayback.playbackRole === "preview" || mediaPlayback.outputId) &&
+    mediaPlayback?.playbackRole === "output" &&
+      mediaPlayback.outputId &&
       mediaPlayback.showBackground !== false &&
       window.electronAPI,
   );

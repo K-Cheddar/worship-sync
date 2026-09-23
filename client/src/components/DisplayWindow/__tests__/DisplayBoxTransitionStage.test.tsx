@@ -241,6 +241,63 @@ describe("DisplayBoxTransitionStage", () => {
     }
   });
 
+  it("uses the direct video lane for Electron transmit previews", () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalMediaPath: jest.fn().mockResolvedValue(null) },
+    });
+    const video = (name: string): DisplayBoxTransitionSnapshot => ({
+      key: name,
+      boxes: [{ id: "box", words: name, width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: `remote:${name}`,
+        originalSrc: `https://cdn.example.com/${name}.mp4`,
+      },
+    });
+    const mediaPlayback = {
+      outputId: "projector",
+      windowRole: "projector-preview",
+      playbackRole: "preview" as const,
+      showBackground: true,
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={video("first")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.queryByTestId("electron-media-surface-pool")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toHaveAttribute(
+      "data-media-id",
+      "remote:first",
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={video("second")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={video("latest")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.queryByTestId("electron-media-surface-pool")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("content-second")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-latest")).toBeInTheDocument();
+  });
+
   it("integrates the Electron pool with canonical prepared identity and transition ownership", async () => {
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
