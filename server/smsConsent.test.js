@@ -89,6 +89,8 @@ test("persists server-side consent fields without linking a member", async (t) =
   assert.deepEqual(res.payload, { success: true, verificationRequired: true });
   assert.equal(record?.phoneNumber, "+19545551234");
   assert.equal(record?.status, "pending");
+  assert.equal(record?.consentedAt, undefined);
+  assert.equal(record?.verifiedAt, undefined);
   assert.equal(record?.source, "web_form");
   assert.equal(record?.consentVersion, SMS_CONSENT_VERSION);
   assert.equal(record?.consentText, SMS_CONSENT_TEXT);
@@ -119,6 +121,11 @@ test("correct verification transitions pending consent to opted in", async (t) =
 
   assert.deepEqual(verify.payload, { success: true });
   assert.equal(record?.status, "opted_in");
+  assert.equal(record?.source, "web_form");
+  assert.equal(record?.consentVersion, SMS_CONSENT_VERSION);
+  assert.equal(record?.consentText, SMS_CONSENT_TEXT);
+  assert.match(record?.consentSubmittedAt || "", /^20\d\d-/);
+  assert.match(record?.consentedAt || "", /^20\d\d-/);
   assert.match(record?.verifiedAt || "", /^20\d\d-/);
   assert.equal(record?.verificationCodeHash, null);
 });
@@ -159,7 +166,7 @@ test("incorrect and expired codes never become affirmative consent", async (t) =
   );
 });
 
-test("resubmission is safe and does not downgrade existing verified consent", async (t) => {
+test("reverification protects the verified snapshot and records confirmation separately", async (t) => {
   if (!canSeedHumanBearerAuthForServerTests()) {
     t.skip("SMS consent persistence tests use the in-memory store only.");
     return;
@@ -176,11 +183,62 @@ test("resubmission is safe and does not downgrade existing verified consent", as
   const before = await getSmsConsentForServerTests(phoneNumber);
   const second = createRes();
   await authHandlers.submitSmsConsent(createReq({ body: validBody(phoneNumber), ip: "sms-safe-retry-ip-2" }), second);
-  const after = await getSmsConsentForServerTests(phoneNumber);
+  const afterSubmission = await getSmsConsentForServerTests(phoneNumber);
 
-  assert.equal(after?.status, "opted_in");
-  assert.equal(after?.consentedAt, before?.consentedAt);
+  assert.equal(afterSubmission?.status, "opted_in");
+  for (const field of [
+    "consentedAt",
+    "verifiedAt",
+    "consentSubmittedAt",
+    "consentVersion",
+    "consentText",
+    "source",
+  ]) {
+    assert.equal(afterSubmission?.[field], before?.[field], field);
+  }
+  assert.notEqual(afterSubmission?.verificationCodeHash, before?.verificationCodeHash);
+  assert.equal(afterSubmission?.verificationAttempts, 0);
   assert.deepEqual(second.payload, { success: true, verificationRequired: true });
+
+  const invalid = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({ body: verificationBody(phoneNumber, "000000"), ip: "sms-safe-retry-ip-2" }),
+    invalid,
+  );
+  assert.equal(invalid.statusCode, 400);
+  const afterInvalid = await getSmsConsentForServerTests(phoneNumber);
+  assert.equal(afterInvalid?.status, "opted_in");
+  for (const field of [
+    "consentedAt",
+    "verifiedAt",
+    "consentSubmittedAt",
+    "consentVersion",
+    "consentText",
+    "source",
+  ]) {
+    assert.equal(afterInvalid?.[field], before?.[field], field);
+  }
+
+  const reverification = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({ body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)), ip: "sms-safe-retry-ip-2" }),
+    reverification,
+  );
+  const afterReverification = await getSmsConsentForServerTests(phoneNumber);
+
+  assert.deepEqual(reverification.payload, { success: true });
+  assert.equal(afterReverification?.status, "opted_in");
+  for (const field of [
+    "consentedAt",
+    "verifiedAt",
+    "consentSubmittedAt",
+    "consentVersion",
+    "consentText",
+    "source",
+  ]) {
+    assert.equal(afterReverification?.[field], before?.[field], field);
+  }
+  assert.match(afterReverification?.verificationConfirmedAt || "", /^20\d\d-/);
 });
 
 test("rate limits repeated SMS consent submissions by IP", async () => {

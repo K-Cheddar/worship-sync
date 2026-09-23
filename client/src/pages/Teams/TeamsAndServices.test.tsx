@@ -350,7 +350,9 @@ const openVocalSlot = async (
 };
 
 describe("Teams", () => {
-  jest.setTimeout(15000);
+  // Coverage + suite load makes lazy routes and schedule grids slower than the
+  // default 5s Jest budget; keep headroom without masking real hangs.
+  jest.setTimeout(30_000);
 
   // Warm the lazy route chunks used by these tests so the first visit does not
   // sit in Suspense while findBy polls — under CI load that race can hang until
@@ -362,6 +364,8 @@ describe("Teams", () => {
       import("./pages/TeamsSchedulesPage"),
       import("./pages/TeamsMembersPage"),
       import("./pages/TeamsPositionsPage"),
+      import("./pages/TeamsFormsPage"),
+      import("./pages/TeamsGroupsPage"),
     ]);
   });
 
@@ -385,6 +389,8 @@ describe("Teams", () => {
   });
 
   afterEach(() => {
+    // Fake-timer tests must not leak into later async waits under suite load.
+    jest.useRealTimers();
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
   });
@@ -804,7 +810,7 @@ describe("Teams", () => {
       expect(mockGetTeamScheduleDetail).toHaveBeenCalledWith("church-1", scheduleId);
     });
     expect(
-      await screen.findByRole("button", { name: /Sunday Vocal/i }),
+      await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
   });
 
@@ -1025,44 +1031,44 @@ describe("Teams", () => {
     );
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    const membersLink = screen.getByRole("link", { name: /^Members$/i });
+    await user.click(membersLink);
+    await waitFor(() => {
+      expect(membersLink).toHaveAttribute("aria-current", "page");
+    }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create member/i }),
+      await screen.findByRole("button", { name: /Create member/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Members$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Positions$/i }));
+    const positionsLink = screen.getByRole("link", { name: /^Positions$/i });
+    await user.click(positionsLink);
+    await waitFor(() => {
+      expect(positionsLink).toHaveAttribute("aria-current", "page");
+    }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create position/i }),
+      await screen.findByRole("button", { name: /Create position/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Positions$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Teams$/i }));
+    const teamsLink = screen.getByRole("link", { name: /^Teams$/i });
+    await user.click(teamsLink);
+    await waitFor(() => {
+      expect(teamsLink).toHaveAttribute("aria-current", "page");
+    }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create team/i }),
+      await screen.findByRole("button", { name: /Create team/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Teams$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
+    const schedulesLink = screen.getByRole("link", { name: /^Schedules$/i });
+    await user.click(schedulesLink);
+    await waitFor(() => {
+      expect(schedulesLink).toHaveAttribute("aria-current", "page");
+    }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("heading", { name: /^Schedules$/i }),
+      await screen.findByRole("heading", { name: /^Schedules$/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
   });
 
   it("contains a crash inside the active Teams section", async () => {

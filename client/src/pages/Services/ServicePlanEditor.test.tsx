@@ -1678,16 +1678,18 @@ Opening Song to begin the worship experience.
     await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
+    // Add-item can autosave an empty title before the typed value flushes;
+    // wait for the save that includes the edited title.
     await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalled();
+      const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
+      expect(body?.sections?.[0]?.elements?.[0]?.title).toEqual(
+        plainTextToRichText("Great Are You Lord"),
+      );
     }, { timeout: 2_500 });
     const [churchId, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(churchId).toBe("church-1");
     expect(planKey).toBe("service-1@2026-07-26");
     expect(body.serviceId).toBe("service-1");
-    expect(body.sections[0].elements[0].title).toEqual(
-      plainTextToRichText("Great Are You Lord"),
-    );
     // The first element added to an empty plan seeds the timing anchor from
     // the occurrence's own start time (14:00 UTC on 2026-07-26).
     expect(body.sections[0].elements[0].startTime).toBeTruthy();

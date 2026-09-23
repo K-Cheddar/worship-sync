@@ -1532,6 +1532,13 @@ const upsertSmsConsent = async (phoneNumber) => {
   const consentId = smsConsentIdForPhone(phoneNumber);
   const submittedAt = nowIso();
   const challenge = createSmsConsentChallenge();
+  const challengeFields = {
+    verificationCodeHash: challenge.codeHash,
+    verificationCodeSalt: challenge.codeSalt,
+    verificationExpiresAt: challenge.expiresAt,
+    verificationAttempts: 0,
+    updatedAt: submittedAt,
+  };
   const db = requireFirestore();
 
   if (db) {
@@ -1539,11 +1546,16 @@ const upsertSmsConsent = async (phoneNumber) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const existing = snapshot.exists ? snapshot.data() : null;
+      if (existing?.status === "opted_in") {
+        // Anonymous resubmission may rotate the challenge, but not the verified snapshot.
+        transaction.set(consentRef, challengeFields, { merge: true });
+        return;
+      }
       transaction.set(consentRef, {
         consentId,
         phoneNumber,
         phoneHash: hashValue(phoneNumber),
-        status: existing?.status === "opted_in" ? "opted_in" : "pending",
+        status: "pending",
         source: "web_form",
         consentVersion: SMS_CONSENT_VERSION,
         consentText: SMS_CONSENT_TEXT,
@@ -1551,23 +1563,26 @@ const upsertSmsConsent = async (phoneNumber) => {
         ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
         ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
         optedOutAt: existing?.optedOutAt || null,
-        verificationCodeHash: challenge.codeHash,
-        verificationCodeSalt: challenge.codeSalt,
-        verificationExpiresAt: challenge.expiresAt,
-        verificationAttempts: 0,
         createdAt: existing?.createdAt || submittedAt,
-        updatedAt: submittedAt,
+        ...challengeFields,
       });
     });
     return { consentId, challenge, shouldSend: true };
   }
 
   const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+  if (existing?.status === "opted_in") {
+    // Keep the in-memory fallback aligned with the transactional path above.
+    await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
+      merge: true,
+    });
+    return { consentId, challenge, shouldSend: true };
+  }
   await setDoc(COLLECTIONS.smsConsents, consentId, {
     consentId,
     phoneNumber,
     phoneHash: hashValue(phoneNumber),
-    status: existing?.status === "opted_in" ? "opted_in" : "pending",
+    status: "pending",
     source: "web_form",
     consentVersion: SMS_CONSENT_VERSION,
     consentText: SMS_CONSENT_TEXT,
@@ -1575,12 +1590,8 @@ const upsertSmsConsent = async (phoneNumber) => {
     ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
     ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
     optedOutAt: existing?.optedOutAt || null,
-    verificationCodeHash: challenge.codeHash,
-    verificationCodeSalt: challenge.codeSalt,
-    verificationExpiresAt: challenge.expiresAt,
-    verificationAttempts: 0,
     createdAt: existing?.createdAt || submittedAt,
-    updatedAt: submittedAt,
+    ...challengeFields,
   }, { merge: false });
   return { consentId, challenge, shouldSend: true };
 };
