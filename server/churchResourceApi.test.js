@@ -9,7 +9,7 @@ const makeResponse = () => ({
   json(value) { this.body = value; return value; },
 });
 
-const makeHarness = () => {
+const makeHarness = ({ quota } = {}) => {
   const docs = new Map();
   const commands = [];
   const storageState = { removeError: null, deleteMetadataError: null };
@@ -24,6 +24,7 @@ const makeHarness = () => {
       docs.delete(id);
     },
     nowIso: () => "2026-09-21T00:00:00.000Z",
+    quota,
     storage: {
       createUpload: async () => ({ resourceUpload: { id: "churchResource_123e4567-e89b-42d3-a456-426614174000", key: "pending/key", fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4, kind: "document" }, uploadUrl: "https://example.test/upload", expiresAt: "2026-09-21T00:15:00.000Z" }),
       completeUpload: async () => {
@@ -40,6 +41,53 @@ const makeHarness = () => {
   });
   return { docs, commands, handlers, storageState, resourceId };
 };
+
+test("resource upload admission returns structured quota errors and the church quota endpoint shape", async () => {
+  const quotaCalls = [];
+  const { handlers } = makeHarness({
+    quota: {
+      reserve: async (input) => { quotaCalls.push(input); },
+      getUsage: async () => ({
+        r2: { used: 4, limit: 10, unit: "bytes" },
+        cloudinary: { used: 2, limit: 8, unit: "bytes" },
+        mux: { used: 1.5, limit: 4, unit: "minutes" },
+      }),
+    },
+  });
+  const upload = makeResponse();
+  await handlers.createUpload(request("church-1", {
+    fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4,
+  }), upload);
+  assert.equal(upload.statusCode, 200);
+  assert.equal(quotaCalls[0].amount, 4);
+
+  const quotaResponse = makeResponse();
+  await handlers.storageQuota(request("church-1"), quotaResponse);
+  assert.deepEqual(quotaResponse.body.quotas, {
+    r2: { used: 4, limit: 10, unit: "bytes" },
+    cloudinary: { used: 2, limit: 8, unit: "bytes" },
+    mux: { used: 1.5, limit: 4, unit: "minutes" },
+  });
+
+  const exceeded = makeHarness({
+    quota: {
+      reserve: async () => {
+        throw Object.assign(new Error("This church has reached its 1 GB file storage limit."), {
+          statusCode: 413,
+          code: "CHURCH_STORAGE_QUOTA_EXCEEDED",
+          provider: "r2Bytes",
+        });
+      },
+    },
+  });
+  const rejected = makeResponse();
+  await exceeded.handlers.createUpload(request("church-1", {
+    fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4,
+  }), rejected);
+  assert.equal(rejected.statusCode, 413);
+  assert.equal(rejected.body.code, "CHURCH_STORAGE_QUOTA_EXCEEDED");
+  assert.equal(rejected.body.quota, "r2Bytes");
+});
 
 const request = (churchId, body = {}, extra = {}) => ({
   params: { churchId, resourceId: "churchResource_123e4567-e89b-42d3-a456-426614174000" },

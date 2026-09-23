@@ -86,6 +86,37 @@ test("ChurchResource storage uses the resources bucket, scoped keys, and promoti
   assert.equal(commands[1].input.Bucket, "worshipsync-resources");
 });
 
+test("ChurchResource quota admission runs after actual-size validation and before promotion", async () => {
+  const events = [];
+  const storage = createChurchResourceStorage({
+    env,
+    randomId: () => "churchResource_123e4567-e89b-42d3-a456-426614174000",
+    s3Client: {
+      send: async (command) => {
+        events.push(command.constructor.name);
+        if (command.constructor.name === "HeadObjectCommand") {
+          return { ContentLength: 4, ContentType: "application/pdf" };
+        }
+        return {};
+      },
+    },
+    signUrl: async () => "https://example.test/signed",
+  });
+  const intent = await storage.createUpload({
+    churchId: "church-1",
+    upload: { fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4 },
+  });
+  await storage.completeUpload({
+    churchId: "church-1",
+    upload: intent.resourceUpload,
+    beforePromote: async ({ sizeBytes }) => {
+      assert.equal(sizeBytes, 4);
+      events.push("quota-admission");
+    },
+  });
+  assert.deepEqual(events, ["HeadObjectCommand", "quota-admission", "CopyObjectCommand", "DeleteObjectCommand"]);
+});
+
 test("ChurchResource completion rejects a client key outside the expected church/file scope", async () => {
   const storage = createChurchResourceStorage({
     env,

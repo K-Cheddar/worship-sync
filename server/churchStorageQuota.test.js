@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  CHURCH_STORAGE_QUOTA_DEFAULTS,
+  ChurchStorageQuotaError,
+  createChurchStorageQuotaService,
+  getCloudinaryAssetBytes,
+  getMuxStoredMinutes,
+  normalizeChurchStorageQuotas,
+  sumR2ChurchMetadataUsage,
+} from "./churchStorageQuota.js";
+
+class MemoryFirestore {
+  collections = new Map();
+  transactionQueue = Promise.resolve();
+
+  collection(name) {
+    if (!this.collections.has(name)) this.collections.set(name, new Map());
+    const docs = this.collections.get(name);
+    const makeRef = (id) => ({
+      id,
+      get: async () => snapshot(docs, id),
+      _docs: docs,
+    });
+    return {
+      doc: (id) => makeRef(id),
+      where: (field, operator, value) => ({
+        _query: true,
+        docs,
+        filters: [[field, operator, value]],
+        where(nextField, nextOperator, nextValue) {
+          return { ...this, filters: [...this.filters, [nextField, nextOperator, nextValue]] };
+        },
+      }),
+      _docs: docs,
+    };
+  }
+
+  runTransaction(callback) {
+    const execute = async () => callback({
+      get: async (ref) => {
+        if (ref._query) {
+          return {
+            docs: [...ref.docs.entries()]
+              .filter(([, data]) => ref.filters.every(([field, operator, value]) => {
+                if (operator === "==") return data[field] === value;
+                if (operator === "<=") return data[field] <= value;
+                return false;
+              }))
+              .map(([id]) => ({ id, ref: { id, _docs: ref.docs }, data: () => ref.docs.get(id) })),
+          };
+        }
+        return snapshot(ref._docs, ref.id);
+      },
+      set: (ref, value, options = {}) => {
+        const current = ref._docs.get(ref.id) || {};
+        ref._docs.set(ref.id, options.merge ? { ...current, ...value } : { ...value });
+      },
+      delete: (ref) => ref._docs.delete(ref.id),
+    });
+    const result = this.transactionQueue.then(execute);
+    this.transactionQueue = result.catch(() => {});
+    return result;
+  }
+}
+
+const snapshot = (docs, id) => ({
+  exists: docs.has(id),
+  data: () => docs.get(id),
+});
+
+const createQuota = ({ limits = { r2Bytes: 10, cloudinaryBytes: 10, muxMinutes: 10 }, initialUsage = 0 } = {}) => {
+  const firestore = new MemoryFirestore();
+  let currentTime = 1_000;
+  const service = createChurchStorageQuotaService({
+    getFirestore: () => firestore,
+    getChurch: async () => ({ storageQuotas: limits }),
+    loadR2Usage: async () => initialUsage,
+    now: () => currentTime,
+    reservationTtlMs: 100,
+  });
+  return { firestore, service, advanceTime: (milliseconds) => { currentTime += milliseconds; } };
+};
+
+test("central quota defaults stay separate and church overrides apply", async () => {
+  assert.deepEqual(CHURCH_STORAGE_QUOTA_DEFAULTS, {
+    r2Bytes: 1024 ** 3,
+    cloudinaryBytes: 500 * 1024 ** 2,
+    muxMinutes: 400,
+  });
+  assert.deepEqual(normalizeChurchStorageQuotas({ r2Bytes: 7 }), {
+    r2Bytes: 7,
+    cloudinaryBytes: 500 * 1024 ** 2,
+    muxMinutes: 400,
+  });
+  const { service } = createQuota({ limits: { r2Bytes: 7, cloudinaryBytes: 6, muxMinutes: 5 } });
+  await service.reserve({ churchId: "church-a", amount: 7, operationId: "at-limit" });
+  await assert.rejects(
+    service.reserve({ churchId: "church-a", amount: 1, operationId: "over-limit" }),
+    (error) =>
+      error instanceof ChurchStorageQuotaError &&
+      error.provider === "r2Bytes" &&
+      /7 bytes file storage limit/.test(error.message),
+  );
+  await service.reserve({ churchId: "church-b", amount: 7, operationId: "separate-church" });
+});
+
+test("concurrent R2 admissions cannot both exceed the church limit", async () => {
+  const { service } = createQuota();
+  const results = await Promise.allSettled([
+    service.reserve({ churchId: "church-a", amount: 7, operationId: "upload-a" }),
+    service.reserve({ churchId: "church-a", amount: 7, operationId: "upload-b" }),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+});
+
+test("concurrent replacements cannot both subtract the same song attachment", async () => {
+  const { service } = createQuota();
+  await service.reserve({
+    churchId: "church-a", amount: 8, operationId: "first-replacement", lockId: "song:song-a",
+  });
+  await assert.rejects(
+    service.reserve({
+      churchId: "church-a", amount: 6, replaceAmount: 8,
+      operationId: "second-replacement", lockId: "song:song-a",
+    }),
+    (error) => error.code === "CHURCH_STORAGE_MUTATION_IN_PROGRESS",
+  );
+});
+
+test("song replacement reserves and commits only its size delta", async () => {
+  const { service } = createQuota();
+  const first = await service.reserve({ churchId: "church-a", amount: 8, operationId: "song-upload:first" });
+  await service.commitR2({ churchId: "church-a", reservationId: first.id, assetId: "song:song-a", actualAmount: 8 });
+  const replacement = await service.reserve({
+    churchId: "church-a", amount: 6, replaceAmount: 8, operationId: "song-upload:replacement",
+  });
+  await service.commitR2({
+    churchId: "church-a", reservationId: replacement.id, assetId: "song:song-a",
+    actualAmount: 6, fallbackPreviousAmount: 8,
+  });
+  assert.equal((await service.getUsage("church-a")).r2.used, 6);
+});
+
+test("deleting an asset releases R2 usage once", async () => {
+  const { service } = createQuota();
+  const reservation = await service.reserve({ churchId: "church-a", amount: 4, operationId: "resource:file-a" });
+  await service.commitR2({ churchId: "church-a", reservationId: reservation.id, assetId: "resource:file-a", actualAmount: 4 });
+  const deletion = {
+    churchId: "church-a", reservationId: "delete:file-a", assetId: "resource:file-a", fallbackPreviousAmount: 4,
+  };
+  await service.releaseR2(deletion);
+  await service.releaseR2(deletion);
+  assert.equal((await service.getUsage("church-a")).r2.used, 0);
+});
+
+test("cancelled and expired pending uploads stop reserving quota", async () => {
+  const { service, advanceTime } = createQuota();
+  const cancelled = await service.reserve({ churchId: "church-a", amount: 7, operationId: "failed-upload" });
+  await service.cancel({ churchId: "church-a", reservationId: cancelled.id });
+  await service.reserve({ churchId: "church-a", amount: 7, operationId: "next-upload" });
+  advanceTime(101);
+  await service.reserve({ churchId: "church-a", amount: 7, operationId: "after-expiry" });
+});
+
+test("R2 reconciliation sums persisted resource and song metadata", async () => {
+  const resources = [
+    { storage: { sizeBytes: 5 } },
+    { storage: { sizeBytes: 7 } },
+  ];
+  const songs = [{ songAudio: { sizeBytes: 11 } }, { songAudio: { sizeBytes: 13 } }];
+  assert.equal(sumR2ChurchMetadataUsage({ resources, songs }), 36);
+  const { service } = createQuota({ initialUsage: 36 });
+  assert.equal((await service.reconcileR2Usage("church-a")).r2.used, 36);
+});
+
+test("Cloudinary bytes and Mux stored duration accounting ignore temporary assets", async () => {
+  assert.equal(getCloudinaryAssetBytes({ bytes: 1234 }), 1234);
+  assert.equal(getCloudinaryAssetBytes({ byte_size: 4321 }), 4321);
+  assert.equal(getMuxStoredMinutes({ duration: 90 }), 1.5);
+  const { service } = createQuota({ limits: { r2Bytes: 10, cloudinaryBytes: 5, muxMinutes: 3 } });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "temporary-image", amount: 100, temporary: true,
+  });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "muxMinutes", assetId: "temporary-video", amount: 8, temporary: true,
+  });
+  assert.deepEqual(await service.getUsage("church-a"), {
+    r2: { used: 0, limit: 10, unit: "bytes" },
+    cloudinary: { used: 0, limit: 5, unit: "bytes" },
+    mux: { used: 0, limit: 3, unit: "minutes" },
+  });
+  await assert.rejects(
+    service.recordProviderAsset({ churchId: "church-a", provider: "cloudinaryBytes", assetId: "image", amount: 6 }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
+  await service.recordProviderAsset({ churchId: "church-a", provider: "muxMinutes", assetId: "video", amount: 2.5 });
+  assert.equal((await service.getUsage("church-a")).mux.used, 2.5);
+  assert.equal(await service.removeProviderAssetByIdentity({
+    provider: "muxMinutes",
+    assetId: "video",
+  }), "church-a");
+  assert.equal((await service.getUsage("church-a")).mux.used, 0);
+});

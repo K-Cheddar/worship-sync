@@ -444,6 +444,8 @@ const firebaseRuntime = (() => {
   };
 })();
 
+let firestoreTestOverride = null;
+
 /** In production, auth persistence must use Firestore — in-memory Maps are not safe for deploys. */
 if (process.env.NODE_ENV === "production" && !firebaseRuntime?.db) {
   throw new Error(
@@ -1064,7 +1066,16 @@ const requireFirebaseAdmin = () => {
   return firebaseRuntime.auth;
 };
 
-const requireFirestore = () => firebaseRuntime?.db || null;
+const requireFirestore = () => firestoreTestOverride || firebaseRuntime?.db || null;
+
+export const setServerFirestoreForTests = (db) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setServerFirestoreForTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  firestoreTestOverride = db || null;
+};
 
 const readDeviceFingerprint = (body = {}) =>
   hashValue(
@@ -1648,8 +1659,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
   };
 
   if (db) {
-    let verifiedAt;
-    await db.runTransaction(async (transaction) => {
+    const transactionResult = await db.runTransaction(async (transaction) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const record = snapshot.exists ? snapshot.data() : null;
@@ -1665,9 +1675,12 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
             updatedAt: nowIso(),
           }, { merge: true });
         }
-        invalid();
+        return {
+          status:
+            attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : "invalid",
+        };
       }
-      verifiedAt = nowIso();
+      const verifiedAt = nowIso();
       transaction.set(consentRef, {
         status: "opted_in",
         ...(record?.status === "opted_in"
@@ -1678,7 +1691,11 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
         verificationExpiresAt: null,
         updatedAt: verifiedAt,
       }, { merge: true });
+      return { status: "verified", verifiedAt };
     });
+
+    if (transactionResult.status !== "verified") invalid();
+    const { verifiedAt } = transactionResult;
     return { consentId, verifiedAt };
   }
 

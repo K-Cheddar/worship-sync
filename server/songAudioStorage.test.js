@@ -236,6 +236,45 @@ test("completing an upload validates, commits, and removes the pending object", 
   );
 });
 
+test("song audio quota uses stored bytes and rejects before promotion", async () => {
+  const commands = [];
+  const quotaCalls = [];
+  const storage = createSongAudioStorage({
+    env: {
+      R2_ACCOUNT_ID: "account",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "song-audio",
+    },
+    quota: {
+      reserve: async (input) => {
+        quotaCalls.push(input);
+        throw Object.assign(new Error("over quota"), { code: "CHURCH_STORAGE_QUOTA_EXCEEDED" });
+      },
+    },
+    s3Client: {
+      send: async (command) => {
+        commands.push(command);
+        if (command.constructor.name === "HeadObjectCommand") {
+          return { ContentLength: 3, ContentType: "audio/mpeg" };
+        }
+        return {};
+      },
+    },
+    signUrl: async () => "https://example.test/upload",
+  });
+  const intent = await storage.createUpload({
+    churchId: "church-1",
+    songId: "song-1",
+    upload: { fileName: "reference.mp3", contentType: "audio/mpeg", sizeBytes: 3 },
+  });
+  await assert.rejects(storage.completeUpload({
+    churchId: "church-1", songId: "song-1", audio: intent.audio,
+  }), { code: "CHURCH_STORAGE_QUOTA_EXCEEDED" });
+  assert.equal(quotaCalls[0].amount, 3);
+  assert.deepEqual(commands.map((command) => command.constructor.name), ["HeadObjectCommand", "DeleteObjectCommand"]);
+});
+
 test("completing a replacement overwrites the song's existing final object", async () => {
   const commands = [];
   const storage = createSongAudioStorage({
@@ -283,8 +322,8 @@ test("completing a replacement overwrites the song's existing final object", asy
 
   assert.equal(audio.id, previousAudio.id);
   assert.equal(audio.key, previousAudio.key);
-  assert.equal(commands[1].input.Key, previousAudio.key);
-  assert.equal(commands[2].input.Key, intent.audio.key);
+  assert.equal(commands[2].input.Key, previousAudio.key);
+  assert.equal(commands[3].input.Key, intent.audio.key);
 });
 
 test("a replacement rejects a previous final object from another song", async () => {
@@ -478,6 +517,9 @@ test("the packaged-app fallback overwrites the existing final object on replacem
     s3Client: {
       send: async (command) => {
         commands.push(command);
+        if (command.constructor.name === "HeadObjectCommand") {
+          return { ContentLength: 3, ContentType: "audio/mpeg" };
+        }
       },
     },
   });
@@ -500,5 +542,5 @@ test("the packaged-app fallback overwrites the existing final object on replacem
 
   assert.equal(audio.id, previousAudio.id);
   assert.equal(audio.key, previousAudio.key);
-  assert.equal(commands[0].input.Key, previousAudio.key);
+  assert.equal(commands[1].input.Key, previousAudio.key);
 });

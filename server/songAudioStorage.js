@@ -155,6 +155,7 @@ export const createSongAudioStorage = ({
   env = process.env,
   s3Client,
   signUrl,
+  quota,
 } = {}) => {
   const config = getSongAudioStorageConfig(env);
   const objectStorage = createR2ObjectStorage({
@@ -249,10 +250,44 @@ export const createSongAudioStorage = ({
       newAudioId: id,
       previousAudio,
     });
-    await objectStorage.copy({
-      sourceKey: pendingKey,
-      targetKey: target.key,
-      contentType,
+    let previousSizeBytes = 0;
+    if (previousAudio) {
+      const previousHead = await objectStorage.head({ key: target.key });
+      previousSizeBytes = Number(previousHead.ContentLength);
+      if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
+        throw new SongAudioInputError("The existing song MP3 could not be verified.");
+      }
+    }
+    const reservationId = `song-upload:${churchId}:${songId}:${id}`;
+    try {
+      await quota?.reserve({
+        churchId,
+        provider: "r2Bytes",
+        amount: sizeBytes,
+        replaceAmount: previousSizeBytes,
+        operationId: reservationId,
+        lockId: `song:${songId}`,
+      });
+    } catch (error) {
+      try { await objectStorage.delete({ key: pendingKey }); } catch {}
+      throw error;
+    }
+    try {
+      await objectStorage.copy({
+        sourceKey: pendingKey,
+        targetKey: target.key,
+        contentType,
+      });
+    } catch (error) {
+      await quota?.cancel({ churchId, reservationId });
+      throw error;
+    }
+    await quota?.commitR2({
+      churchId,
+      reservationId,
+      assetId: `song:${songId}`,
+      actualAmount: sizeBytes,
+      fallbackPreviousAmount: previousSizeBytes,
     });
     try {
       await objectStorage.delete({ key: pendingKey });
@@ -293,11 +328,46 @@ export const createSongAudioStorage = ({
       newAudioId: id,
       previousAudio,
     });
-    await objectStorage.put({
-      key: target.key,
-      contentType,
-      body: bytes,
+    let previousSizeBytes = 0;
+    if (previousAudio) {
+      const previousHead = await objectStorage.head({ key: target.key });
+      previousSizeBytes = Number(previousHead.ContentLength);
+      if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
+        throw new SongAudioInputError("The existing song MP3 could not be verified.");
+      }
+    }
+    const reservationId = `song-upload:${churchId}:${songId}:${id}`;
+    await quota?.reserve({
+      churchId,
+      provider: "r2Bytes",
+      amount: sizeBytes,
+      replaceAmount: previousSizeBytes,
+      operationId: reservationId,
+      lockId: `song:${songId}`,
     });
+    try {
+      await objectStorage.put({
+        key: target.key,
+        contentType,
+        body: bytes,
+      });
+    } catch (error) {
+      await quota?.cancel({ churchId, reservationId });
+      throw error;
+    }
+    try {
+      await quota?.commitR2({
+        churchId,
+        reservationId,
+        assetId: `song:${songId}`,
+        actualAmount: sizeBytes,
+        fallbackPreviousAmount: previousSizeBytes,
+      });
+    } catch (error) {
+      try { await objectStorage.delete({ key: target.key }); } catch {}
+      await quota?.cancel({ churchId, reservationId });
+      throw error;
+    }
     return {
       id: target.id,
       key: target.key,
@@ -327,7 +397,7 @@ export const createSongAudioStorage = ({
     });
   };
 
-  const remove = async ({ churchId, songId, audio }) => {
+  const remove = async ({ churchId, songId, audio, storedSizeBytes, getStoredSize }) => {
     const id = requireNonEmptyString(audio?.id, "Audio ID");
     const key = requireNonEmptyString(audio?.key, "Storage key");
     if (!isSongAudioKeyForScope({ key, churchId, songId, audioId: id })) {
@@ -335,7 +405,22 @@ export const createSongAudioStorage = ({
         "That audio file does not belong to this song.",
       );
     }
+    let sizeBytes = 0;
+    try {
+      sizeBytes = Number((await objectStorage.head({ key })).ContentLength);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) sizeBytes = 0;
+    } catch (error) {
+      if (error?.name !== "NotFound" && error?.name !== "NoSuchKey") throw error;
+      sizeBytes = Number(await getStoredSize?.() ?? storedSizeBytes);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) sizeBytes = 0;
+    }
     await objectStorage.delete({ key });
+    await quota?.releaseR2({
+      churchId,
+      reservationId: `song-delete:${songId}:${id}`,
+      assetId: `song:${songId}`,
+      fallbackPreviousAmount: sizeBytes,
+    });
   };
 
   return {
