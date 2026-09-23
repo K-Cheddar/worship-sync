@@ -1280,6 +1280,7 @@ app.post(
           contentType: req.get("content-type"),
         },
         body: req.body,
+        audioId: req.get("x-song-audio-upload-id"),
         previousAudio:
           req.get("x-song-audio-id") || req.get("x-song-audio-key")
             ? {

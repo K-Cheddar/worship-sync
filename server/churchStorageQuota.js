@@ -306,7 +306,7 @@ export const createChurchStorageQuotaService = ({
     return { id: reservationId };
   };
 
-  const finishReservation = async ({ churchId, reservationId, actualAmount, assetId, remove = false, fallbackPreviousAmount = 0 }) => {
+  const finishReservation = async ({ churchId, reservationId, actualAmount, assetId, previousAssetId, remove = false, fallbackPreviousAmount = 0 }) => {
     const db = getFirestore?.();
     if (!db) throw new Error("Church storage quota persistence is unavailable.");
     const { quota, reservations, operations, locks } = getRefs(db, churchId);
@@ -316,9 +316,13 @@ export const createChurchStorageQuotaService = ({
     ));
     const provider = "r2Bytes";
     const asset = operations.doc(scopedDocId(churchId, `asset:${provider}:${assetId}`));
+    const previousAsset = previousAssetId
+      ? operations.doc(scopedDocId(churchId, `asset:${provider}:${previousAssetId}`))
+      : null;
     await db.runTransaction(async (transaction) => {
-      const [quotaSnapshot, reservationSnapshot, operationSnapshot, assetSnapshot] = await Promise.all([
+      const [quotaSnapshot, reservationSnapshot, operationSnapshot, assetSnapshot, previousAssetSnapshot] = await Promise.all([
         transaction.get(quota), transaction.get(reservation), transaction.get(op), transaction.get(asset),
+        ...(previousAsset ? [transaction.get(previousAsset)] : [Promise.resolve(null)]),
       ]);
       const current = quotaSnapshot.exists ? quotaSnapshot.data() : {};
       const pending = reservationSnapshot.exists ? reservationSnapshot.data() : null;
@@ -332,14 +336,16 @@ export const createChurchStorageQuotaService = ({
           transaction.set(quota, {
             [reservedField]: finiteSigned(current[reservedField]) - Number(pending.delta ?? pending.amount ?? 0),
           }, { merge: true });
-          transaction.delete(reservation);
+          transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
           if (lockSnapshot?.data()?.operationId === reservationId) transaction.delete(lock);
         }
         return;
       }
       if (!remove && !pending && !assetSnapshot.exists) return;
       const oldSize = finiteNonNegative(
-        assetSnapshot.exists
+        previousAssetSnapshot?.exists
+          ? previousAssetSnapshot.data().sizeBytes
+          : assetSnapshot.exists && !previousAssetId
           ? assetSnapshot.data().sizeBytes
           : fallbackPreviousAmount,
       );
@@ -352,9 +358,14 @@ export const createChurchStorageQuotaService = ({
       }, { merge: true });
       if (remove) transaction.delete(asset);
       else transaction.set(asset, { provider, sizeBytes: nextSize, updatedAt: now() });
+      if (previousAsset && !remove) {
+        // Keep a zero-sized tombstone so deletion of the replaced R2 object
+        // cannot release the quota now attributed to its successor.
+        transaction.set(previousAsset, { provider, sizeBytes: 0, replaced: true, updatedAt: now() });
+      }
       transaction.set(op, { completedAt: now() });
       if (pending) {
-        transaction.delete(reservation);
+        transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
         if (lockSnapshot?.data()?.operationId === reservationId) transaction.delete(lock);
       }
     });

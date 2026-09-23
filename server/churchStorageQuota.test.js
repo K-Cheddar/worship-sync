@@ -132,15 +132,37 @@ test("concurrent replacements cannot both subtract the same song attachment", as
 test("song replacement reserves and commits only its size delta", async () => {
   const { service } = createQuota();
   const first = await service.reserve({ churchId: "church-a", amount: 8, operationId: "song-upload:first" });
-  await service.commitR2({ churchId: "church-a", reservationId: first.id, assetId: "song:song-a", actualAmount: 8 });
+  await service.commitR2({ churchId: "church-a", reservationId: first.id, assetId: "song-audio:audio-old", actualAmount: 8 });
   const replacement = await service.reserve({
     churchId: "church-a", amount: 6, replaceAmount: 8, operationId: "song-upload:replacement",
   });
   await service.commitR2({
-    churchId: "church-a", reservationId: replacement.id, assetId: "song:song-a",
-    actualAmount: 6, fallbackPreviousAmount: 8,
+    churchId: "church-a", reservationId: replacement.id, assetId: "song-audio:audio-new",
+    previousAssetId: "song-audio:audio-old", actualAmount: 6, fallbackPreviousAmount: 8,
   });
   assert.equal((await service.getUsage("church-a")).r2.used, 6);
+  await service.releaseR2({
+    churchId: "church-a", reservationId: "delete:old-audio", assetId: "song-audio:audio-old",
+    fallbackPreviousAmount: 8,
+  });
+  assert.equal((await service.getUsage("church-a")).r2.used, 6);
+  await service.releaseR2({
+    churchId: "church-a", reservationId: "delete:new-audio", assetId: "song-audio:audio-new",
+    fallbackPreviousAmount: 6,
+  });
+  assert.equal((await service.getUsage("church-a")).r2.used, 0);
+});
+
+test("a committed song replacement can be retried with the same reservation", async () => {
+  const { service } = createQuota();
+  const reservation = await service.reserve({ churchId: "church-a", amount: 4, operationId: "same-upload" });
+  const commit = {
+    churchId: "church-a", reservationId: reservation.id, assetId: "song-audio:audio-1", actualAmount: 4,
+  };
+  await service.commitR2(commit);
+  await service.reserve({ churchId: "church-a", amount: 4, operationId: "same-upload" });
+  await service.commitR2(commit);
+  assert.equal((await service.getUsage("church-a")).r2.used, 4);
 });
 
 test("deleting an asset releases R2 usage once", async () => {

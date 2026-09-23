@@ -111,10 +111,12 @@ const resolveFinalSongAudioTarget = ({
     );
   }
 
-  // A song has one final R2 attachment slot. Replacements overwrite that
-  // validated key so a failed client-side cleanup cannot leave final objects
-  // accumulating under the song prefix.
-  return { id, key };
+  // Keep the old object intact until the caller persists this replacement's
+  // metadata. The client removes the previous key only after that save.
+  return {
+    id: newAudioId,
+    key: buildSongAudioObjectKey({ churchId, songId, audioId: newAudioId }),
+  };
 };
 
 export const getSongAudioStorageConfig = (env = process.env) => {
@@ -252,7 +254,7 @@ export const createSongAudioStorage = ({
     });
     let previousSizeBytes = 0;
     if (previousAudio) {
-      const previousHead = await objectStorage.head({ key: target.key });
+      const previousHead = await objectStorage.head({ key: previousAudio.key });
       previousSizeBytes = Number(previousHead.ContentLength);
       if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
         throw new SongAudioInputError("The existing song MP3 could not be verified.");
@@ -285,7 +287,8 @@ export const createSongAudioStorage = ({
     await quota?.commitR2({
       churchId,
       reservationId,
-      assetId: `song:${songId}`,
+      assetId: `song-audio:${target.id}`,
+      previousAssetId: previousAudio ? `song-audio:${previousAudio.id}` : undefined,
       actualAmount: sizeBytes,
       fallbackPreviousAmount: previousSizeBytes,
     });
@@ -315,13 +318,14 @@ export const createSongAudioStorage = ({
     upload,
     body,
     previousAudio,
+    audioId,
   }) => {
     const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body || []);
     const { fileName, contentType, sizeBytes } = validateSongAudioUpload(
       { ...upload, sizeBytes: bytes.byteLength },
       env,
     );
-    const id = randomUUID();
+    const id = audioId ? requireNonEmptyString(audioId, "Upload ID") : randomUUID();
     const target = resolveFinalSongAudioTarget({
       churchId,
       songId,
@@ -330,7 +334,7 @@ export const createSongAudioStorage = ({
     });
     let previousSizeBytes = 0;
     if (previousAudio) {
-      const previousHead = await objectStorage.head({ key: target.key });
+      const previousHead = await objectStorage.head({ key: previousAudio.key });
       previousSizeBytes = Number(previousHead.ContentLength);
       if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
         throw new SongAudioInputError("The existing song MP3 could not be verified.");
@@ -359,13 +363,15 @@ export const createSongAudioStorage = ({
       await quota?.commitR2({
         churchId,
         reservationId,
-        assetId: `song:${songId}`,
+        assetId: `song-audio:${target.id}`,
+        previousAssetId: previousAudio ? `song-audio:${previousAudio.id}` : undefined,
         actualAmount: sizeBytes,
         fallbackPreviousAmount: previousSizeBytes,
       });
     } catch (error) {
-      try { await objectStorage.delete({ key: target.key }); } catch {}
-      await quota?.cancel({ churchId, reservationId });
+      // The Firestore transaction may have committed even if its response was
+      // lost. Keep both the durable object and reservation so a retry with the
+      // same upload ID can safely finish the operation.
       throw error;
     }
     return {
@@ -418,7 +424,7 @@ export const createSongAudioStorage = ({
     await quota?.releaseR2({
       churchId,
       reservationId: `song-delete:${songId}:${id}`,
-      assetId: `song:${songId}`,
+      assetId: `song-audio:${id}`,
       fallbackPreviousAmount: sizeBytes,
     });
   };

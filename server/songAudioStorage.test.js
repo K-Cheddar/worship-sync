@@ -275,7 +275,7 @@ test("song audio quota uses stored bytes and rejects before promotion", async ()
   assert.deepEqual(commands.map((command) => command.constructor.name), ["HeadObjectCommand", "DeleteObjectCommand"]);
 });
 
-test("completing a replacement overwrites the song's existing final object", async () => {
+test("completing a replacement writes a new object and leaves the old key for post-save cleanup", async () => {
   const commands = [];
   const storage = createSongAudioStorage({
     env: {
@@ -320,9 +320,10 @@ test("completing a replacement overwrites the song's existing final object", asy
     previousAudio,
   });
 
-  assert.equal(audio.id, previousAudio.id);
-  assert.equal(audio.key, previousAudio.key);
-  assert.equal(commands[2].input.Key, previousAudio.key);
+  assert.equal(audio.id, intent.audio.id);
+  assert.equal(audio.key, intent.audio.key.replace("pending/", ""));
+  assert.equal(commands[1].input.Key, previousAudio.key);
+  assert.equal(commands[2].input.Key, audio.key);
   assert.equal(commands[3].input.Key, intent.audio.key);
 });
 
@@ -505,7 +506,7 @@ test("the packaged-app fallback stores a validated MP3 under a unique key", asyn
   assert.equal(commands[0].input.ContentType, "audio/mpeg");
 });
 
-test("the packaged-app fallback overwrites the existing final object on replacement", async () => {
+test("the packaged-app fallback writes a new object on replacement", async () => {
   const commands = [];
   const storage = createSongAudioStorage({
     env: {
@@ -540,7 +541,55 @@ test("the packaged-app fallback overwrites the existing final object on replacem
     previousAudio,
   });
 
-  assert.equal(audio.id, previousAudio.id);
-  assert.equal(audio.key, previousAudio.key);
-  assert.equal(commands[1].input.Key, previousAudio.key);
+  assert.notEqual(audio.id, previousAudio.id);
+  assert.notEqual(audio.key, previousAudio.key);
+  assert.equal(commands[0].input.Key, previousAudio.key);
+  assert.equal(commands[1].input.Key, audio.key);
+});
+
+test("a failed quota commit preserves both the old key and the durable replacement for retry", async () => {
+  const commands = [];
+  let commitAttempts = 0;
+  const storage = createSongAudioStorage({
+    env: {
+      R2_ACCOUNT_ID: "account",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "song-audio",
+    },
+    s3Client: {
+      send: async (command) => {
+        commands.push(command);
+        if (command.constructor.name === "HeadObjectCommand") return { ContentLength: 3 };
+      },
+    },
+    quota: {
+      reserve: async () => {},
+      commitR2: async () => {
+        commitAttempts += 1;
+        if (commitAttempts === 1) throw new Error("commit response lost");
+      },
+      cancel: async () => assert.fail("ambiguous commit must not cancel its reservation"),
+    },
+  });
+  const previousAudio = {
+    id: "existing-audio",
+    key: buildSongAudioObjectKey({ churchId: "church-1", songId: "song-1", audioId: "existing-audio" }),
+  };
+  const input = {
+    churchId: "church-1",
+    songId: "song-1",
+    audioId: "retryable-upload-id",
+    upload: { fileName: "replacement.mp3", contentType: "audio/mpeg" },
+    body: Buffer.from([1, 2, 3]),
+    previousAudio,
+  };
+
+  await assert.rejects(storage.uploadFromServer(input), /commit response lost/);
+  const audio = await storage.uploadFromServer(input);
+
+  assert.equal(audio.id, "retryable-upload-id");
+  assert.equal(commands.filter((command) => command.constructor.name === "DeleteObjectCommand").length, 0);
+  assert.equal(commands.filter((command) => command.constructor.name === "PutObjectCommand").length, 2);
+  assert.ok(commands.every((command) => command.input.Key !== previousAudio.key || command.constructor.name === "HeadObjectCommand"));
 });
