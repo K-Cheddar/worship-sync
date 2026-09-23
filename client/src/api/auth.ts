@@ -205,7 +205,7 @@ const verifyCurrentAppSession = async (): Promise<SessionVerification> => {
   }
 };
 
-const apiFetch = async <T>(
+export const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
   extraHeaders?: Record<string, string>,

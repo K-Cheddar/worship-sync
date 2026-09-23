@@ -63,6 +63,7 @@ const createConnectedService = async ({
     format: "png",
     width: 1920,
     height: 1080,
+    bytes: 321,
   }),
   muxClient = null,
   publicLinkResponseForUrl = () => null,
@@ -80,6 +81,7 @@ const createConnectedService = async ({
   muxProcessingDeadlineMs,
   destroyCloudinaryAsset = async () => {},
   uploadCloudinaryAsset,
+  storageQuota,
 } = {}) => {
   const calls = [];
   let exportRequestCount = 0;
@@ -188,6 +190,7 @@ const createConnectedService = async ({
       },
     },
     getMuxClient: () => muxClient,
+    storageQuota,
     clientId: "client-id",
     clientSecret: "client-secret",
     tokenEncryptionKey: "a-test-encryption-secret-that-is-not-checked-in",
@@ -1518,6 +1521,36 @@ test("Canva imports a page again after the design revision changes", async () =>
     result.assets[0].data.canvaImportKey,
     "canva:DAF_design_1:rev:101:png:1",
   );
+});
+
+test("Canva refresh charges the replacement through the shared provider quota ledger", async () => {
+  const records = [];
+  const { service } = await createConnectedService({
+    designUpdatedAt: 101,
+    storageQuota: {
+      recordProviderAsset: async (entry) => records.push(entry),
+    },
+  });
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1],
+    format: "png",
+    replacementAssets: [{
+      provider: "cloudinaryBytes",
+      assetId: "old-page-image",
+      revision: 100,
+      pageNumbers: [1],
+    }],
+  });
+  assert.equal(result.assets.length, 1);
+  assert.deepEqual(records, [{
+    churchId: "church-1",
+    provider: "cloudinaryBytes",
+    assetId: "worship-sync/canva/church-1/page-1",
+    amount: 321,
+    replaceAssetIds: ["old-page-image"],
+  }]);
 });
 
 test("Canva refuses connection setup when server credentials are missing", async () => {

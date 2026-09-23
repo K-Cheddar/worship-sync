@@ -34,10 +34,12 @@ import {
 } from "../../utils/localVideoMediaLibrary";
 import generateRandomId from "../../utils/generateRandomId";
 import {
-  deleteFromCloudinary,
   extractPublicId,
 } from "../../utils/cloudinaryUtils";
-import { getApiBasePath } from "../../utils/environment";
+import {
+  deleteCloudinaryMediaAsset,
+  deleteChurchMuxAsset,
+} from "../../api/providerStorage";
 import {
   setMediaItems,
   setMediaRouteFolder,
@@ -194,7 +196,7 @@ export function useMediaLibraryController({
     updater,
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
-  const { access } = useContext(GlobalInfoContext) || {};
+  const { access, churchId = "" } = useContext(GlobalInfoContext) || {};
 
   const {
     list,
@@ -1002,59 +1004,47 @@ export function useMediaLibraryController({
     async (rows: MediaType[]): Promise<MediaType[]> => {
       const failed: MediaType[] = [];
       for (const row of rows) {
-        if (row.source === "cloudinary") {
-          if (!cloud) {
-            failed.push(row);
-            continue;
-          }
-          let publicId = row.publicId;
-          if (!publicId) {
-            publicId = extractPublicId(row.background) || "";
-          }
-          if (!publicId) continue;
-          const ok = await deleteFromCloudinary(cloud, publicId, row.type);
-          if (!ok) failed.push(row);
-        } else if (row.source === "mux" && row.muxAssetId) {
-          try {
-            const res = await fetch(
-              `${getApiBasePath()}api/mux/asset/${row.muxAssetId}`,
-              { method: "DELETE" },
-            );
-            if (!res.ok) failed.push(row);
-          } catch (error) {
-            console.warn("Error deleting from Mux:", error);
-            failed.push(row);
-          }
-        } else if (row.source === "local") {
-          try {
-            if (row.localImage?.cloudUrl && row.publicId) {
-              if (!cloud) {
-                failed.push(row);
-                continue;
-              }
-              const removedCloudCopy = await deleteFromCloudinary(
-                cloud,
-                row.publicId,
-                "image",
-              );
-              if (!removedCloudCopy) {
-                failed.push(row);
-                continue;
-              }
+        const provider = row.providerStorage?.provider ||
+          (row.localImage?.cloudUrl ? "cloudinary" : "") ||
+          (row.localVideoFile?.cloudMediaId ? "mux" : "") ||
+          row.source;
+        const cloudinaryPublicId =
+          row.providerStorage?.publicId ||
+          (provider === "cloudinary" ? row.publicId : "") ||
+          (row.localImage?.cloudUrl ? row.publicId : "");
+        const muxAssetId =
+          (provider === "mux" ? row.providerStorage?.assetId : "") ||
+          row.muxAssetId ||
+          row.localVideoFile?.cloudMediaId;
+        try {
+          if (provider === "cloudinary") {
+            let publicId = cloudinaryPublicId || extractPublicId(row.background) || "";
+            if (publicId) {
+              if (!churchId) throw new Error("Church session is unavailable.");
+              await deleteCloudinaryMediaAsset(churchId, publicId);
             }
+          } else if (provider === "mux" && muxAssetId) {
+            if (!churchId) throw new Error("Church session is unavailable.");
+            await deleteChurchMuxAsset(churchId, muxAssetId);
+          }
+          if (row.source === "local") {
             if (row.localImage) await deleteLocalImage(row.localImage.id);
             if (row.localVideoFile) {
               await deleteLocalVideoFile(row.localVideoFile.id);
             }
-          } catch (error) {
-            console.warn("Error deleting local media:", error);
-            failed.push(row);
           }
+        } catch (error) {
+          if (provider === "mux") {
+            console.warn("Error deleting from Mux:", error);
+          } else if (row.source === "local") {
+            console.warn("Error deleting local media:", error);
+          }
+          failed.push(row);
         }
       }
       return failed;
     },
-    [cloud],
+    [churchId],
   );
 
   const deleteCanvaProvider = useCallback(
@@ -1488,6 +1478,7 @@ export function useMediaLibraryController({
   };
 
   const addNewBackground = ({
+    asset_id,
     public_id,
     secure_url,
     playback_url,
@@ -1500,6 +1491,7 @@ export function useMediaLibraryController({
     frame_rate,
     duration,
     is_audio,
+    bytes,
     canvaImportKey,
     canvaSource,
   }: mediaInfoType): MediaType | undefined => {
@@ -1550,6 +1542,14 @@ export function useMediaLibraryController({
       duration,
       hasAudio: is_audio,
       source: "cloudinary",
+      providerStorage: {
+        provider: "cloudinary",
+        assetId: asset_id || public_id,
+        publicId: public_id,
+        churchId,
+        permanent: true,
+        bytes,
+      },
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
       ...(canvaSource ? { canvaSource } : {}),
@@ -1626,6 +1626,7 @@ export function useMediaLibraryController({
   const addMuxVideo = ({
     playbackId,
     assetId,
+    durationSeconds,
     playbackUrl,
     thumbnailUrl,
     name,
@@ -1665,6 +1666,13 @@ export function useMediaLibraryController({
       source: "mux",
       muxPlaybackId: playbackId,
       muxAssetId: assetId,
+      providerStorage: {
+        provider: "mux",
+        assetId,
+        churchId,
+        permanent: true,
+        durationSeconds,
+      },
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
       ...(canvaSource ? { canvaSource } : {}),
@@ -1696,12 +1704,20 @@ export function useMediaLibraryController({
         thumbnail: thumbnail || current.thumbnail,
         placeholderImage: "",
         source: "cloudinary",
+        providerStorage: {
+          provider: "cloudinary",
+          assetId: info.asset_id || info.public_id,
+          publicId: info.public_id,
+          churchId,
+          permanent: true,
+          bytes: info.bytes,
+        },
         canvaImportKey: info.canvaImportKey,
         canvaSource: info.canvaSource,
       };
       await commitCanvaReplacement(current, nextMedia);
     },
-    [cloud, commitCanvaReplacement],
+    [churchId, cloud, commitCanvaReplacement],
   );
 
   const refreshCanvaVideo = useCallback(
@@ -1724,12 +1740,19 @@ export function useMediaLibraryController({
         source: "mux",
         muxPlaybackId: info.playbackId,
         muxAssetId: info.assetId,
+        providerStorage: {
+          provider: "mux",
+          assetId: info.assetId,
+          churchId,
+          permanent: true,
+          durationSeconds: info.durationSeconds,
+        },
         canvaImportKey: info.canvaImportKey,
         canvaSource: info.canvaSource,
       };
       await commitCanvaReplacement(current, nextMedia);
     },
-    [commitCanvaReplacement],
+    [churchId, commitCanvaReplacement],
   );
 
   const requestMediaUpload = useCallback(() => {

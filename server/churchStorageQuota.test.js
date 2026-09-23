@@ -69,13 +69,18 @@ const snapshot = (docs, id) => ({
   data: () => docs.get(id),
 });
 
-const createQuota = ({ limits = { r2Bytes: 10, cloudinaryBytes: 10, muxMinutes: 10 }, initialUsage = 0 } = {}) => {
+const createQuota = ({
+  limits = { r2Bytes: 10, cloudinaryBytes: 10, muxMinutes: 10 },
+  initialUsage = 0,
+  providerQuotaEnforcementEnabled = () => true,
+} = {}) => {
   const firestore = new MemoryFirestore();
   let currentTime = 1_000;
   const service = createChurchStorageQuotaService({
     getFirestore: () => firestore,
     getChurch: async () => ({ storageQuotas: limits }),
     loadR2Usage: async () => initialUsage,
+    providerQuotaEnforcementEnabled,
     now: () => currentTime,
     reservationTtlMs: 100,
   });
@@ -213,6 +218,7 @@ test("Cloudinary bytes and Mux stored duration accounting ignore temporary asset
     cloudinary: { used: 0, limit: 5, unit: "bytes" },
     mux: { used: 0, limit: 3, unit: "minutes" },
   });
+  await service.markProviderUsageReady({ churchId: "church-a" });
   await assert.rejects(
     service.recordProviderAsset({ churchId: "church-a", provider: "cloudinaryBytes", assetId: "image", amount: 6 }),
     (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
@@ -224,4 +230,56 @@ test("Cloudinary bytes and Mux stored duration accounting ignore temporary asset
     assetId: "video",
   }), "church-a");
   assert.equal((await service.getUsage("church-a")).mux.used, 0);
+});
+
+test("provider replacement admission uses the old asset as credit and deletion releases it after commit", async () => {
+  const { service } = createQuota();
+  await service.markProviderUsageReady({ churchId: "church-a" });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "old-image", amount: 8,
+  });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "new-image", amount: 7,
+    replaceAssetIds: ["old-image"],
+  });
+  assert.equal((await service.getUsage("church-a")).cloudinary.used, 15);
+  await service.removeProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "old-image",
+  });
+  assert.equal((await service.getUsage("church-a")).cloudinary.used, 7);
+});
+
+test("provider admissions are atomic across concurrent assets", async () => {
+  const { service } = createQuota();
+  await service.markProviderUsageReady({ churchId: "church-a" });
+  const results = await Promise.allSettled([
+    service.recordProviderAsset({ churchId: "church-a", provider: "muxMinutes", assetId: "mux-a", amount: 6 }),
+    service.recordProviderAsset({ churchId: "church-a", provider: "muxMinutes", assetId: "mux-b", amount: 6 }),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+});
+
+test("existing provider usage is reconciled before quota enforcement is enabled", async () => {
+  let enforce = false;
+  const { service } = createQuota({
+    providerQuotaEnforcementEnabled: () => enforce,
+  });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "existing-image", amount: 8,
+  });
+  enforce = true;
+  await assert.rejects(
+    service.recordProviderAsset({
+      churchId: "church-a", provider: "cloudinaryBytes", assetId: "new-image", amount: 1,
+    }),
+    (error) => error.code === "CHURCH_PROVIDER_STORAGE_NOT_RECONCILED",
+  );
+  await service.markProviderUsageReady({ churchId: "church-a" });
+  await assert.rejects(
+    service.recordProviderAsset({
+      churchId: "church-a", provider: "cloudinaryBytes", assetId: "over-limit-image", amount: 3,
+    }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
 });

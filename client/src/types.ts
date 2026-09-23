@@ -1080,6 +1080,15 @@ export type MediaType = {
   localVideoInput?: LocalVideoInputMediaSource;
   muxPlaybackId?: string;
   muxAssetId?: string;
+  providerStorage?: {
+    provider: "cloudinary" | "mux";
+    assetId: string;
+    churchId: string;
+    permanent: true;
+    publicId?: string;
+    bytes?: number;
+    durationSeconds?: number;
+  };
   /** Stable identity for an asset copied from Canva. */
   canvaImportKey?: string;
   /** Source metadata used to check and refresh Canva imports. */

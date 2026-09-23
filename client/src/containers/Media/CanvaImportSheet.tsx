@@ -483,6 +483,33 @@ const CanvaImportSheet = ({
         (key): key is string =>
           typeof key === "string" && key.startsWith(designImportKeyPrefix),
       );
+    const replacementAssets = existingMedia.flatMap((mediaItem) => {
+      const source = mediaItem.canvaSource;
+      if (
+        !source ||
+        source.designId !== selectedDesign.id ||
+        source.format !== format ||
+        !source.pageNumbers?.length
+      ) return [];
+      const provider = mediaItem.providerStorage?.provider;
+      const assetId = provider === "mux"
+        ? mediaItem.providerStorage?.assetId || mediaItem.muxAssetId
+        : provider === "cloudinary"
+          ? mediaItem.providerStorage?.publicId || mediaItem.publicId
+          : mediaItem.source === "mux"
+            ? mediaItem.muxAssetId
+            : mediaItem.source === "cloudinary"
+              ? mediaItem.publicId
+              : "";
+      if (!assetId) return [];
+      return [{
+        provider: provider === "mux" || mediaItem.source === "mux" ? "muxMinutes" : "cloudinaryBytes",
+        assetId,
+        revision: source.revision,
+        preferred: mediaItem.id === sourceMedia?.id,
+        pageNumbers: [...source.pageNumbers].sort((a, b) => a - b),
+      }];
+    });
     setIsImporting(true);
     importCancelledRef.current = false;
     const importController = new AbortController();
@@ -501,6 +528,7 @@ const CanvaImportSheet = ({
         format,
         ...(format === "mp4" ? { mp4ImportMode } : {}),
         existingImportKeys,
+        replacementAssets,
       };
       const handleProgress = (event: CanvaImportProgressEvent) => {
         if (importCancelledRef.current) return;

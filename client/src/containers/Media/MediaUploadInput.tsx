@@ -202,10 +202,18 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
         if (fileProgress.fileType === "video") {
           updateFileStatus(fileIndex, { status: "processing", progress: 40 });
-          const result = await uploadVideoToMux(fileProgress.file, callbacks);
+          const result = await uploadVideoToMux(
+            fileProgress.file,
+            {
+              churchId,
+              mediaId: media.id,
+              title: fileProgress.displayName,
+            },
+            callbacks,
+          );
           onLocalMediaPatched?.(
             media.id,
-            buildLocalVideoCloudSharePatch(media, result),
+            buildLocalVideoCloudSharePatch(media, result, churchId),
           );
           updateFileStatus(fileIndex, { status: "ready", progress: 100 });
           return;
@@ -283,7 +291,11 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                   resolvedUploadPreset,
                   callbacks,
                 )
-              : await convertMuxVideoToLocalMp4(fileProgress.file, callbacks);
+              : await convertMuxVideoToLocalMp4(
+                  fileProgress.file,
+                  churchId,
+                  callbacks,
+                );
           media = await createLocalMediaFromFile(
             convertedFile,
             churchId,

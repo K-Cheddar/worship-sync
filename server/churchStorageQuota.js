@@ -37,6 +37,16 @@ export class ChurchStorageMutationInProgressError extends Error {
   }
 }
 
+export class ChurchProviderStorageNotReconciledError extends Error {
+  statusCode = 503;
+  code = "CHURCH_PROVIDER_STORAGE_NOT_RECONCILED";
+
+  constructor() {
+    super("Provider storage usage must be reconciled before uploads are enabled.");
+    this.name = "ChurchProviderStorageNotReconciledError";
+  }
+}
+
 const finiteNonNegative = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -93,6 +103,7 @@ export const createChurchStorageQuotaService = ({
   loadR2Usage,
   now = () => Date.now(),
   reservationTtlMs = 60 * 60 * 1000,
+  providerQuotaEnforcementEnabled = () => true,
 }) => {
   const collection = "churchStorageQuotas";
   const reservationCollection = "churchStorageQuotaReservations";
@@ -215,13 +226,16 @@ export const createChurchStorageQuotaService = ({
         snapshot.exists && snapshot.data()?.r2Initialized
           ? undefined
           : await loadR2Usage?.(churchId);
-      return reserveTransaction({ db, churchId, provider, amount, operationId, replaceAmount, lockId, metadataBytes, church });
+      return reserveTransaction({ db, churchId, provider, amount, operationId, replaceAmount, lockId, metadataBytes, church, enforceLimit: true });
     }
     const church = getChurch ? await getChurch(churchId) : null;
-    return reserveTransaction({ db, churchId, provider, amount, operationId, replaceAmount, lockId, church });
+    return reserveTransaction({
+      db, churchId, provider, amount, operationId, replaceAmount, lockId, church,
+      enforceLimit: Boolean(providerQuotaEnforcementEnabled()),
+    });
   };
 
-  const reserveTransaction = async ({ db, churchId, provider, amount, operationId, replaceAmount, lockId, metadataBytes, church }) => {
+  const reserveTransaction = async ({ db, churchId, provider, amount, operationId, replaceAmount, lockId, metadataBytes, church, enforceLimit = true }) => {
     const numericAmount = finiteNonNegative(amount);
     const replacement = finiteNonNegative(replaceAmount);
     const { quota, reservations, locks } = getRefs(db, churchId);
@@ -271,7 +285,10 @@ export const createChurchStorageQuotaService = ({
       const limits = normalizeChurchStorageQuotas(church?.storageQuotas || current.limits);
       const limit = limits[provider];
       const reservationDelta = numericAmount - replacement;
-      if (used + reserved + reservationDelta > limit) {
+      if (provider !== "r2Bytes" && enforceLimit && current.providerUsageReady !== true) {
+        throw new ChurchProviderStorageNotReconciledError();
+      }
+      if (enforceLimit && used + reserved + reservationDelta > limit) {
         throw new ChurchStorageQuotaError(provider, limit);
       }
       transaction.set(quota, {
@@ -417,19 +434,50 @@ export const createChurchStorageQuotaService = ({
     return finishReservation({ ...input, remove: true });
   };
 
-  const recordProviderAsset = async ({ churchId, provider, assetId, amount, temporary = false }) => {
+  const recordProviderAsset = async ({
+    churchId,
+    provider,
+    assetId,
+    amount,
+    temporary = false,
+    replaceAssetIds = [],
+  }) => {
     if (temporary) return getUsage(churchId);
-    const reservationId = `provider:${provider}:${assetId}`;
-    await reserve({ churchId, provider, amount, operationId: reservationId });
     const db = getFirestore?.();
     const { quota, reservations, operations, providerAssets } = getRefs(db, churchId);
-    const reservation = reservations.doc(scopedDocId(churchId, reservationId));
     const asset = operations.doc(scopedDocId(churchId, `asset:${provider}:${assetId}`));
-    const operation = operations.doc(scopedDocId(churchId, `provider-commit:${provider}:${assetId}`));
+    const normalizedAmount = finiteNonNegative(amount);
+    const priorAssetSnapshot = await asset.get();
+    const previousAmount = finiteNonNegative(
+      priorAssetSnapshot.exists ? priorAssetSnapshot.data()?.amount : 0,
+    );
+    const replacementIds = [...new Set(replaceAssetIds.map(String))]
+      .filter((id) => id && id !== String(assetId));
+    const replacementAssets = await Promise.all(replacementIds.map(async (id) => {
+      const ref = operations.doc(scopedDocId(churchId, `asset:${provider}:${id}`));
+      const snapshot = await ref.get();
+      return { id, ref, amount: finiteNonNegative(snapshot.exists ? snapshot.data()?.amount : 0) };
+    }));
+    const replacementAmount = replacementAssets.reduce((total, item) => total + item.amount, 0);
+    const reservationId = `provider:${provider}:${assetId}:${normalizedAmount}`;
+    await reserve({
+      churchId,
+      provider,
+      amount: normalizedAmount,
+      replaceAmount: previousAmount + replacementAmount,
+      operationId: reservationId,
+      lockId: replacementAssets.length
+        ? `provider-replacement:${provider}:${replacementIds.sort().join(",")}`
+        : `provider:${provider}:${assetId}`,
+    });
+    const reservation = reservations.doc(scopedDocId(churchId, reservationId));
+    const operation = operations.doc(scopedDocId(churchId, `provider-commit:${provider}:${assetId}:${normalizedAmount}`));
     const owner = providerAssets.doc(operationDocId(`${provider}:${assetId}`));
-    await db.runTransaction(async (transaction) => {
-      const [quotaSnapshot, reservationSnapshot, assetSnapshot, operationSnapshot, ownerSnapshot] = await Promise.all([
+    try {
+      await db.runTransaction(async (transaction) => {
+      const [quotaSnapshot, reservationSnapshot, assetSnapshot, operationSnapshot, ownerSnapshot, ...replacementSnapshots] = await Promise.all([
         transaction.get(quota), transaction.get(reservation), transaction.get(asset), transaction.get(operation), transaction.get(owner),
+        ...replacementAssets.map((item) => transaction.get(item.ref)),
       ]);
       const current = quotaSnapshot.exists ? quotaSnapshot.data() : {};
       const pending = reservationSnapshot.exists ? reservationSnapshot.data() : {};
@@ -438,26 +486,52 @@ export const createChurchStorageQuotaService = ({
           transaction.set(quota, {
             [`reserved_${provider}`]: finiteSigned(current[`reserved_${provider}`]) - Number(pending.delta ?? pending.amount ?? 0),
           }, { merge: true });
-          transaction.delete(reservation);
+          transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+          const lock = getRefs(db, churchId).locks.doc(scopedDocId(churchId, pending.lockId));
+          transaction.delete(lock);
         }
         return;
       }
       if (ownerSnapshot.exists && ownerSnapshot.data().churchId !== churchId) {
         throw new Error("That provider asset is already assigned to another church.");
       }
+      const activeReplacements = replacementAssets.map((item, index) => ({
+        ...item,
+        snapshot: replacementSnapshots[index],
+        currentAmount: finiteNonNegative(replacementSnapshots[index]?.exists
+          ? replacementSnapshots[index].data()?.amount
+          : 0),
+      })).filter((item) => item.snapshot.exists && item.currentAmount > 0);
+      for (const item of activeReplacements) {
+        const replacementOwner = providerAssets.doc(operationDocId(`${provider}:${item.id}`));
+        const ownerSnapshot = await transaction.get(replacementOwner);
+        if (ownerSnapshot.exists && ownerSnapshot.data().churchId !== churchId) {
+          throw new Error("A replacement provider asset belongs to another church.");
+        }
+      }
       const field = provider;
       const reservedField = `reserved_${provider}`;
       const previous = finiteNonNegative(assetSnapshot.exists ? assetSnapshot.data().amount : 0);
       const actual = finiteNonNegative(amount);
       transaction.set(quota, {
+        // Replacement assets remain charged until the caller durably switches
+        // the media record and deletes the superseded provider asset. Admission
+        // used their size as a credit, while commit adds only the new asset.
         [field]: finiteNonNegative(current[field]) + actual - previous,
         [reservedField]: finiteSigned(current[reservedField]) - Number(pending.delta ?? pending.amount ?? 0),
       }, { merge: true });
       transaction.set(asset, { provider, amount: actual, updatedAt: now() });
-      transaction.set(operation, { completedAt: now() });
+      transaction.set(operation, { completedAt: now(), amount: actual });
       transaction.set(owner, { churchId, provider, assetId, amount: actual, updatedAt: now() });
-      transaction.delete(reservation);
-    });
+      transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+      if (pending.lockId) {
+        transaction.delete(getRefs(db, churchId).locks.doc(scopedDocId(churchId, pending.lockId)));
+      }
+      });
+    } catch (error) {
+      await cancel({ churchId, reservationId });
+      throw error;
+    }
     return getUsage(churchId);
   };
 
@@ -497,6 +571,65 @@ export const createChurchStorageQuotaService = ({
     return churchId;
   };
 
+  const getProviderAssetOwner = async ({ provider, assetId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const ref = db.collection(providerAssetCollection)
+      .doc(operationDocId(`${provider}:${assetId}`));
+    const snapshot = await ref.get();
+    return snapshot.exists ? snapshot.data() : null;
+  };
+
+  const listProviderAssets = async ({ churchId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const snapshot = await db.collection(providerAssetCollection)
+      .where("churchId", "==", churchId).get();
+    return snapshot.docs.map((doc) => doc.data());
+  };
+
+  const markProviderUsageReady = async ({ churchId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const { quota } = getRefs(db, churchId);
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(quota);
+      transaction.set(quota, {
+        ...(snapshot.exists ? snapshot.data() : {}),
+        providerUsageReady: true,
+        providerUsageReconciledAt: now(),
+      });
+    });
+    return getUsage(churchId);
+  };
+
+  const markProviderUsageNotReady = async ({ churchId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const { quota } = getRefs(db, churchId);
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(quota);
+      transaction.set(quota, {
+        ...(snapshot.exists ? snapshot.data() : {}),
+        providerUsageReady: false,
+      });
+    });
+  };
+
+  const isProviderUsageReady = async (churchId) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const { quota } = getRefs(db, churchId);
+    const snapshot = await quota.get();
+    return snapshot.exists && snapshot.data()?.providerUsageReady === true;
+  };
+
+  const assertProviderUsageReady = async (churchId) => {
+    if (providerQuotaEnforcementEnabled() && !(await isProviderUsageReady(churchId))) {
+      throw new ChurchProviderStorageNotReconciledError();
+    }
+  };
+
   return {
     getUsage,
     reconcileR2Usage,
@@ -507,5 +640,11 @@ export const createChurchStorageQuotaService = ({
     recordProviderAsset,
     removeProviderAsset,
     removeProviderAssetByIdentity,
+    getProviderAssetOwner,
+    listProviderAssets,
+    markProviderUsageReady,
+    markProviderUsageNotReady,
+    isProviderUsageReady,
+    assertProviderUsageReady,
   };
 };

@@ -51,6 +51,7 @@ export type MuxUploadResult = {
   mp4Url?: string;
   thumbnailUrl: string;
   name: string;
+  durationSeconds?: number;
   /** Stable identity for detecting an already-imported Canva page selection. */
   canvaImportKey?: string;
   canvaSource?: CanvaMediaSource;

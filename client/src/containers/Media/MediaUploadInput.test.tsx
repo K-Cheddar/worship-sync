@@ -320,6 +320,7 @@ describe("MediaUploadInput", () => {
     await waitFor(() => {
       expect(mockedConvertMuxVideo).toHaveBeenCalledWith(
         sourceFile,
+        "church-1",
         expect.objectContaining({
           isCancelled: expect.any(Function),
           onProgress: expect.any(Function),

@@ -1,5 +1,6 @@
 import type { MediaType } from "../types";
 import { commitCanvaMediaReplacement } from "./canvaMediaReplacement";
+import type { CanvaMediaReplacementTransactionArgs } from "./canvaMediaReplacement";
 
 const media = (overrides: Partial<MediaType> = {}) =>
   ({
@@ -58,6 +59,9 @@ const createArgs = (overrides: Partial<Parameters<typeof commitCanvaMediaReplace
     events,
     appliedLists,
     ...overrides,
+  } as CanvaMediaReplacementTransactionArgs & {
+    events: string[];
+    appliedLists: MediaType[][];
   };
 };
 

@@ -65,7 +65,6 @@ import {
 } from "./server/youtubeSearchService.js";
 import {
   createCanvaService,
-  normalizeMuxStaticRenditions,
 } from "./server/canvaService.js";
 import { createPlanningCenterService } from "./server/planningCenterService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
@@ -84,6 +83,7 @@ import {
   createChurchStorageQuotaService,
   sumR2ChurchMetadataUsage,
 } from "./server/churchStorageQuota.js";
+import { createProviderStorageService } from "./server/providerStorageService.js";
 import { toWorshipSyncContentDbName } from "./server/couchContentDatabase.js";
 import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
 import {
@@ -362,6 +362,8 @@ let songAudioStorage;
 const churchStorageQuota = createChurchStorageQuotaService({
   getFirestore: getServerFirestore,
   getChurch: (churchId) => getDoc(COLLECTIONS.churches, churchId),
+  providerQuotaEnforcementEnabled: () =>
+    process.env.CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED === "true",
   loadR2Usage: async (churchId) => {
     const firestore = getServerFirestore();
     const resources = firestore
@@ -944,6 +946,12 @@ canvaService = createCanvaService({
   getIntegrationsPath: getChurchIntegrationsPath,
   redirectBaseUrl: frontEndHost,
   httpClient: axios,
+  cloudinaryClient: cloudinary,
+  getMuxClient: () => mux,
+  storageQuota: churchStorageQuota,
+});
+
+const providerStorageService = createProviderStorageService({
   cloudinaryClient: cloudinary,
   getMuxClient: () => mux,
   storageQuota: churchStorageQuota,
@@ -2269,6 +2277,49 @@ const respondCanvaError = (res, context, error) => {
   });
 };
 
+const getCanvaReplacementCandidates = async ({ churchId, designId, preferredMediaIds = [] }) => {
+  if (!process.env.COUCHDB_HOST || !process.env.COUCHDB_USER || !process.env.COUCHDB_PASSWORD) {
+    return [];
+  }
+  const database = toWorshipSyncContentDbName(churchId);
+  const url = `https://${process.env.COUCHDB_HOST}/${encodeURIComponent(database)}/media`;
+  let mediaDocument;
+  try {
+    const response = await axios.get(url, {
+      auth: { username: process.env.COUCHDB_USER, password: process.env.COUCHDB_PASSWORD },
+    });
+    mediaDocument = response.data;
+  } catch (error) {
+    if (error?.response?.status === 404) return [];
+    throw error;
+  }
+  const preferred = new Set(preferredMediaIds);
+  return (Array.isArray(mediaDocument?.list) ? mediaDocument.list : [])
+    .flatMap((media) => {
+      const source = media?.canvaSource;
+      if (source?.designId !== designId || !Array.isArray(source.pageNumbers)) return [];
+      const provider = media?.providerStorage?.provider === "mux" || media?.source === "mux"
+        ? "muxMinutes"
+        : media?.providerStorage?.provider === "cloudinary" || media?.source === "cloudinary"
+          ? "cloudinaryBytes"
+          : "";
+      const assetId = provider === "mux"
+        ? media?.providerStorage?.assetId || media?.muxAssetId
+        : provider === "cloudinary"
+          ? media?.providerStorage?.publicId || media?.publicId
+          : "";
+      if (!provider || typeof assetId !== "string" || !assetId.trim()) return [];
+      return [{
+        provider,
+        assetId: assetId.trim(),
+        mediaId: String(media.id || ""),
+        revision: Number(source.revision) || 0,
+        pageNumbers: source.pageNumbers.map(Number).filter(Number.isInteger),
+        preferred: preferred.has(String(media.id || "")),
+      }];
+    });
+};
+
 app.get("/api/canva/oauth/callback", async (req, res) => {
   try {
     const result = await canvaService.completeConnect({
@@ -2447,6 +2498,18 @@ app.post(
       }
     };
     try {
+      const requestedReplacementAssets = Array.isArray(req.body?.replacementAssets)
+        ? req.body.replacementAssets
+        : [];
+      const replacementAssets = requestedReplacementAssets.length
+        ? await getCanvaReplacementCandidates({
+            churchId: req.params.churchId,
+            designId: String(req.body?.designId || ""),
+            preferredMediaIds: requestedReplacementAssets
+              .filter((asset) => asset?.preferred === true && typeof asset.mediaId === "string")
+              .map((asset) => asset.mediaId),
+          })
+        : [];
       const result = await canvaService.importDesign({
         churchId: req.params.churchId,
         designId: req.body?.designId,
@@ -2454,6 +2517,7 @@ app.post(
         format: req.body?.format,
         mp4ImportMode: req.body?.mp4ImportMode,
         existingImportKeys: req.body?.existingImportKeys,
+        replacementAssets,
         onProgress: writeProgress,
         isCancelled: () => clientDisconnected,
       });
@@ -3582,6 +3646,128 @@ app.get("/api/changelog", async (req, res) => {
   }
 });
 
+app.use(
+  "/api/churches/:churchId/media-storage",
+  requireAppSession,
+  requireFullAppAccess,
+  (req, res, next) =>
+    req.appSession.churchId === req.params.churchId
+      ? next()
+      : res.status(403).json({ error: "That church is not available." }),
+);
+app.post(
+  "/api/churches/:churchId/media-storage/cloudinary/commit",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      const asset = await providerStorageService.commitCloudinaryImage({
+        churchId: req.params.churchId,
+        publicId: req.body?.publicId,
+      });
+      res.json({ asset });
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not commit the image to Media.",
+        ...(error?.code ? { code: error.code } : {}),
+        ...(error?.provider ? { provider: error.provider } : {}),
+      });
+    }
+  },
+);
+app.post(
+  "/api/churches/:churchId/media-storage/cloudinary/delete",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.deleteCloudinaryImage({
+        churchId: req.params.churchId,
+        publicId: req.body?.publicId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not delete the image.",
+      });
+    }
+  },
+);
+
+app.use(
+  "/api/churches/:churchId/mux",
+  requireAppSession,
+  requireFullAppAccess,
+  (req, res, next) =>
+    req.appSession.churchId === req.params.churchId
+      ? next()
+      : res.status(403).json({ error: "That church is not available." }),
+);
+app.post(
+  "/api/churches/:churchId/mux/uploads",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.createMuxUpload({
+        churchId: req.params.churchId,
+        mediaId: req.body?.mediaId,
+        title: req.body?.title,
+        corsOrigin: req.get("origin"),
+        temporary: req.body?.temporary === true,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not create the video upload.",
+      });
+    }
+  },
+);
+app.get(
+  "/api/churches/:churchId/mux/uploads/:uploadId",
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.getMuxUpload({
+        churchId: req.params.churchId,
+        uploadId: req.params.uploadId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not read the video upload.",
+      });
+    }
+  },
+);
+app.get(
+  "/api/churches/:churchId/mux/assets/:assetId",
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.getMuxAsset({
+        churchId: req.params.churchId,
+        assetId: req.params.assetId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not read the video asset.",
+        ...(error?.code ? { code: error.code } : {}),
+        ...(error?.provider ? { provider: error.provider } : {}),
+      });
+    }
+  },
+);
+app.post(
+  "/api/churches/:churchId/mux/assets/:assetId/delete",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.deleteMuxAsset({
+        churchId: req.params.churchId,
+        assetId: req.params.assetId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not delete the video.",
+      });
+    }
+  },
+);
+
 app.delete("/api/cloudinary/delete", async (req, res) => {
   try {
     const { publicId, resourceType } = req.body;
@@ -3591,17 +3777,22 @@ app.delete("/api/cloudinary/delete", async (req, res) => {
     }
 
     const resolvedResourceType = resourceType || "image";
+    const providerOwner = resolvedResourceType === "image"
+      ? await churchStorageQuota.getProviderAssetOwner({
+          provider: "cloudinaryBytes",
+          assetId: publicId,
+        })
+      : null;
+    if (providerOwner) {
+      return res.status(403).json({
+        error: "Church media must be deleted through its authenticated church session.",
+      });
+    }
     const result = await cloudinary.uploader.destroy(publicId, {
       resource_type: resolvedResourceType,
     });
 
     if (result.result === "ok" || result.result === "not found") {
-      if (resolvedResourceType === "image") {
-        await churchStorageQuota.removeProviderAssetByIdentity({
-          provider: "cloudinaryBytes",
-          assetId: publicId,
-        });
-      }
       res.json({ success: true, message: "Image deleted successfully" });
     } else {
       res.status(500).json({ error: "Failed to delete image", result });
@@ -3614,121 +3805,9 @@ app.delete("/api/cloudinary/delete", async (req, res) => {
   }
 });
 
-// Mux endpoints
-app.post("/api/mux/upload", async (req, res) => {
-  try {
-    if (!mux) {
-      return res.status(503).json({
-        error:
-          "Mux is not configured. Please set MUX_TOKEN_ID and MUX_TOKEN_SECRET environment variables.",
-      });
-    }
-
-    const { corsOrigin } = req.body;
-
-    const upload = await mux.video.uploads.create({
-      cors_origin: corsOrigin || "*",
-      new_asset_settings: {
-        playback_policy: ["public"],
-        encoding_tier: "baseline",
-        static_renditions: [
-          {
-            resolution: "highest",
-          },
-        ],
-      },
-    });
-
-    res.json({
-      uploadId: upload.id,
-      url: upload.url,
-    });
-  } catch (error) {
-    console.error("Error creating Mux upload:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to create upload", details: error.message });
-  }
-});
-
-app.get("/api/mux/upload/:uploadId", async (req, res) => {
-  try {
-    if (!mux) {
-      return res.status(503).json({ error: "Mux is not configured" });
-    }
-
-    const { uploadId } = req.params;
-    const upload = await mux.video.uploads.retrieve(uploadId);
-
-    res.json({
-      status: upload.status,
-      assetId: upload.asset_id,
-    });
-  } catch (error) {
-    console.error("Error getting Mux upload status:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to get upload status", details: error.message });
-  }
-});
-
-app.get("/api/mux/asset/:assetId", async (req, res) => {
-  try {
-    if (!mux) {
-      return res.status(503).json({ error: "Mux is not configured" });
-    }
-
-    const { assetId } = req.params;
-    const asset = await mux.video.assets.retrieve(assetId);
-
-    const staticRenditions = normalizeMuxStaticRenditions(asset);
-
-    const highestRendition = staticRenditions.find(
-      (r) => r.resolution === "highest",
-    );
-    const staticRenditionReady = highestRendition?.status === "ready";
-
-    res.json({
-      status: asset.status,
-      playbackId: asset.playback_ids?.[0]?.id,
-      duration: asset.duration,
-      aspectRatio: asset.aspect_ratio,
-      staticRenditions: staticRenditions.map((r) => ({
-        resolution: r.resolution,
-        status: r.status,
-        name: r.name,
-      })),
-      staticRenditionReady,
-    });
-  } catch (error) {
-    console.error("Error getting Mux asset:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to get asset", details: error.message });
-  }
-});
-
-app.delete("/api/mux/asset/:assetId", async (req, res) => {
-  try {
-    if (!mux) {
-      return res.status(503).json({ error: "Mux is not configured" });
-    }
-
-    const { assetId } = req.params;
-    await mux.video.assets.delete(assetId);
-    await churchStorageQuota.removeProviderAssetByIdentity({
-      provider: "muxMinutes",
-      assetId,
-    });
-
-    res.json({ success: true, message: "Asset deleted successfully" });
-  } catch (error) {
-    console.error("Error deleting Mux asset:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to delete asset", details: error.message });
-  }
-});
+app.all("/api/mux/*path", (_req, res) =>
+  res.status(410).json({ error: "Sign in to upload and manage church videos." }),
+);
 
 app.get("/api/getDbSession", async (req, res) => {
   try {

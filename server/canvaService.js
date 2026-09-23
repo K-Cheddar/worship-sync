@@ -868,6 +868,7 @@ export const createCanvaService = ({
     format,
     mp4ImportMode = "combined",
     existingImportKeys,
+    replacementAssets,
     onProgress,
     isCancelled,
   }) => {
@@ -1416,6 +1417,18 @@ export const createCanvaService = ({
       }
       await emitProgress({ type: "finalizing" });
       for (const asset of assets) {
+        const replacement = (Array.isArray(replacementAssets) ? replacementAssets : [])
+          .filter((candidate) =>
+            candidate?.provider === (asset.kind === "image" ? "cloudinaryBytes" : "muxMinutes") &&
+            Number(candidate.revision) < revision &&
+            Array.isArray(candidate.pageNumbers) &&
+            [...candidate.pageNumbers].map(Number).sort((a, b) => a - b).join(",") ===
+              [...(asset.data.canvaSource?.pageNumbers || [])].map(Number).sort((a, b) => a - b).join(","),
+          )
+          .sort((left, right) =>
+            Number(Boolean(right.preferred)) - Number(Boolean(left.preferred)) ||
+            Number(right.revision) - Number(left.revision),
+          )[0];
         if (asset.kind === "image" && asset.data.public_id) {
           const bytes = getCloudinaryAssetBytes(asset.data);
           if (bytes > 0) {
@@ -1424,6 +1437,7 @@ export const createCanvaService = ({
               provider: "cloudinaryBytes",
               assetId: asset.data.public_id,
               amount: bytes,
+              replaceAssetIds: replacement ? [replacement.assetId] : [],
             });
             accountedCloudinaryAssets.add(asset.data.public_id);
           }
@@ -1435,6 +1449,7 @@ export const createCanvaService = ({
               provider: "muxMinutes",
               assetId: asset.data.assetId,
               amount: minutes,
+              replaceAssetIds: replacement ? [replacement.assetId] : [],
             });
             accountedMuxAssets.add(asset.data.assetId);
           }

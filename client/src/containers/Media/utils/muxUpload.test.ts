@@ -1,7 +1,20 @@
 import {
+  createChurchMuxUpload,
+  deleteChurchMuxAsset,
+  getChurchMuxAsset,
+  getChurchMuxUpload,
+} from "../../../api/providerStorage";
+import {
   convertMuxVideoToLocalMp4,
   pollUploadStatus,
 } from "./muxUpload";
+
+jest.mock("../../../api/providerStorage", () => ({
+  createChurchMuxUpload: jest.fn(),
+  deleteChurchMuxAsset: jest.fn(),
+  getChurchMuxAsset: jest.fn(),
+  getChurchMuxUpload: jest.fn(),
+}));
 
 type XhrListener = (event: unknown) => void;
 
@@ -11,9 +24,7 @@ class TestXmlHttpRequest {
   responseType = "";
   method = "";
   url = "";
-  upload = {
-    addEventListener: jest.fn(),
-  };
+  upload = { addEventListener: jest.fn() };
   private readonly listeners: Record<string, XhrListener[]> = {};
 
   open = jest.fn((method: string, url: string) => {
@@ -28,158 +39,96 @@ class TestXmlHttpRequest {
 
   send = jest.fn(() => {
     queueMicrotask(() => {
-      if (this.method === "GET") {
-        this.response = new Blob(["converted"], { type: "video/mp4" });
-      }
+      if (this.method === "GET") this.response = new Blob(["converted"], { type: "video/mp4" });
       this.listeners.load?.forEach((listener) => listener({}));
     });
   });
 
-  abort = jest.fn(() => {
-    this.listeners.abort?.forEach((listener) => listener({}));
-  });
+  abort = jest.fn(() => this.listeners.abort?.forEach((listener) => listener({})));
 }
 
-describe("convertMuxVideoToLocalMp4", () => {
-  const originalFetch = global.fetch;
+const mockCreateUpload = jest.mocked(createChurchMuxUpload);
+const mockGetUpload = jest.mocked(getChurchMuxUpload);
+const mockGetAsset = jest.mocked(getChurchMuxAsset);
+const mockDeleteAsset = jest.mocked(deleteChurchMuxAsset);
+
+describe("church-scoped Mux upload and temporary conversion", () => {
   const originalXmlHttpRequest = global.XMLHttpRequest;
 
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCreateUpload.mockResolvedValue({ uploadId: "upload-1", url: "https://upload" });
+    mockGetUpload.mockResolvedValue({ status: "asset_created", assetId: "asset-1" });
+    mockGetAsset.mockResolvedValue({
+      status: "ready",
+      playbackId: "playback-1",
+      duration: 60,
+      staticRenditionReady: true,
+    });
+    mockDeleteAsset.mockResolvedValue({ success: true });
+  });
+
   afterEach(() => {
-    global.fetch = originalFetch;
     global.XMLHttpRequest = originalXmlHttpRequest;
     jest.restoreAllMocks();
   });
 
-  it("cancels pending upload status polling", async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: "waiting" }),
-    });
-
+  it("cancels pending church-scoped upload status polling", async () => {
+    mockGetUpload.mockResolvedValue({ status: "waiting" });
     let cancelled = false;
     let cancelPolling: (() => void) | undefined;
     let resolvePollingStarted: (() => void) | undefined;
-    const pollingStarted = new Promise<void>((resolve) => {
-      resolvePollingStarted = resolve;
-    });
-    const polling = pollUploadStatus("upload-1", {
+    const pollingStarted = new Promise<void>((resolve) => { resolvePollingStarted = resolve; });
+    const polling = pollUploadStatus("upload-1", "church-1", {
       isCancelled: () => cancelled,
       addTimeout: (_timeoutId, cancel) => {
         cancelPolling = cancel;
         resolvePollingStarted?.();
       },
     });
-
     await pollingStarted;
     cancelled = true;
-    if (!cancelPolling) {
-      throw new Error("Expected a pending polling timer to be cancellable");
-    }
-    cancelPolling();
-
+    cancelPolling?.();
     await expect(polling).rejects.toThrow("Upload cancelled");
+    expect(mockGetUpload).toHaveBeenCalledWith("church-1", "upload-1");
   });
 
   it("downloads a static MP4 and removes the temporary Mux asset", async () => {
     const uploadXhr = new TestXmlHttpRequest();
     const downloadXhr = new TestXmlHttpRequest();
     const xhrs = [uploadXhr, downloadXhr];
-    global.XMLHttpRequest = jest.fn(
-      () => xhrs.shift() as TestXmlHttpRequest,
-    ) as unknown as typeof XMLHttpRequest;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ uploadId: "upload-1", url: "https://upload" }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: "asset_created", assetId: "asset-1" }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: "ready",
-          playbackId: "playback-1",
-          staticRenditionReady: true,
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, status: 200 });
-
-    const source = new File(["source"], "camera.mov", {
-      type: "video/quicktime",
-    });
-    const converted = await convertMuxVideoToLocalMp4(source);
-
+    global.XMLHttpRequest = jest.fn(() => xhrs.shift() as TestXmlHttpRequest) as unknown as typeof XMLHttpRequest;
+    const source = new File(["source"], "camera.mov", { type: "video/quicktime" });
+    const converted = await convertMuxVideoToLocalMp4(source, "church-1");
     expect(converted.name).toBe("camera.mp4");
     expect(converted.type).toBe("video/mp4");
     expect(converted.size).toBeGreaterThan(0);
-    expect(downloadXhr.open).toHaveBeenCalledWith(
-      "GET",
-      "https://stream.mux.com/playback-1/highest.mp4",
-    );
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      4,
-      "/api/mux/asset/asset-1",
-      { method: "DELETE" },
-    );
+    expect(downloadXhr.open).toHaveBeenCalledWith("GET", "https://stream.mux.com/playback-1/highest.mp4");
+    expect(mockCreateUpload).toHaveBeenCalledWith("church-1", expect.objectContaining({ temporary: true }));
+    expect(mockGetAsset).toHaveBeenCalledWith("church-1", "asset-1");
+    expect(mockDeleteAsset).toHaveBeenCalledWith("church-1", "asset-1");
   });
 
-  it("cancels pending rendition polling and removes the temporary Mux asset", async () => {
+  it("removes an uncommitted asset after rendition polling is cancelled", async () => {
     const uploadXhr = new TestXmlHttpRequest();
-    global.XMLHttpRequest = jest.fn(
-      () => uploadXhr,
-    ) as unknown as typeof XMLHttpRequest;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ uploadId: "upload-1", url: "https://upload" }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: "asset_created", assetId: "asset-1" }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: "processing",
-          playbackId: undefined,
-          staticRenditionReady: false,
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, status: 200 });
-
+    global.XMLHttpRequest = jest.fn(() => uploadXhr) as unknown as typeof XMLHttpRequest;
+    mockGetAsset.mockResolvedValue({ status: "processing", staticRenditionReady: false });
     let cancelled = false;
     let cancelPolling: (() => void) | undefined;
     let resolvePollingStarted: (() => void) | undefined;
-    const pollingStarted = new Promise<void>((resolve) => {
-      resolvePollingStarted = resolve;
-    });
-    const source = new File(["source"], "camera.mov", {
-      type: "video/quicktime",
-    });
-    const conversion = convertMuxVideoToLocalMp4(source, {
+    const pollingStarted = new Promise<void>((resolve) => { resolvePollingStarted = resolve; });
+    const source = new File(["source"], "camera.mov", { type: "video/quicktime" });
+    const conversion = convertMuxVideoToLocalMp4(source, "church-1", {
       isCancelled: () => cancelled,
       addTimeout: (_timeoutId, cancel) => {
         cancelPolling = cancel;
         resolvePollingStarted?.();
       },
     });
-
     await pollingStarted;
     cancelled = true;
-    if (!cancelPolling) {
-      throw new Error("Expected a pending polling timer to be cancellable");
-    }
-    cancelPolling();
-
+    cancelPolling?.();
     await expect(conversion).rejects.toThrow("Upload cancelled");
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      4,
-      "/api/mux/asset/asset-1",
-      { method: "DELETE" },
-    );
+    expect(mockDeleteAsset).toHaveBeenCalledWith("church-1", "asset-1");
   });
 });
