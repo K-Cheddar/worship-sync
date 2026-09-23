@@ -1086,48 +1086,5 @@ export const useServiceVideoCandidates = ({
     renderer,
   ]);
 
-  const previousReconciliationRef = useRef<
-    | {
-        count: number;
-        keys: string[];
-      }
-    | undefined
-  >(undefined);
-  const previousDiscoverySignatureRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const signature = JSON.stringify(candidateResult.discovery);
-    if (signature === previousDiscoverySignatureRef.current) return;
-    previousDiscoverySignatureRef.current = signature;
-    console.debug("[prepared-media] discovery", candidateResult.discovery);
-  }, [candidateResult.discovery]);
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const next = {
-      count: candidateResult.candidates.length,
-      keys: candidateResult.candidates.map((candidate) => candidate.mediaKey),
-    };
-    const previous = previousReconciliationRef.current;
-    if (
-      !previous ||
-      previous.count !== next.count ||
-      previous.keys.join("\u0000") !== next.keys.join("\u0000")
-    ) {
-      console.debug("[prepared-surface] candidate reconciliation", {
-        outputId,
-        serviceId: activeListIdRef.current,
-        serviceItemCount: serviceItemIdsRef.current.size,
-        selectedItemId: currentItemId,
-        liveItemId: currentItemId,
-        previousCandidateCount: previous?.count ?? 0,
-        nextCandidateCount: next.count,
-        previousMediaKeys: previous?.keys ?? [],
-        nextMediaKeys: next.keys,
-        discoveredCount: candidateResult.diagnostics.length,
-      });
-    }
-    previousReconciliationRef.current = next;
-  }, [candidateResult, currentItemId, outputId]);
-
   return candidateResult;
 };

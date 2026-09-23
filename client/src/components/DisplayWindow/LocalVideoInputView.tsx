@@ -242,7 +242,6 @@ const LocalVideoInputView = ({
     };
     const subscribeBufferedRelay = (fallbackReason?: string) => {
       if (!active || stopBufferedRelay) return;
-      setIsRealtimeActive(false);
       if (fallbackReason) {
         updateLocalVideoView(input.sourceId, diagnosticViewId, {
           path: "BUFFERED_MSE",
@@ -261,6 +260,7 @@ const LocalVideoInputView = ({
         includeAudio: playAudioRef.current,
         onStarted: () => {
           setErrorDetail(null);
+          setIsRealtimeActive(false);
           setIsDirectReady(true);
           markLocalVideoViewFrame(input.sourceId, diagnosticViewId);
         },
@@ -319,7 +319,6 @@ const LocalVideoInputView = ({
             if (!active) return;
             realtimeSubscriptionRef.current?.stop();
             realtimeSubscriptionRef.current = undefined;
-            setIsDirectReady(false);
             subscribeBufferedRelay("REALTIME_UNHEALTHY");
           },
           diagnosticViewId,

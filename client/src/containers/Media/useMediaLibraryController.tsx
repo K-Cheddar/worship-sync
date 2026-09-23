@@ -1298,7 +1298,6 @@ export function useMediaLibraryController({
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "media") {
-            console.log("updating media list from remote");
             const update = _update as DBMedia;
             const normalized = normalizeMediaDoc(update);
             dispatch(syncMediaFromRemote(normalized));

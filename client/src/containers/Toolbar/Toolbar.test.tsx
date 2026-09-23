@@ -116,6 +116,15 @@ jest.mock("./ToolbarElements/BoxEditor", () => ({
   default: () => <div>Box Tools Panel</div>,
 }));
 
+jest.mock("./ToolbarElements/MediaSurfaceDiagnostics", () => ({
+  __esModule: true,
+  default: ({ className }: { className?: string }) => (
+    <button type="button" className={className} data-testid="videos-button">
+      Videos
+    </button>
+  ),
+}));
+
 jest.mock("../../components/Drawer/Drawer", () => ({
   __esModule: true,
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
@@ -478,6 +487,15 @@ describe("Toolbar", () => {
     expect(
       screen.getByRole("button", { name: "Service Times" }),
     ).toBeInTheDocument();
+  });
+
+  it("places Videos in the Configurations row instead of the primary row", () => {
+    mockPathname = "/controller/preferences";
+    renderToolbar({ access: "full", itemType: "song" });
+
+    const videosButton = screen.getByTestId("videos-button");
+    expect(videosButton).toBeVisible();
+    expect(screen.getByTestId("toolbar-primary-row")).not.toContainElement(videosButton);
   });
 
   it("keeps overlay live controls in a single Present-mode toolbar row", () => {

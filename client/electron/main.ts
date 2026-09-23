@@ -1084,17 +1084,9 @@ ipcMain.handle("get-prepared-video-metrics", (event) => {
     const rendererPid = event.sender.getOSProcessId();
     const metrics = app.getAppMetrics();
     const result = normalizePreparedVideoMetrics({ rendererPid, metrics });
-    console.debug("[prepared-surface] renderer metrics", {
-      rendererPid,
-      matchedPid: result.matchedPid,
-      processType: result.processType,
-      status: result.status,
-      metricCount: metrics.length,
-    });
     return result;
   } catch (error) {
     const reason = `Electron metrics unavailable: ${(error as Error).message}`;
-    console.debug("[prepared-surface] renderer metrics unavailable", { reason });
     return createUnavailablePreparedVideoMetrics("metric_unsupported", reason);
   }
 });
@@ -1843,12 +1835,6 @@ ipcMain.handle(
       const tracks = await localLyricsImportService.searchGeniusTracks(params, {
         fetchLyrics: false,
       });
-      if (isDev) {
-        console.debug(
-          `[lyrics-import] local Genius search: ${(performance.now() - startedAt).toFixed(0)}ms`,
-          { resultCount: tracks.length },
-        );
-      }
       return tracks;
     } catch (error) {
       console.error("Local Genius search failed:", error);

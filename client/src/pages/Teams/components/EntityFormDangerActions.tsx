@@ -18,6 +18,7 @@ type EntityFormDangerActionsProps = {
   restoreLabel?: string;
   deleteLabel?: string;
   menuLabel?: string;
+  additionalItems?: MenuItemType[];
 };
 
 /** Archive and delete actions in the edit panel header menu. */
@@ -31,10 +32,11 @@ const EntityFormDangerActions = ({
   restoreLabel = "Restore",
   deleteLabel = "Delete",
   menuLabel = "More actions",
+  additionalItems = [],
 }: EntityFormDangerActionsProps) => {
   const menuItems = useMemo(() => {
-    const items: MenuItemType[] = [];
-    if (!canEdit) return items;
+    if (!canEdit) return [];
+    const items: MenuItemType[] = [...additionalItems];
     if (archived && onRestore) {
       items.push({ text: restoreLabel, onClick: onRestore });
     } else if (!archived && onArchive) {
@@ -44,7 +46,7 @@ const EntityFormDangerActions = ({
       items.push({ text: deleteLabel, variant: "destructive", onClick: onDelete });
     }
     return items;
-  }, [archived, archiveLabel, canEdit, deleteLabel, onArchive, onDelete, onRestore, restoreLabel]);
+  }, [additionalItems, archived, archiveLabel, canEdit, deleteLabel, onArchive, onDelete, onRestore, restoreLabel]);
 
   if (menuItems.length === 0) return null;
 

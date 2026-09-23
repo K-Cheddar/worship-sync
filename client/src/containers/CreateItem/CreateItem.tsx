@@ -370,7 +370,6 @@ const CreateItem = ({
       return;
     }
 
-    const startedAt = performance.now();
     const requestId = lyricsImportRequestRef.current + 1;
     lyricsImportRequestRef.current = requestId;
     setIsImportingLyrics(true);
@@ -457,11 +456,6 @@ const CreateItem = ({
         lyricsImportError: "Could not import lyrics right now. Try again.",
       });
     } finally {
-      if (lyricsImportRequestRef.current === requestId && import.meta.env.DEV) {
-        console.debug(
-          `[lyrics-import] total import search: ${(performance.now() - startedAt).toFixed(0)}ms`,
-        );
-      }
       if (lyricsImportRequestRef.current === requestId) {
         setIsImportingLyrics(false);
       }

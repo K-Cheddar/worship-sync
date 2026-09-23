@@ -780,16 +780,18 @@ export const subscribeLocalVideoRealtime = (
         return;
       }
       if (waitingForFreshKeyFrame && recoveryKeyFrameDropped) {
-        // The keyframe requested during pressure was shed too. Request one
-        // replacement as soon as the queue is usable, then wait for it before
-        // accepting any delta or a keyframe from the pressured period.
-        freshKeyFrameRequested = true;
-        recoveryKeyFrameDropped = false;
-        requestKeyFrame();
-        recordLocalVideoDecoder(sourceId, diagnosticViewId, {
-          droppedForLatency: 1,
-        });
-        return;
+        if (chunk.type !== "key") {
+          // The keyframe requested during pressure was shed too. Request one
+          // replacement as soon as the queue is usable, then wait for it
+          // before accepting delta frames from the pressured period.
+          freshKeyFrameRequested = true;
+          recoveryKeyFrameDropped = false;
+          requestKeyFrame();
+          recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+            droppedForLatency: 1,
+          });
+          return;
+        }
       }
       if (waitingForKeyFrame && chunk.type !== "key") {
         if (waitingForFreshKeyFrame) {

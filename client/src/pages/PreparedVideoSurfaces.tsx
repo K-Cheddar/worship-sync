@@ -210,7 +210,6 @@ const PreparedVideoSurfaces = () => {
 
   const refreshSources = useCallback(async () => {
     if (!window.electronAPI || !(await window.electronAPI.isDev())) return;
-    const startedAt = performance.now();
     const metadataEntries: PreparedVideoSourceInfo[] = window.electronAPI.getPreparedVideoSources
       ? await window.electronAPI.getPreparedVideoSources()
       : Object.entries(await window.electronAPI.getMediaCacheMap()).map(([sourceUrl, source]) => ({ source, sourceUrl }));
@@ -220,7 +219,6 @@ const PreparedVideoSurfaces = () => {
     setEligible(sources);
     setSelected((current) => current.filter((source) => sources.some((item) => item.source === source)));
     setPrepared((current) => current.filter((source) => sources.some((item) => item.source === source)));
-    console.info("[prepared-surface] sources resolved", { count: sources.length, resolveMs: performance.now() - startedAt });
   }, []);
 
   const refreshMetrics = useCallback(async () => {

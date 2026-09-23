@@ -1,6 +1,7 @@
 import { Activity } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import cn from "classnames";
 import Drawer from "../../../components/Drawer/Drawer";
 import Button from "../../../components/Button/Button";
 import { useSelector } from "../../../hooks";
@@ -29,7 +30,7 @@ const formatMetric = (
   return metric?.reason ?? "—";
 };
 
-const MediaSurfaceDiagnostics = () => {
+const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const [open, setOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Record<string, ReceivedDiagnostics>>({});
   const displayOutputs = useSelector(selectDisplayOutputs);
@@ -98,7 +99,7 @@ const MediaSurfaceDiagnostics = () => {
       <Button
         svg={Activity}
         variant="tertiary"
-        className="shrink-0 text-xs"
+        className={cn("shrink-0 text-xs", className)}
         onClick={() => setOpen(true)}
         aria-label="Open video readiness diagnostics"
         aria-expanded={open}

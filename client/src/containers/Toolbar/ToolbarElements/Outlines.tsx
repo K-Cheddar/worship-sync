@@ -218,7 +218,6 @@ const Services = ({
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "ItemLists") {
-            console.log("updating item lists from remote");
             const update = _update as ItemLists;
             dispatch(
               updateItemListsFromRemote({

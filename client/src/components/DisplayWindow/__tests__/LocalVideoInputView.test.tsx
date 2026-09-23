@@ -524,6 +524,44 @@ describe("LocalVideoInputView", () => {
     );
   });
 
+  it("keeps the last realtime frame visible until buffered playback starts", () => {
+    mockSupportsRealtime.mockReturnValue(true);
+    let onFallback: (() => void) | undefined;
+    let onRealtimeStarted: (() => void) | undefined;
+    let onBufferedStarted: (() => void) | undefined;
+    mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
+      onFallback = options?.onFallback;
+      onRealtimeStarted = options?.onStarted;
+      return {
+        stop: jest.fn(),
+        setVolume: jest.fn(),
+        setAudioEnabled: jest.fn(),
+      };
+    });
+    mockSubscribeMedia.mockImplementation((_sourceId, _video, options) => {
+      onBufferedStarted = options?.onStarted;
+      return jest.fn();
+    });
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled={false}
+        receiveHighQuality
+      />,
+    );
+    act(() => {
+      onRealtimeStarted?.();
+      onFallback?.();
+    });
+
+    expect(screen.getByLabelText("USB Capture realtime video")).toHaveClass("opacity-100");
+    expect(screen.getByLabelText("USB Capture")).toHaveClass("opacity-0");
+    act(() => onBufferedStarted?.());
+    expect(screen.getByLabelText("USB Capture realtime video")).toHaveClass("opacity-0");
+    expect(screen.getByLabelText("USB Capture")).toHaveClass("opacity-100");
+  });
+
   it("preserves realtime diagnostics when switching to the buffered relay", () => {
     localStorage.setItem("worshipsync_local_video_debug", "true");
     mockSupportsRealtime.mockReturnValue(true);

@@ -274,7 +274,6 @@ export class MediaCacheManager {
       // Normalize to cache key (returns null for non-cacheable URLs like non-Mux HLS)
       const cacheKey = this.getCacheKey(url);
       if (!cacheKey) {
-        console.log("Skipping non-cacheable URL:", url);
         return null;
       }
 
@@ -291,12 +290,6 @@ export class MediaCacheManager {
       // Use cacheKey for filename so extension matches actual content (always MP4 for Mux)
       const fileName = this.getMediaFileName(cacheKey);
       const localPath = join(this.cacheDir, fileName);
-
-      if (this.isMuxUrl(downloadUrl)) {
-        console.log(
-          `[Media Cache] Downloading Mux video: ${downloadUrl} (original: ${url})`
-        );
-      }
 
       return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(localPath);
@@ -454,7 +447,6 @@ export class MediaCacheManager {
 
     if (urlsToRemove.length > 0) {
       this.flushSaveIndex();
-      console.log(`Cleaned up ${urlsToRemove.length} unused media file(s)`);
     }
   }
 

@@ -701,6 +701,7 @@ describe("MemberManager notification readiness", () => {
     const user = userEvent.setup();
     const originalClipboard = navigator.clipboard;
     const writeText = jest.fn().mockResolvedValue(undefined);
+    const open = jest.spyOn(window, "open").mockImplementation(() => null);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
@@ -709,13 +710,20 @@ describe("MemberManager notification readiness", () => {
     try {
       renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
       await user.click(screen.getByRole("button", { name: /Has Email/ }));
-
-      expect(
-        screen.getByRole("link", { name: /Open SMS opt-in page/i }),
-      ).toHaveAttribute("href", `${window.location.origin}/sms-opt-in`);
+      await user.click(screen.getByRole("button", { name: /Member actions/i }));
 
       await user.click(
-        screen.getByRole("button", { name: /Copy SMS opt-in link/i }),
+        screen.getByRole("menuitem", { name: /Open SMS opt-in page/i }),
+      );
+      expect(open).toHaveBeenCalledWith(
+        `${window.location.origin}/sms-opt-in`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+
+      await user.click(screen.getByRole("button", { name: /Member actions/i }));
+      await user.click(
+        screen.getByRole("menuitem", { name: /Copy SMS opt-in link/i }),
       );
       expect(writeText).toHaveBeenCalledWith(
         `${window.location.origin}/sms-opt-in`,
@@ -725,6 +733,7 @@ describe("MemberManager notification readiness", () => {
         configurable: true,
         value: originalClipboard,
       });
+      open.mockRestore();
     }
   });
 

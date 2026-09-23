@@ -3230,7 +3230,6 @@ listenerMiddleware.startListening({
           if (!hasFinishedInitialization || generation !== initializationGeneration) {
             return;
           }
-          console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
         { timeout: 10000 },

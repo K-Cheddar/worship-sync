@@ -768,6 +768,54 @@ describe("ElectronMediaSurfacePool", () => {
     expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
   });
 
+  it("keeps the same video element when the outline resolves or switches", async () => {
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        outlineId={null}
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        outlineId="resolved-outline"
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        outlineId="different-outline"
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+  });
+
   it("invalidates a READY surface before re-preparing a changed source", async () => {
     const onReadyChange = jest.fn();
     const { rerender } = render(
@@ -919,6 +967,81 @@ describe("ElectronMediaSurfacePool", () => {
       "src",
       "local-video-file://local-file",
     );
+  });
+
+  it("fails a preparation attempt when local file resolution hangs", async () => {
+    jest.useFakeTimers();
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalAsset: jest.fn(() => new Promise(() => undefined)),
+        getLocalMediaPath: jest.fn(),
+        isDev: jest.fn().mockResolvedValue(false),
+      },
+    });
+    const onPreparationFailure = jest.fn();
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[{ ...candidate, source: "local-video-file://hung" }]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onPreparationFailure={onPreparationFailure}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(onPreparationFailure).toHaveBeenCalledWith(
+      candidate.mediaKey,
+      expect.stringContaining("source preparation watchdog timeout"),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+      "data-prepared-state",
+      "error",
+    );
+    jest.useRealTimers();
+  });
+
+  it("fails a preparation attempt when local media path resolution hangs", async () => {
+    jest.useFakeTimers();
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalMediaPath: jest.fn(() => new Promise(() => undefined)),
+        isDev: jest.fn().mockResolvedValue(false),
+      },
+    });
+    const onPreparationFailure = jest.fn();
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onPreparationFailure={onPreparationFailure}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(onPreparationFailure).toHaveBeenCalledWith(
+      candidate.mediaKey,
+      expect.stringContaining("source preparation watchdog timeout"),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+      "data-prepared-state",
+      "error",
+    );
+    jest.useRealTimers();
   });
 
   it("uses the original finite URL when no local cache entry exists", async () => {

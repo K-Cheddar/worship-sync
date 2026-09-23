@@ -3,7 +3,6 @@ import jsQR from "jsqr";
 import { RefreshCw, ScanLine, X } from "lucide-react";
 import Button from "../Button/Button";
 import {
-  getDevicePairingApprovalUrlParseError,
   parseDevicePairingApprovalUrl,
 } from "../../utils/devicePairingQr";
 
@@ -75,12 +74,6 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     (value: string) => {
       const parsed = parseDevicePairingApprovalUrl(value);
       if (!parsed) {
-        if (import.meta.env.DEV) {
-          console.debug(
-            "Rejected device-pairing QR URL:",
-            getDevicePairingApprovalUrlParseError(value),
-          );
-        }
         setInvalid(true);
         setScannerStatus("decoded-invalid");
         return;
@@ -141,15 +134,6 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
       setScannerStatus("scanning");
       scanHealthRef.current.startedAt = performance.now();
       scanDiagnosticsRef.current = { attempts: 0, loggedResult: false, loggedDimensions: false, loggedWaiting: false };
-      if (import.meta.env.DEV) {
-        const track = stream.getVideoTracks?.()[0];
-        console.debug("Device QR camera started", {
-          label: track?.label || "(no video track)",
-          settings: track?.getSettings(),
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-        });
-      }
       let lastScanAt = 0;
       const scan = (now: number) => {
         const activeVideo = videoRef.current;
@@ -162,9 +146,6 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
           if (!scanHealth.firstFrameAt) scanHealth.firstFrameAt = now;
           const diagnostics = scanDiagnosticsRef.current;
           diagnostics.attempts += 1;
-          if (import.meta.env.DEV && diagnostics.attempts % 25 === 0) {
-            console.debug("Device QR scan attempts", { attempts: diagnostics.attempts });
-          }
           try {
             const canvas = canvasRef.current || document.createElement("canvas");
             canvasRef.current = canvas;
@@ -174,24 +155,16 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
             canvas.width = Math.max(1, Math.round(sourceWidth * scale));
             canvas.height = Math.max(1, Math.round(sourceHeight * scale));
             const context = canvas.getContext("2d", { willReadFrequently: true });
-            if (import.meta.env.DEV && !diagnostics.loggedDimensions) {
+            if (!diagnostics.loggedDimensions) {
               diagnostics.loggedDimensions = true;
-              console.debug("Device QR scan frame", {
-                attempts: diagnostics.attempts,
-                sourceWidth,
-                sourceHeight,
-                canvasWidth: canvas.width,
-                canvasHeight: canvas.height,
-              });
             }
             if (context) {
               context.drawImage(activeVideo, 0, 0, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
               const image = context.getImageData(0, 0, canvas.width, canvas.height);
               const result = jsQR(image.data, canvas.width, canvas.height);
               scanHealth.consecutiveErrors = 0;
-              if (import.meta.env.DEV && result && !diagnostics.loggedResult) {
+              if (result && !diagnostics.loggedResult) {
                 diagnostics.loggedResult = true;
-                console.debug("Device QR decoder returned a result", { attempts: diagnostics.attempts });
               }
               if (result) {
                 scanHealth.decodedResult = true;
@@ -199,18 +172,16 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
               }
               if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
             }
-          } catch (error) {
+          } catch {
             scanHealth.errors += 1;
             scanHealth.consecutiveErrors += 1;
             if (scanHealth.consecutiveErrors >= REPEATED_ERROR_THRESHOLD && scanStateRef.current !== "decoded-invalid") {
               setScannerStatus("recovered-error");
             }
-            if (import.meta.env.DEV) console.debug("Device QR scan frame failed", error);
           }
         }
-        if (import.meta.env.DEV && !(activeVideo.videoWidth && activeVideo.videoHeight) && !scanDiagnosticsRef.current.loggedWaiting) {
+        if (!(activeVideo.videoWidth && activeVideo.videoHeight) && !scanDiagnosticsRef.current.loggedWaiting) {
           scanDiagnosticsRef.current.loggedWaiting = true;
-          console.debug("Device QR scan waiting for video dimensions");
         }
         if (!acceptedRef.current && startVersion === startVersionRef.current) {
           frameRef.current = requestAnimationFrame(scan);

@@ -666,9 +666,7 @@ export const formatAllDocs = async (
         if (item.doc) {
           await db.put(updatedItem);
         }
-        console.log("formattedItem", updatedItem);
       } catch (error) {
-        console.log("Failed to format item", item.doc);
         console.error("Failed to format item", error);
       }
     }
@@ -708,7 +706,6 @@ export const formatAllSongs = async (
       if (retrievedSong) {
         await db.put(updatedItem);
       }
-      console.log("formattedSong", formattedSong);
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
@@ -737,7 +734,6 @@ export const formatAllItems = async (
       items: formattedItems,
       updatedAt: new Date().toISOString(),
     });
-    console.log("formattedItems", formattedItems);
   } catch (error) {
     console.error("Failed to format all items", error);
   }

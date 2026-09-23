@@ -483,7 +483,6 @@ const ControllerInfoProvider = ({ children }: any) => {
             if (broadcastDatabaseKey) {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }
-            console.log("Replication completed");
             if (isAuthenticatedSession) {
               syncDb(localDb, remoteDb);
             }
@@ -589,7 +588,6 @@ const ControllerInfoProvider = ({ children }: any) => {
           setBibleDb(localDb);
           setIsBibleDbSetup(true);
           globalBibleDb = localDb;
-          console.log("Bible Replication completed");
           if (isAuthenticatedSession) {
             bibleSyncDb(localDb, remoteDb);
           }

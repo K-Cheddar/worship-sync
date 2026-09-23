@@ -475,10 +475,7 @@ export const useControllerPageLifecycle = () => {
           getMediaCacheMap: () => Promise<Record<string, string>>;
         };
         if (urlArray.length > 0) {
-          const result = await electronAPI.syncMediaCache(urlArray);
-          console.log(
-            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
-          );
+          await electronAPI.syncMediaCache(urlArray);
         } else {
           await electronAPI.syncMediaCache([]);
         }

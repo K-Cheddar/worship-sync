@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Copy, Plus, X } from "lucide-react";
+import { Camera, Plus, X } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
@@ -39,6 +39,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
 } from "../../../api/authTypes";
+import type { MenuItemType } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import {
@@ -1153,6 +1154,22 @@ const MemberManager = ({
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
+                  additionalItems={[
+                    {
+                      text: "Copy SMS opt-in link",
+                      onClick: () => void copySmsOptInLink(),
+                    },
+                    {
+                      text: "Open SMS opt-in page",
+                      onClick: () => {
+                        window.open(
+                          buildShareablePublicPathUrl("/sms-opt-in"),
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      },
+                    },
+                  ] satisfies MenuItemType[]}
                   onArchive={
                     editing.archivedAt
                       ? undefined
@@ -1261,36 +1278,6 @@ const MemberManager = ({
               }))
             }
           />
-          {editing && canEdit ? (
-            <div className="flex flex-col gap-1 border-t border-gray-700/50 pt-3">
-              <span className="text-sm text-gray-300">SMS consent</span>
-              <span className="text-xs text-gray-400">
-                Share the public opt-in page with this member. Consent is recorded
-                separately and is not linked to this member record.
-              </span>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  variant="textLink"
-                  padding="p-0"
-                  svg={Copy}
-                  iconSize="sm"
-                  onClick={() => void copySmsOptInLink()}
-                >
-                  Copy SMS opt-in link
-                </Button>
-                <Button
-                  component="link"
-                  variant="textLink"
-                  padding="p-0"
-                  to={buildShareablePublicPathUrl("/sms-opt-in")}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open SMS opt-in page
-                </Button>
-              </div>
-            </div>
-          ) : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet

@@ -405,6 +405,9 @@ const Toolbar = ({
             Service Planning
           </ToolbarButton>
         )}
+        <MediaSurfaceDiagnostics
+          className={section !== "configurations" ? "hidden" : undefined}
+        />
         <SlideEditTools
           className={cn(section !== "slide-tools" && "hidden")}
         />
@@ -458,7 +461,6 @@ const Toolbar = ({
                   <Menu variant="default" />
                 </div>
                 {modeToggle}
-                <MediaSurfaceDiagnostics />
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
               </div>
