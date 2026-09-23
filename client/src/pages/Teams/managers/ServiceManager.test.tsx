@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServiceManager from "./ServiceManager";
@@ -110,7 +110,9 @@ describe("ServiceManager combined services", () => {
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Stay" }));
-    expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
+    });
     expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Unsaved Service");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));

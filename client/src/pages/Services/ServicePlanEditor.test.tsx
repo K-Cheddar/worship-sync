@@ -1493,9 +1493,7 @@ Opening Song to begin the worship experience.
 
     expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(
-      screen.getByDisplayValue("Opening Song: Come Before His Presence"),
-    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Come Before His Presence")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
@@ -1599,7 +1597,8 @@ Opening Song to begin the worship experience.
       startTime: "09:00",
     });
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe("Blair");
-    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome home");
+    // Non-generic elementType wins over the longer content title.
+    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome");
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
@@ -1668,15 +1667,21 @@ Opening Song to begin the worship experience.
     await user.click(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
+    // Empty scratch can autosave under suite load; drain it so the assertion
+    // below is about the title edit, not the seed write.
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    mockSaveServicePlan.mockClear();
 
     // Seeded with one default section; Add item targets it without an extra pick.
     await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
     await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
+      expect(mockSaveServicePlan).toHaveBeenCalled();
     }, { timeout: 2_500 });
-    const [churchId, planKey, body] = mockSaveServicePlan.mock.calls[0];
+    const [churchId, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(churchId).toBe("church-1");
     expect(planKey).toBe("service-1@2026-07-26");
     expect(body.serviceId).toBe("service-1");

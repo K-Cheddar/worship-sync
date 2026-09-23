@@ -24,6 +24,7 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 
 jest.mock("../../utils/environment", () => ({
   isElectron: jest.fn(() => false),
+  getApiBasePath: jest.fn(() => "/"),
 }));
 
 // Home reads the OS through the platform capability layer. `isMobileBrowser` /
@@ -226,7 +227,8 @@ describe("Home", () => {
     const overlayLink = screen.getByRole("link", {
       name: /^Overlays /i,
     });
-    expect(overlayLink).toHaveAttribute("aria-busy", "false");
+    // Button omits aria-busy when idle (`isLoading || undefined`).
+    expect(overlayLink).not.toHaveAttribute("aria-busy");
 
     await user.click(overlayLink);
 

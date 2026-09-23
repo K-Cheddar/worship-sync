@@ -11,7 +11,21 @@ const renderDiagnostics = () => {
     { id: "lobby", type: "projector", name: "Lobby", order: 1, enabled: true },
   ];
   const store = configureStore({
-    reducer: { displayOutputs: displayOutputsReducer },
+    reducer: {
+      displayOutputs: displayOutputsReducer,
+      undoable: (
+        state = {
+          present: {
+            itemLists: {
+              selectedList: null,
+              scope: "presentation",
+              currentLists: [],
+              selectedIdByScope: {},
+            },
+          },
+        },
+      ) => state,
+    },
     preloadedState: {
       displayOutputs: {
         isLoaded: true,

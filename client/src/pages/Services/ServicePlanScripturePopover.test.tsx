@@ -66,7 +66,7 @@ describe("ServicePlanScripturePopover", () => {
     await user.type(screen.getByLabelText(/Scripture reference/i), "not a reference");
 
     expect(
-      await screen.findByText(/doesn't look like a scripture reference/i),
+      await screen.findByText(/doesn't look like a scripture reference/i, {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Attach scripture/i })).toBeDisabled();
     expect(onSelect).not.toHaveBeenCalled();

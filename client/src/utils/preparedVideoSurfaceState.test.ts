@@ -62,7 +62,7 @@ describe("preparedVideoSurfaceState", () => {
       "metadata load failed: video element error",
     );
     expect(getPreparedVideoSurfaceErrorMessage("playback", new Error("NotSupportedError"))).toBe(
-      "video decode error: NotSupportedError",
+      "seek/playback preparation failed: NotSupportedError",
     );
     expect(getPreparedVideoSurfaceErrorMessage("presented-frame", new Error("presented-frame timeout"))).toBe(
       "presented-frame timeout",

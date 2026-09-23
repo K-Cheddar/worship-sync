@@ -360,6 +360,8 @@ describe("Teams", () => {
       import("./pages/TeamsMicrophonesPage"),
       import("./pages/TeamsPlansPage"),
       import("./pages/TeamsSchedulesPage"),
+      import("./pages/TeamsMembersPage"),
+      import("./pages/TeamsPositionsPage"),
     ]);
   });
 
