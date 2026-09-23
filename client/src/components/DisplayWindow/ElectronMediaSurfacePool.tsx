@@ -32,7 +32,7 @@ import {
   resolveVideoCueDrift,
   resolveVideoCueCorrection,
   resolveVideoPlaybackPosition,
-  VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
+  VIDEO_CUE_DRIFT_TOLERANCE_SECONDS,
   VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
 } from "../../utils/videoBackgroundPlayback";
 import { isHLSVideoSource } from "../../utils/isInstantVideoSource";
@@ -795,7 +795,7 @@ const PreparedSurface = ({
           : undefined;
         const drift = resolveVideoCueDrift(cue, video.currentTime, duration);
         if (!Number.isFinite(drift) ||
-            Math.abs(drift) >= VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS) {
+            Math.abs(drift) > VIDEO_CUE_DRIFT_TOLERANCE_SECONDS) {
           const target = resolveVideoPlaybackPosition(cue, duration);
           const seeked = waitForVideoEvent(video, "seeked");
           playheadChanged = true;

@@ -430,6 +430,44 @@ describe("DisplayBoxTransitionStage", () => {
       opacity: "0",
     });
 
+    const firstFallback = screen.getByTestId("display-box-transition-media-a");
+    const firstFallbackVideo = within(firstFallback).getByTestId(
+      "lane-full-frame-media-mock",
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          ...first,
+          key: "pool-a-lyrics",
+          boxes: [{ id: "box", words: "A2", width: 100, height: 100 }],
+        }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-a",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      ),
+    );
+    act(() => mockTimelineComplete?.());
+    expect(screen.getByTestId("display-box-transition-media-a")).toBe(firstFallback);
+    expect(within(firstFallback).getByTestId("lane-full-frame-media-mock")).toBe(
+      firstFallbackVideo,
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveStyle({
+      opacity: "0",
+    });
+
     mockReadinessByMedia.set("remote:pool-b", {
       paintReady: false,
       livePaintReady: false,
@@ -450,6 +488,10 @@ describe("DisplayBoxTransitionStage", () => {
       />,
     );
 
+    expect(firstFallback).toBeInTheDocument();
+    expect(within(firstFallback).getByTestId("lane-full-frame-media-mock")).toBe(
+      firstFallbackVideo,
+    );
     const play = HTMLMediaElement.prototype.play as jest.Mock;
     await waitFor(() => expect(play).toHaveBeenCalled());
     await waitFor(() =>
@@ -1757,6 +1799,41 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+
+    const next = {
+      ...verse(4),
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:next",
+        originalSrc: "https://cdn.example.com/next.mp4",
+      },
+    };
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={next}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(media).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-mode",
+      "full",
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          ...next,
+          key: "v-5",
+          boxes: [{ id: "box", words: "Verse 5", width: 100, height: 100 }],
+        }}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(media).toBeInTheDocument();
+    expect(screen.queryByTestId("content-Verse 4")).not.toBeInTheDocument();
   });
 
   it("cancels a fade when rapid navigation returns to the visible slide", () => {

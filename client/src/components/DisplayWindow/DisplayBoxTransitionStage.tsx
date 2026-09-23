@@ -22,11 +22,7 @@ import {
   NONE_LANE_BACKGROUND_MEDIA,
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
-import {
-  logVideoCue,
-  resolveVideoPlaybackPosition,
-  VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
-} from "../../utils/videoBackgroundPlayback";
+import { logVideoCue } from "../../utils/videoBackgroundPlayback";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import {
   usePublishMediaPreparationManifest,
@@ -316,6 +312,21 @@ const DisplayBoxTransitionStage = ({
     Record<LaneId, DisplayBoxTransitionSnapshot | null>
   >({ a: snapshot, b: null });
   laneSnapshotsRef.current = state.lanes;
+  const mediaLaneForContentLane = useCallback((contentLaneId: LaneId): LaneId => {
+    if (
+      state.phase === "idle" ||
+      state.mode === "content" ||
+      state.mediaAnchorLaneId === state.activeLaneId
+    ) return contentLaneId;
+    return contentLaneId === state.activeLaneId
+      ? state.mediaAnchorLaneId
+      : otherLane(state.mediaAnchorLaneId);
+  }, [
+    state.activeLaneId,
+    state.mediaAnchorLaneId,
+    state.mode,
+    state.phase,
+  ]);
 
   // Controller tiles already play the current video in their fallback lane.
   // A service-wide pool per tile competes with the editor and output windows
@@ -604,7 +615,7 @@ const DisplayBoxTransitionStage = ({
         contentRefs.current[activeLaneId],
       );
       const incomingMediaOpacity = readLaneOpacity(
-        mediaRefs.current[incomingLaneId] ??
+        mediaRefs.current[mediaLaneForContentLane(incomingLaneId)] ??
           preparedMediaRefs.current[
             getLanePreparedMediaKey(
               state.lanes[incomingLaneId]?.backgroundMedia,
@@ -612,7 +623,7 @@ const DisplayBoxTransitionStage = ({
           ],
       );
       const activeMediaOpacity = readLaneOpacity(
-        mediaRefs.current[activeLaneId] ??
+        mediaRefs.current[mediaLaneForContentLane(activeLaneId)] ??
           preparedMediaRefs.current[
             getLanePreparedMediaKey(state.lanes[activeLaneId]?.backgroundMedia)
           ],
@@ -639,6 +650,10 @@ const DisplayBoxTransitionStage = ({
         state.lanes[baselineLaneId] ?? state.lanes[activeLaneId];
 
       if (baselineSnapshot) {
+        const baselineMediaLaneId =
+          state.mode === "content"
+            ? state.mediaAnchorLaneId
+            : mediaLaneForContentLane(baselineLaneId);
         const baselineMediaKey = getLanePreparedMediaKey(
           baselineSnapshot.backgroundMedia,
         );
@@ -648,7 +663,7 @@ const DisplayBoxTransitionStage = ({
           mediaOwnersRef.current.set(baselineMediaKey, baselineOwner);
         }
         for (const laneId of ["a", "b"] as const) {
-          const mediaOpacity = laneId === baselineLaneId ? 1 : 0;
+          const mediaOpacity = laneId === baselineMediaLaneId ? 1 : 0;
           const contentOpacity = laneId === baselineLaneId ? 1 : 0;
           if (mediaRefs.current[laneId]) {
             gsap.set(mediaRefs.current[laneId], { opacity: mediaOpacity });
@@ -657,7 +672,7 @@ const DisplayBoxTransitionStage = ({
             gsap.set(contentRefs.current[laneId], { opacity: contentOpacity });
           }
           const preparedMediaKey = getLanePreparedMediaKey(
-            state.lanes[laneId]?.backgroundMedia,
+            state.lanes[mediaLaneForContentLane(laneId)]?.backgroundMedia,
           );
           if (preparedMediaRefs.current[preparedMediaKey]) {
             gsap.set(preparedMediaRefs.current[preparedMediaKey], {
@@ -676,7 +691,7 @@ const DisplayBoxTransitionStage = ({
             requestedKey: snapshot.key,
             queuedSnapshot: null,
             mode: "full",
-            mediaAnchorLaneId: baselineLaneId,
+            mediaAnchorLaneId: baselineMediaLaneId,
           });
           return;
         }
@@ -688,7 +703,7 @@ const DisplayBoxTransitionStage = ({
           requestedKey: snapshot.key,
           queuedSnapshot: null,
           mode: nextMode,
-          mediaAnchorLaneId: baselineLaneId,
+          mediaAnchorLaneId: baselineMediaLaneId,
         });
         return;
       }
@@ -789,7 +804,7 @@ const DisplayBoxTransitionStage = ({
         mediaAnchorLaneId: current.mediaAnchorLaneId,
       };
     });
-  }, [mediaPlayback?.outputId, mediaPlayback?.windowRole, shouldAnimate, snapshot, state]);
+  }, [mediaLaneForContentLane, mediaPlayback?.outputId, mediaPlayback?.windowRole, shouldAnimate, snapshot, state]);
 
   const reportBoxPaintReady = useCallback(
     (laneId: LaneId, laneKey: string, index: number, ready: boolean) => {
@@ -908,17 +923,21 @@ const DisplayBoxTransitionStage = ({
       // A pool surface may be warm for the current slide without owning the
       // audience-facing lane. Keep the normal renderer authoritative until a
       // transition explicitly adopts the prepared surface.
-      if (laneId === state.activeLaneId) return false;
+      // The foreground can move to the other lane after a content-only fade.
+      // Its background is still the live fallback player, so a warm pool copy
+      // of that same media must not silently replace it at its starting frame.
+      if (
+        preparedKey ===
+        getLanePreparedMediaKey(
+          state.lanes[state.activeLaneId]?.backgroundMedia,
+        )
+      ) return false;
       const cue = mediaPlayback?.activeFileVideoPlayback?.mediaKey === preparedKey
         ? mediaPlayback.activeFileVideoPlayback
         : undefined;
-      if (
-        status?.phase !== "active-playing" &&
-        cue &&
-        resolveVideoPlaybackPosition(cue) >= VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS
-      ) {
-        // The retained first frame is not the requested playhead. Show the
-        // poster while the hidden pool surface seeks and presents that frame.
+      if (cue && !cue.paused && status?.phase !== "active-playing") {
+        // A cued video must be moving before its prepared surface can enter
+        // the fade; otherwise the retained starting frame visibly catches up.
         return false;
       }
       return hasPreparedFrame(status);
@@ -965,10 +984,11 @@ const DisplayBoxTransitionStage = ({
     const preparedMediaKey = getLanePreparedMediaKey(
       laneSnapshot.backgroundMedia,
     );
+    const mediaLaneId = mediaLaneForContentLane(laneId);
     const mediaState = mediaPaintReadiness[laneId];
     const preparedStatus = preparedStatusForKey(preparedMediaKey);
     const usesPrepared = usesPreparedSurface(
-      laneId,
+      mediaLaneId,
       laneSnapshot.backgroundMedia,
     );
     const outgoingSnapshot = state.lanes[state.activeLaneId];
@@ -1008,7 +1028,7 @@ const DisplayBoxTransitionStage = ({
         state.lanes[state.activeLaneId]?.backgroundMedia,
       );
       const incomingUsesPrepared = usesPreparedSurface(
-        incomingLaneId,
+        mediaLaneForContentLane(incomingLaneId),
         incomingMedia,
       );
       if (incomingKey !== outgoingKey) mediaOwnersRef.current.delete(outgoingKey);
@@ -1048,7 +1068,7 @@ const DisplayBoxTransitionStage = ({
           requestedKey: nextSnapshot?.key ?? current.requestedKey,
           queuedSnapshot: null,
           mode: "full",
-          mediaAnchorLaneId: nextActiveLaneId,
+          mediaAnchorLaneId: mediaLaneForContentLane(nextActiveLaneId),
         };
       });
       return;
@@ -1057,7 +1077,7 @@ const DisplayBoxTransitionStage = ({
     const incomingMedia = incomingSnapshot?.backgroundMedia;
     const incomingPreparedKey = getLanePreparedMediaKey(incomingMedia);
     const incomingUsesPrepared = usesPreparedSurface(
-      incomingLaneId,
+      mediaLaneForContentLane(incomingLaneId),
       incomingMedia,
     );
     const incomingFallbackLiveReady =
@@ -1146,7 +1166,7 @@ const DisplayBoxTransitionStage = ({
       const preparedKey = getLanePreparedMediaKey(laneMedia);
       return mediaOwnersRef.current.has(preparedKey)
         ? preparedMediaRefs.current[preparedKey]
-        : mediaRefs.current[laneId];
+        : mediaRefs.current[mediaLaneForContentLane(laneId)];
     };
     const outgoingMedia = mediaElementForLane(state.activeLaneId);
     const incomingMedia = mediaElementForLane(incomingLaneId);
@@ -1274,7 +1294,7 @@ const DisplayBoxTransitionStage = ({
                 requestedKey: queued.key,
                 queuedSnapshot: null,
                 mode: "full",
-                mediaAnchorLaneId: currentIncomingLaneId,
+                mediaAnchorLaneId: mediaLaneForContentLane(currentIncomingLaneId),
               };
             }
             if (queued.key !== incomingKey) {
@@ -1314,7 +1334,7 @@ const DisplayBoxTransitionStage = ({
                 mode: completedIncoming
                   ? resolveTransitionMode(completedIncoming, queued)
                   : "full",
-                mediaAnchorLaneId: currentIncomingLaneId,
+                mediaAnchorLaneId: mediaLaneForContentLane(currentIncomingLaneId),
               };
             }
           }
@@ -1335,7 +1355,7 @@ const DisplayBoxTransitionStage = ({
             requestedKey: incomingKey,
             queuedSnapshot: null,
             mode: "full",
-            mediaAnchorLaneId: currentIncomingLaneId,
+            mediaAnchorLaneId: mediaLaneForContentLane(currentIncomingLaneId),
           };
         });
       };
@@ -1413,6 +1433,7 @@ const DisplayBoxTransitionStage = ({
   }, [
     incomingLaneId,
     incomingSnapshot,
+    mediaLaneForContentLane,
     state.activeLaneId,
     state.lanes,
     state.mode,
@@ -1440,6 +1461,8 @@ const DisplayBoxTransitionStage = ({
     mediaSnapshot: DisplayBoxTransitionSnapshot | null;
     isActive: boolean;
     isPrevious: boolean;
+    isMediaPrevious: boolean;
+    mediaContentLaneId: LaneId;
     hostsMedia: boolean;
     hostsContent: boolean;
     mediaKey: string;
@@ -1448,6 +1471,7 @@ const DisplayBoxTransitionStage = ({
     usesPreparedSurface: boolean;
     mediaAudioEnabled: boolean;
     mediaOpacity: number | undefined;
+    mediaStackOffset: number;
     contentOpacity: number | undefined;
     needsStillHold: boolean;
     paintBackground: boolean;
@@ -1462,13 +1486,15 @@ const DisplayBoxTransitionStage = ({
     const laneSnapshot = state.lanes[laneId];
     const isActive = laneId === state.activeLaneId;
     const isPrevious = inFlight && isActive;
+    const mediaContentLaneId = mediaLaneForContentLane(laneId);
+    const isMediaPrevious = inFlight && laneId === state.mediaAnchorLaneId;
 
     // Shared-media modes: only the media anchor hosts the player. The anchor
     // may have no content snapshot after a content-only settle — still host
     // media there using the active slide's background.
     const hostsMedia = sharedMediaHost
       ? laneId === state.mediaAnchorLaneId && mediaSourceSnapshot != null
-      : laneSnapshot != null;
+      : state.lanes[mediaContentLaneId] != null;
     const hostsContent =
       laneSnapshot != null && (!isMediaMode || isActive);
 
@@ -1477,7 +1503,7 @@ const DisplayBoxTransitionStage = ({
     const mediaSnapshot = hostsMedia
       ? sharedMediaHost
         ? mediaSourceSnapshot
-        : laneSnapshot
+        : state.lanes[mediaContentLaneId]
       : null;
     const contentSnapshot = hostsContent ? laneSnapshot : null;
     if (!mediaSnapshot && !contentSnapshot) return [];
@@ -1493,7 +1519,7 @@ const DisplayBoxTransitionStage = ({
       laneId,
       mediaSnapshot?.backgroundMedia,
     );
-    const mediaState = mediaPaintReadiness[laneId];
+    const mediaState = mediaPaintReadiness[mediaContentLaneId];
     const fullFramePaintReady =
       isContentMode ||
       mediaKey === "none" ||
@@ -1502,7 +1528,7 @@ const DisplayBoxTransitionStage = ({
             preparedStatusForKey(preparedMediaKey),
           )
         : mediaState?.mediaKey === mediaKey && mediaState.ready);
-    const liveMediaState = mediaLivePaintReadiness[laneId];
+    const liveMediaState = mediaLivePaintReadiness[mediaContentLaneId];
     const liveVideoPaintReady =
       mediaKey !== "none" &&
       (usesPrepared
@@ -1515,8 +1541,8 @@ const DisplayBoxTransitionStage = ({
       mediaPlayback?.fileVideoAudioEnabled === true &&
       (state.phase === "idle" ||
         state.mode === "content" ||
-        (state.phase === "preparing" && isPrevious) ||
-        (state.phase === "animating" && isPrevious));
+        (state.phase === "preparing" && isMediaPrevious) ||
+        (state.phase === "animating" && isMediaPrevious));
 
     let mediaOpacity: number | undefined;
     let contentOpacity: number | undefined;
@@ -1528,10 +1554,10 @@ const DisplayBoxTransitionStage = ({
       mediaOpacity = hostsMedia ? 1 : 0;
       contentOpacity = isActive ? 1 : 0;
     } else if (isMediaMode) {
-      mediaOpacity = isActive ? 1 : 0;
+      mediaOpacity = isMediaPrevious ? 1 : 0;
       contentOpacity = hostsContent ? 1 : 0;
     } else if (isFullMode) {
-      mediaOpacity = isActive ? 1 : 0;
+      mediaOpacity = isMediaPrevious ? 1 : 0;
       contentOpacity = isActive ? 1 : 0;
     } else {
       mediaOpacity = 1;
@@ -1557,6 +1583,8 @@ const DisplayBoxTransitionStage = ({
         mediaSnapshot,
         isActive,
         isPrevious,
+        isMediaPrevious,
+        mediaContentLaneId,
         hostsMedia,
         hostsContent,
         mediaKey,
@@ -1565,6 +1593,7 @@ const DisplayBoxTransitionStage = ({
         usesPreparedSurface: usesPrepared,
         mediaAudioEnabled,
         mediaOpacity,
+        mediaStackOffset: roleStackOffset(isMediaPrevious),
         contentOpacity,
         needsStillHold,
         paintBackground:
@@ -1596,11 +1625,11 @@ const DisplayBoxTransitionStage = ({
          // ready-paused so it can request activation. It remains transparent
          // until the shared lifecycle reports active-playing.
          opacity: laneView.usesPreparedSurface ? laneView.mediaOpacity : 0,
-        zIndex: laneView.stackOffset,
+        zIndex: laneView.mediaStackOffset,
          shouldPlay:
            laneView.hostsMedia &&
            (laneView.usesPreparedSurface ||
-             (state.phase !== "idle" && !laneView.isPrevious)),
+             (state.phase !== "idle" && !laneView.isMediaPrevious)),
         muted:
           !laneView.mediaAudioEnabled || !laneView.usesPreparedSurface,
         volume: mediaPlayback?.volume ?? 1,
@@ -1666,13 +1695,13 @@ const DisplayBoxTransitionStage = ({
           ({
             laneId,
             mediaSnapshot,
-            isActive,
-            isPrevious,
+            isMediaPrevious,
+            mediaContentLaneId,
             hostsMedia,
             mediaKey,
             mediaOpacity,
             needsStillHold,
-            stackOffset,
+            mediaStackOffset,
             usesPreparedSurface,
             mediaAudioEnabled,
           }) => {
@@ -1686,11 +1715,11 @@ const DisplayBoxTransitionStage = ({
                 className="absolute inset-0"
                 data-testid={`display-box-transition-media-${laneId}`}
                 data-lane-role={
-                  isPrevious ? "outgoing" : isActive ? "active" : "incoming"
+                  isMediaPrevious ? "outgoing" : inFlight ? "incoming" : "active"
                 }
                 style={{
                   ...(mediaOpacity == null ? {} : { opacity: mediaOpacity }),
-                  zIndex: stackOffset,
+                  zIndex: mediaStackOffset,
                   willChange: "opacity",
                 }}
               >
@@ -1699,12 +1728,12 @@ const DisplayBoxTransitionStage = ({
                   media={
                     mediaSnapshot.backgroundMedia ?? NONE_LANE_BACKGROUND_MEDIA
                   }
-                  isPrevious={isPrevious}
+                  isPrevious={isMediaPrevious}
                   onPaintReadyChange={(ready) =>
-                    reportMediaPaintReady(laneId, mediaKey, ready)
+                    reportMediaPaintReady(mediaContentLaneId, mediaKey, ready)
                   }
                   onLivePaintReadyChange={(ready) =>
-                    reportMediaLivePaintReady(laneId, mediaKey, ready)
+                    reportMediaLivePaintReady(mediaContentLaneId, mediaKey, ready)
                   }
                   fileVideoAudioEnabled={mediaAudioEnabled}
                   volume={mediaPlayback?.volume}
@@ -1723,7 +1752,7 @@ const DisplayBoxTransitionStage = ({
                 {needsStillHold &&
                   renderLane(
                     mediaSnapshot,
-                    isPrevious,
+                    isMediaPrevious,
                     (index, ready) =>
                       reportBoxPaintReady(
                         laneId,

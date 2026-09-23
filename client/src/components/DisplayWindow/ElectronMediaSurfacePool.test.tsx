@@ -586,7 +586,7 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
-  it("aligns a delayed cue before exposing the first playing frame", async () => {
+  it.each([1, 5])("aligns a %s-second cue before exposing the first playing frame", async (positionSeconds) => {
     let currentTime = 0;
     const playPositions: number[] = [];
     Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
@@ -609,7 +609,7 @@ describe("ElectronMediaSurfacePool", () => {
     });
     const cue = {
       mediaKey: candidate.mediaKey,
-      positionSeconds: 5,
+      positionSeconds,
       paused: false,
       atServerMs: Date.now(),
       generation: 7,
@@ -640,7 +640,7 @@ describe("ElectronMediaSurfacePool", () => {
       ),
     );
     expect(playPositions[0]).toBe(0);
-    expect(playPositions[1]).toBeGreaterThanOrEqual(5);
+    expect(playPositions[1]).toBeGreaterThanOrEqual(positionSeconds);
   });
 
   it("does not claim HLS manifests as finite prepared surfaces", async () => {

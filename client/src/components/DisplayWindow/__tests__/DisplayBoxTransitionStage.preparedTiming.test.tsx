@@ -324,6 +324,69 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     );
   });
 
+  it("waits for a cued video to advance before fading it in", async () => {
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn().mockResolvedValue(undefined),
+    });
+    mockAutoPresentFirstAdvancingFrame = false;
+
+    const first = snapshot("prepared-a", "A", "remote:prepared-a");
+    const second = snapshot("prepared-b", "B", "remote:prepared-b");
+    const mediaPlayback = {
+      outputId: "projector",
+      windowRole: "projector",
+      currentItemId: "item-b",
+      playbackRole: "output" as const,
+      showBackground: true,
+      activeFileVideoPlayback: {
+        mediaKey: "remote:prepared-b",
+        positionSeconds: 0,
+        paused: false,
+        atServerMs: Date.now(),
+        generation: 1,
+        applySeek: true,
+      },
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={renderLane}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:prepared-b")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={renderLane}
+      />,
+    );
+    await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+
+    mockFirstAdvancingFrameCallback?.();
+    await waitFor(() =>
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      ),
+    );
+  });
+
   it("keeps the outgoing visual until a cold incoming surface is frame-ready", async () => {
     mockHoldInitialPreparedFrames = true;
     const first = snapshot("prepared-a", "A", "remote:prepared-a");
