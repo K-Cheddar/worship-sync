@@ -1376,42 +1376,46 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       ]);
 
     const laneMediaPlayback = useMemo<LaneMediaPlaybackOptions>(
-      () => ({
-        outputId,
-        windowRole: isEditor
-          ? "editor"
-          : videoPreloadRole === "preview"
-            ? `${displayType ?? "unknown"}-preview`
-            : displayType ?? "unknown",
-        currentItemId,
-        preparedMediaOutlineId,
-        preparedMediaScope: "service",
-        preparedMediaContext,
-        showBackground,
-        fileVideoAudioEnabled: localVideoFileAudioEnabled,
-        volume: localVideoVolume,
-        playbackRole: isEditor ? "preview" : "output",
-        preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
-        suspendPlayback: suspendVideoPlayback,
-        activeFileVideoPlayback: activeVideoPlayback,
-        isEditor,
-        localVideo: {
-          playAudio:
-            canCaptureLocalVideo &&
-            playLocalVideoAudio &&
-            resolvedDisplaySettings.localVideoAudioEnabled &&
-            localVideoInput?.audioEnabled !== false &&
-            localVideoContentVisible,
-          captureEnabled:
-            canCaptureLocalVideo &&
-            (displayType === "editor" || directLocalVideoCapture),
-          receiveHighQuality: canCaptureLocalVideo,
-          publishPreview: canCaptureLocalVideo && displayType === "editor",
-          showErrors: !canCaptureLocalVideo || displayType === "editor",
-          transparentBackground: displayType === "stream",
-          contentVisible: localVideoContentVisible,
-        },
-      }),
+      () => {
+        const playbackRole =
+          isEditor || videoPreloadRole === "preview" ? "preview" : "output";
+        return {
+          outputId,
+          windowRole: isEditor
+            ? "editor"
+            : videoPreloadRole === "preview"
+              ? `${displayType ?? "unknown"}-preview`
+              : displayType ?? "unknown",
+          currentItemId,
+          preparedMediaOutlineId,
+          preparedMediaScope: "service",
+          preparedMediaContext,
+          showBackground,
+          fileVideoAudioEnabled: localVideoFileAudioEnabled,
+          volume: localVideoVolume,
+          playbackRole,
+          preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
+          suspendPlayback: suspendVideoPlayback,
+          activeFileVideoPlayback: activeVideoPlayback,
+          isEditor,
+          localVideo: {
+            playAudio:
+              canCaptureLocalVideo &&
+              playLocalVideoAudio &&
+              resolvedDisplaySettings.localVideoAudioEnabled &&
+              localVideoInput?.audioEnabled !== false &&
+              localVideoContentVisible,
+            captureEnabled:
+              canCaptureLocalVideo &&
+              (displayType === "editor" || directLocalVideoCapture),
+            receiveHighQuality: canCaptureLocalVideo,
+            publishPreview: canCaptureLocalVideo && displayType === "editor",
+            showErrors: !canCaptureLocalVideo || displayType === "editor",
+            transparentBackground: displayType === "stream",
+            contentVisible: localVideoContentVisible,
+          },
+        };
+      },
       [
         activeVideoPlayback,
         canCaptureLocalVideo,

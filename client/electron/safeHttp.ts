@@ -1,7 +1,7 @@
 import * as dns from "node:dns/promises";
 import * as http from "node:http";
 import * as https from "node:https";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 
 export const MAX_SAFE_HTTP_REDIRECTS = 5;
@@ -179,11 +179,18 @@ export const safeHttpGet = async (
       response: IncomingMessage;
       request: ClientRequest;
     }>((resolve, reject) => {
-      const socketLookup = (
-        _hostname: string,
-        _options: object,
-        callback: (error: Error | null, address?: string, family?: number) => void,
-      ) => callback(null, validated.address.address, validated.address.family);
+      const socketLookup: LookupFunction = (_hostname, options, callback) => {
+        if (options.all) {
+          callback(null, [
+            {
+              address: validated.address.address,
+              family: validated.address.family,
+            },
+          ]);
+          return;
+        }
+        callback(null, validated.address.address, validated.address.family);
+      };
       const clientRequest = request(validated.url, {
         headers,
         lookup: socketLookup,

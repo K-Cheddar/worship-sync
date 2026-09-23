@@ -35,6 +35,34 @@ export type OutlineSlideSection = {
   shouldSendTo?: ShouldSendTo;
 };
 
+export type OutlineSlideSectionCacheEntry = {
+  item: ServiceItem;
+  listId: string;
+  itemId: string;
+  source: ActiveItemSlideSource | DBItem | undefined;
+  sourceId?: string;
+  sourceListId?: string;
+  sourceRevision?: string;
+  selectedArrangement?: number;
+  resolvedSlides: ItemSlideType[];
+  resolvedFormattedSections: FormattedSection[];
+  resolvedShouldSendTo?: ShouldSendTo;
+  section: OutlineSlideSection;
+};
+
+export type OutlineVirtualRowCacheEntry = {
+  section: OutlineSlideSection;
+  listId: string;
+  itemId: string;
+  name: string;
+  itemType: string;
+  slides: ItemSlideType[];
+  slideCount: number;
+  firstSlideId?: string;
+  cols: number;
+  rows: OutlineVirtualRow[];
+};
+
 export type OutlineVirtualRow =
   | {
       type: "sectionLabel";
@@ -60,6 +88,7 @@ export type OutlineVirtualRow =
 type ActiveItemSlideSource = {
   _id?: string;
   listId?: string;
+  _rev?: string;
   name?: string;
   type?: string;
   slides?: ItemSlideType[];
@@ -68,6 +97,9 @@ type ActiveItemSlideSource = {
   formattedSections?: FormattedSection[];
   shouldSendTo?: ShouldSendTo;
 };
+
+const EMPTY_ITEM_SLIDES: ItemSlideType[] = [];
+const EMPTY_FORMATTED_SECTIONS: FormattedSection[] = [];
 
 /**
  * Route for an outline item on a given controller.
@@ -126,10 +158,12 @@ const resolveSlidesFromDoc = (
   if (type === "song") {
     const arrangementIndex = source.selectedArrangement ?? 0;
     return (
-      source.arrangements?.[arrangementIndex]?.slides ?? source.slides ?? []
+      source.arrangements?.[arrangementIndex]?.slides ??
+      source.slides ??
+      EMPTY_ITEM_SLIDES
     );
   }
-  return source.slides ?? [];
+  return source.slides ?? EMPTY_ITEM_SLIDES;
 };
 
 export const resolveSlidesForOutlineItem = (
@@ -160,14 +194,7 @@ export const buildOutlineSlideSections = (
   options: {
     activeItem: ActiveItemSlideSource;
     docsById: Map<string, DBItem>;
-    sectionCache?: Map<
-      string,
-      {
-        item: ServiceItem;
-        source: ActiveItemSlideSource | DBItem | undefined;
-        section: OutlineSlideSection;
-      }
-    >;
+    sectionCache?: Map<string, OutlineSlideSectionCacheEntry>;
   },
 ): OutlineSlideSection[] =>
   items.map((item) => {
@@ -176,8 +203,29 @@ export const buildOutlineSlideSections = (
       item.listId === options.activeItem.listId &&
       item._id === options.activeItem._id;
     const source = isActive ? options.activeItem : doc;
+    const resolvedSlides = resolveSlidesForOutlineItem(item, options);
+    const resolvedFormattedSections =
+      (isActive ? options.activeItem.formattedSections : doc?.formattedSections) ??
+      EMPTY_FORMATTED_SECTIONS;
+    const resolvedShouldSendTo = isActive
+      ? options.activeItem.shouldSendTo
+      : doc?.shouldSendTo;
+    const sourceListId =
+      source && "listId" in source ? source.listId : undefined;
     const cached = options.sectionCache?.get(item.listId);
-    if (cached?.item === item && cached.source === source) {
+    if (
+      cached?.item === item &&
+      cached.listId === item.listId &&
+      cached.itemId === item._id &&
+      cached.source === source &&
+      cached.sourceId === source?._id &&
+      cached.sourceListId === sourceListId &&
+      cached.sourceRevision === source?._rev &&
+      cached.selectedArrangement === source?.selectedArrangement &&
+      cached.resolvedSlides === resolvedSlides &&
+      cached.resolvedFormattedSections === resolvedFormattedSections &&
+      cached.resolvedShouldSendTo === resolvedShouldSendTo
+    ) {
       return cached.section;
     }
     const section = {
@@ -186,14 +234,25 @@ export const buildOutlineSlideSections = (
       name: isActive ? options.activeItem.name || item.name : item.name,
       type: item.type,
       rev: isActive ? undefined : doc?._rev,
-      slides: resolveSlidesForOutlineItem(item, options),
+      slides: resolvedSlides,
       isActive,
-      formattedSections:
-        (isActive ? options.activeItem.formattedSections : doc?.formattedSections) ??
-        [],
-      shouldSendTo: isActive ? options.activeItem.shouldSendTo : doc?.shouldSendTo,
+      formattedSections: resolvedFormattedSections,
+      shouldSendTo: resolvedShouldSendTo,
     };
-    options.sectionCache?.set(item.listId, { item, source, section });
+    options.sectionCache?.set(item.listId, {
+      item,
+      listId: item.listId,
+      itemId: item._id,
+      source,
+      sourceId: source?._id,
+      sourceListId,
+      sourceRevision: source?._rev,
+      selectedArrangement: source?.selectedArrangement,
+      resolvedSlides,
+      resolvedFormattedSections,
+      resolvedShouldSendTo,
+      section,
+    });
     return section;
   });
 
@@ -217,16 +276,24 @@ export const getOutlineVirtualRowKey = (row: OutlineVirtualRow): string => {
 export const buildOutlineVirtualRows = (
   sections: OutlineSlideSection[],
   cols: number,
-  rowCache?: Map<
-    string,
-    { section: OutlineSlideSection; cols: number; rows: OutlineVirtualRow[] }
-  >,
+  rowCache?: Map<string, OutlineVirtualRowCacheEntry>,
 ): OutlineVirtualRow[] => {
   const safeCols = Math.max(1, cols);
   const rows: OutlineVirtualRow[] = [];
   for (const section of sections) {
+    const firstSlideId = section.slides[0]?.id;
     const cached = rowCache?.get(section.listId);
-    if (cached?.section === section && cached.cols === safeCols) {
+    if (
+      cached?.section === section &&
+      cached.listId === section.listId &&
+      cached.itemId === section.itemId &&
+      cached.name === section.name &&
+      cached.itemType === section.type &&
+      cached.slides === section.slides &&
+      cached.slideCount === section.slides.length &&
+      cached.firstSlideId === firstSlideId &&
+      cached.cols === safeCols
+    ) {
       rows.push(...cached.rows);
       continue;
     }
@@ -257,7 +324,18 @@ export const buildOutlineVirtualRows = (
         });
       }
     }
-    rowCache?.set(section.listId, { section, cols: safeCols, rows: sectionRows });
+    rowCache?.set(section.listId, {
+      section,
+      listId: section.listId,
+      itemId: section.itemId,
+      name: section.name,
+      itemType: section.type,
+      slides: section.slides,
+      slideCount: section.slides.length,
+      firstSlideId,
+      cols: safeCols,
+      rows: sectionRows,
+    });
     rows.push(...sectionRows);
   }
   return rows;

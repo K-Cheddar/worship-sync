@@ -7,7 +7,9 @@ import TransmitHandler from "./TransmitHandler";
 import {
   presentationSlice,
   setDisplayBoardAliasId,
+  setOutputTransmitting,
   syncOutputSlots,
+  updatePresentation,
 } from "../../store/presentationSlice";
 import {
   displayOutputsSlice,
@@ -29,17 +31,39 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
     isTransmitting,
     toggleIsTransmitting,
     footer,
+    info,
+    readOnly,
+    minimalHeader,
   }: {
     name: string;
     isTransmitting?: boolean;
     toggleIsTransmitting?: () => void;
     footer?: React.ReactNode;
+    readOnly?: boolean;
+    minimalHeader?: boolean;
+    info?: {
+      name?: string;
+      slide?: { id?: string } | null;
+      videoPlayback?: { positionSeconds?: number; paused?: boolean };
+    };
   }) => (
-    <div data-testid={`preview-${name}`} data-live={String(!!isTransmitting)}>
+    <div
+      data-testid={`preview-${name}`}
+      data-live={String(!!isTransmitting)}
+      data-read-only={String(!!readOnly || !!minimalHeader)}
+      data-info-name={info?.name ?? ""}
+      data-slide-id={info?.slide?.id ?? ""}
+      data-video-position={info?.videoPlayback?.positionSeconds ?? ""}
+      data-video-paused={
+        info?.videoPlayback ? String(info.videoPlayback.paused) : ""
+      }
+    >
       {name}
-      <button type="button" onClick={toggleIsTransmitting}>
-        {`Toggle ${name}`}
-      </button>
+      {!readOnly && !minimalHeader && (
+        <button type="button" onClick={toggleIsTransmitting}>
+          {`Toggle ${name}`}
+        </button>
+      )}
       {footer}
     </div>
   ),
@@ -310,7 +334,7 @@ describe("mirror controls on an auxiliary controller", () => {
     return store;
   };
 
-  it("offers Mirror under the owned display, not for screens this controller does not drive", () => {
+  it("shows the source preview and offers Mirror under the owned display", () => {
     const store = createAuxStore();
     render(
       <Provider store={store}>
@@ -325,7 +349,9 @@ describe("mirror controls on an auxiliary controller", () => {
         name: "Mirror Main",
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId("preview-Main")).not.toBeInTheDocument();
+    const sourcePreview = screen.getByTestId("preview-Main");
+    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
+    expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
   });
 
@@ -366,6 +392,97 @@ describe("mirror controls on an auxiliary controller", () => {
     );
   });
 
+  it("shows a read-only source tile alongside the aux-owned follower tile", async () => {
+    const user = userEvent.setup();
+    const store = createAuxStore();
+    store.dispatch(
+      setOutputTransmitting({ outputId: "projector", value: true }),
+    );
+    store.dispatch(
+      setOutputTransmitting({ outputId: "out_lobby", value: true }),
+    );
+
+    const sendProjectorSlide = (
+      name: string,
+      videoPlayback?: {
+        mediaKey: string;
+        positionSeconds: number;
+        paused: boolean;
+        atServerMs: number;
+        generation: number;
+        applySeek: boolean;
+      },
+    ) =>
+      store.dispatch(
+        updatePresentation({
+          type: "song",
+          name,
+          slide: {
+            type: "Verse",
+            name,
+            id: `slide-${name}`,
+            boxes: [{ words: name, width: 100, height: 100 }],
+          },
+          videoPlayback,
+          outputIds: ["projector"],
+        }),
+      );
+
+    sendProjectorSlide("Slide A", {
+      mediaKey: "remote:video-a",
+      positionSeconds: 20,
+      paused: false,
+      atServerMs: 1000,
+      generation: 1,
+      applySeek: true,
+    });
+
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    const auxPreview = screen.getByTestId("preview-Lobby");
+    const preview = within(auxPreview);
+    const sourcePreview = screen.getByTestId("preview-Main");
+    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
+    await user.click(preview.getByRole("button", { name: "Mirror Main" }));
+
+    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
+    expect(sourcePreview).toHaveAttribute("data-live", "true");
+    expect(sourcePreview).toHaveAttribute("data-info-name", "Slide A");
+    expect(sourcePreview).toHaveAttribute("data-slide-id", "slide-Slide A");
+    expect(sourcePreview).toHaveAttribute("data-video-position", "20");
+    expect(sourcePreview).toHaveAttribute("data-video-paused", "false");
+    expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
+    expect(auxPreview).toHaveAttribute("data-read-only", "false");
+    expect(auxPreview).toHaveAttribute("data-info-name", "Slide A");
+
+    act(() => {
+      sendProjectorSlide("Slide B", {
+        mediaKey: "remote:video-a",
+        positionSeconds: 32,
+        paused: false,
+        atServerMs: 2000,
+        generation: 2,
+        applySeek: true,
+      });
+    });
+    expect(auxPreview).toHaveAttribute("data-info-name", "Slide B");
+    expect(auxPreview).toHaveAttribute("data-video-position", "32");
+
+    await user.click(preview.getByRole("button", { name: "Toggle Lobby" }));
+    expect(store.getState().presentation.outputs.out_lobby.isTransmitting).toBe(
+      false,
+    );
+    expect(store.getState().presentation.outputs.projector.isTransmitting).toBe(
+      true,
+    );
+  });
+
   it("keeps an unavailable mirror visible so the operator can stop it", async () => {
     const user = userEvent.setup();
     const store = createAuxStore();
@@ -392,6 +509,9 @@ describe("mirror controls on an auxiliary controller", () => {
 
     expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
       "Mirror source unavailable",
+    );
+    expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
+      "Main",
     );
     await user.click(preview.getByRole("button", { name: "Stop mirroring" }));
     expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(

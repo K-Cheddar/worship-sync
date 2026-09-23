@@ -1,11 +1,13 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { onValue, ref } from "firebase/database";
+import { onValue, ref, set } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   useRemoteMediaPreparationManifest,
+  usePublishMediaPreparationManifest,
 } from "./useMediaPreparationManifest";
 import type { MediaPreparationManifest } from "../utils/mediaPreparationManifest";
+import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagnostics";
 
 jest.mock("firebase/database", () => ({
   onValue: jest.fn(),
@@ -15,6 +17,7 @@ jest.mock("firebase/database", () => ({
 
 const onValueMock = jest.mocked(onValue) as jest.Mock;
 const refMock = jest.mocked(ref);
+const setMock = jest.mocked(set);
 
 const manifest: MediaPreparationManifest = {
   contract: "worshipsync.media-preparation",
@@ -47,6 +50,8 @@ describe("useRemoteMediaPreparationManifest", () => {
   beforeEach(() => {
     onValueMock.mockReset();
     refMock.mockClear();
+    setMock.mockReset();
+    setMock.mockResolvedValue(undefined);
     localStorage.clear();
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
@@ -106,5 +111,79 @@ describe("useRemoteMediaPreparationManifest", () => {
       { name: "shared" },
       "churches/church-1/data/presentation/mediaPreparation/projector",
     );
+  });
+
+  it("publishes a loaded controller manifest and skips display sessions", async () => {
+    const discovery: ElectronMediaDiscovery = {
+      renderer: "projector",
+      outputId: "projector",
+      controllerProfileId: "presentation",
+      outlineScope: "presentation",
+      outlineId: "outline-1",
+      outlineLoadState: "loaded",
+      itemCount: 1,
+      uniqueFiniteVideoCount: 1,
+      items: [
+        {
+          itemIndex: 0,
+          itemId: "item-1",
+          itemName: "Opening",
+          videos: [
+            {
+              mediaKey: "remote:opening",
+              source: "https://cdn.example.com/opening.mp4",
+              sourceKind: "remote",
+              status: "eligible",
+              cacheStatus: "not-required",
+            },
+          ],
+        },
+      ],
+    };
+    const makeWrapper = (sessionKind: "controller" | "display") =>
+      ({ children }: { children: ReactNode }) => (
+        <GlobalInfoContext.Provider
+          value={
+            {
+              firebaseDb: { name: "shared" },
+              churchId: "church-1",
+              sharedDataReady: true,
+              sessionKind,
+            } as never
+          }
+        >
+          {children}
+        </GlobalInfoContext.Provider>
+      );
+
+    renderHook(
+      () =>
+        usePublishMediaPreparationManifest({
+          enabled: true,
+          discovery,
+          outputId: "projector",
+        }),
+      {
+        wrapper: makeWrapper("controller"),
+      },
+    );
+
+    await waitFor(() => expect(setMock).toHaveBeenCalled());
+    expect(refMock).toHaveBeenCalledWith(
+      { name: "shared" },
+      "churches/church-1/data/presentation/mediaPreparation/projector",
+    );
+
+    setMock.mockClear();
+    renderHook(
+      () =>
+        usePublishMediaPreparationManifest({
+          enabled: true,
+          discovery,
+          outputId: "projector",
+        }),
+      { wrapper: makeWrapper("display") },
+    );
+    expect(setMock).not.toHaveBeenCalled();
   });
 });

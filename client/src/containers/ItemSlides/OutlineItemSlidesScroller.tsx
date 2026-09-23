@@ -48,6 +48,8 @@ import {
   type OutlineScrollAnchor,
   type OutlineSlideSection,
   type OutlineSlideFocalPoint,
+  type OutlineSlideSectionCacheEntry,
+  type OutlineVirtualRowCacheEntry,
 } from "../../utils/outlineSlideSections";
 import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
@@ -116,6 +118,7 @@ type OutlineActiveItemSource = {
 
 type PendingDirectSlideClick = {
   listId: string;
+  fromListId?: string;
   slideIndex: number;
   wasVisible: boolean;
 };
@@ -321,22 +324,12 @@ const OutlineItemSlidesScroller = ({
     for (const item of outlineItems) map.set(item.listId, item);
     return map;
   }, [outlineItems]);
-  const sectionCacheRef = useRef<
-    Map<
-      string,
-      {
-        item: (typeof outlineItems)[number];
-        source: OutlineActiveItemSource | undefined;
-        section: OutlineSlideSection;
-      }
-    >
-  >(new Map());
-  const rowCacheRef = useRef<
-    Map<
-      string,
-      { section: OutlineSlideSection; cols: number; rows: ReturnType<typeof buildOutlineVirtualRows> }
-    >
-  >(new Map());
+  const sectionCacheRef = useRef<Map<string, OutlineSlideSectionCacheEntry>>(
+    new Map(),
+  );
+  const rowCacheRef = useRef<Map<string, OutlineVirtualRowCacheEntry>>(
+    new Map(),
+  );
   // Prefetch follows where the operator is browsing, not only the selected item.
   const [browsePinListId, setBrowsePinListId] = useState(
     () => selectedItemListId || activeItemListId,
@@ -395,6 +388,16 @@ const OutlineItemSlidesScroller = ({
   const focalPointRestoreTimerRef = useRef<number | null>(null);
   const pendingDirectSlideClickRef =
     useRef<PendingDirectSlideClick | null>(null);
+  if (
+    pendingDirectSlideClickRef.current &&
+    selectedItemListId &&
+    pendingDirectSlideClickRef.current.listId !== selectedItemListId &&
+    pendingDirectSlideClickRef.current.fromListId !== selectedItemListId
+  ) {
+    // A newer list selection supersedes a direct inactive-item click that has
+    // not finished its active-item transition yet.
+    pendingDirectSlideClickRef.current = null;
+  }
 
   const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
   const tileRowHeightRef = useRef(tileRowHeight);
@@ -1191,6 +1194,7 @@ const OutlineItemSlidesScroller = ({
         );
         pendingDirectSlideClickRef.current = {
           listId: section.listId,
+          fromListId: activeItemListId,
           slideIndex: index,
           wasVisible:
             parent != null &&
@@ -1219,6 +1223,7 @@ const OutlineItemSlidesScroller = ({
     },
     [
       activateItem,
+      activeItemListId,
       onSlideGridClick,
       scrollRef,
       selectSlide,

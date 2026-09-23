@@ -48,8 +48,14 @@ const Item = () => {
   const { mode } = usePresentationControllerMode();
   const activeItemRef = useRef({ id: activeItemId, listId: activeListId });
   activeItemRef.current = { id: activeItemId, listId: activeListId };
+  const loadSequenceRef = useRef(0);
 
   useEffect(() => {
+    const loadSequence = ++loadSequenceRef.current;
+    let cancelled = false;
+    const isCurrentLoad = () =>
+      !cancelled && loadSequence === loadSequenceRef.current;
+
     const selectItem = async () => {
       if (!db || !cloud) return;
       // Outline continuous scroll already applied this item via Redux before
@@ -60,14 +66,17 @@ const Item = () => {
         activeItemRef.current.listId === decodedListId &&
         decodedItemId
       ) {
+        if (!isCurrentLoad()) return;
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
         dispatch(setItemIsLoading(false));
         return;
       }
       try {
+        setStatus("loading");
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
+        if (!isCurrentLoad()) return;
         if (!response) return setStatus("error");
         const itemWithSections: DBItem =
           response.type === "free" &&
@@ -78,6 +87,7 @@ const Item = () => {
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
       } catch (e: unknown) {
+        if (!isCurrentLoad()) return;
         // First access of the service-time item: no DB record yet — create it.
         // Matches the pattern in createNewItemInDb: catch any error, fire-and-forget
         // the put, and immediately use the in-memory item. No await, no status check.
@@ -97,6 +107,7 @@ const Item = () => {
               console.error(putErr);
             }
           }
+          if (!isCurrentLoad()) return;
           dispatch(setActiveItem({ ...newItem, listId: decodedListId }));
           dispatch(setActiveItemInList(decodedListId));
           setStatus("success");
@@ -106,10 +117,16 @@ const Item = () => {
         console.error(e);
         setStatus("error");
       } finally {
-        dispatch(setItemIsLoading(false));
+        if (isCurrentLoad()) {
+          dispatch(setItemIsLoading(false));
+        }
       }
     };
     selectItem();
+
+    return () => {
+      cancelled = true;
+    };
   }, [cloud, db, decodedItemId, decodedListId, dispatch]);
 
   if (status === "error")

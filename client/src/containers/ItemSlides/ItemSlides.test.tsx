@@ -541,6 +541,28 @@ describe("ItemSlides", () => {
     );
   });
 
+  it("does not render the previous item's debounced slides after an identity change", () => {
+    const view = renderAncestorItemSlides();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "list-2",
+      name: "Next Song",
+      slides: [{ ...baseSlides[0], id: "next-slide", name: "Next slide" }],
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Next slide" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Section 1" })).not.toBeInTheDocument();
+  });
+
   const dropMediaAt = async (
     index: number,
     mediaIds: string[],

@@ -64,15 +64,18 @@ jest.mock("./ItemSlide", () => ({
     index,
     slide,
     slideDomId,
+    canEdit,
     onSlideGridClick,
   }: {
     index: number;
     slide: { name: string };
     slideDomId?: string;
+    canEdit?: boolean;
     onSlideGridClick: (e: React.MouseEvent, index: number) => void;
   }) => (
     <button
       id={slideDomId}
+      data-testid={canEdit ? `active-outline-slide-${slide.name}` : undefined}
       type="button"
       onClick={(event) => onSlideGridClick(event, index)}
     >
@@ -340,6 +343,7 @@ describe("OutlineItemSlidesScroller", () => {
         ]),
       ],
       ["song-2", songDoc("song-2", [slide("s2a", "Song 2 A")])],
+      ["song-3", songDoc("song-3", [slide("s3a", "Song 3 A")])],
     ]);
     mockUseOutlineItemDocs.mockImplementation(() => mockDocsById);
     mockState = {
@@ -373,6 +377,7 @@ describe("OutlineItemSlidesScroller", () => {
               song("song-1", "l-1", "Song One"),
               { _id: "h1", listId: "h-1", name: "Section", type: "heading" },
               song("song-2", "l-2", "Song Two"),
+              song("song-3", "l-3", "Song Three"),
             ],
           },
         },
@@ -398,6 +403,68 @@ describe("OutlineItemSlidesScroller", () => {
       borderWidth: "2px",
     });
     expect(screen.queryByText("Section")).not.toBeInTheDocument();
+  });
+
+  it("switches the active rendered section across sequential item changes", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+
+    const renderCurrentItem = (id: string, listId: string, name: string, slideId: string, slideName: string) => {
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        _id: id,
+        listId,
+        name,
+        arrangements: [
+          {
+            ...mockState.undoable.present.item.arrangements[0],
+            slides: [slide(slideId, slideName)],
+          },
+        ],
+      };
+      mockState.undoable.present.itemList.selectedItemListId = listId;
+      rerender(outlineScrollerUi(scrollRef));
+    };
+
+    expect(screen.getByTestId("active-outline-slide-Song 1 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+
+    renderCurrentItem("song-2", "l-2", "Song Two", "s2a", "Song 2 A");
+    expect(screen.getByTestId("active-outline-slide-Song 2 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
+
+    renderCurrentItem("song-3", "l-3", "Song Three", "s3a", "Song 3 A");
+    expect(screen.getByTestId("active-outline-slide-Song 3 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+  });
+
+  it("does not let selection intent replace the active section before the item loads", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(screen.getByTestId("active-outline-slide-Song 1 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+      name: "Song Two",
+      arrangements: [
+        {
+          ...mockState.undoable.present.item.arrangements[0],
+          slides: [slide("s2a", "Song 2 A")],
+        },
+      ],
+    };
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(screen.getByTestId("active-outline-slide-Song 2 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
   });
 
   it("does not change item or slide selection on manual scroll", () => {

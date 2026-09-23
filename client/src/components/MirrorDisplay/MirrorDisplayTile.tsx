@@ -57,17 +57,22 @@ const MirrorDisplayTile = ({
   return (
     <div className={cn("flex min-h-10 w-full flex-wrap items-center gap-2", className)}>
       {followingId && (
-        <p
+        <div
           className={cn(
             "w-full text-xs",
             followingSourceAvailable ? "text-gray-300" : "text-amber-300",
           )}
           data-testid={`mirror-status-${outputId}`}
         >
-          {followingSourceAvailable && followingSource
-            ? `Mirroring ${followingSource.name}`
-            : "Mirror source unavailable"}
-        </p>
+          {followingSourceAvailable && followingSource ? (
+            `Mirroring ${followingSource.name}`
+          ) : (
+            <>
+              <p>Mirror source unavailable</p>
+              <p>{followingSource?.name ?? followingId}</p>
+            </>
+          )}
+        </div>
       )}
       {sources.map((source) => (
         <Button

@@ -266,12 +266,14 @@ const DisplayBoxTransitionStage = ({
     b: null,
   });
   const timelineRef = useRef<GSAPTimeline | null>(null);
+  const timelineGenerationRef = useRef<number | null>(null);
   const mediaOwnersRef = useRef(
     new Map<string, { generation: number; sourceIdentity: string }>(),
   );
   useLayoutEffect(() => () => {
     timelineRef.current?.kill();
     timelineRef.current = null;
+    timelineGenerationRef.current = null;
   }, []);
   const preparedMediaRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const preparedMediaStatusRef = useRef<Record<string, MediaSurfaceStatus>>({});
@@ -317,7 +319,7 @@ const DisplayBoxTransitionStage = ({
 
   const poolEnabled = Boolean(
     (mediaPlayback?.playbackRole === "output" ||
-      (mediaPlayback?.playbackRole === "preview" && mediaPlayback.isEditor)) &&
+      mediaPlayback?.playbackRole === "preview") &&
       (mediaPlayback.playbackRole === "preview" || mediaPlayback.outputId) &&
       mediaPlayback.showBackground !== false &&
       window.electronAPI,
@@ -441,7 +443,9 @@ const DisplayBoxTransitionStage = ({
   const lifecycleRoute = mediaPlayback?.windowRole ?? "display-window";
   const lifecycleRole = mediaPlayback?.isEditor
     ? "editor-preview"
-    : "projector-output";
+    : mediaPlayback?.playbackRole === "preview"
+      ? "projector-preview"
+      : "projector-output";
   const lifecycleOutlineId = mediaPlayback?.preparedMediaOutlineId;
 
   useLayoutEffect(() => {
@@ -577,6 +581,17 @@ const DisplayBoxTransitionStage = ({
     // The latest operator request must take over immediately. Preserve one
     // coherent baseline, kill the obsolete fade, and prepare the new request
     // directly instead of making it wait behind a queued destination.
+    if (isNewRequest) {
+      const activeTimeline = timelineRef.current;
+      if (activeTimeline) {
+        activeTimeline.kill();
+      }
+      if (timelineRef.current === activeTimeline && activeTimeline) {
+        timelineRef.current = null;
+        timelineGenerationRef.current = null;
+      }
+    }
+
     if (isNewRequest && state.phase === "animating") {
       const activeLaneId = state.activeLaneId;
       const incomingLaneId = otherLane(activeLaneId);
@@ -622,8 +637,6 @@ const DisplayBoxTransitionStage = ({
         state.lanes[baselineLaneId] ?? state.lanes[activeLaneId];
 
       if (baselineSnapshot) {
-        timelineRef.current?.kill();
-        timelineRef.current = null;
         const baselineMediaKey = getLanePreparedMediaKey(
           baselineSnapshot.backgroundMedia,
         );
@@ -1152,8 +1165,23 @@ const DisplayBoxTransitionStage = ({
     const incomingKey = incomingSnapshot.key;
     const timing = getDisplayTransitionTiming(transitionDurationMs);
     const completeTransition = () => {
-        if (animationGeneration !== requestGenerationRef.current) return;
+        if (animationGeneration !== requestGenerationRef.current) {
+          if (timelineGenerationRef.current === animationGeneration) {
+            timelineRef.current = null;
+            timelineGenerationRef.current = null;
+          }
+          return;
+        }
+        // Zero-duration cuts intentionally have no timeline; otherwise the
+        // active timeline must belong to this request generation.
+        if (
+          timelineRef.current !== null &&
+          timelineGenerationRef.current !== animationGeneration
+        ) {
+          return;
+        }
         timelineRef.current = null;
+        timelineGenerationRef.current = null;
         logVideoCue("transition.complete", {
           outputId: mediaPlaybackRef.current?.outputId,
           windowRole: mediaPlaybackRef.current?.windowRole,
@@ -1328,6 +1356,7 @@ const DisplayBoxTransitionStage = ({
 
     const timeline = gsap.timeline({ onComplete: completeTransition });
     timelineRef.current = timeline;
+    timelineGenerationRef.current = animationGeneration;
     timeline.addLabel("crossfade", 0);
 
     if (animateMedia && outgoingMedia && incomingMedia) {

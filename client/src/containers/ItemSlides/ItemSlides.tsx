@@ -291,6 +291,7 @@ const ItemSlidesContent = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
+  const itemIdentity = `${_id}\u0000${listId ?? ""}`;
 
   const renameFreeSection = useCallback(
     (sectionNum: number, name: string) => {
@@ -640,12 +641,31 @@ const ItemSlidesContent = () => {
   const [dragPreviewSlides, setDragPreviewSlides] = useState<
     ItemSlideType[] | null
   >(null);
+  const debouncedSlidesItemIdentityRef = useRef(itemIdentity);
+  const dragPreviewItemIdentityRef = useRef(itemIdentity);
 
   const hasSlides = slides.length > 0;
+  const debouncedSlidesForCurrentItem =
+    debouncedSlidesItemIdentityRef.current === itemIdentity
+      ? debouncedSlides
+      : [];
   /** Avoid one paint with an empty list after load: debounced state clears while loading and syncs in an effect. */
   const slidesToRender =
-    hasSlides && debouncedSlides.length === 0 ? slides : debouncedSlides;
-  const renderedSlides = dragPreviewSlides ?? slidesToRender;
+    hasSlides && debouncedSlidesForCurrentItem.length === 0
+      ? slides
+      : debouncedSlidesForCurrentItem;
+  const renderedSlides =
+    (dragPreviewItemIdentityRef.current === itemIdentity
+      ? dragPreviewSlides
+      : null) ?? slidesToRender;
+
+  useEffect(() => {
+    if (debouncedSlidesItemIdentityRef.current === itemIdentity) return;
+    debouncedSlidesItemIdentityRef.current = itemIdentity;
+    dragPreviewItemIdentityRef.current = itemIdentity;
+    setDebouncedSlides(slides);
+    setDragPreviewSlides(null);
+  }, [itemIdentity, slides]);
 
   useEffect(() => {
     if (isCollapsedContinuous) {

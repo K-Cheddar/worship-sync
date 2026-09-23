@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import type { RequestOptions } from "node:http";
+import type { LookupFunction } from "node:net";
 import {
   isProhibitedIpAddress,
   safeHttpGet,
@@ -9,8 +11,10 @@ const publicLookup = async () => [{ address: "93.184.216.34", family: 4 as const
 
 const makeRequestFactory = (responses: Array<{ statusCode: number; location?: string }>) => {
   const urls: string[] = [];
-  const requestFactory = jest.fn((url: string, _options, callback) => {
+  const lookups: LookupFunction[] = [];
+  const requestFactory = jest.fn((url: string, options: RequestOptions, callback) => {
     urls.push(url);
+    if (options.lookup) lookups.push(options.lookup);
     const request = new EventEmitter() as EventEmitter & {
       setTimeout: (timeout: number, callback: () => void) => void;
       destroy: (error?: Error) => void;
@@ -33,7 +37,7 @@ const makeRequestFactory = (responses: Array<{ statusCode: number; location?: st
     });
     return request;
   });
-  return { requestFactory, urls };
+  return { requestFactory, urls, lookups };
 };
 
 describe("safe Electron media HTTP", () => {
@@ -53,6 +57,27 @@ describe("safe Electron media HTTP", () => {
       "https://cdn.example.com/start.mp4",
       "https://cdn.example.com/final.mp4",
     ]);
+  });
+
+  it("pins both Node lookup callback shapes to the validated address", async () => {
+    const { requestFactory, lookups } = makeRequestFactory([{ statusCode: 200 }]);
+
+    await safeHttpGet("https://cdn.example.com/video.mp4", {
+      lookupAll: publicLookup,
+      requestFactory,
+    });
+
+    const lookup = lookups[0];
+    expect(lookup).toBeDefined();
+    const allCallback = jest.fn();
+    lookup("cdn.example.com", { all: true, verbatim: true }, allCallback);
+    expect(allCallback).toHaveBeenCalledWith(null, [
+      { address: "93.184.216.34", family: 4 },
+    ]);
+
+    const singleCallback = jest.fn();
+    lookup("cdn.example.com", { all: false, verbatim: true }, singleCallback);
+    expect(singleCallback).toHaveBeenCalledWith(null, "93.184.216.34", 4);
   });
 
   it.each([
