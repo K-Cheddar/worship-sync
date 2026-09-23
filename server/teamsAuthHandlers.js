@@ -43,6 +43,15 @@ import {
   resolveMemberAddress,
 } from "./notificationRecipients.js";
 import { normalizeUsPhoneNumber } from "./phoneNumber.js";
+import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
+import { resolveSmsMemberEligibility } from "./smsEligibility.js";
+import { buildTeamIntakeSms } from "./smsMessage.js";
+import {
+  getSmsProviderForConfig,
+} from "./smsProvider.js";
+import {
+  normalizeSmsDeliveryStatus,
+} from "./smsDeliveryAttempts.js";
 import {
   createTeamIntakeRecipientToken,
   decryptTeamIntakeRecipientToken,
@@ -141,6 +150,8 @@ export const createTeamsAuthHandlers = ({
   updateDocMapKeys,
   getUserByUid,
   getChurchById,
+  getSmsConsentForPhone = async () => null,
+  smsProviderFactory = getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail,
   emailDeliveryConfigured = false,
@@ -2746,6 +2757,55 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const sanitizeSmsDeliveryAttemptForAdmin = (attempt) => {
+    if (!attempt) return null;
+    const {
+      phoneNumberSnapshot,
+      providerMessageId,
+      ...safeAttempt
+    } = attempt;
+    return safeAttempt;
+  };
+
+  const buildSmsEligibilityByMemberId = async (members) => {
+    const phoneNumbers = [
+      ...new Set(
+        members
+          .map((member) => {
+            try {
+              return normalizeUsPhoneNumber(member.phoneNumber);
+            } catch {
+              return "";
+            }
+          })
+          .filter(Boolean),
+      ),
+    ];
+    const consentByPhone = new Map(
+      await Promise.all(
+        phoneNumbers.map(async (phoneNumber) => [
+          phoneNumber,
+          await getSmsConsentForPhone(phoneNumber),
+        ]),
+      ),
+    );
+    return Object.fromEntries(
+      members.map((member) => {
+        let phoneNumber = "";
+        try {
+          phoneNumber = normalizeUsPhoneNumber(member.phoneNumber);
+        } catch {
+          // The roster write path normally prevents this; invalid legacy data
+          // is surfaced as no mobile rather than treated as eligible.
+        }
+        return [
+          member.memberId,
+          resolveSmsMemberEligibility(member, consentByPhone.get(phoneNumber)),
+        ];
+      }),
+    );
+  };
+
   // How far around "today" the bootstrap ships fully-hydrated schedules when the
   // client opts into summaries. Anything outside the window arrives as a summary
   // and is hydrated on demand. One month back keeps the just-finished month's
@@ -2883,6 +2943,7 @@ export const createTeamsAuthHandlers = ({
       rawIntakeForms,
       intakeSubmissions,
       intakeRecipients,
+      smsDeliveryAttempts,
     ] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
@@ -2938,7 +2999,14 @@ export const createTeamsAuthHandlers = ({
         churchId,
         { truncatedCollections },
       ),
+      listTeamCollectionForChurch(
+        COLLECTIONS.smsDeliveryAttempts,
+        "attemptId",
+        churchId,
+        { truncatedCollections },
+      ),
     ]);
+    const smsEligibilityByMemberId = await buildSmsEligibilityByMemberId(members);
     const submissionCountByForm = new Map();
     intakeSubmissions.forEach((submission) => {
       submissionCountByForm.set(
@@ -2986,6 +3054,7 @@ export const createTeamsAuthHandlers = ({
 
     return {
       members,
+      smsEligibilityByMemberId,
       positions: sortPositionsByOrder(positions),
       teams,
       teamRoles,
@@ -3003,6 +3072,9 @@ export const createTeamsAuthHandlers = ({
       intakeForms,
       intakeSubmissions,
       intakeRecipients: intakeRecipients.map(sanitizeTeamIntakeRecipientForAdmin),
+      smsDeliveryAttempts: smsDeliveryAttempts
+        .map(sanitizeSmsDeliveryAttemptForAdmin)
+        .filter(Boolean),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -4881,6 +4953,49 @@ export const createTeamsAuthHandlers = ({
 
   const buildTeamIntakeRecipientPublicUrl = (token) =>
     `${APP_BASE_URL}/a/${encodeURIComponent(String(token || "").trim())}`;
+
+  const ensureTeamIntakeRecipientToken = async (recipient, updatedByUid) => {
+    const updatedAt = nowIso();
+    const existingToken = decryptTeamIntakeRecipientToken(
+      recipient.recipientTokenCiphertext,
+      teamIntakeRecipientTokenSecret,
+    );
+    const canReuseToken = Boolean(
+      existingToken &&
+        looksLikeTeamIntakeRecipientToken(existingToken) &&
+        hashTeamIntakeRecipientToken(
+          existingToken,
+          teamIntakeRecipientTokenSecret,
+        ) === recipient.recipientTokenHash,
+    );
+    const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+    const update = {
+      ...(canReuseToken
+        ? {}
+        : {
+            recipientTokenHash: hashTeamIntakeRecipientToken(
+              token,
+              teamIntakeRecipientTokenSecret,
+            ),
+            recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
+              token,
+              teamIntakeRecipientTokenSecret,
+            ),
+            tokenIssuedAt: updatedAt,
+          }),
+      updatedAt,
+      ...(updatedByUid ? { updatedByUid } : {}),
+    };
+    if (Object.keys(update).length > 2 || !canReuseToken) {
+      await setDoc(
+        COLLECTIONS.teamIntakeRecipients,
+        recipient.recipientId,
+        update,
+        { merge: true },
+      );
+    }
+    return { token, recipient: { ...recipient, ...update } };
+  };
 
   const getTeamIntakeRecipientContext = async (
     recipient,
@@ -8249,51 +8364,30 @@ export const createTeamsAuthHandlers = ({
         const { form, member } = await getTeamIntakeRecipientContext(recipient, {
           requireTokenHash: false,
         });
-        const copiedAt = nowIso();
         const markCopied = req.body?.markCopied === true;
-        const existingToken = decryptTeamIntakeRecipientToken(
-          recipient.recipientTokenCiphertext,
-          teamIntakeRecipientTokenSecret,
+        const copiedAt = nowIso();
+        const ensured = await ensureTeamIntakeRecipientToken(
+          recipient,
+          admin.user.uid,
         );
-        const canReuseToken = Boolean(
-          existingToken &&
-            looksLikeTeamIntakeRecipientToken(existingToken) &&
-            hashTeamIntakeRecipientToken(
-              existingToken,
-              teamIntakeRecipientTokenSecret,
-            ) === recipient.recipientTokenHash,
-        );
-        const token = canReuseToken
-          ? existingToken
-          : createTeamIntakeRecipientToken();
         const update = {
-          ...(canReuseToken
-            ? {}
-            : {
-                recipientTokenHash: hashTeamIntakeRecipientToken(
-                  token,
-                  teamIntakeRecipientTokenSecret,
-                ),
-                recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
-                  token,
-                  teamIntakeRecipientTokenSecret,
-                ),
-                tokenIssuedAt: copiedAt,
-              }),
           ...(markCopied
             ? {
-                linkCopiedAt: copiedAt,
+              linkCopiedAt: copiedAt,
                 linkCopiedByUid: admin.user.uid,
               }
             : {}),
           updatedAt: copiedAt,
           updatedByUid: admin.user.uid,
         };
-        await setDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId, update, {
-          merge: true,
-        });
+        await setDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          recipient.recipientId,
+          update,
+          { merge: true },
+        );
         const nextRecipient = {
-          ...recipient,
+          ...ensured.recipient,
           ...update,
         };
         if (markCopied) {
@@ -8309,7 +8403,7 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           recipient: sanitizeTeamIntakeRecipientForAdmin(nextRecipient),
-          publicUrl: buildTeamIntakeRecipientPublicUrl(token),
+          publicUrl: buildTeamIntakeRecipientPublicUrl(ensured.token),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -8317,6 +8411,140 @@ export const createTeamsAuthHandlers = ({
           error,
           "Could not create the individual intake link.",
         );
+      }
+    },
+
+    async sendTeamIntakeRecipientSms(req, res) {
+      try {
+        await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        enforceRateLimit({
+          scope: "team-intake-sms-send",
+          key: `${req.params.churchId}:${admin.user.uid}:${req.params.recipientId}`,
+          limit: 10,
+          windowMs: 10 * 60 * 1000,
+          blockMs: 10 * 60 * 1000,
+        });
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const { form, member } = await getTeamIntakeRecipientContext(recipient);
+        const preliminaryEligibility = resolveSmsMemberEligibility(member, null);
+        const consent = preliminaryEligibility.phoneNumber
+          ? await getSmsConsentForPhone(preliminaryEligibility.phoneNumber)
+          : null;
+        const eligibility = resolveSmsMemberEligibility(member, consent);
+        if (!eligibility.eligible) {
+          const messages = {
+            no_mobile: "This member does not have a valid mobile number.",
+            consent_needed: "SMS consent is needed for this phone number.",
+            opted_out: "This phone number has opted out of SMS.",
+          };
+          throw httpError(400, messages[eligibility.status]);
+        }
+
+        const config = normalizeChurchMessagingConfig(
+          await getDoc(COLLECTIONS.churchMessagingConfigs, req.params.churchId),
+          req.params.churchId,
+        );
+        if (!isChurchMessagingReady(config)) {
+          throw httpError(503, "Church SMS messaging is not configured and enabled.");
+        }
+
+        const ensured = await ensureTeamIntakeRecipientToken(
+          recipient,
+          admin.user.uid,
+        );
+        const publicUrl = buildTeamIntakeRecipientPublicUrl(ensured.token);
+        const message = buildTeamIntakeSms({
+          churchName: (await getChurchById(req.params.churchId))?.name,
+          formName: form.name,
+          publicUrl,
+        });
+        const attemptId = createId("smsAttempt");
+        const createdAt = nowIso();
+        const pendingAttempt = {
+          attemptId,
+          churchId: req.params.churchId,
+          recipientType: "team_intake",
+          recipientId: recipient.recipientId,
+          memberId: member.memberId,
+          phoneNumberSnapshot: eligibility.phoneNumber,
+          provider: config.provider,
+          purpose: "initial",
+          status: "pending",
+          createdAt,
+          updatedAt: createdAt,
+        };
+        await setDoc(
+          COLLECTIONS.smsDeliveryAttempts,
+          attemptId,
+          pendingAttempt,
+          { merge: false },
+        );
+
+        try {
+          const provider = smsProviderFactory({
+            config,
+            churchId: req.params.churchId,
+          });
+          const result = await provider.sendMessage({
+            to: eligibility.phoneNumber,
+            body: message.body,
+            statusCallbackUrl:
+              process.env.TWILIO_STATUS_CALLBACK_URL ||
+              `${APP_BASE_URL}/api/webhooks/twilio/sms-status`,
+          });
+          const providerMessageId = String(result?.providerMessageId || "").trim();
+          if (!providerMessageId) {
+            throw new Error("The SMS provider did not return a message ID.");
+          }
+          const savedAttempt = {
+            ...pendingAttempt,
+            providerMessageId,
+            status: normalizeSmsDeliveryStatus(result.status),
+            updatedAt: nowIso(),
+          };
+          await setDoc(
+            COLLECTIONS.smsDeliveryAttempts,
+            attemptId,
+            {
+              providerMessageId,
+              status: savedAttempt.status,
+              updatedAt: savedAttempt.updatedAt,
+            },
+            { merge: true },
+          );
+          return res.json({
+            success: true,
+            recipient: sanitizeTeamIntakeRecipientForAdmin(ensured.recipient),
+            attempt: sanitizeSmsDeliveryAttemptForAdmin(savedAttempt),
+            message: {
+              characterCount: message.characterCount,
+              segmentCount: message.segmentCount,
+            },
+          });
+        } catch (error) {
+          const failedAt = nowIso();
+          await setDoc(
+            COLLECTIONS.smsDeliveryAttempts,
+            attemptId,
+            {
+              status: "failed",
+              ...(error?.code ? { failureCode: String(error.code).slice(0, 80) } : {}),
+              failureMessage: String(error?.message || "SMS provider send failed").slice(0, 500),
+              updatedAt: failedAt,
+            },
+            { merge: true },
+          );
+          throw httpError(502, "The SMS could not be sent. Try again.");
+        }
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not send the individual intake SMS.");
       }
     },
 

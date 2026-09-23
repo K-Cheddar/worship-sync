@@ -94,6 +94,12 @@ import {
   normalizeCurrentServiceWorkspacePatch,
 } from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
+import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
+import {
+  getSmsProviderForConfig,
+  normalizeTwilioStatus,
+  validateTwilioWebhookSignature,
+} from "./server/smsProvider.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -181,6 +187,8 @@ export const COLLECTIONS = {
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
   smsConsents: "smsConsents",
+  churchMessagingConfigs: "churchMessagingConfigs",
+  smsDeliveryAttempts: "smsDeliveryAttempts",
   emailCodeChallenges: "emailCodeChallenges",
   humanApiCredentials: "humanApiCredentials",
 };
@@ -586,6 +594,8 @@ const memoryState = {
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
   smsConsents: new Map(),
+  churchMessagingConfigs: new Map(),
+  smsDeliveryAttempts: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
 };
@@ -652,6 +662,8 @@ const collectionMap = {
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
   [COLLECTIONS.smsConsents]: memoryState.smsConsents,
+  [COLLECTIONS.churchMessagingConfigs]: memoryState.churchMessagingConfigs,
+  [COLLECTIONS.smsDeliveryAttempts]: memoryState.smsDeliveryAttempts,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
   [COLLECTIONS.humanApiCredentials]: memoryState.humanApiCredentials,
 };
@@ -1546,6 +1558,9 @@ const upsertSmsConsent = async (phoneNumber) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const existing = snapshot.exists ? snapshot.data() : null;
+      if (existing?.status === "opted_out" || existing?.optedOutAt) {
+        throw httpError(400, "This phone number has opted out of SMS.");
+      }
       if (existing?.status === "opted_in") {
         // Anonymous resubmission may rotate the challenge, but not the verified snapshot.
         transaction.set(consentRef, challengeFields, { merge: true });
@@ -1571,6 +1586,9 @@ const upsertSmsConsent = async (phoneNumber) => {
   }
 
   const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+  if (existing?.status === "opted_out" || existing?.optedOutAt) {
+    throw httpError(400, "This phone number has opted out of SMS.");
+  }
   if (existing?.status === "opted_in") {
     // Keep the in-memory fallback aligned with the transactional path above.
     await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
@@ -4643,6 +4661,36 @@ export const getSmsConsentForServerTests = async (phoneNumber) => {
   );
 };
 
+export const seedSmsConsentForServerTests = async ({
+  phoneNumber,
+  status = "opted_in",
+  optedOutAt = null,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedSmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedSmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedPhone = String(phoneNumber || "").trim();
+  const consentId = smsConsentIdForPhone(normalizedPhone);
+  const record = {
+    consentId,
+    phoneNumber: normalizedPhone,
+    phoneHash: hashValue(normalizedPhone),
+    status,
+    ...(optedOutAt ? { optedOutAt } : {}),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  await setDoc(COLLECTIONS.smsConsents, consentId, record, { merge: false });
+  return record;
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -5157,6 +5205,12 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   // Assignment notifications need the same primitives the intake digest uses.
   getUserByUid,
   getChurchById,
+  getSmsConsentForPhone: (phoneNumber) =>
+    getDoc(
+      COLLECTIONS.smsConsents,
+      smsConsentIdForPhone(String(phoneNumber || "").trim()),
+    ),
+  smsProviderFactory: getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail: resendServicePlanFromEmail,
   emailDeliveryConfigured: Boolean(resendClient),
@@ -5169,7 +5223,22 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   logAuthEvent,
 });
 
+const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
+  queryDocs,
+  setDoc,
+  nowIso,
+  validateSignature: validateTwilioWebhookSignature,
+  normalizeStatus: normalizeTwilioStatus,
+  getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
+  getCallbackUrl: (req) =>
+    String(
+      process.env.TWILIO_STATUS_CALLBACK_URL ||
+        `${req.protocol}://${req.get("host")}${req.originalUrl}`,
+    ).trim(),
+});
+
 export const authHandlers = {
+  handleSmsStatusWebhook: smsStatusWebhookHandler,
   async getAuthMe(req, res) {
     try {
       const humanBootstrap = await resolveHumanBootstrap(req);

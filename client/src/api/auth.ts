@@ -57,6 +57,7 @@ import type {
   TeamIntakeForm,
   TeamIntakePreview,
   TeamIntakeRecipient,
+  SmsDeliveryAttempt,
   TeamIntakeSubmission,
   TeamRosterMember,
   TeamSchedule,
@@ -1257,6 +1258,20 @@ export const revokeTeamIntakeRecipient = async (
     `api/churches/${churchId}/team-intake/recipients/${recipientId}/revoke`,
     { method: "POST", body: JSON.stringify({}) },
   );
+
+export const sendTeamIntakeRecipientSms = async (
+  churchId: string,
+  recipientId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    recipient: TeamIntakeRecipient;
+    attempt: SmsDeliveryAttempt;
+    message: { characterCount: number; segmentCount: number };
+  }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 
 export const applyTeamIntakeSubmission = async (
   churchId: string,

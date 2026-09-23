@@ -11,6 +11,7 @@ export const teamsDataKeys: TeamsDataKey[] = [
   "intakeForms",
   "intakeSubmissions",
   "intakeRecipients",
+  "smsDeliveryAttempts",
 ];
 
 export const emptyDuplicateFirstNames = new Set<string>();
@@ -27,4 +28,6 @@ export const emptyData: TeamsData = {
   intakeForms: [],
   intakeSubmissions: [],
   intakeRecipients: [],
+  smsEligibilityByMemberId: {},
+  smsDeliveryAttempts: [],
 };

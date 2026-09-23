@@ -28,8 +28,14 @@ const {
   getDoc,
   seedActiveHumanBearerForServerTests,
   seedChurchServiceTimesForServerTests,
+  seedSmsConsentForServerTests,
+  queryDocs,
   setDoc,
 } = await import("../authService.js");
+import {
+  createFakeSmsProvider,
+  setSmsProviderForServerTests,
+} from "./smsProvider.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -8033,4 +8039,199 @@ test("individual intake recipient creation validates the full set before writing
       .length,
     0,
   );
+});
+
+test("individual intake SMS creates auditable attempts, retries preserve history, and bootstrap exposes derived state", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("individual_intake_sms");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Sms", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Sms;
+  const phoneNumber = "+19545551234";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_in" });
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    {
+      churchId: context.churchId,
+      provider: "twilio",
+      providerAccountId: "AC_test",
+      messagingServiceId: "MG_test",
+      registrationStatus: "approved",
+      enabled: true,
+    },
+    { merge: false },
+  );
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "October availability",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      teamIds: [teamId],
+      active: true,
+    },
+  });
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  const recipientId = created.payload.recipients[0].recipientId;
+  const fake = createFakeSmsProvider({
+    response: { providerMessageId: "SM_first", status: "queued" },
+  });
+  setSmsProviderForServerTests(fake);
+  try {
+    const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+      context,
+      params: { recipientId },
+    });
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    assert.equal(first.payload.attempt.status, "accepted");
+    assert.match(fake.calls[0].body, /\/a\/r_/);
+    assert.doesNotMatch(fake.calls[0].body, new RegExp(memberId));
+    assert.doesNotMatch(fake.calls[0].body, /19545551234/);
+    const firstAttempt = await getDoc(
+      "smsDeliveryAttempts",
+      first.payload.attempt.attemptId,
+    );
+    assert.equal(firstAttempt.phoneNumberSnapshot, phoneNumber);
+    assert.equal(firstAttempt.providerMessageId, "SM_first");
+
+    fake.sendMessage = async (input) => {
+      fake.calls.push(input);
+      return { providerMessageId: "SM_second", status: "sent" };
+    };
+    const second = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+      context,
+      params: { recipientId },
+    });
+    assert.equal(second.statusCode, 200);
+    assert.notEqual(second.payload.attempt.attemptId, first.payload.attempt.attemptId);
+    const attempts = await queryDocs("smsDeliveryAttempts", [
+      { field: "recipientId", value: recipientId },
+    ]);
+    assert.equal(attempts.length, 2);
+
+    const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+      context,
+    });
+    assert.equal(
+      bootstrap.payload.smsEligibilityByMemberId[memberId].status,
+      "enabled",
+    );
+    assert.equal(bootstrap.payload.smsDeliveryAttempts.length, 2);
+  } finally {
+    setSmsProviderForServerTests(null);
+  }
+});
+
+test("individual intake SMS records provider failure and blocks missing consent, disabled messaging, revoked requests, and closed forms", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("individual_intake_sms_guards");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Sms", lastName: "Guarded" }],
+  });
+  const memberId = memberIds.Sms;
+  const phoneNumber = "+19545551235";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Guarded availability",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      teamIds: [teamId],
+      active: true,
+    },
+  });
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId: form.payload.form.formId },
+    body: { memberIds: [memberId] },
+  });
+  const recipientId = created.payload.recipients[0].recipientId;
+  const noConsent = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+    context,
+    params: { recipientId },
+  });
+  assert.equal(noConsent.statusCode, 400);
+  assert.match(noConsent.payload.errorMessage, /consent/i);
+
+  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_in" });
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    {
+      churchId: context.churchId,
+      provider: "twilio",
+      registrationStatus: "approved",
+      enabled: true,
+    },
+    { merge: false },
+  );
+  const failingProvider = createFakeSmsProvider({
+    sendMessage: async () => {
+      const error = new Error("provider rejected message");
+      error.code = "30007";
+      throw error;
+    },
+  });
+  setSmsProviderForServerTests(failingProvider);
+  try {
+    const failed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+      context,
+      params: { recipientId },
+    });
+    assert.equal(failed.statusCode, 502);
+    const attempts = await queryDocs("smsDeliveryAttempts", [
+      { field: "recipientId", value: recipientId },
+    ]);
+    assert.equal(attempts.at(-1).status, "failed");
+    assert.equal(attempts.at(-1).failureCode, "30007");
+  } finally {
+    setSmsProviderForServerTests(null);
+  }
+
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    { enabled: false },
+    { merge: true },
+  );
+  const disabled = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+    context,
+    params: { recipientId },
+  });
+  assert.equal(disabled.statusCode, 503);
+
+  await setDoc(
+    "teamIntakeForms",
+    form.payload.form.formId,
+    { active: false },
+    { merge: true },
+  );
+  const closed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+    context,
+    params: { recipientId },
+  });
+  assert.equal(closed.statusCode, 400);
+  assert.match(closed.payload.errorMessage, /closed/i);
+
+  const revoked = await callHandler(authHandlers.revokeTeamIntakeRecipient, {
+    context,
+    params: { recipientId },
+  });
+  assert.equal(revoked.statusCode, 200);
+  const revokedSend = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+    context,
+    params: { recipientId },
+  });
+  assert.equal(revokedSend.statusCode, 404);
 });

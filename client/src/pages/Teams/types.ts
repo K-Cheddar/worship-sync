@@ -3,6 +3,8 @@ import type {
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
+  SmsDeliveryAttempt,
+  SmsMemberEligibility,
   TeamPosition,
   TeamQualificationArea,
   TeamQualificationLevel,
@@ -32,11 +34,13 @@ export type TeamsData = {
   intakeForms: TeamIntakeForm[];
   intakeSubmissions: TeamIntakeSubmission[];
   intakeRecipients: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
 };
 
 export type TeamsScheduleDrafts = Record<string, TeamSchedulePayload>;
 
-export type TeamsDataKey = Exclude<keyof TeamsData, "services">;
+export type TeamsDataKey = Exclude<keyof TeamsData, "services" | "smsEligibilityByMemberId">;
 
 export type TeamsTab =
   | "schedule"

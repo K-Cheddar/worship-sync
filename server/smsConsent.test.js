@@ -18,6 +18,7 @@ const {
   authHandlers,
   canSeedHumanBearerAuthForServerTests,
   getSmsConsentForServerTests,
+  seedSmsConsentForServerTests,
 } = await import("../authService.js");
 
 let sentCodes = new Map();
@@ -262,4 +263,27 @@ test("rate limits repeated SMS consent submissions by IP", async () => {
   );
   assert.equal(limited.statusCode, 429);
   assert.match(limited.payload?.errorMessage || "", /too many/i);
+});
+
+test("opted-out consent cannot be silently reactivated through the public form", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("SMS consent tests seed in-memory auth only.");
+    return;
+  }
+  const phoneNumber = "+19545551239";
+  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_out" });
+  const response = createRes();
+  await authHandlers.submitSmsConsent(
+    createReq({
+      body: { phoneNumber, consent: true },
+      ip: "sms-opted-out-ip",
+    }),
+    response,
+  );
+  assert.equal(response.statusCode, 400);
+  assert.match(response.payload.errorMessage, /opted out/i);
+  assert.equal(
+    (await getSmsConsentForServerTests(phoneNumber)).status,
+    "opted_out",
+  );
 });

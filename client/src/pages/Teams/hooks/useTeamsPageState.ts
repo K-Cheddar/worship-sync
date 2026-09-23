@@ -520,10 +520,10 @@ export const useTeamsPageState = () => {
   }, [refresh]);
 
   const upsertData = useCallback(
-    <K extends keyof TeamsData>(
+    <K extends TeamsDataKey>(
       key: K,
       idField: string,
-      item: TeamsData[K][number],
+      item: NonNullable<TeamsData[K]> extends Array<infer T> ? T : never,
       replaceId?: string,
     ) => {
       if (key === "schedules") {

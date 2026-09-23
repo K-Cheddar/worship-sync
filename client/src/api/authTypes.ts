@@ -555,6 +555,8 @@ export type TeamsBootstrap = {
   intakeForms?: TeamIntakeForm[];
   intakeSubmissions?: TeamIntakeSubmission[];
   intakeRecipients?: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
   /** True when any collection hit the server row cap, so this view is partial. */
   truncated?: boolean;
 };
@@ -629,6 +631,41 @@ export type TeamIntakeRecipient = {
   respondedAt?: string | null;
   submissionId?: string | null;
   revokedAt?: string | null;
+};
+
+export type SmsMemberEligibilityStatus =
+  | "no_mobile"
+  | "consent_needed"
+  | "enabled"
+  | "opted_out";
+
+export type SmsMemberEligibility = {
+  status: SmsMemberEligibilityStatus;
+  eligible: boolean;
+  phoneNumber?: string;
+};
+
+export type SmsDeliveryAttemptStatus =
+  | "pending"
+  | "accepted"
+  | "sent"
+  | "delivered"
+  | "undelivered"
+  | "failed";
+
+export type SmsDeliveryAttempt = {
+  attemptId: string;
+  churchId: string;
+  recipientType: "team_intake";
+  recipientId: string;
+  memberId: string;
+  provider: string;
+  purpose: "initial" | "reminder";
+  status: SmsDeliveryAttemptStatus;
+  failureCode?: string;
+  failureMessage?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TeamIntakeBlockoutRange = {

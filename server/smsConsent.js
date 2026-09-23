@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { createSmsProviderForConfig } from "./smsProvider.js";
 
 export const SMS_CONSENT_VERSION = "2026-09-20";
 
@@ -78,6 +79,8 @@ export const verifySmsConsentCode = ({ record, code, now = Date.now() }) => {
   if (
     !record ||
     !["pending", "opted_in"].includes(record.status) ||
+    record.status === "opted_out" ||
+    record.optedOutAt ||
     !record.verificationCodeHash
   ) {
     return { ok: false, reason: "unavailable" };
@@ -105,44 +108,19 @@ export const sendSmsConsentVerificationCode = async ({ phoneNumber, code }) => {
     return smsConsentSender({ phoneNumber, code });
   }
 
-  const accountSid = String(process.env.TWILIO_ACCOUNT_SID || "").trim();
-  const authToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
-  const from = String(
-    process.env.TWILIO_SMS_FROM_NUMBER ||
-      process.env.TWILIO_FROM_NUMBER ||
-      process.env.TWILIO_PHONE_NUMBER ||
-      "",
-  ).trim();
-  const messagingServiceSid = String(
-    process.env.TWILIO_MESSAGING_SERVICE_SID || "",
-  ).trim();
-  if (!accountSid || !authToken || (!from && !messagingServiceSid)) {
-    const error = new Error("SMS verification is not configured on this server.");
-    error.statusCode = 503;
-    throw error;
-  }
-
-  const response = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        To: phoneNumber,
-        ...(messagingServiceSid
-          ? { MessagingServiceSid: messagingServiceSid }
-          : { From: from }),
-        Body: `Your WorshipSync verification code is ${code}. It expires in 10 minutes.`,
-      }),
+  const provider = createSmsProviderForConfig({
+    config: {
+      provider: "twilio",
+      messagingServiceId: process.env.TWILIO_MESSAGING_SERVICE_SID,
+      senderPhoneNumber:
+        process.env.TWILIO_SMS_FROM_NUMBER ||
+        process.env.TWILIO_FROM_NUMBER ||
+        process.env.TWILIO_PHONE_NUMBER,
     },
-  );
-  if (!response.ok) {
-    const error = new Error("The verification message could not be sent.");
-    error.statusCode = response.status >= 500 ? 503 : 502;
-    throw error;
-  }
+  });
+  await provider.sendMessage({
+    to: phoneNumber,
+    body: `Your WorshipSync verification code is ${code}. It expires in 10 minutes.`,
+  });
   return { provider: "twilio", method: "sms_otp" };
 };

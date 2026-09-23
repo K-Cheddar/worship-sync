@@ -22,6 +22,7 @@ import {
   getTeamIntakeRecipientLink,
   getTeamIntakeFormLink,
   revokeTeamIntakeRecipient,
+  sendTeamIntakeRecipientSms,
   updateTeamIntakeForm,
   type TeamIntakeFormPayload,
 } from "../../../api/auth";
@@ -33,6 +34,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
   TeamService,
+  SmsDeliveryAttempt,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -83,6 +85,14 @@ type IntakeManagerProps = {
   forms: TeamIntakeForm[];
   submissions: TeamIntakeSubmission[];
   intakeRecipients: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<
+    string,
+    {
+      status: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
+      eligible: boolean;
+    }
+  >;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
   services: TeamService[];
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -93,6 +103,7 @@ type IntakeManagerProps = {
   onMemberSaved: (member: TeamRosterMember) => void;
   onTeamSaved: (team: TeamRecord) => void;
   onRecipientSaved: (recipient: TeamIntakeRecipient) => void;
+  onSmsDeliveryAttemptSaved?: (attempt: SmsDeliveryAttempt) => void;
 };
 
 const IntakeFormStatusBadge = ({ active }: { active: boolean }) => (
@@ -182,6 +193,8 @@ const IntakeManager = ({
   forms,
   submissions,
   intakeRecipients,
+  smsEligibilityByMemberId,
+  smsDeliveryAttempts = [],
   services,
   members,
   positions,
@@ -192,6 +205,7 @@ const IntakeManager = ({
   onMemberSaved,
   onTeamSaved,
   onRecipientSaved,
+  onSmsDeliveryAttemptSaved,
 }: IntakeManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -516,6 +530,17 @@ const IntakeManager = ({
     [selectedFormRecipients],
   );
 
+  const latestSmsAttemptByRecipientId = useMemo(() => {
+    const latest = new Map<string, SmsDeliveryAttempt>();
+    smsDeliveryAttempts.forEach((attempt) => {
+      const current = latest.get(attempt.recipientId);
+      if (!current || attempt.createdAt > current.createdAt) {
+        latest.set(attempt.recipientId, attempt);
+      }
+    });
+    return latest;
+  }, [smsDeliveryAttempts]);
+
   const applicableMembers = useMemo(() => {
     if (!activeSelectedForm) return [];
     const scope = new Set(activeSelectedForm.teamIds || []);
@@ -595,6 +620,24 @@ const IntakeManager = ({
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not prepare this individual link.");
+    } finally {
+      setRecipientActionKey("");
+    }
+  };
+
+  const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
+    if (!canEdit || recipientActionKey || recipient.revokedAt) return;
+    setRecipientActionKey(`${recipient.recipientId}:sms`);
+    try {
+      const response = await sendTeamIntakeRecipientSms(
+        churchId,
+        recipient.recipientId,
+      );
+      onRecipientSaved(response.recipient);
+      onSmsDeliveryAttemptSaved?.(response.attempt);
+      showToast("SMS sent.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this SMS.");
     } finally {
       setRecipientActionKey("");
     }
@@ -1388,6 +1431,31 @@ const IntakeManager = ({
           <div className="space-y-2">
             {filteredApplicableMembers.map((member) => {
               const recipient = recipientByMemberId.get(member.memberId);
+              const smsEligibility = smsEligibilityByMemberId?.[member.memberId] || {
+                status: member.phoneNumber ? "consent_needed" : "no_mobile",
+                eligible: false,
+              };
+              const latestSmsAttempt = recipient
+                ? latestSmsAttemptByRecipientId.get(recipient.recipientId)
+                : undefined;
+              const smsStatus = recipient?.respondedAt
+                ? "Responded"
+                : smsEligibility.status === "no_mobile"
+                  ? "No mobile number"
+                  : smsEligibility.status === "consent_needed"
+                    ? "SMS consent needed"
+                    : smsEligibility.status === "opted_out"
+                      ? "SMS opted out"
+                      : latestSmsAttempt?.status === "delivered"
+                        ? "Delivered"
+                        : latestSmsAttempt?.status === "failed" ||
+                            latestSmsAttempt?.status === "undelivered"
+                          ? "Failed"
+                          : latestSmsAttempt?.status === "pending"
+                            ? "Sending"
+                            : latestSmsAttempt
+                              ? "Sent"
+                              : "Ready to send";
               const status = recipient?.revokedAt
                 ? "Revoked"
                 : recipient?.respondedAt
@@ -1423,8 +1491,40 @@ const IntakeManager = ({
                     {recipient?.linkCopiedAt ? (
                       <span className="text-gray-500">Link requested</span>
                     ) : null}
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5",
+                        smsStatus === "Delivered" || smsStatus === "Responded"
+                          ? "border-emerald-500/40 text-emerald-200"
+                          : smsStatus === "Failed" ||
+                              smsStatus === "SMS opted out"
+                            ? "border-red-500/40 text-red-200"
+                            : smsStatus === "Ready to send"
+                              ? "border-sky-500/40 text-sky-200"
+                              : "border-gray-600 text-gray-300",
+                      )}
+                    >
+                      {smsStatus}
+                    </span>
                     {recipient && !recipient.revokedAt ? (
                       <>
+                        <Button
+                          variant="textLink"
+                          padding="px-0 py-0"
+                          disabled={
+                            Boolean(recipientActionKey) ||
+                            !smsEligibility.eligible
+                          }
+                          isLoading={recipientActionKey === `${recipient.recipientId}:sms`}
+                          title={
+                            smsEligibility.eligible
+                              ? "Send this intake request by SMS"
+                              : smsStatus
+                          }
+                          onClick={() => void sendRecipientSms(recipient)}
+                        >
+                          Send SMS
+                        </Button>
                         <Button
                           variant="textLink"
                           padding="px-0 py-0"
