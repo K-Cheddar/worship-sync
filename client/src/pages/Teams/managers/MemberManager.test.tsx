@@ -197,6 +197,18 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("formats a U.S. phone number while it is entered", async () => {
+    const user = userEvent.setup();
+    renderManager();
+    await openCreateForm(user);
+
+    const phone = await screen.findByLabelText(/Mobile/);
+    await user.type(phone, "9545551234");
+
+    expect(phone).toHaveValue("(954) 555-1234");
+    expect(screen.queryByText(/E\.164/)).not.toBeInTheDocument();
+  });
+
   it("keeps create and filter actions usable while a member is open", async () => {
     const user = userEvent.setup();
     renderManager({ data: joinedData() });
@@ -700,7 +712,7 @@ describe("MemberManager notification readiness", () => {
 
       expect(
         screen.getByRole("link", { name: /Open SMS opt-in page/i }),
-      ).toHaveAttribute("href", "/sms-opt-in");
+      ).toHaveAttribute("href", `${window.location.origin}/sms-opt-in`);
 
       await user.click(
         screen.getByRole("button", { name: /Copy SMS opt-in link/i }),

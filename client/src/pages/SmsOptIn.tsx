@@ -6,6 +6,7 @@ import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
+import { formatUsPhoneInput } from "../utils/phoneNumber";
 
 export const SMS_CONSENT_TEXT =
   "I agree to receive SMS messages from my church through WorshipSync about volunteer availability, scheduling, assignments, and related reminders. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. Consent is optional and is not required to use WorshipSync.";
@@ -78,11 +79,6 @@ const SmsOptIn = () => {
             <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               SMS Messaging
             </h1>
-            <p className="text-sm leading-relaxed text-gray-300">
-              Opt in to transactional text messages from your church through
-              WorshipSync about volunteer availability, scheduling, assignments,
-              and related reminders.
-            </p>
           </div>
 
           {didOptIn ? (
@@ -108,7 +104,7 @@ const SmsOptIn = () => {
                 inputMode="tel"
                 value={phoneNumber}
                 onChange={(value) => {
-                  setPhoneNumber(String(value));
+                  setPhoneNumber(formatUsPhoneInput(String(value)));
                   setPhoneError("");
                   setErrorMessage("");
                 }}
@@ -120,6 +116,8 @@ const SmsOptIn = () => {
               <div className="space-y-2">
                 <Checkbox
                   id="sms-consent"
+                  className="items-start"
+                  labelClassName="items-start"
                   checked={consent}
                   onCheckedChange={(checked) => {
                     setConsent(checked);
@@ -137,23 +135,6 @@ const SmsOptIn = () => {
                     {consentError}
                   </p>
                 ) : null}
-                <p className="pl-7 text-sm text-gray-300">
-                  <Link
-                    to="/privacy"
-                    className="cursor-pointer font-medium text-orange-300 underline underline-offset-2 hover:text-orange-200"
-                  >
-                    Privacy Policy
-                  </Link>
-                  <span aria-hidden className="px-2 text-gray-500">
-                    ·
-                  </span>
-                  <Link
-                    to="/terms"
-                    className="cursor-pointer font-medium text-orange-300 underline underline-offset-2 hover:text-orange-200"
-                  >
-                    Terms of Service
-                  </Link>
-                </p>
               </div>
 
               {errorMessage ? (

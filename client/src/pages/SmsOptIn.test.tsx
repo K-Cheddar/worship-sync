@@ -31,15 +31,25 @@ describe("SmsOptIn", () => {
     mockedSubmitSmsConsent.mockReset();
   });
 
-  it("renders publicly with unchecked consent and the required review links", () => {
+  it("renders publicly with unchecked consent and legal links in the footer", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "SMS Messaging" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Mobile phone number/i)).toBeInTheDocument();
     expect(screen.getByText(SMS_CONSENT_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "false");
-    expect(screen.getAllByRole("link", { name: "Privacy Policy" })).not.toHaveLength(0);
-    expect(screen.getAllByRole("link", { name: "Terms of Service" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("link", { name: "Privacy Policy" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Terms of Service" })).toHaveLength(1);
+  });
+
+  it("formats a U.S. phone number while it is entered", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const phone = screen.getByLabelText(/Mobile phone number/i);
+    await user.type(phone, "9545551234");
+
+    expect(phone).toHaveValue("(954) 555-1234");
   });
 
   it("keeps submission disabled until affirmative consent is checked", async () => {

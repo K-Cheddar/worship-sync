@@ -418,19 +418,36 @@ describe("DisplayBoxTransitionStage", () => {
     expect(
       mockTimeline.fromTo.mock.calls.some(([element]) =>
         (element as HTMLElement).getAttribute("data-testid") ===
-        "electron-media-surface-remote:pool-b",
+        "display-box-transition-media-b",
       ),
     ).toBe(true);
     expect(
       screen.getByTestId("electron-media-surface-video-remote:pool-b"),
-    ).toHaveProperty("muted", false);
+    ).toHaveProperty("muted", true);
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
 
     act(() => mockTimelineComplete?.());
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
       "idle",
     );
-    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
     expect(screen.getByTestId("electron-media-surface-remote:pool-b")).toBeInTheDocument();
 
     rerender(
@@ -456,7 +473,7 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-mode",
       "content",
     );
-    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
     expect(screen.getAllByTestId("electron-media-surface-remote:pool-b")).toHaveLength(1);
   });
 
@@ -490,7 +507,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.queryByTestId("electron-media-surface-remote:no-background-pool")).not.toBeInTheDocument();
   });
 
-  it("holds a live file-video replacement until its incoming live frame is ready", () => {
+  it("starts a file-video replacement as soon as its poster can paint", () => {
     const first: DisplayBoxTransitionSnapshot = {
       key: "fallback-a",
       boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
@@ -537,9 +554,10 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
-    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    expect(fadeCount).toBeGreaterThan(0);
 
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -557,6 +575,7 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-phase",
       "animating",
     );
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
     expect(mockTimelineComplete).toBeDefined();
   });
 
@@ -643,7 +662,7 @@ describe("DisplayBoxTransitionStage", () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-b")).toHaveAttribute("data-prepared-state", "error"));
-    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute("data-transition-phase", "preparing");
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute("data-transition-phase", "animating");
 
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -1422,7 +1441,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
   });
 
-  it("holds the complete outgoing state until full-transition media is live", () => {
+  it("crossfades complete slides once the incoming poster is ready", () => {
     const mediaA = {
       ...sharedFileMedia,
       mediaKey: "remote:independent-a",
@@ -1469,12 +1488,13 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
     expect(screen.getByTestId("content-Old lyric")).toBeInTheDocument();
     expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
-    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+    expect(mockTimeline.fromTo).toHaveBeenCalled();
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
 
     mockReadinessByMedia.set("remote:independent-b", {
       paintReady: true,
@@ -1488,7 +1508,7 @@ describe("DisplayBoxTransitionStage", () => {
       />,
     );
     expect(mockTimelineCompletions).toHaveLength(1);
-    expect(mockTimeline.fromTo).toHaveBeenCalled();
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
     act(() => mockTimelineCompletions[0]?.());
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
@@ -1550,6 +1570,45 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+  });
+
+  it("cancels a fade when rapid navigation returns to the visible slide", () => {
+    const slide = (key: string, words: string): DisplayBoxTransitionSnapshot => ({
+      key,
+      boxes: [{ id: "box", words, width: 100, height: 100 }],
+      backgroundMedia: sharedFileMedia,
+    });
+    const first = slide("first", "Verse 1");
+    const second = slide("second", "Verse 2");
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const media = screen.getByTestId("lane-full-frame-media-mock");
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase", "idle",
+    );
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(screen.queryByTestId("content-Verse 2")).not.toBeInTheDocument();
   });
 
   it("remounts reused foreground lanes so stale multi-box text cannot survive", () => {

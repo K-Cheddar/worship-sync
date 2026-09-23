@@ -32,6 +32,7 @@ import {
   resolveVideoCueDrift,
   resolveVideoCueCorrection,
   resolveVideoPlaybackPosition,
+  VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
   VIDEO_CUE_RATE_CORRECTION_MAX_DURATION_MS,
 } from "../../utils/videoBackgroundPlayback";
 import { isHLSVideoSource } from "../../utils/isInstantVideoSource";
@@ -757,6 +758,32 @@ const PreparedSurface = ({
     publishLifecycleStatus("activation-requested");
     onFirstAdvancingFrameChange(candidate.mediaKey, false);
     try {
+      // A prepared surface starts at its retained first frame. If the shared
+      // cue has moved far ahead while this surface was activating, reconcile
+      // the playhead while the surface is still hidden. The advancing-frame
+      // check below then proves the sought frame can paint before adoption.
+      if (cue?.mediaKey === candidate.mediaKey) {
+        const duration = Number.isFinite(video.duration)
+          ? video.duration
+          : undefined;
+        const drift = resolveVideoCueDrift(cue, video.currentTime, duration);
+        if (!Number.isFinite(drift) ||
+            Math.abs(drift) >= VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS) {
+          const target = resolveVideoPlaybackPosition(cue, duration);
+          const seeked = waitForVideoEvent(video, "seeked");
+          video.currentTime = target;
+          await withPreparationWatchdog(seeked, "playback");
+        }
+      }
+      if (
+        playbackAttemptRef.current !== playbackAttempt ||
+        !shouldPlayRef.current ||
+        (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
+          viewRef.current.playback.paused)
+      ) {
+        playbackInFlightRef.current = false;
+        return;
+      }
       publishReady({
         sendRequestTimestamp: sendRequestedAt,
         sendTimestamp: sendRequestedAt,

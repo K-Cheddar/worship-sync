@@ -527,6 +527,63 @@ describe("ElectronMediaSurfacePool", () => {
     ).toBeGreaterThan(1);
   });
 
+  it("aligns a delayed cue before exposing the first playing frame", async () => {
+    let currentTime = 0;
+    const playPositions: number[] = [];
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set(value: number) {
+        currentTime = value;
+        if (value > 0) {
+          window.setTimeout(() => this.dispatchEvent(new Event("seeked")), 0);
+        }
+      },
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn(function play(this: HTMLMediaElement) {
+        playPositions.push(this.currentTime);
+        (this as HTMLVideoElement & { __wsPlaying?: boolean }).__wsPlaying = true;
+        return Promise.resolve();
+      }),
+    });
+    const cue = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 5,
+      paused: false,
+      atServerMs: Date.now(),
+      generation: 7,
+      applySeek: true,
+    };
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[view(false)]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state", "ready",
+      ),
+    );
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makeView(candidate.mediaKey, candidate.source, true, cue)]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state", "playing",
+      ),
+    );
+    expect(playPositions[0]).toBe(0);
+    expect(playPositions[1]).toBeGreaterThanOrEqual(5);
+  });
+
   it("does not claim HLS manifests as finite prepared surfaces", async () => {
     const getLocalMediaPath = window.electronAPI
       ?.getLocalMediaPath as jest.Mock;

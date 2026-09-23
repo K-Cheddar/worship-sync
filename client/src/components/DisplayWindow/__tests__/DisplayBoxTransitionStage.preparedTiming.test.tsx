@@ -181,7 +181,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     mockFirstAdvancingFrameCallback = undefined;
   });
 
-  it("keeps the outgoing video visible until the prepared video advances", async () => {
+  it("crossfades a prepared frame without waiting for playback to advance", async () => {
     const play = jest.fn(() => {
       if (play.mock.calls.length <= mockPoolCandidates.length) {
         return Promise.resolve();
@@ -244,17 +244,15 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     await waitFor(() => expect(play).toHaveBeenCalledTimes(3));
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
-    expect(
-      screen.getByTestId("electron-media-surface-remote:prepared-b"),
-    ).toHaveStyle({ opacity: "0" });
-    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    expect(fadeCount).toBeGreaterThan(0);
 
     await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
 
     mockFirstAdvancingFrameCallback?.();
@@ -264,6 +262,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         "animating",
       ),
     );
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
     const mediaFadeCall = mockTimeline.fromTo.mock.calls.find(
       (call) =>
         call[0]?.getAttribute?.("data-testid") ===
@@ -320,8 +319,8 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     expect(preparedB?.sendToPlayResolvedMs).toBeGreaterThanOrEqual(180);
     expect(preparedB?.sendToPlayResolvedMs).toBeLessThan(300);
     expect(preparedB?.sendToFirstAdvancingFrameMs).toBeGreaterThanOrEqual(180);
-    expect(preparedB?.sendToTransitionStartMs).toBeGreaterThanOrEqual(
-      preparedB?.sendToFirstAdvancingFrameMs ?? Number.POSITIVE_INFINITY,
+    expect(preparedB?.sendToTransitionStartMs).toBeLessThan(
+      preparedB?.sendToPlayResolvedMs ?? Number.NEGATIVE_INFINITY,
     );
   });
 

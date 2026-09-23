@@ -11,7 +11,11 @@ import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
-import { formatUsPhoneNumber } from "../../../utils/phoneNumber";
+import {
+  formatUsPhoneInput,
+  formatUsPhoneNumber,
+} from "../../../utils/phoneNumber";
+import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -564,7 +568,7 @@ const MemberManager = ({
     }
 
     try {
-      const url = new URL("/sms-opt-in", window.location.origin).toString();
+      const url = buildShareablePublicPathUrl("/sms-opt-in");
       await navigator.clipboard.writeText(url);
       showToast("SMS opt-in link copied.");
     } catch {
@@ -1250,9 +1254,11 @@ const MemberManager = ({
             autoComplete="tel"
             inputMode="tel"
             value={draft.phoneNumber || ""}
-            helperText="U.S. numbers are stored securely in E.164 format."
             onChange={(phoneNumber) =>
-              setDraft((d) => ({ ...d, phoneNumber: String(phoneNumber) }))
+              setDraft((d) => ({
+                ...d,
+                phoneNumber: formatUsPhoneInput(String(phoneNumber)),
+              }))
             }
           />
           {editing && canEdit ? (
@@ -1276,7 +1282,7 @@ const MemberManager = ({
                   component="link"
                   variant="textLink"
                   padding="p-0"
-                  to="/sms-opt-in"
+                  to={buildShareablePublicPathUrl("/sms-opt-in")}
                   target="_blank"
                   rel="noreferrer"
                 >
