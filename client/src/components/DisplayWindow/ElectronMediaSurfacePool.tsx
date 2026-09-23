@@ -118,7 +118,7 @@ const surfaceStateForLifecycle = (
 ): SurfaceDiagnostic["surfaceState"] => {
   if (phase === "active-playing") return "ACTIVE";
   if (phase === "ready-paused") return "READY";
-  if (phase === "candidate" || phase === "disposed") return "COLD";
+  if (phase === "candidate" || phase === "error" || phase === "disposed") return "COLD";
   return "PREPARING";
 };
 
@@ -500,6 +500,7 @@ const PreparedSurface = ({
       );
       update(failed);
       onReadyChange(candidate.mediaKey, false);
+      publishLifecycleStatus("error", { error: message });
       onPreparationFailure?.(candidate.mediaKey, message);
       return;
     }
@@ -553,6 +554,11 @@ const PreparedSurface = ({
       );
       update(ready);
       setFramePresentedReady(true);
+      // The presented starting frame establishes the source identity. A
+      // cache promotion for this media key must not reprepare a valid surface
+      // while the display stage owns it.
+      frozenSourceRef.current = resolvedSource;
+      pendingSourceRef.current = undefined;
       onReadyChange(candidate.mediaKey, true);
       publishLifecycleStatus("ready-paused", { geometryReady: geometryReadyRef.current });
       publishReady({
@@ -564,7 +570,8 @@ const PreparedSurface = ({
       if (stateRef.current.generation !== loading.generation) return;
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
       onReadyChange(candidate.mediaKey, false);
-      publishLifecycleStatus("preparing", { error: message });
+      frozenSourceRef.current = undefined;
+      publishLifecycleStatus("error", { error: message });
       setFramePresentedReady(false);
       onPreparationFailure?.(candidate.mediaKey, message);
       update(
@@ -644,6 +651,7 @@ const PreparedSurface = ({
         ),
       );
       onReadyChange(candidate.mediaKey, false);
+      publishLifecycleStatus("error", { error: message });
       onPreparationFailure?.(candidate.mediaKey, message);
     } finally {
       resetInFlightRef.current = false;
@@ -657,6 +665,45 @@ const PreparedSurface = ({
     publishLifecycleStatus,
     update,
   ]);
+
+  const restoreAfterAbortedPlay = useCallback(
+    (generation: number, playbackAttempt: number, requiresReset: boolean) => {
+      if (
+        stateRef.current.generation !== generation ||
+        playbackAttemptRef.current !== playbackAttempt
+      ) {
+        return;
+      }
+      playbackInFlightRef.current = false;
+      playingGenerationRef.current = undefined;
+      advancingFrameRef.current = false;
+      onFirstAdvancingFrameChange(candidate.mediaKey, false);
+      videoRef.current?.pause();
+      if (requiresReset || !framePresentedReady) {
+        void reset();
+        return;
+      }
+      update(
+        advancePreparedVideoSurface(
+          stateRef.current,
+          generation,
+          "ready",
+        ),
+      );
+      publishLifecycleStatus("ready-paused", {
+        geometryReady: geometryReadyRef.current,
+        advancingFrame: false,
+      });
+    },
+    [
+      candidate.mediaKey,
+      framePresentedReady,
+      onFirstAdvancingFrameChange,
+      publishLifecycleStatus,
+      reset,
+      update,
+    ],
+  );
 
   const play = useCallback(async () => {
     const video = videoRef.current;
@@ -678,6 +725,7 @@ const PreparedSurface = ({
     }
     const generation = stateRef.current.generation;
     const playbackAttempt = ++playbackAttemptRef.current;
+    let playheadChanged = false;
     playbackInFlightRef.current = true;
     const stateBeforeSend: SurfaceDiagnostic["sendStateBeforeRequest"] =
       phase === "ready" ? "READY" : "PREPARING";
@@ -708,6 +756,7 @@ const PreparedSurface = ({
             Math.abs(drift) >= VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS) {
           const target = resolveVideoPlaybackPosition(cue, duration);
           const seeked = waitForVideoEvent(video, "seeked");
+          playheadChanged = true;
           video.currentTime = target;
           await withPreparationWatchdog(seeked, "playback");
         }
@@ -718,7 +767,7 @@ const PreparedSurface = ({
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
           viewRef.current.playback.paused)
       ) {
-        playbackInFlightRef.current = false;
+        restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
       }
       publishReady({
@@ -747,7 +796,7 @@ const PreparedSurface = ({
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
           viewRef.current.playback.paused)
       ) {
-        playbackInFlightRef.current = false;
+        restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
       }
       const playResolvedAt = performance.now();
@@ -764,7 +813,7 @@ const PreparedSurface = ({
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
           viewRef.current.playback.paused)
       ) {
-        playbackInFlightRef.current = false;
+        restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
       }
       playbackInFlightRef.current = false;
@@ -784,6 +833,13 @@ const PreparedSurface = ({
       playbackInFlightRef.current = false;
       if (stateRef.current.generation !== generation) return;
       const message = getPreparedVideoSurfaceErrorMessage("playback", error);
+      if (
+        !shouldPlayRef.current ||
+        playbackAttemptRef.current !== playbackAttempt
+      ) {
+        restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
+        return;
+      }
       playingGenerationRef.current = undefined;
       update(
         advancePreparedVideoSurface(
@@ -794,6 +850,7 @@ const PreparedSurface = ({
         ),
       );
       onFirstAdvancingFrameChange(candidate.mediaKey, false);
+      publishLifecycleStatus("error", { error: message });
       onPreparationFailure?.(candidate.mediaKey, message);
     }
   }, [
@@ -802,14 +859,17 @@ const PreparedSurface = ({
     onFirstAdvancingFrameChange,
     publishReady,
     publishLifecycleStatus,
+    restoreAfterAbortedPlay,
     update,
   ]);
 
   useEffect(() => {
     mountedRef.current = true;
     let active = true;
-    if (frozenSourceRef.current && shouldPlayRef.current) {
-      pendingSourceRef.current = candidate.source;
+    if (frozenSourceRef.current) {
+      if (candidate.source !== frozenSourceRef.current) {
+        pendingSourceRef.current = candidate.source;
+      }
       return () => {
         active = false;
       };
@@ -857,7 +917,8 @@ const PreparedSurface = ({
           error,
         });
         onPreparationFailureRef.current?.(candidate.mediaKey, error);
-        publishLifecycleStatus("preparing", { error });
+        frozenSourceRef.current = undefined;
+        publishLifecycleStatus("error", { error });
       }
     }, (error) => {
       if (!active) return;
@@ -878,7 +939,7 @@ const PreparedSurface = ({
         error: message,
       });
       onPreparationFailureRef.current?.(candidate.mediaKey, message);
-      publishLifecycleStatus("preparing", { error: message });
+      publishLifecycleStatus("error", { error: message });
     });
     return () => {
       active = false;
@@ -895,11 +956,15 @@ const PreparedSurface = ({
   }, [enabled, prepare, resolvedSource]);
 
   useEffect(() => {
-    if (view?.shouldPlay || !frozenSourceRef.current) return;
-    const pendingSource = pendingSourceRef.current;
+    if (view?.shouldPlay) return;
+    const pendingSource =
+      pendingSourceRef.current ??
+      (candidate.source !== lifecycleSourceRef.current
+        ? candidate.source
+        : undefined);
+    if (!pendingSource) return;
     frozenSourceRef.current = undefined;
     pendingSourceRef.current = undefined;
-    if (!pendingSource) return;
     let active = true;
     void resolveSurfaceSource(pendingSource).then((result) => {
       if (!active) return;

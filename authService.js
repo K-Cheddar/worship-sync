@@ -36,9 +36,14 @@ import {
   resolveSupportInboxEmail,
 } from "./server/supportContact.js";
 import {
+  createSmsConsentChallenge,
   parseSmsConsentBody,
+  parseSmsConsentVerificationBody,
+  sendSmsConsentVerificationCode,
+  SMS_CONSENT_MAX_ATTEMPTS,
   SMS_CONSENT_TEXT,
   SMS_CONSENT_VERSION,
+  verifySmsConsentCode,
 } from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
@@ -1525,7 +1530,8 @@ const smsConsentIdForPhone = (phoneNumber) =>
  */
 const upsertSmsConsent = async (phoneNumber) => {
   const consentId = smsConsentIdForPhone(phoneNumber);
-  const consentedAt = nowIso();
+  const submittedAt = nowIso();
+  const challenge = createSmsConsentChallenge();
   const db = requireFirestore();
 
   if (db) {
@@ -1537,39 +1543,133 @@ const upsertSmsConsent = async (phoneNumber) => {
         consentId,
         phoneNumber,
         phoneHash: hashValue(phoneNumber),
-        status: "opted_in",
+        status: existing?.status === "opted_in" ? "opted_in" : "pending",
         source: "web_form",
         consentVersion: SMS_CONSENT_VERSION,
         consentText: SMS_CONSENT_TEXT,
-        consentedAt,
-        optedOutAt: null,
-        createdAt: existing?.createdAt || consentedAt,
-        updatedAt: consentedAt,
+        consentSubmittedAt: submittedAt,
+        ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+        ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+        optedOutAt: existing?.optedOutAt || null,
+        verificationCodeHash: challenge.codeHash,
+        verificationCodeSalt: challenge.codeSalt,
+        verificationExpiresAt: challenge.expiresAt,
+        verificationAttempts: 0,
+        createdAt: existing?.createdAt || submittedAt,
+        updatedAt: submittedAt,
       });
     });
-    return { consentId, consentedAt };
+    return { consentId, challenge, shouldSend: true };
   }
 
   const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+  await setDoc(COLLECTIONS.smsConsents, consentId, {
+    consentId,
+    phoneNumber,
+    phoneHash: hashValue(phoneNumber),
+    status: existing?.status === "opted_in" ? "opted_in" : "pending",
+    source: "web_form",
+    consentVersion: SMS_CONSENT_VERSION,
+    consentText: SMS_CONSENT_TEXT,
+    consentSubmittedAt: submittedAt,
+    ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+    ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+    optedOutAt: existing?.optedOutAt || null,
+    verificationCodeHash: challenge.codeHash,
+    verificationCodeSalt: challenge.codeSalt,
+    verificationExpiresAt: challenge.expiresAt,
+    verificationAttempts: 0,
+    createdAt: existing?.createdAt || submittedAt,
+    updatedAt: submittedAt,
+  }, { merge: false });
+  return { consentId, challenge, shouldSend: true };
+};
+
+const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
+  const sentAt = nowIso();
   await setDoc(
     COLLECTIONS.smsConsents,
     consentId,
     {
-      consentId,
-      phoneNumber,
-      phoneHash: hashValue(phoneNumber),
-      status: "opted_in",
-      source: "web_form",
-      consentVersion: SMS_CONSENT_VERSION,
-      consentText: SMS_CONSENT_TEXT,
-      consentedAt,
-      optedOutAt: null,
-      createdAt: existing?.createdAt || consentedAt,
-      updatedAt: consentedAt,
+      verificationSentAt: sentAt,
+      verificationProvider: provider || "sms",
+      verificationMethod: method || "sms_otp",
+      updatedAt: sentAt,
     },
-    { merge: false },
+    { merge: true },
   );
-  return { consentId, consentedAt };
+  return sentAt;
+};
+
+const verifySmsConsent = async (phoneNumber, code) => {
+  const consentId = smsConsentIdForPhone(phoneNumber);
+  const db = requireFirestore();
+  const invalid = () => {
+    throw httpError(400, "That verification code is not valid or has expired.");
+  };
+
+  if (db) {
+    let verifiedAt;
+    await db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const record = snapshot.exists ? snapshot.data() : null;
+      const result = verifySmsConsentCode({ record, code });
+      if (!result.ok) {
+        const attempts = Number(record?.verificationAttempts || 0) + 1;
+        if (record) {
+          transaction.set(consentRef, {
+            verificationAttempts: attempts,
+            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+              ? { verificationCodeHash: null }
+              : {}),
+            updatedAt: nowIso(),
+          }, { merge: true });
+        }
+        invalid();
+      }
+      verifiedAt = nowIso();
+      transaction.set(consentRef, {
+        status: "opted_in",
+        ...(record?.status === "opted_in"
+          ? { verificationConfirmedAt: verifiedAt }
+          : { consentedAt: verifiedAt, verifiedAt }),
+        verificationCodeHash: null,
+        verificationCodeSalt: null,
+        verificationExpiresAt: null,
+        updatedAt: verifiedAt,
+      }, { merge: true });
+    });
+    return { consentId, verifiedAt };
+  }
+
+  const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+  const result = verifySmsConsentCode({ record, code });
+  if (!result.ok) {
+    if (record) {
+      const attempts = Number(record.verificationAttempts || 0) + 1;
+      await setDoc(COLLECTIONS.smsConsents, consentId, {
+        verificationAttempts: attempts,
+        ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+          ? { verificationCodeHash: null }
+          : {}),
+        updatedAt: nowIso(),
+      }, { merge: true });
+    }
+    invalid();
+  }
+  const verifiedAt = nowIso();
+  await setDoc(COLLECTIONS.smsConsents, consentId, {
+    status: "opted_in",
+    ...(record?.status === "opted_in"
+      ? { verificationConfirmedAt: verifiedAt }
+      : { consentedAt: verifiedAt, verifiedAt }),
+    verificationCodeHash: null,
+    verificationCodeSalt: null,
+    verificationExpiresAt: null,
+    updatedAt: verifiedAt,
+  }, { merge: true });
+  return { consentId, verifiedAt };
 };
 
 const buildDesktopAuthBrowserUrl = ({ desktopAuthId, provider }) =>
@@ -6246,16 +6346,29 @@ export const authHandlers = {
         blockMs: 60 * 60 * 1000,
       });
 
-      const { consentId } = await upsertSmsConsent(parsed.phoneNumber);
+      const { consentId, challenge, shouldSend } = await upsertSmsConsent(
+        parsed.phoneNumber,
+      );
+      if (shouldSend && challenge) {
+        const delivery = await sendSmsConsentVerificationCode({
+          phoneNumber: parsed.phoneNumber,
+          code: challenge.code,
+        });
+        await markSmsConsentChallengeSent({
+          consentId,
+          provider: delivery?.provider,
+          method: delivery?.method,
+        });
+      }
       await addSecurityEvent({
-        type: "sms_consent_opted_in",
+        type: "sms_consent_verification_requested",
         consentId,
         phoneHash: hashValue(parsed.phoneNumber),
         source: "web_form",
         consentVersion: SMS_CONSENT_VERSION,
       });
 
-      return res.json({ success: true });
+      return res.json({ success: true, verificationRequired: true });
     } catch (error) {
       const statusCode = error.statusCode || 500;
       return res.status(statusCode).json({
@@ -6264,6 +6377,39 @@ export const authHandlers = {
           statusCode >= 500
             ? "Could not save your SMS consent right now. Please try again."
             : error.message || "Could not save your SMS consent.",
+      });
+    }
+  },
+
+  /** Public SMS consent verification. No session required; failures are generic. */
+  async verifySmsConsent(req, res) {
+    try {
+      const parsed = parseSmsConsentVerificationBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      enforceRateLimit({
+        scope: "sms-consent-verify-ip",
+        key: `${getClientIp(req)}:${hashValue(parsed.phoneNumber)}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      const result = await verifySmsConsent(parsed.phoneNumber, parsed.code);
+      await addSecurityEvent({
+        type: "sms_consent_verified",
+        consentId: result.consentId,
+        phoneHash: hashValue(parsed.phoneNumber),
+        source: "web_form",
+        verificationMethod: "sms_otp",
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage:
+          statusCode >= 500
+            ? "Could not verify your SMS consent right now. Please try again."
+            : error.message || "That verification code is not valid or has expired.",
       });
     }
   },

@@ -128,6 +128,10 @@ const ResourcePreview = ({
     setLoading(true);
     setDownloading(false);
     setDeleting(false);
+    if (resource?.deletionStatus === "deleting") {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     let active = true;
     const load = async () => {
@@ -217,6 +221,7 @@ const ResourcePreview = ({
   };
 
   const contentType = resourceEntryContentType(entry);
+  const deletionIncomplete = resource?.deletionStatus === "deleting";
   return (
     <aside className="flex min-h-0 flex-col gap-3 border-t border-gray-700 bg-gray-950/50 p-4" aria-label="Resource details">
       {editingName && resource ? (
@@ -239,6 +244,7 @@ const ResourcePreview = ({
         </p>
       )}
       {resource?.description ? <p className="text-sm text-gray-300">{resource.description}</p> : null}
+      {deletionIncomplete ? <p className="text-sm text-amber-200" role="status">Deletion is still in progress. This resource is unavailable until deletion finishes.</p> : null}
       {loading ? <p className="text-sm text-gray-400" role="status">Opening resource...</p> : null}
       {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
 
@@ -261,9 +267,9 @@ const ResourcePreview = ({
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={loading || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button>
-        {resource && canEdit ? <Button type="button" variant="tertiary" svg={Pencil} disabled={savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
-        {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{resourceEntryDeleteActionLabel(entry)}</Button> : null}
+        <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={loading || deletionIncomplete || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button>
+        {resource && canEdit ? <Button type="button" variant="tertiary" svg={Pencil} disabled={deletionIncomplete || savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
+        {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</Button> : null}
       </div>
     </aside>
   );
@@ -459,7 +465,13 @@ const ResourcesPage = () => {
       setSelectedResourceKeys(new Set());
       setSelectedKey(null);
     } catch (deleteError) {
-      setError(errorMessage(deleteError, "The resource could not be deleted."));
+      const message = errorMessage(deleteError, "The resource could not be deleted.");
+      setResources((current) => current.map((resource) =>
+        candidates.some((entry) => entry.source === "church-resource" && entry.resource.id === resource.id)
+          ? { ...resource, deletionStatus: "deleting", deletionError: message }
+          : resource,
+      ));
+      setError(message);
     } finally {
       setDeletingKey(null);
     }

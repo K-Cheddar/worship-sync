@@ -1,6 +1,7 @@
 import {
   isAdvancingMediaFrame,
   isCurrentMediaSurfaceStatus,
+  isPreparedMediaSurfaceUsable,
   isMediaSurfaceVisible,
   type MediaSurfaceStatus,
 } from "./mediaSurfaceLifecycle";
@@ -27,6 +28,21 @@ describe("media surface lifecycle", () => {
       ),
     ).toBe(false);
     expect(isMediaSurfaceVisible(status())).toBe(true);
+  });
+
+  it("keeps preparation readiness separate from terminal ownership", () => {
+    expect(isPreparedMediaSurfaceUsable(status({ phase: "ready-paused" }))).toBe(
+      true,
+    );
+    expect(
+      isPreparedMediaSurfaceUsable(
+        status({ phase: "activation-requested", geometryReady: false }),
+      ),
+    ).toBe(true);
+    expect(isPreparedMediaSurfaceUsable(status({ phase: "error" }))).toBe(false);
+    expect(isPreparedMediaSurfaceUsable(status({ phase: "disposed" }))).toBe(
+      false,
+    );
   });
 
   it("requires monotonic frame metadata rather than a callback alone", () => {

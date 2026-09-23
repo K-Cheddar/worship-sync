@@ -5,6 +5,7 @@ export type MediaSurfaceLifecyclePhase =
   | "activation-requested"
   | "active-playing"
   | "retiring/resetting"
+  | "error"
   | "disposed";
 
 export type MediaSurfaceRouteRole = {
@@ -72,6 +73,18 @@ export const isMediaSurfaceVisible = (status: MediaSurfaceStatus | undefined) =>
   status?.phase === "active-playing" &&
   status.geometryReady &&
   status.advancingFrame;
+
+export const isPreparedMediaSurfaceUsable = (
+  status: MediaSurfaceStatus | undefined,
+) =>
+  Boolean(
+    status &&
+      status.phase !== "error" &&
+      status.phase !== "disposed" &&
+      (status.phase === "ready-paused" ||
+        status.phase === "activation-requested" ||
+        isMediaSurfaceVisible(status)),
+  );
 
 const finite = (value: number | undefined): number | undefined =>
   value != null && Number.isFinite(value) ? value : undefined;

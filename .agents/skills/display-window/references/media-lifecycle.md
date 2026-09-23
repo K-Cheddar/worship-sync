@@ -18,12 +18,15 @@ disk-cached bytes are not deleted.
 
 A prepared surface resolves the local/cache source, mounts one persistent video
 element, loads metadata, decodes and presents a frame, seeks to the beginning,
-pauses, presents that final starting frame before reporting `READY`, and does
-not seek again after readiness. `play` waits for the initial playback call and
-records the first advancing frame diagnostically; that frame does not gate an
-already-ready transition. Reset/reprepare uses generation checks so stale async
-work cannot publish readiness for a newer source or identity. A conservative
-preparation watchdog releases a wedged pool attempt to the fallback lane.
+pauses, presents that final starting frame, and reports `ready-paused`. This is
+preparation readiness, not proof of moving playback. `play` reports
+`activation-requested` until an advancing frame is observed; only then is the
+surface `active-playing` and safe as the live replacement for a moving video.
+Reset/reprepare uses generation checks so stale async work cannot publish
+readiness for a newer source or identity. Aborted activation returns to
+`ready-paused` when the retained frame is still valid, or resets/reprepares
+when a seek invalidated it. A conservative preparation watchdog releases a
+wedged pool attempt to the fallback lane.
 
 Opaque persisted references such as `local-video-file://`, `local-image://`, and
 `local-video-input://` are resolved before candidate eligibility and before any
@@ -39,9 +42,14 @@ for persistence. It must not use the church-wide `activeList` for an auxiliary
 output. A full transition keeps the outgoing foreground and media intact until
 both incoming planes are ready, then uses one coordinated A/B timeline. A ready
 pool surface cannot replace an active lane fallback; the transition adopts the
-incoming surface explicitly. Adopted ownership is sticky through transient
-`READY`/geometry resets, while an active resolved source is frozen until that
-ownership ends. The pool is an optimization: all fallback paths remain
+incoming surface explicitly. Adopted ownership is keyed by `mediaKey` plus
+lifecycle generation and remains valid through transient readiness/geometry
+updates. Terminal `error` or `disposed` status releases that ownership
+immediately so the normal fallback renderer can recover. The resolved source
+is frozen when the prepared starting frame is established; remote-to-cache
+remapping is diagnostic/source-loading information and does not remount a
+valid surface. A newer source waits until ownership is released, unless the
+current source fails. The pool is an optimization: all fallback paths remain
 authoritative when discovery, cache resolution, decode, or Electron APIs are
 unavailable.
 

@@ -1,9 +1,8 @@
 import { app } from "electron";
 import { join } from "node:path";
 import * as fs from "node:fs";
-import * as https from "node:https";
-import * as http from "node:http";
 import { URL } from "node:url";
+import { safeHttpGet } from "./safeHttp";
 
 interface MediaCacheEntry {
   url: string;
@@ -298,106 +297,52 @@ export class MediaCacheManager {
           : `${downloadUrl}?download=video.mp4`;
 
         // Follow redirects within the same context to preserve cacheKey/localPath
-        const makeRequest = (
-          targetUrl: string,
-          redirectsLeft: number = 5
-        ) => {
-          const urlObj = new URL(targetUrl);
-          const client = urlObj.protocol === "https:" ? https : http;
+        void (async () => {
+          try {
+            const { response } = await safeHttpGet(initialUrl, {
+              headers: { "User-Agent": "WorshipSync/1.0", Accept: "*/*" },
+            });
+            if (response.statusCode !== 200) {
+              file.close();
+              this.cleanupFile(localPath);
 
-          const request = client.get(
-            targetUrl,
-            { headers: { "User-Agent": "WorshipSync/1.0", Accept: "*/*" } },
-            (response) => {
-              // Follow redirects while preserving cache key context
-              let redirect: ReturnType<typeof resolveMediaCacheRedirect>;
-              try {
-                redirect = resolveMediaCacheRedirect(
-                  response,
-                  targetUrl,
-                  redirectsLeft,
-                );
-              } catch (error) {
-                file.close();
-                this.cleanupFile(localPath);
-                reject(error);
-                return;
-              }
-              if (redirect) {
-                makeRequest(redirect.targetUrl, redirect.redirectsLeft);
-                return;
-              }
-
-              if (response.statusCode !== 200) {
-                file.close();
-                this.cleanupFile(localPath);
-
-                if (response.statusCode === 404) {
-                  if (this.isMuxUrl(downloadUrl)) {
-                    console.warn(
-                      `[Media Cache] Mux video returned 404 for: ${downloadUrl}`
-                    );
-                    console.warn(
-                      `[Media Cache] Static renditions may not be ready. Video will stream via HLS.`
-                    );
-                  } else {
-                    console.warn(
-                      `[Media Cache] Media not available (404): ${downloadUrl}`
-                    );
-                  }
-                  // Resolve with null instead of rejecting — allows sync to continue
-                  resolve(null);
-                  return;
+              if (response.statusCode === 404) {
+                if (this.isMuxUrl(downloadUrl)) {
+                  console.warn(`[Media Cache] Mux video returned 404 for: ${downloadUrl}`);
+                  console.warn("[Media Cache] Static renditions may not be ready. Video will stream via HLS.");
+                } else {
+                  console.warn(`[Media Cache] Media not available (404): ${downloadUrl}`);
                 }
-
-                reject(
-                  new Error(
-                    `Failed to download media: ${response.statusCode}`
-                  )
-                );
+                resolve(null);
                 return;
               }
 
-              // Capture content-type for accurate serving by the protocol handler
-              const responseContentType = (
-                response.headers["content-type"] || ""
-              )
-                .split(";")[0]
-                .trim();
-
-              response.pipe(file);
-
-              file.on("finish", () => {
-                file.close();
-                const entry: MediaCacheEntry = {
-                  url: cacheKey,
-                  localPath,
-                  lastUsed: Date.now(),
-                  contentType: responseContentType || undefined,
-                };
-                this.cacheIndex.set(cacheKey, entry);
-                this.flushSaveIndex();
-                resolve(localPath);
-              });
+              reject(new Error(`Failed to download media: ${response.statusCode}`));
+              return;
             }
-          );
 
-          request.on("error", (error) => {
+            const responseContentType = (response.headers["content-type"] || "")
+              .split(";")[0]
+              .trim();
+            response.pipe(file);
+            file.on("finish", () => {
+              file.close();
+              const entry: MediaCacheEntry = {
+                url: cacheKey,
+                localPath,
+                lastUsed: Date.now(),
+                contentType: responseContentType || undefined,
+              };
+              this.cacheIndex.set(cacheKey, entry);
+              this.flushSaveIndex();
+              resolve(localPath);
+            });
+          } catch (error) {
             file.close();
             this.cleanupFile(localPath);
             reject(error);
-          });
-
-          // 5 minute timeout — large files need more than 30s on moderate connections
-          request.setTimeout(300000, () => {
-            request.destroy();
-            file.close();
-            this.cleanupFile(localPath);
-            reject(new Error("Download timeout"));
-          });
-        };
-
-        makeRequest(initialUrl);
+          }
+        })();
       });
     } catch (error) {
       console.error(`Error downloading media ${url}:`, error);

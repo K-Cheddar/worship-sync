@@ -949,6 +949,7 @@ app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
 app.post("/api/support/contact", authHandlers.submitSupportContact);
 app.post("/api/sms-consent", authHandlers.submitSmsConsent);
+app.post("/api/sms-consent/verify", authHandlers.verifySmsConsent);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",

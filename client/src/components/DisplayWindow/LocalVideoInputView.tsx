@@ -154,6 +154,9 @@ const LocalVideoInputView = ({
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
   const [isDirectReady, setIsDirectReady] = useState(false);
   const [isRealtimeActive, setIsRealtimeActive] = useState(false);
+  const [isBufferedReady, setIsBufferedReady] = useState(false);
+  const [isRealtimeFallbackPending, setIsRealtimeFallbackPending] =
+    useState(false);
   const [captureOwnedElsewhere, setCaptureOwnedElsewhere] = useState(false);
   const [captureAttempt, setCaptureAttempt] = useState(0);
   const isDesktopShare = isDesktopCaptureKind(input.captureKind);
@@ -261,11 +264,16 @@ const LocalVideoInputView = ({
         onStarted: () => {
           setErrorDetail(null);
           setIsRealtimeActive(false);
+          setIsRealtimeFallbackPending(false);
+          setIsBufferedReady(true);
           setIsDirectReady(true);
           markLocalVideoViewFrame(input.sourceId, diagnosticViewId);
         },
         onError: setErrorDetail,
-        onStopped: () => setIsDirectReady(false),
+        onStopped: () => {
+          setIsBufferedReady(false);
+          setIsDirectReady(false);
+        },
       });
       if (
         localVideoDiagnosticsEnabled() &&
@@ -311,12 +319,25 @@ const LocalVideoInputView = ({
           volume: normalizedVolumeRef.current,
           onStarted: () => {
             setErrorDetail(null);
+            setIsRealtimeFallbackPending(false);
+            setIsBufferedReady(false);
+            setIsRealtimeActive(true);
             setIsDirectReady(true);
           },
-          onStopped: () => setIsDirectReady(false),
+          onStopped: () => {
+            setIsRealtimeActive(false);
+            setIsDirectReady(false);
+          },
           onError: setErrorDetail,
           onFallback: () => {
             if (!active) return;
+            // Keep the last canvas frame as the visual owner while the
+            // buffered video acquires its first paint. Realtime is no longer
+            // considered active, so the handoff cannot expose two players.
+            setIsRealtimeActive(false);
+            setIsRealtimeFallbackPending(true);
+            setIsBufferedReady(false);
+            setIsDirectReady(false);
             realtimeSubscriptionRef.current?.stop();
             realtimeSubscriptionRef.current = undefined;
             subscribeBufferedRelay("REALTIME_UNHEALTHY");
@@ -518,6 +539,8 @@ const LocalVideoInputView = ({
     setErrorDetail(null);
     setAudioWarning(null);
     setIsDirectReady(false);
+    setIsBufferedReady(false);
+    setIsRealtimeFallbackPending(false);
     startLocalVideoView(input.sourceId, diagnosticViewId, {
       outputId,
       windowRole,
@@ -758,7 +781,10 @@ const LocalVideoInputView = ({
     };
   }, [input.sourceId, restartDetail]);
 
-  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
+  const isShowingPicture =
+    isDirectReady ||
+    isRealtimeFallbackPending ||
+    Boolean(previewFrameUrl);
   // Terminal / remote-unavailable UIs are also "ready" so a missing capture
   // cannot block the parent transition stage forever.
   const paintReady =
@@ -834,7 +860,7 @@ const LocalVideoInputView = ({
           {canUseRealtimeRelay ? (
             <canvas
               ref={realtimeCanvasRef}
-              className={`absolute inset-0 h-full w-full transition-none ${isRealtimeActive && isDirectReady && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
+              className={`absolute inset-0 h-full w-full transition-none ${(isRealtimeActive || isRealtimeFallbackPending) && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
               aria-label={`${input.deviceLabel} realtime video`}
             />
           ) : null}
@@ -845,7 +871,7 @@ const LocalVideoInputView = ({
           */}
           <video
             ref={videoRef}
-            className={`absolute inset-0 h-full w-full transition-none ${!isRealtimeActive && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
+            className={`absolute inset-0 h-full w-full transition-none ${((!canUseRealtimeRelay && isDirectReady) || isBufferedReady) && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
             autoPlay
             muted={!playAudio}
             playsInline
@@ -862,7 +888,7 @@ const LocalVideoInputView = ({
               )
             }
           />
-          {!isDirectReady && !previewFrameUrl && !errorDetail ? (
+          {!isShowingPicture && !errorDetail ? (
             <div
               className={`pointer-events-none absolute inset-0 ${transparentBackground ? "bg-transparent" : "bg-black"}`}
               aria-hidden

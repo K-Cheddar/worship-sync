@@ -4,6 +4,7 @@ import {
   createChurchResourceStorage,
 } from "./churchResourceService.js";
 import { findChurchResourceServicePlanReferences } from "./churchResourceReferences.js";
+import { isR2NotFoundError } from "./storage/r2ObjectStorage.js";
 
 const MAX_NAME_LENGTH = 300;
 const MAX_DESCRIPTION_LENGTH = 2_000;
@@ -78,6 +79,20 @@ const normalizeResourceRecord = (resource) => {
     updatedBy: normalizeShortText(resource.updatedBy, 240),
     ...(normalizeShortText(resource.contentVersion, 160)
       ? { contentVersion: normalizeShortText(resource.contentVersion, 160) }
+      : {}),
+    ...(resource.deletionStatus === "deleting"
+      ? {
+          deletionStatus: "deleting",
+          ...(normalizeShortText(resource.deletionRequestedAt, 60)
+            ? { deletionRequestedAt: normalizeShortText(resource.deletionRequestedAt, 60) }
+            : {}),
+          ...(normalizeShortText(resource.deletionStorageDeletedAt, 60)
+            ? { deletionStorageDeletedAt: normalizeShortText(resource.deletionStorageDeletedAt, 60) }
+            : {}),
+          ...(normalizeShortText(resource.deletionError, 300)
+            ? { deletionError: normalizeShortText(resource.deletionError, 300) }
+            : {}),
+        }
       : {}),
   };
 };
@@ -168,14 +183,30 @@ export const createChurchResourceHandlers = ({
 }) => {
   const getStorage = () => storage || storageFactory();
 
-  const findResource = async (churchId, resourceId) => {
+  const findResource = async (churchId, resourceId, { includeDeleting = false } = {}) => {
     const resource = normalizeResourceRecord(
       await getDoc(COLLECTIONS.churchResources, resourceId),
     );
-    if (!resource || resource.churchId !== churchId) {
+    if (
+      !resource ||
+      resource.churchId !== churchId ||
+      (!includeDeleting && resource.deletionStatus === "deleting")
+    ) {
       throw httpError(404, "Resource not found.");
     }
     return resource;
+  };
+
+  const persistDeletionState = async (resource, patch) => {
+    const next = normalizeResourceRecord({
+      ...resource,
+      ...patch,
+      updatedAt: patch.updatedAt || nowIso(),
+    });
+    await setDoc(COLLECTIONS.churchResources, resource.id, next, {
+      merge: false,
+    });
+    return next;
   };
 
   const persistUploadedResource = async ({
@@ -229,7 +260,11 @@ export const createChurchResourceHandlers = ({
         );
         const resources = docs
           .map(normalizeResourceRecord)
-          .filter((resource) => resource?.churchId === churchId)
+          .filter(
+            (resource) =>
+              resource?.churchId === churchId &&
+              resource.deletionStatus !== "deleting",
+          )
           .sort((left, right) => {
             const updated = String(right.updatedAt || "").localeCompare(
               String(left.updatedAt || ""),
@@ -308,7 +343,13 @@ export const createChurchResourceHandlers = ({
           body: req.body,
         });
         const resource = await persistUploadedResource({
-          req,
+          req: {
+            ...req,
+            body: {
+              name: req.get("x-resource-name"),
+              description: req.get("x-resource-description"),
+            },
+          },
           churchId,
           storageResult,
           resourceStorage,
@@ -377,18 +418,61 @@ export const createChurchResourceHandlers = ({
       try {
         const churchId = requireChurchSession(req);
         const resourceId = requireResourceId(req);
-        const resource = await findResource(churchId, resourceId);
-        const references = await findResourceReferences({ churchId, resourceId });
-        if (references.length) {
-          const conflict = httpError(
-            409,
-            `This resource is used by ${references.length} Service Plan${references.length === 1 ? "" : "s"}. Remove it from the plan${references.length === 1 ? "" : "s"} before deleting it.`,
-          );
-          conflict.referenceCount = references.length;
-          throw conflict;
+        const stored = await getDoc(COLLECTIONS.churchResources, resourceId);
+        if (!stored) return res.json({ success: true });
+        let resource = await findResource(churchId, resourceId, {
+          includeDeleting: true,
+        });
+
+        if (resource.deletionStatus !== "deleting") {
+          const references = await findResourceReferences({ churchId, resourceId });
+          if (references.length) {
+            const conflict = httpError(
+              409,
+              `This resource is used by ${references.length} Service Plan${references.length === 1 ? "" : "s"}. Remove it from the plan${references.length === 1 ? "" : "s"} before deleting it.`,
+            );
+            conflict.referenceCount = references.length;
+            throw conflict;
+          }
+          resource = await persistDeletionState(resource, {
+            deletionStatus: "deleting",
+            deletionRequestedAt: nowIso(),
+            deletionError: null,
+            deletionStorageDeletedAt: null,
+          });
         }
-        await getStorage().remove({ churchId, resource });
-        await deleteDoc(COLLECTIONS.churchResources, resourceId);
+
+        try {
+          await getStorage().remove({ churchId, resource });
+        } catch (error) {
+          if (!isR2NotFoundError(error)) {
+            try {
+              await persistDeletionState(resource, {
+                deletionError: String(error?.message || "Storage deletion failed").slice(0, 300),
+              });
+            } catch (stateError) {
+              console.error("Could not record church resource deletion failure:", stateError);
+            }
+            throw error;
+          }
+        }
+
+        resource = await persistDeletionState(resource, {
+          deletionStorageDeletedAt: nowIso(),
+          deletionError: null,
+        });
+        try {
+          await deleteDoc(COLLECTIONS.churchResources, resourceId);
+        } catch (error) {
+          try {
+            await persistDeletionState(resource, {
+              deletionError: String(error?.message || "Metadata deletion failed").slice(0, 300),
+            });
+          } catch (stateError) {
+            console.error("Could not record church resource metadata deletion failure:", stateError);
+          }
+          throw error;
+        }
         return res.json({ success: true });
       } catch (error) {
         return errorResponse(res, error, "Could not delete this resource.");

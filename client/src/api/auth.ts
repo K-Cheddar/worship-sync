@@ -538,15 +538,27 @@ type ChurchResourceUploadIntent = {
   expiresAt: string;
 };
 
+export type ChurchResourceUploadInput = {
+  churchId: string;
+  file: File;
+  name?: string;
+  description?: string;
+  onProgress?: (progress: number) => void;
+};
+
 const churchResourcesPath = (churchId: string) =>
   `api/churches/${encodeURIComponent(churchId)}/resources`;
 
 const uploadChurchResourceFromPackagedElectron = async ({
   churchId,
   file,
+  name,
+  description,
 }: {
   churchId: string;
   file: File;
+  name?: string;
+  description?: string;
 }): Promise<ChurchResource> => {
   let response: Response;
   try {
@@ -561,6 +573,10 @@ const uploadChurchResourceFromPackagedElectron = async ({
             ? { Authorization: `Bearer ${getHumanApiToken()}` }
             : {}),
           ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
+          ...(name?.trim() ? { "x-resource-name": name.trim() } : {}),
+          ...(description?.trim()
+            ? { "x-resource-description": description.trim() }
+            : {}),
         },
         body: file,
       },
@@ -604,15 +620,14 @@ export const uploadChurchResource = async ({
   name,
   description,
   onProgress,
-}: {
-  churchId: string;
-  file: File;
-  name?: string;
-  description?: string;
-  onProgress?: (progress: number) => void;
-}): Promise<ChurchResource> => {
+}: ChurchResourceUploadInput): Promise<ChurchResource> => {
   if (isPackagedElectronRenderer()) {
-    return uploadChurchResourceFromPackagedElectron({ churchId, file });
+    return uploadChurchResourceFromPackagedElectron({
+      churchId,
+      file,
+      name,
+      description,
+    });
   }
   const intent = await apiFetch<ChurchResourceUploadIntent>(
     `${churchResourcesPath(churchId)}/upload`,
@@ -862,7 +877,19 @@ export const submitSmsConsent = async (body: {
   phoneNumber: string;
   consent: boolean;
 }) =>
-  apiFetchWithoutAuthRecovery<{ success: boolean }>("api/sms-consent", {
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    verificationRequired: boolean;
+  }>("api/sms-consent", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const verifySmsConsent = async (body: {
+  phoneNumber: string;
+  code: string;
+}) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean }>("api/sms-consent/verify", {
     method: "POST",
     body: JSON.stringify(body),
   });

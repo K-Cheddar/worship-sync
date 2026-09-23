@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { submitSmsConsent } from "../api/auth";
+import { submitSmsConsent, verifySmsConsent } from "../api/auth";
 import SmsOptIn, { SMS_CONSENT_TEXT } from "./SmsOptIn";
 
 jest.mock("../components/HomeToolbarMenu/HomeToolbarMenu", () => () => (
@@ -13,10 +13,14 @@ jest.mock("../components/HomeToolbarMenu/HomeToolbarMenu", () => () => (
 jest.mock("../api/auth", () => ({
   ...jest.requireActual("../api/auth"),
   submitSmsConsent: jest.fn(),
+  verifySmsConsent: jest.fn(),
 }));
 
 const mockedSubmitSmsConsent = submitSmsConsent as jest.MockedFunction<
   typeof submitSmsConsent
+>;
+const mockedVerifySmsConsent = verifySmsConsent as jest.MockedFunction<
+  typeof verifySmsConsent
 >;
 
 const renderPage = () =>
@@ -29,6 +33,7 @@ const renderPage = () =>
 describe("SmsOptIn", () => {
   beforeEach(() => {
     mockedSubmitSmsConsent.mockReset();
+    mockedVerifySmsConsent.mockReset();
   });
 
   it("renders publicly with unchecked consent and legal links in the footer", () => {
@@ -78,8 +83,9 @@ describe("SmsOptIn", () => {
     expect(mockedSubmitSmsConsent).not.toHaveBeenCalled();
   });
 
-  it("submits valid phone and affirmative consent, then confirms opt-in", async () => {
-    mockedSubmitSmsConsent.mockResolvedValue({ success: true });
+  it("submits valid phone, asks for a code, then confirms opt-in after verification", async () => {
+    mockedSubmitSmsConsent.mockResolvedValue({ success: true, verificationRequired: true });
+    mockedVerifySmsConsent.mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderPage();
 
@@ -93,6 +99,14 @@ describe("SmsOptIn", () => {
     expect(mockedSubmitSmsConsent).toHaveBeenCalledWith({
       phoneNumber: "(954) 555-1234",
       consent: true,
+    });
+    expect(await screen.findByLabelText(/Verification code/)).toBeInTheDocument();
+    expect(screen.getByText(/sent a 6-digit verification code/i)).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Verification code/), "123456");
+    await user.click(screen.getByRole("button", { name: /verify phone/i }));
+    expect(mockedVerifySmsConsent).toHaveBeenCalledWith({
+      phoneNumber: "(954) 555-1234",
+      code: "123456",
     });
     expect(await screen.findByText("You're opted in.")).toBeInTheDocument();
     expect(screen.getByText(/reply STOP/i)).toBeInTheDocument();

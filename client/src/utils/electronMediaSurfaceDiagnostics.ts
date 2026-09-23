@@ -117,6 +117,7 @@ export type ElectronMediaSurfaceDiagnostic = {
     | "activation-requested"
     | "active-playing"
     | "retiring/resetting"
+    | "error"
     | "disposed";
   lifecycleRoute?: string;
   lifecycleRole?: string;

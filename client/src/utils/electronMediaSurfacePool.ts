@@ -32,7 +32,7 @@ export type ElectronMediaSurfaceView = {
   mediaKey: string;
   source: string;
   videoBox: Box;
-  opacity: number | undefined;
+  opacity?: number;
   zIndex: number;
   shouldPlay: boolean;
   muted: boolean;

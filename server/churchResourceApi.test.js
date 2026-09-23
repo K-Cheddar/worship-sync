@@ -12,12 +12,17 @@ const makeResponse = () => ({
 const makeHarness = () => {
   const docs = new Map();
   const commands = [];
+  const storageState = { removeError: null, deleteMetadataError: null };
+  const resourceId = "churchResource_123e4567-e89b-42d3-a456-426614174000";
   const handlers = createChurchResourceHandlers({
     COLLECTIONS: { churchResources: "churchResources", servicePlans: "servicePlans" },
     getDoc: async (_collection, id) => docs.get(id) || null,
     queryDocs: async () => [...docs.values()],
     setDoc: async (_collection, id, value) => { docs.set(id, value); },
-    deleteDoc: async (_collection, id) => { docs.delete(id); },
+    deleteDoc: async (_collection, id) => {
+      if (storageState.deleteMetadataError) throw storageState.deleteMetadataError;
+      docs.delete(id);
+    },
     nowIso: () => "2026-09-21T00:00:00.000Z",
     storage: {
       createUpload: async () => ({ resourceUpload: { id: "churchResource_123e4567-e89b-42d3-a456-426614174000", key: "pending/key", fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4, kind: "document" }, uploadUrl: "https://example.test/upload", expiresAt: "2026-09-21T00:15:00.000Z" }),
@@ -26,11 +31,14 @@ const makeHarness = () => {
         return { id: "churchResource_123e4567-e89b-42d3-a456-426614174000", key: "churches/church-1/files/churchResource_123e4567-e89b-42d3-a456-426614174000/original", fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4, uploadedAt: "2026-09-21T00:00:00.000Z", kind: "document" };
       },
       createReadUrl: async () => ({ url: "https://example.test/read", expiresAt: "2026-09-21T00:15:00.000Z" }),
-      remove: async () => { commands.push("remove"); },
+      remove: async () => {
+        commands.push("remove");
+        if (storageState.removeError) throw storageState.removeError;
+      },
       uploadFromServer: async () => ({ id: "churchResource_123e4567-e89b-42d3-a456-426614174000", key: "churches/church-1/files/churchResource_123e4567-e89b-42d3-a456-426614174000/original", fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4, uploadedAt: "2026-09-21T00:00:00.000Z", kind: "document" }),
     },
   });
-  return { docs, commands, handlers };
+  return { docs, commands, handlers, storageState, resourceId };
 };
 
 const request = (churchId, body = {}, extra = {}) => ({
@@ -38,7 +46,7 @@ const request = (churchId, body = {}, extra = {}) => ({
   body,
   query: {},
   appSession: { churchId, userId: "user-1", actorId: "user-1" },
-  get: () => "application/pdf",
+  get: (header) => header === "content-type" ? "application/pdf" : undefined,
   ...extra,
 });
 
@@ -67,6 +75,44 @@ test("ChurchResource API persists metadata without signed URLs and rejects cross
   await handlers.get(request("church-2"), otherChurchResponse);
   assert.equal(otherChurchResponse.statusCode, 404);
   assert.equal(otherChurchResponse.body.resource, undefined);
+});
+
+test("browser and packaged Electron uploads persist equivalent edited metadata", async () => {
+  const browser = makeHarness();
+  const browserResponse = makeResponse();
+  await browser.handlers.completeUpload(
+    request("church-1", {
+      resourceUpload: {
+        id: browser.resourceId,
+        key: "pending/church-1",
+        fileName: "guide.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 4,
+      },
+      name: "Edited guide",
+      description: "Used during Sunday service",
+    }),
+    browserResponse,
+  );
+
+  const electron = makeHarness();
+  const electronResponse = makeResponse();
+  await electron.handlers.uploadFromApp(
+    request("church-1", {}, {
+      body: Buffer.from("file"),
+      get: (header) => ({
+        "content-type": "application/pdf",
+        "x-resource-name": "Edited guide",
+        "x-resource-description": "Used during Sunday service",
+      })[header],
+    }),
+    electronResponse,
+  );
+
+  assert.deepEqual(
+    electronResponse.body.resource,
+    browserResponse.body.resource,
+  );
 });
 
 test("ChurchResource API update and delete are metadata-scoped to the stored church", async () => {
@@ -126,6 +172,83 @@ test("ChurchResource delete returns a counted conflict before storage or metadat
   assert.deepEqual(response.body.references, { count: 1 });
   assert.deepEqual(commands, []);
   assert.ok(docs.has(resourceId));
+});
+
+test("ChurchResource deletion tombstones failures and resumes safely", async () => {
+  const { docs, commands, handlers, storageState, resourceId } = makeHarness();
+  docs.set(resourceId, {
+    id: resourceId,
+    churchId: "church-1",
+    name: "Guide",
+    kind: "document",
+    storage: {
+      key: `churches/church-1/files/${resourceId}/original`,
+      fileName: "guide.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 4,
+      uploadedAt: "2026-09-21T00:00:00.000Z",
+    },
+    createdAt: "2026-09-21T00:00:00.000Z",
+    createdBy: "user-1",
+    updatedAt: "2026-09-21T00:00:00.000Z",
+    updatedBy: "user-1",
+  });
+  storageState.removeError = Object.assign(new Error("R2 unavailable"), { name: "NetworkError" });
+
+  const failed = makeResponse();
+  await handlers.remove(request("church-1"), failed);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(docs.get(resourceId).deletionStatus, "deleting");
+  const listedWhileDeleting = makeResponse();
+  await handlers.list(request("church-1"), listedWhileDeleting);
+  assert.deepEqual(listedWhileDeleting.body.resources, []);
+
+  storageState.removeError = null;
+  const retried = makeResponse();
+  await handlers.remove(request("church-1"), retried);
+  assert.deepEqual(retried.body, { success: true });
+  assert.equal(docs.has(resourceId), false);
+  assert.equal(commands.filter((command) => command === "remove").length, 2);
+});
+
+test("ChurchResource deletion retries after R2 succeeds but metadata removal fails", async () => {
+  const { docs, handlers, storageState, resourceId } = makeHarness();
+  docs.set(resourceId, {
+    id: resourceId,
+    churchId: "church-1",
+    name: "Guide",
+    kind: "document",
+    storage: {
+      key: `churches/church-1/files/${resourceId}/original`,
+      fileName: "guide.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 4,
+      uploadedAt: "2026-09-21T00:00:00.000Z",
+    },
+    createdAt: "2026-09-21T00:00:00.000Z",
+    createdBy: "user-1",
+    updatedAt: "2026-09-21T00:00:00.000Z",
+    updatedBy: "user-1",
+  });
+  storageState.deleteMetadataError = new Error("Firestore unavailable");
+
+  const failed = makeResponse();
+  await handlers.remove(request("church-1"), failed);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(docs.get(resourceId).deletionStorageDeletedAt, "2026-09-21T00:00:00.000Z");
+
+  storageState.deleteMetadataError = null;
+  const retried = makeResponse();
+  await handlers.remove(request("church-1"), retried);
+  assert.deepEqual(retried.body, { success: true });
+  assert.equal(docs.has(resourceId), false);
+});
+
+test("repeated delete of an already absent resource is idempotent", async () => {
+  const { handlers } = makeHarness();
+  const response = makeResponse();
+  await handlers.remove(request("church-1"), response);
+  assert.deepEqual(response.body, { success: true });
 });
 
 test("ChurchResource API reports a missing resources bucket as a clean 503 without storage commands", async () => {

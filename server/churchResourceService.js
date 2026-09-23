@@ -350,7 +350,11 @@ export const createChurchResourceStorage = ({
     if (resource?.storage?.key && resource.storage.key !== key) {
       throw new ChurchResourceInputError("That resource is not available.");
     }
-    await objectStorage.delete({ key });
+    try {
+      await objectStorage.delete({ key });
+    } catch (error) {
+      if (!isR2NotFoundError(error)) throw error;
+    }
   };
 
   return {

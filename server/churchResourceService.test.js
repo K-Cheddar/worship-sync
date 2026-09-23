@@ -126,3 +126,26 @@ test("ChurchResource server upload, signed read, and delete use final ID keys", 
   await storage.remove({ churchId: "church-1", resource: { id: resource.id, storage: resource } });
   assert.equal(commands.at(-1).constructor.name, "DeleteObjectCommand");
 });
+
+test("ChurchResource delete treats a missing R2 object as already deleted", async () => {
+  const storage = createChurchResourceStorage({
+    env,
+    s3Client: {
+      send: async () => {
+        throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+      },
+    },
+  });
+
+  await assert.doesNotReject(() =>
+    storage.remove({
+      churchId: "church-1",
+      resource: {
+        id: "churchResource_123e4567-e89b-42d3-a456-426614174000",
+        storage: {
+          key: "churches/church-1/files/churchResource_123e4567-e89b-42d3-a456-426614174000/original",
+        },
+      },
+    }),
+  );
+});

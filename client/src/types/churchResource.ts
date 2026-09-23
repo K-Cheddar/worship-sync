@@ -23,6 +23,10 @@ export type ChurchResource = {
   updatedAt: string;
   updatedBy: string;
   contentVersion?: string;
+  deletionStatus?: "deleting";
+  deletionRequestedAt?: string;
+  deletionStorageDeletedAt?: string;
+  deletionError?: string;
 };
 
 export type ResourceLibrarySongAudioEntry = {

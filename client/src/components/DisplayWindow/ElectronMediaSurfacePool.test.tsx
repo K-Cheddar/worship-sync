@@ -527,6 +527,65 @@ describe("ElectronMediaSurfacePool", () => {
     ).toBeGreaterThan(1);
   });
 
+  it("returns a cancelled activation to ready-paused", async () => {
+    let resolvePlay: (() => void) | undefined;
+    let playCalls = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn(function play(this: HTMLMediaElement) {
+        playCalls += 1;
+        if (playCalls === 1) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        });
+      }),
+    });
+    const cue = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 0,
+      paused: false,
+      atServerMs: Date.now(),
+      generation: 1,
+      applySeek: false,
+    };
+    const pausedCue = { ...cue, paused: true, generation: 2 };
+    const onStatusChange = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makeView(candidate.mediaKey, candidate.source, true, cue)]}
+        onStatusChange={onStatusChange}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onStatusChange.mock.calls.map(([event]) => event.phase)).toContain(
+        "activation-requested",
+      ),
+    );
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makeView(candidate.mediaKey, candidate.source, true, pausedCue)]}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    act(() => resolvePlay?.());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-media-lifecycle",
+        "ready-paused",
+      ),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+      "data-prepared-state",
+      "ready",
+    );
+  });
+
   it("aligns a delayed cue before exposing the first playing frame", async () => {
     let currentTime = 0;
     const playPositions: number[] = [];

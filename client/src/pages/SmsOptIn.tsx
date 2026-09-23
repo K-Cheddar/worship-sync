@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { AuthApiError, submitSmsConsent } from "../api/auth";
+import { AuthApiError, submitSmsConsent, verifySmsConsent } from "../api/auth";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
@@ -30,6 +30,10 @@ const SmsOptIn = () => {
   const [consentError, setConsentError] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState("");
+  const [verificationPending, setVerificationPending] = useState(false);
   const [didOptIn, setDidOptIn] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -50,7 +54,7 @@ const SmsOptIn = () => {
     setIsSubmitting(true);
     try {
       await submitSmsConsent({ phoneNumber, consent: true });
-      setDidOptIn(true);
+      setVerificationPending(true);
     } catch (error) {
       setErrorMessage(
         error instanceof AuthApiError
@@ -59,6 +63,30 @@ const SmsOptIn = () => {
       );
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleVerify = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isVerifying || didOptIn) return;
+    setVerificationError("");
+    if (!/^\d{6}$/.test(verificationCode.trim())) {
+      setVerificationError("Enter the 6-digit verification code we sent you.");
+      return;
+    }
+    setIsVerifying(true);
+    try {
+      await verifySmsConsent({ phoneNumber, code: verificationCode.trim() });
+      setDidOptIn(true);
+      setVerificationPending(false);
+    } catch (error) {
+      setVerificationError(
+        error instanceof AuthApiError
+          ? error.message
+          : "Could not verify your SMS consent. Please try again.",
+      );
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -89,6 +117,35 @@ const SmsOptIn = () => {
                 to unsubscribe.
               </p>
             </div>
+          ) : verificationPending ? (
+            <form className="mt-6 flex w-full flex-col gap-4" onSubmit={handleVerify} noValidate>
+              <p className="text-sm leading-relaxed text-gray-300" role="status">
+                We sent a 6-digit verification code to your phone. Enter it to finish opting in.
+              </p>
+              <Input
+                id="sms-verification-code"
+                label="Verification code"
+                name="verificationCode"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={verificationCode}
+                onChange={(value) => {
+                  setVerificationCode(String(value).replace(/\D/g, "").slice(0, 6));
+                  setVerificationError("");
+                }}
+                errorText={verificationError}
+                required
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                className="w-full cursor-pointer justify-center"
+                isLoading={isVerifying}
+                disabled={isVerifying || verificationCode.length !== 6}
+              >
+                Verify phone
+              </Button>
+            </form>
           ) : (
             <form
               className="mt-6 flex w-full flex-col gap-4"

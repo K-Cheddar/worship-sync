@@ -507,7 +507,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.queryByTestId("electron-media-surface-remote:no-background-pool")).not.toBeInTheDocument();
   });
 
-  it("starts a file-video replacement as soon as its poster can paint", () => {
+  it("waits for live playback when replacing a moving file video", () => {
     const first: DisplayBoxTransitionSnapshot = {
       key: "fallback-a",
       boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
@@ -554,10 +554,8 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "animating",
+      "preparing",
     );
-    const fadeCount = mockTimeline.fromTo.mock.calls.length;
-    expect(fadeCount).toBeGreaterThan(0);
 
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -575,7 +573,7 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-phase",
       "animating",
     );
-    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(mockTimeline.fromTo).toHaveBeenCalled();
     expect(mockTimelineComplete).toBeDefined();
   });
 
@@ -627,7 +625,7 @@ describe("DisplayBoxTransitionStage", () => {
     });
     mockReadinessByMedia.set("remote:fallback-a", {
       paintReady: true,
-      livePaintReady: true,
+      livePaintReady: false,
     });
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -663,6 +661,7 @@ describe("DisplayBoxTransitionStage", () => {
     );
     await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-b")).toHaveAttribute("data-prepared-state", "error"));
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute("data-transition-phase", "animating");
+    expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
 
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -1439,9 +1438,85 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-One")).toBeInTheDocument();
     expect(screen.getByTestId("content-Two")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+    const mediaFades = mockTimeline.fromTo.mock.calls.filter(
+      ([element]) =>
+        (element as HTMLElement).getAttribute("data-testid")?.includes(
+          "display-box-transition-media-",
+        ),
+    );
+    expect(mediaFades).toHaveLength(2);
+    expect(mediaFades.map(([, from, to]) => [from, to])).toEqual(
+      expect.arrayContaining([
+        [{ opacity: 1 }, expect.objectContaining({ opacity: 0 })],
+        [{ opacity: 0 }, expect.objectContaining({ opacity: 1 })],
+      ]),
+    );
   });
 
-  it("crossfades complete slides once the incoming poster is ready", () => {
+  it("does not restart a running fade when media readiness telemetry changes", () => {
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "telemetry-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:telemetry-a",
+        originalSrc: "https://cdn.example.com/telemetry-a.mp4",
+      },
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "telemetry-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:telemetry-b",
+        originalSrc: "https://cdn.example.com/telemetry-b.mp4",
+      },
+    };
+    mockReadinessByMedia.set("remote:telemetry-a", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    mockReadinessByMedia.set("remote:telemetry-b", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+
+    mockReadinessByMedia.set("remote:telemetry-b", {
+      paintReady: true,
+      livePaintReady: false,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(mockTimeline.kill).not.toHaveBeenCalled();
+  });
+
+  it("crossfades complete slides once the incoming live frame is ready", () => {
     const mediaA = {
       ...sharedFileMedia,
       mediaKey: "remote:independent-a",
@@ -1488,14 +1563,11 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "animating",
+      "preparing",
     );
     expect(screen.getByTestId("content-Old lyric")).toBeInTheDocument();
     expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
-    expect(mockTimeline.fromTo).toHaveBeenCalled();
-    const fadeCount = mockTimeline.fromTo.mock.calls.length;
-
     mockReadinessByMedia.set("remote:independent-b", {
       paintReady: true,
       livePaintReady: true,
@@ -1507,8 +1579,12 @@ describe("DisplayBoxTransitionStage", () => {
         renderLane={readyRenderLane()}
       />,
     );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
     expect(mockTimelineCompletions).toHaveLength(1);
-    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(mockTimeline.fromTo).toHaveBeenCalled();
     act(() => mockTimelineCompletions[0]?.());
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
