@@ -21,14 +21,42 @@ export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";
 
 /** Side-by-side list + edit form row inside Teams managers. */
 export const teamsCreatePanelRowClassName =
-  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 lg:flex-row lg:items-stretch lg:gap-4";
+  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 max-lg:relative max-lg:overflow-hidden lg:grid lg:grid-cols-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:transition-[grid-template-columns,column-gap] lg:ease-in-out motion-reduce:transition-none";
 
-/** List column when the edit form is open: shares space instead of a fixed max width. */
-export const teamsCreatePanelListOpenClassName =
-  "lg:min-w-0 lg:flex-1 lg:max-w-2xl";
+/** Full-height mobile detail view shared by the list, aside, and form. */
+export const teamsCreatePanelMobileViewClassName =
+  "max-lg:absolute max-lg:inset-0 max-lg:flex max-lg:h-full max-lg:min-h-0 max-lg:w-full max-lg:max-w-none max-lg:flex-col";
 
-/** List column when only the list is shown. */
-export const teamsCreatePanelListClosedClassName = "lg:mx-auto lg:max-w-3xl";
+/** Mobile detail navigation animates position and visibility, never height. */
+export const teamsCreatePanelMobileViewTransitionClassName =
+  "max-lg:transition-[transform,opacity] max-lg:ease-out motion-reduce:transition-none";
+
+/** Mobile detail view timing while a view is entering. */
+export const teamsCreatePanelMobileViewOpenClassName = "max-lg:duration-[240ms]";
+
+/** Mobile detail view timing while a view is leaving. */
+export const teamsCreatePanelMobileViewClosedClassName = "max-lg:duration-[200ms]";
+
+/** Active mobile detail view. */
+export const teamsCreatePanelMobileViewActiveClassName =
+  "max-lg:z-10 max-lg:translate-x-0 max-lg:opacity-100";
+
+/** List view while a detail view is active. */
+export const teamsCreatePanelMobileViewExitLeftClassName =
+  "max-lg:pointer-events-none max-lg:z-0 max-lg:-translate-x-6 max-lg:opacity-0";
+
+/** Detail view while returning to the list or another detail view. */
+export const teamsCreatePanelMobileViewExitRightClassName =
+  "max-lg:pointer-events-none max-lg:z-0 max-lg:translate-x-6 max-lg:opacity-0";
+
+/** Desktop layout timing when a list-side panel is opening. */
+export const teamsCreatePanelRowOpenClassName = "lg:gap-4 lg:duration-300";
+
+/** Desktop layout timing when all list-side panels are closing. */
+export const teamsCreatePanelRowClosedClassName = "lg:gap-0 lg:duration-[220ms]";
+
+/** List column; the grid track coordinates its desktop size with the form panels. */
+export const teamsCreatePanelListClassName = "lg:min-w-0 lg:mx-auto lg:max-w-3xl";
 
 /** Edit form column beside the list. */
 export const teamsCreatePanelFormClassName = "lg:min-w-0 lg:flex-1 lg:max-w-xl";

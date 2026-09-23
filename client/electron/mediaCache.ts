@@ -1,9 +1,8 @@
 import { app } from "electron";
 import { join } from "node:path";
 import * as fs from "node:fs";
-import * as https from "node:https";
-import * as http from "node:http";
 import { URL } from "node:url";
+import { safeHttpGet } from "./safeHttp";
 
 interface MediaCacheEntry {
   url: string;
@@ -11,6 +10,46 @@ interface MediaCacheEntry {
   lastUsed: number;
   contentType?: string;
 }
+
+export type MediaCacheEntryInfo = {
+  source: string;
+  sourceUrl: string;
+  contentType?: string;
+};
+
+export type EnsureMediaCachedResult = {
+  requested: number;
+  cacheable: number;
+  downloaded: number;
+  failed: number;
+  cacheMap: Record<string, string>;
+};
+
+/** Bound background cache warming so a service scan cannot saturate the booth. */
+export const MEDIA_CACHE_WARM_CONCURRENCY = 3;
+
+export const resolveMediaCacheRedirect = (
+  response: {
+    statusCode?: number;
+    headers: { location?: string };
+    resume: () => void;
+  },
+  targetUrl: string,
+  redirectsLeft: number,
+): { targetUrl: string; redirectsLeft: number } | undefined => {
+  if (
+    ![301, 302, 303, 307, 308].includes(response.statusCode ?? 0) ||
+    !response.headers.location
+  ) {
+    return undefined;
+  }
+  if (redirectsLeft <= 0) throw new Error("Too many redirects");
+  response.resume();
+  return {
+    targetUrl: new URL(response.headers.location, targetUrl).toString(),
+    redirectsLeft: redirectsLeft - 1,
+  };
+};
 
 export class MediaCacheManager {
   private cacheDir: string;
@@ -125,7 +164,7 @@ export class MediaCacheManager {
     if (url.includes("stream.mux.com")) {
       const playbackIdMatch = url.match(/stream\.mux\.com\/([^/?]+)/);
       if (playbackIdMatch) {
-        const playbackId = playbackIdMatch[1];
+        const playbackId = playbackIdMatch[1].replace(/\.(?:m3u8|mp4)$/i, "");
         return `https://stream.mux.com/${playbackId}/highest.mp4`;
       }
     }
@@ -178,12 +217,62 @@ export class MediaCacheManager {
     }
   }
 
+  /**
+   * Additively warm the cache for the requested URLs. Unlike syncMediaCache,
+   * this never removes entries that are not part of the request.
+   */
+  async ensureMediaCached(urls: string[]): Promise<EnsureMediaCachedResult> {
+    const uniqueUrlsByCacheKey = new Map<string, string>();
+    for (const url of urls) {
+      const cacheKey = this.getCacheKey(url);
+      if (cacheKey && !uniqueUrlsByCacheKey.has(cacheKey)) {
+        uniqueUrlsByCacheKey.set(cacheKey, url);
+      }
+    }
+
+    let downloaded = 0;
+    let failed = 0;
+    const queue = [...uniqueUrlsByCacheKey.values()];
+    const warmOne = async () => {
+      while (queue.length > 0) {
+        // `shift` happens before the await, so each worker owns one URL and
+        // the number of active downloads never exceeds the policy.
+        const url = queue.shift();
+        if (!url || this.getLocalPath(url)) continue;
+        try {
+          if (await this.downloadMedia(url)) {
+            downloaded += 1;
+          } else {
+            failed += 1;
+          }
+        } catch {
+          failed += 1;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from(
+        {
+          length: Math.min(MEDIA_CACHE_WARM_CONCURRENCY, queue.length),
+        },
+        () => warmOne(),
+      ),
+    );
+
+    return {
+      requested: urls.length,
+      cacheable: uniqueUrlsByCacheKey.size,
+      downloaded,
+      failed,
+      cacheMap: this.getMediaCacheMap(),
+    };
+  }
+
   private async downloadMediaInternal(url: string): Promise<string | null> {
     try {
       // Normalize to cache key (returns null for non-cacheable URLs like non-Mux HLS)
       const cacheKey = this.getCacheKey(url);
       if (!cacheKey) {
-        console.log("Skipping non-cacheable URL:", url);
         return null;
       }
 
@@ -201,12 +290,6 @@ export class MediaCacheManager {
       const fileName = this.getMediaFileName(cacheKey);
       const localPath = join(this.cacheDir, fileName);
 
-      if (this.isMuxUrl(downloadUrl)) {
-        console.log(
-          `[Media Cache] Downloading Mux video: ${downloadUrl} (original: ${url})`
-        );
-      }
-
       return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(localPath);
         const initialUrl = downloadUrl.includes("?")
@@ -214,103 +297,52 @@ export class MediaCacheManager {
           : `${downloadUrl}?download=video.mp4`;
 
         // Follow redirects within the same context to preserve cacheKey/localPath
-        const makeRequest = (
-          targetUrl: string,
-          redirectsLeft: number = 5
-        ) => {
-          const urlObj = new URL(targetUrl);
-          const client = urlObj.protocol === "https:" ? https : http;
+        void (async () => {
+          try {
+            const { response } = await safeHttpGet(initialUrl, {
+              headers: { "User-Agent": "WorshipSync/1.0", Accept: "*/*" },
+            });
+            if (response.statusCode !== 200) {
+              file.close();
+              this.cleanupFile(localPath);
 
-          const request = client.get(
-            targetUrl,
-            { headers: { "User-Agent": "WorshipSync/1.0", Accept: "*/*" } },
-            (response) => {
-              // Follow redirects while preserving cache key context
-              if (
-                (response.statusCode === 301 ||
-                  response.statusCode === 302) &&
-                response.headers.location
-              ) {
-                if (redirectsLeft <= 0) {
-                  file.close();
-                  this.cleanupFile(localPath);
-                  reject(new Error("Too many redirects"));
-                  return;
+              if (response.statusCode === 404) {
+                if (this.isMuxUrl(downloadUrl)) {
+                  console.warn(`[Media Cache] Mux video returned 404 for: ${downloadUrl}`);
+                  console.warn("[Media Cache] Static renditions may not be ready. Video will stream via HLS.");
+                } else {
+                  console.warn(`[Media Cache] Media not available (404): ${downloadUrl}`);
                 }
-                makeRequest(response.headers.location, redirectsLeft - 1);
+                resolve(null);
                 return;
               }
 
-              if (response.statusCode !== 200) {
-                file.close();
-                this.cleanupFile(localPath);
-
-                if (response.statusCode === 404) {
-                  if (this.isMuxUrl(downloadUrl)) {
-                    console.warn(
-                      `[Media Cache] Mux video returned 404 for: ${downloadUrl}`
-                    );
-                    console.warn(
-                      `[Media Cache] Static renditions may not be ready. Video will stream via HLS.`
-                    );
-                  } else {
-                    console.warn(
-                      `[Media Cache] Media not available (404): ${downloadUrl}`
-                    );
-                  }
-                  // Resolve with null instead of rejecting — allows sync to continue
-                  resolve(null);
-                  return;
-                }
-
-                reject(
-                  new Error(
-                    `Failed to download media: ${response.statusCode}`
-                  )
-                );
-                return;
-              }
-
-              // Capture content-type for accurate serving by the protocol handler
-              const responseContentType = (
-                response.headers["content-type"] || ""
-              )
-                .split(";")[0]
-                .trim();
-
-              response.pipe(file);
-
-              file.on("finish", () => {
-                file.close();
-                const entry: MediaCacheEntry = {
-                  url: cacheKey,
-                  localPath,
-                  lastUsed: Date.now(),
-                  contentType: responseContentType || undefined,
-                };
-                this.cacheIndex.set(cacheKey, entry);
-                this.flushSaveIndex();
-                resolve(localPath);
-              });
+              reject(new Error(`Failed to download media: ${response.statusCode}`));
+              return;
             }
-          );
 
-          request.on("error", (error) => {
+            const responseContentType = (response.headers["content-type"] || "")
+              .split(";")[0]
+              .trim();
+            response.pipe(file);
+            file.on("finish", () => {
+              file.close();
+              const entry: MediaCacheEntry = {
+                url: cacheKey,
+                localPath,
+                lastUsed: Date.now(),
+                contentType: responseContentType || undefined,
+              };
+              this.cacheIndex.set(cacheKey, entry);
+              this.flushSaveIndex();
+              resolve(localPath);
+            });
+          } catch (error) {
             file.close();
             this.cleanupFile(localPath);
             reject(error);
-          });
-
-          // 5 minute timeout — large files need more than 30s on moderate connections
-          request.setTimeout(300000, () => {
-            request.destroy();
-            file.close();
-            this.cleanupFile(localPath);
-            reject(new Error("Download timeout"));
-          });
-        };
-
-        makeRequest(initialUrl);
+          }
+        })();
       });
     } catch (error) {
       console.error(`Error downloading media ${url}:`, error);
@@ -360,7 +392,6 @@ export class MediaCacheManager {
 
     if (urlsToRemove.length > 0) {
       this.flushSaveIndex();
-      console.log(`Cleaned up ${urlsToRemove.length} unused media file(s)`);
     }
   }
 
@@ -406,5 +437,21 @@ export class MediaCacheManager {
       }
     }
     return map;
+  }
+
+  /** Metadata for the dev-only prepared-video picker. */
+  getMediaCacheEntries(): MediaCacheEntryInfo[] {
+    const entries: MediaCacheEntryInfo[] = [];
+    for (const [sourceUrl, entry] of this.cacheIndex) {
+      if (!fs.existsSync(entry.localPath)) continue;
+      const filename = entry.localPath.split(/[/\\]/).pop();
+      if (!filename) continue;
+      entries.push({
+        source: `media-cache://${filename}`,
+        sourceUrl,
+        ...(entry.contentType ? { contentType: entry.contentType } : {}),
+      });
+    }
+    return entries;
   }
 }

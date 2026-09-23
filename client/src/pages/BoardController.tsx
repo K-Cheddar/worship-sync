@@ -270,7 +270,11 @@ export const BoardControllerContent = () => {
   const [boardToolsOpen, setBoardToolsOpen] = useState(false);
   const [restreamResetConfirmOpen, setRestreamResetConfirmOpen] =
     useState(false);
+  const [isConfirmingRestreamReset, setIsConfirmingRestreamReset] =
+    useState(false);
   const [freshBoardConfirmOpen, setFreshBoardConfirmOpen] =
+    useState(false);
+  const [isConfirmingFreshBoardSession, setIsConfirmingFreshBoardSession] =
     useState(false);
   const loadRequestIdRef = useRef(0);
   const activeDbRef = useRef<PouchDB.Database | undefined>(db);
@@ -537,7 +541,8 @@ export const BoardControllerContent = () => {
   );
 
   const handleConfirmRestreamReset = useCallback(async () => {
-    if (!churchId) return;
+    if (!churchId || isConfirmingRestreamReset) return;
+    setIsConfirmingRestreamReset(true);
     try {
       await resetRestreamSession(churchId);
       await reloadRestreamSession();
@@ -550,15 +555,18 @@ export const BoardControllerContent = () => {
           : "Could not clear the Restream chat.",
         "error",
       );
+    } finally {
+      setIsConfirmingRestreamReset(false);
     }
-  }, [churchId, reloadRestreamSession, showToast]);
+  }, [churchId, isConfirmingRestreamReset, reloadRestreamSession, showToast]);
 
   // Automatic stream detection remains the normal Restream reset path. This
   // explicit fresh-start action resets both sources as a reliable fallback for
   // platforms that do not expose a stable broadcast identity.
   const handleConfirmFreshBoardSession = useCallback(async () => {
-    if (!selectedAlias || !churchId) return;
+    if (!selectedAlias || !churchId || isConfirmingFreshBoardSession) return;
     const aliasId = selectedAlias.aliasId;
+    setIsConfirmingFreshBoardSession(true);
     try {
       await resetRestreamSession(churchId);
       await hardResetBoardAlias(aliasId);
@@ -574,8 +582,17 @@ export const BoardControllerContent = () => {
           : "Could not start a fresh session.",
         "error",
       );
+    } finally {
+      setIsConfirmingFreshBoardSession(false);
     }
-  }, [selectedAlias, churchId, reloadRestreamSession, showToast, pullFromRemote]);
+  }, [
+    selectedAlias,
+    churchId,
+    isConfirmingFreshBoardSession,
+    reloadRestreamSession,
+    showToast,
+    pullFromRemote,
+  ]);
 
   // Prompt (never force) a fresh start when the current board only holds
   // content from an earlier day.
@@ -1143,7 +1160,8 @@ export const BoardControllerContent = () => {
           message="Are you sure you want to clear"
           warningMessage="This permanently removes the earlier Restream chat. Discussion board posts stay the same."
           confirmText="Clear chat"
-          isConfirming={false}
+          confirmingLabel="Clearing chat..."
+          isConfirming={isConfirmingRestreamReset}
         />
       )}
 
@@ -1161,7 +1179,8 @@ export const BoardControllerContent = () => {
             "Restream chat starts a new session",
           ]}
           confirmText="Start fresh"
-          isConfirming={false}
+          confirmingLabel="Starting fresh..."
+          isConfirming={isConfirmingFreshBoardSession}
         />
       )}
 

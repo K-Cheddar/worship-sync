@@ -16,6 +16,10 @@ import {
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import { migrateLegacyMediaRouteFolders } from "../utils/mediaRouteKey";
+import {
+  replaceMediaReferencesInPreference,
+  replaceMediaReferencesInQuickLinks,
+} from "../utils/mediaReferenceReplacement";
 
 export type PreferencesTabType = "defaults" | "quickLinks";
 export type ControllerConfigurationRoute =
@@ -466,6 +470,30 @@ export const preferencesSlice = createSlice({
         );
       }
     },
+    replaceMediaReferencesInPreferences: (
+      state,
+      action: PayloadAction<{
+        oldMedia: MediaType;
+        newMedia: MediaType;
+      }>,
+    ) => {
+      const replacement = action.payload;
+      for (const field of [
+        "defaultSongBackground",
+        "defaultTimerBackground",
+        "defaultBibleBackground",
+        "defaultFreeFormBackground",
+      ] as const) {
+        state.preferences[field] = replaceMediaReferencesInPreference(
+          state.preferences[field],
+          replacement,
+        );
+      }
+      state.quickLinks = replaceMediaReferencesInQuickLinks(
+        state.quickLinks,
+        replacement,
+      );
+    },
 
     // Temporary Preferences Below
 
@@ -685,6 +713,7 @@ export const {
   setMonitorTimerId,
   setMonitorShowNextSlide,
   updatePreferencesFromRemote,
+  replaceMediaReferencesInPreferences,
   forceUpdate,
   setIsInitialized,
   setFocusMediaId,

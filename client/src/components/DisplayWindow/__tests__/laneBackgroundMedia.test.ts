@@ -1,10 +1,12 @@
 import type { Box, LocalVideoInputPresentation } from "../../../types";
 import {
   getLaneBackgroundMediaKey,
+  getLanePreparedMediaKey,
   getSnapshotBackgroundIdentity,
   getSnapshotForegroundIdentity,
   resolveLaneBackgroundMedia,
 } from "../laneBackgroundMedia";
+import { getVideoBackgroundMediaKey } from "../../../utils/videoBackgroundPlayback";
 
 const imageBox: Box = {
   id: "image",
@@ -59,6 +61,19 @@ describe("laneBackgroundMedia", () => {
         originalSrc: "worshipsync-media://asset/1",
       }),
     );
+  });
+
+  it("keeps the candidate, lane, and playback identity equal", () => {
+    const laneMedia = resolveLaneBackgroundMedia({
+      boxes: [videoBox],
+      showBackground: true,
+      shouldPlayVideo: true,
+    });
+
+    expect(getVideoBackgroundMediaKey(videoBox.mediaInfo)).toBe(
+      getLanePreparedMediaKey(laneMedia),
+    );
+    expect(getLanePreparedMediaKey(laneMedia)).toBe("remote:video-1");
   });
 
   it("uses the thumbnail when the placeholder is empty", () => {

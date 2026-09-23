@@ -236,6 +236,8 @@ export type TeamRosterMember = {
    * Absent on members added before addresses were collected.
    */
   email?: string;
+  /** Contact number in normalized U.S. E.164 format; not an identity. */
+  phoneNumber?: string;
   /** Account this member is linked to, when one has been confirmed. */
   userId?: string;
   /**
@@ -552,6 +554,9 @@ export type TeamsBootstrap = {
   scheduleHydrationWindow?: { startDate: string; endDate: string };
   intakeForms?: TeamIntakeForm[];
   intakeSubmissions?: TeamIntakeSubmission[];
+  intakeRecipients?: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
   /** True when any collection hit the server row cap, so this view is partial. */
   truncated?: boolean;
 };
@@ -577,6 +582,8 @@ export type TeamIntakeFieldId =
   | "positions"
   | "availability"
   | "schedulingPreferences"
+  | "recurringAvailability"
+  | "schedulingFrequency"
   | "blockoutDates"
   | "notes";
 
@@ -611,6 +618,57 @@ export type TeamIntakeForm = {
 };
 
 export type TeamIntakeSubmissionStatus = "new" | "applied" | "dismissed";
+
+export type TeamIntakeRecipient = {
+  recipientId: string;
+  churchId: string;
+  formId: string;
+  memberId: string;
+  createdAt: string;
+  createdBy?: string;
+  linkCopiedAt?: string | null;
+  linkCopiedBy?: string;
+  respondedAt?: string | null;
+  submissionId?: string | null;
+  revokedAt?: string | null;
+};
+
+export type SmsMemberEligibilityStatus =
+  | "no_mobile"
+  | "consent_needed"
+  | "enabled"
+  | "opted_out";
+
+export type SmsMemberEligibility = {
+  status: SmsMemberEligibilityStatus;
+  eligible: boolean;
+  phoneNumber?: string;
+};
+
+export type SmsDeliveryAttemptStatus =
+  | "pending"
+  | "accepted"
+  | "sent"
+  | "delivered"
+  | "undelivered"
+  | "failed";
+
+export type SmsDeliveryAttempt = {
+  attemptId: string;
+  churchId: string;
+  recipientType: "team_intake";
+  recipientId: string;
+  /** Present on new attempts; legacy records are scoped by recipient lookup. */
+  formId?: string;
+  memberId: string;
+  provider: string;
+  purpose: "initial" | "reminder";
+  status: SmsDeliveryAttemptStatus;
+  failureCode?: string;
+  failureMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type TeamIntakeBlockoutRange = {
   startDate: string;
@@ -664,6 +722,8 @@ export type TeamIntakePreview = {
     | "availabilityMessage"
     | "notesMessage"
   >;
+  /** Present only for a recipient-bound link; contains no contact or account data. */
+  recipient?: { firstName: string };
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];
   /** Teams referenced by `positions`, for grouping the public form by team. */

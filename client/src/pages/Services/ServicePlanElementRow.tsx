@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -29,6 +30,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
+import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import ServicePlanAssigneeList, {
   addMicrophoneSlot,
   addServicePlanAssignee,
@@ -76,8 +79,16 @@ import {
 import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { getChurchResource, getChurchResourceUrl } from "../../api/auth";
 import generateRandomId from "../../utils/generateRandomId";
 import { pad2 } from "../../constants";
+import {
+  getServicePlanChurchResourceId,
+  getServicePlanResourceDefinition,
+  getServicePlanResourceDisplayLabel,
+  normalizeServicePlanResourceForPreview,
+} from "./servicePlanResources";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import ServicePlanScripturePopover, {
@@ -98,6 +109,7 @@ import type {
   ServicePlanAssignee,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServicePlanContentResource,
   ServicePlanSongReference,
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
@@ -1173,6 +1185,8 @@ const ServicePlanElementRow = ({
   onOpenContent,
   onOpenSongDetails,
 }: ServicePlanElementRowProps) => {
+  const globalInfo = useContext(GlobalInfoContext);
+  const churchId = globalInfo?.churchId || "";
   const hasNotes = !isRichTextEmpty(element.notes);
   const [notesEditorOpen, setNotesEditorOpen] = useState(hasNotes);
   // Existing notes start minimized; newly added notes open expanded for editing.
@@ -1189,8 +1203,9 @@ const ServicePlanElementRow = ({
   const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
   const [leadPopoverOpen, setLeadPopoverOpen] = useState(false);
   const isDesktopAssignmentPanel = useMediaQuery("(min-width: 1280px)");
-  const usesDesktopAssignmentPanel = isDesktopAssignmentPanel && Boolean(onOpenAssignment);
+  const usesAssignmentPanel = Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
+  const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
   const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
@@ -1349,7 +1364,7 @@ const ServicePlanElementRow = ({
     || scheduledPositionIds.length > 0
     || scheduledRows.length > 0;
   const openAssignment = (trigger?: HTMLElement) => {
-    if (usesDesktopAssignmentPanel && onOpenAssignment) {
+    if (usesAssignmentPanel && onOpenAssignment) {
       onOpenAssignment(trigger);
       return;
     }
@@ -1361,6 +1376,33 @@ const ServicePlanElementRow = ({
       return;
     }
     setContentManagerOpen(true);
+  };
+
+  const openResourcePreview = (
+    resource: ServicePlanContentResource,
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
+    event.stopPropagation();
+    const resourceId = getServicePlanChurchResourceId(resource);
+    const resolveSource = churchId && resourceId
+      ? async () => {
+          const [resourceResult, urlResult] = await Promise.all([
+            getChurchResource(churchId, resourceId),
+            getChurchResourceUrl({ churchId, resourceId, disposition: "inline" }),
+          ]);
+          return {
+            url: urlResult.url,
+            title: resourceResult.resource.name,
+            mimeType: resourceResult.resource.storage.contentType,
+            fileName: resourceResult.resource.storage.fileName,
+          };
+        }
+      : undefined;
+    setPreviewResource(
+      normalizeServicePlanResourceForPreview(resource, {
+        ...(resolveSource ? { resolveSource } : {}),
+      }),
+    );
   };
   const readOnlyLeadDetails = assignees.length > 0 ? (
     <ServicePlanAssigneeList
@@ -1563,8 +1605,9 @@ const ServicePlanElementRow = ({
     });
   };
 
-  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel);
-  const contentReferenceCount = songRefs.length + scriptureRefs.length;
+  const contentResources = element.resources || [];
+  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel) || contentResources.length > 0;
+  const contentReferenceCount = songRefs.length + scriptureRefs.length + contentResources.length;
 
   const renderItemActionsMenu = () => allowEdit ? (
     <ItemActionsMenu
@@ -1662,7 +1705,7 @@ const ServicePlanElementRow = ({
           placement === "manager"
             ? "w-full flex-col items-stretch gap-0.5 overflow-hidden p-0"
             : placement === "summary"
-              ? "min-w-0 flex-1 overflow-hidden p-0"
+              ? "min-w-0 flex-1 overflow-hidden p-0 md:p-0"
               : allowEdit ? "pl-9" : "pl-1.5",
         )}
       >
@@ -1737,7 +1780,7 @@ const ServicePlanElementRow = ({
                     : SERVICE_PLAN_SONG_ICON_CLASS,
                 )}
               />
-              <span className="min-w-0 flex-1 truncate leading-none">
+              <span className="min-w-0 flex-1 truncate leading-5">
                 {label}
               </span>
               {summaryOpensContent ? (
@@ -1762,7 +1805,8 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "box-border flex !h-full !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded py-0 text-left leading-none focus-visible:outline-none focus-visible:ring-1",
+                "box-border flex !h-[2rem] !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded py-0 text-left leading-none focus-visible:outline-none focus-visible:ring-1",
+                placement === "summary" && "px-1.5",
                 isSongUnlinked
                   ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
                   : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
@@ -1787,7 +1831,9 @@ const ServicePlanElementRow = ({
               {songChipContent}
             </button>
           ) : (
-            <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
+            <span className={cn("flex h-[2rem] min-w-0 items-center gap-0.5", placement === "summary" && "self-stretch px-1.5")}>
+              {songChipContent}
+            </span>
           );
 
           return (
@@ -1797,7 +1843,7 @@ const ServicePlanElementRow = ({
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
                 placement === "summary" && cn(
                   SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                  "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                  "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
                 ),
                 isSongUnlinked
                   ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
@@ -1876,7 +1922,7 @@ const ServicePlanElementRow = ({
               SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
               placement === "summary" && cn(
                 SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
               ),
             )}
           >
@@ -1899,7 +1945,10 @@ const ServicePlanElementRow = ({
                 anchor={(
                   <button
                     type="button"
-                    className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                    className={cn(
+                      "flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300",
+                      placement === "summary" && "px-1.5",
+                    )}
                     aria-label={`Edit scripture ${scriptureLabel}`}
                     onClick={(event) => {
                       if (usesContentPanel) openContent(event.currentTarget);
@@ -1910,7 +1959,7 @@ const ServicePlanElementRow = ({
                       size="xs"
                       className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                     />
-                    <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
+                    <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
                   </button>
                 )}
               />
@@ -1921,7 +1970,7 @@ const ServicePlanElementRow = ({
                   size="xs"
                   className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                 />
-                <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
+                <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
               </>
             )}
             {allowEdit ? (
@@ -1969,21 +2018,21 @@ const ServicePlanElementRow = ({
                   anchor={(
                     <button
                       type="button"
-                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-1 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                       aria-label={`Edit scripture ${additionalScripture.label}`}
                       onClick={(event) => {
                         if (usesContentPanel) openContent(event.currentTarget);
                       }}
                     >
                       <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
-                      <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
+                      <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
                     </button>
                   )}
                 />
               ) : (
                 <>
                   <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-                  <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
+                  <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
                 </>
               )}
               {allowEdit ? (
@@ -1999,6 +2048,59 @@ const ServicePlanElementRow = ({
                     scriptureRef: undefined,
                     scriptureRefs: scriptureRefs.filter((_, currentIndex) => currentIndex !== scriptureIndex),
                   })}
+                />
+              ) : null}
+            </span>
+          );
+        })}
+        {contentResources.map((resource, index) => {
+          if (placement === "summary" && (firstSongIndex >= 0 || scriptureLabel || index > 0)) {
+            return null;
+          }
+          const definition = getServicePlanResourceDefinition(resource.type);
+          const ResourceIcon = definition.icon;
+          return (
+            <span
+              key={resource.id}
+              className={cn(
+                SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+                placement === "summary" && cn(
+                  SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+                  "min-w-0 flex-1 !h-[2rem] !items-stretch rounded-none border-0 bg-gray-950/70 px-0",
+                ),
+              )}
+            >
+              <button
+                type="button"
+                className={cn(
+                  "box-border flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300",
+                  placement === "summary" && "px-1.5",
+                )}
+                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${getServicePlanResourceDisplayLabel(resource)}`}
+                title={getServicePlanResourceDisplayLabel(resource)}
+                onClick={(event) => {
+                  if (allowEdit) {
+                    if (usesContentPanel) openContent(event.currentTarget);
+                    return;
+                  }
+                  if (resource.url || resource.data?.text || getServicePlanChurchResourceId(resource)) {
+                    openResourcePreview(resource, event);
+                  }
+                }}
+              >
+                <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
+                <span className="min-w-0 flex-1 truncate leading-5">{getServicePlanResourceDisplayLabel(resource)}</span>
+              </button>
+              {allowEdit ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  iconSize="sm"
+                  padding="p-0"
+                  className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
+                  svg={X}
+                  aria-label={`Remove resource ${resource.title}`}
+                  onClick={() => onUpdate({ resources: contentResources.filter((_, currentIndex) => currentIndex !== index) })}
                 />
               ) : null}
             </span>
@@ -2068,25 +2170,28 @@ const ServicePlanElementRow = ({
   ) : contentReferenceCount === 1 ? (
     attachmentChips("summary")
   ) : (
-    <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
-      <PopoverTrigger asChild>
-        <div
-          role="button"
-          tabIndex={0}
-          className="flex min-w-0 max-w-full cursor-pointer items-center overflow-hidden rounded hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
-          aria-label={`View content for ${itemLabel}`}
+    <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded">
+      {attachmentChips("summary")}
+      <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="tertiary"
+            className="h-7 min-h-0 shrink-0 rounded-none border-0 px-2 text-xs font-normal leading-none text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-8"
+            aria-label={`View content for ${itemLabel}`}
+          >
+            +{contentReferenceCount - 1}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
         >
-          {attachmentChips("summary")}
-        </div>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
-      >
-        <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
-        {attachmentChips("manager")}
-      </PopoverContent>
-    </Popover>
+          <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
+          {attachmentChips("manager")}
+        </PopoverContent>
+      </Popover>
+    </div>
   ) : contentAddControl;
 
   const notesBlock = showNotesEditor ? (
@@ -2621,7 +2726,7 @@ const ServicePlanElementRow = ({
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {assignmentSheetOpen && !usesDesktopAssignmentPanel ? (
+      {assignmentSheetOpen && !usesAssignmentPanel ? (
         <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
           <SheetContent
             side="right"
@@ -2697,6 +2802,10 @@ const ServicePlanElementRow = ({
           })}
         />
       ) : null}
+      <ContentPreviewDialog
+        resource={previewResource}
+        onClose={() => setPreviewResource(null)}
+      />
     </div>
   );
 };

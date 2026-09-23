@@ -39,6 +39,16 @@ type Indexed<T> = { value: T; index: number };
 const normalized = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 
+const labelsMatch = (left: string | string[], right: string | string[]): boolean => {
+  const leftLabels = (Array.isArray(left) ? left : [left])
+    .map(normalized)
+    .filter(Boolean);
+  const rightLabels = new Set(
+    (Array.isArray(right) ? right : [right]).map(normalized).filter(Boolean),
+  );
+  return leftLabels.some((label) => rightLabels.has(label));
+};
+
 /**
  * Pairs unchanged labels first, then uses remaining source order.
  *
@@ -50,7 +60,7 @@ const normalized = (value: string): string =>
 const pairByLabelThenOrder = <T>(
   current: T[],
   imported: T[],
-  label: (item: T) => string,
+  label: (item: T) => string | string[],
   canPairByLabel: (item: T) => boolean = () => true,
   canPairByOrder: (item: T) => boolean = () => true,
 ): Array<[Indexed<T>, Indexed<T>]> => {
@@ -65,7 +75,7 @@ const pairByLabelThenOrder = <T>(
       (existing) =>
         !usedCurrent.has(existing.index) &&
         canPairByLabel(existing.value) &&
-        normalized(label(existing.value)) === normalized(label(incoming.value)),
+        labelsMatch(label(existing.value), label(incoming.value)),
     );
     if (!candidate) continue;
     usedCurrent.add(candidate.index);
@@ -224,10 +234,12 @@ const mergeElement = (
     next.scriptureRefs = getServicePlanElementScriptureRefs(imported);
     delete next.scriptureRef;
     next = copyOptionalField(next, imported, "sourceElementTypeRaw");
+    next = copyOptionalField(next, imported, "sourceContentTitleRaw");
   }
   if (options.updateAssignments) {
     next.assignees = mergeImportedAssignees(current, imported);
     next = copyOptionalField(next, imported, "sourceLedByRaw");
+    next = copyOptionalField(next, imported, "sourceLedByAssignments");
   }
   if (options.updateTiming) {
     next = copyOptionalField(next, imported, "startTime");
@@ -343,7 +355,11 @@ export const refreshServicePlanFromImport = (
       const elementPairs = pairByLabelThenOrder(
         currentSection.elements,
         sourceSection.elements,
-        (element) => richTextToPlainText(element.title),
+        (element) => [
+          richTextToPlainText(element.title),
+          element.sourceElementTypeRaw || "",
+          element.sourceContentTitleRaw || "",
+        ],
         canPairByLabel,
         isSourceOwned,
       );

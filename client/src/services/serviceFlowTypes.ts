@@ -61,10 +61,19 @@ export type PublicServiceFlowItem = {
   /** Display-only attachment labels from the service plan. */
   songs?: string[];
   scriptureRefs?: string[];
+  /** Sanitized display-only resources attached to the service-plan item. */
+  resources?: PublicServiceFlowResource[];
   notes: ServiceFlowRichText;
   teamNotes?: PublicServiceFlowTeamNote[];
   microphoneAssignments?: PublicServiceFlowMicrophoneAssignment[];
   creditName?: string;
+};
+
+export type PublicServiceFlowResource = {
+  type: string;
+  title: string;
+  url?: string;
+  detail?: string;
 };
 
 export type PublicServiceFlowSection = {

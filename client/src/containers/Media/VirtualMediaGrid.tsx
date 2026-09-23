@@ -23,14 +23,39 @@ const ROW_GAP = 4;  // gap-y-1
 const FOLDER_ROW_HEIGHT = 28;
 const INITIAL_TILE_ROW_HEIGHT = 80; // fallback before first real measurement
 
+const getUsableScrollViewport = (element: HTMLElement | null) => {
+  if (!element || element.isConnected === false) return 0;
+
+  try {
+    const rectHeight = element.getBoundingClientRect().height;
+    return Math.max(element.clientHeight, rectHeight);
+  } catch {
+    return 0;
+  }
+};
+
+const findMediaElement = (container: HTMLElement, id: string) =>
+  Array.from(
+    container.querySelectorAll<HTMLElement>("[data-media-id]"),
+  ).find((element) => element.dataset.mediaId === id) ?? null;
+
 type UpRow = { type: "up"; label: string };
 type FolderRow = { type: "folder"; folder: MediaFolder };
 type TilesRow = { type: "tiles"; items: MediaType[]; startIndex: number };
 type VirtualRow = UpRow | FolderRow | TilesRow;
 
 export type VirtualMediaGridHandle = {
-  scrollToMediaId: (id: string) => void;
+  scrollToMediaId: (
+    id: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<VirtualMediaGridScrollResult>;
 };
+
+export type VirtualMediaGridScrollResult =
+  | { status: "success" }
+  | { status: "not-ready" }
+  | { status: "not-found" }
+  | { status: "cancelled" };
 
 export type VirtualMediaGridProps = {
   scrollRef: React.RefObject<HTMLElement | null>;
@@ -108,6 +133,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
 
     const rowsRef = useRef(rows);
     rowsRef.current = rows;
+    const mediaItemsRef = useRef(mediaItems);
+    mediaItemsRef.current = mediaItems;
 
     const virtualizer = useVirtualizer({
       count: rows.length,
@@ -186,20 +213,101 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     useImperativeHandle(
       ref,
       () => ({
-        scrollToMediaId(id: string) {
+        scrollToMediaId(
+          id: string,
+          { signal }: { signal?: AbortSignal } = {},
+        ) {
+          const targetExists = mediaItemsRef.current.some((item) => item.id === id);
           const rowIndex = rowsRef.current.findIndex(
             (r) => r.type === "tiles" && r.items.some((item) => item.id === id),
           );
-          if (rowIndex === -1) return;
+          if (!targetExists) return Promise.resolve({ status: "not-found" });
+          if (rowIndex === -1) return Promise.resolve({ status: "not-ready" });
+          if (signal?.aborted) return Promise.resolve({ status: "cancelled" });
+
+          const scrollContainer =
+            scrollElement === undefined ? scrollRef.current : scrollElement;
+          if (getUsableScrollViewport(scrollContainer) === 0) {
+            return Promise.resolve({ status: "not-ready" });
+          }
+
           virtualizerRef.current.scrollToIndex(rowIndex, { align: "auto" });
-          requestAnimationFrame(() => {
-            scrollRef.current
-              ?.querySelector(`[data-media-id="${id}"]`)
-              ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+          return new Promise<VirtualMediaGridScrollResult>((resolve) => {
+            let frameId: number | null = null;
+            let settled = false;
+
+            const cleanup = () => {
+              if (frameId !== null) cancelAnimationFrame(frameId);
+              signal?.removeEventListener("abort", handleAbort);
+            };
+            const finish = (result: VirtualMediaGridScrollResult) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              resolve(result);
+            };
+            const handleAbort = () => finish({ status: "cancelled" });
+            const checkForMountedTile = () => {
+              if (signal?.aborted) {
+                handleAbort();
+                return;
+              }
+
+              const targetStillExists = mediaItemsRef.current.some(
+                (item) => item.id === id,
+              );
+              if (!targetStillExists) {
+                finish({ status: "not-found" });
+                return;
+              }
+
+              const currentScrollContainer =
+                scrollElement === undefined ? scrollRef.current : scrollElement;
+              if (getUsableScrollViewport(currentScrollContainer) === 0) {
+                finish({ status: "not-ready" });
+                return;
+              }
+              if (!currentScrollContainer) {
+                finish({ status: "not-ready" });
+                return;
+              }
+
+              const mediaElement = findMediaElement(currentScrollContainer, id);
+              if (mediaElement) {
+                const containerRect =
+                  currentScrollContainer.getBoundingClientRect();
+                const mediaRect = mediaElement.getBoundingClientRect();
+                const viewportTop = containerRect.top;
+                const viewportBottom =
+                  containerRect.height > 0
+                    ? containerRect.bottom
+                    : viewportTop + currentScrollContainer.clientHeight;
+                const isOutsideViewport =
+                  mediaRect.top < viewportTop || mediaRect.bottom > viewportBottom;
+
+                if (isOutsideViewport) {
+                  mediaElement.scrollIntoView({
+                    block: "nearest",
+                    behavior: "smooth",
+                  });
+                }
+                finish({ status: "success" });
+                return;
+              }
+
+              frameId = requestAnimationFrame(() => {
+                frameId = null;
+                checkForMountedTile();
+              });
+            };
+
+            signal?.addEventListener("abort", handleAbort, { once: true });
+            checkForMountedTile();
           });
         },
       }),
-      [scrollRef],
+      [scrollElement, scrollRef],
     );
 
     return (

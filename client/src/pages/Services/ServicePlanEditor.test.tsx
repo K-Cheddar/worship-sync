@@ -1,5 +1,6 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import type { ContextType, ReactNode } from "react";
 import ServicePlanEditor from "./ServicePlanEditor";
 import {
@@ -1492,9 +1493,7 @@ Opening Song to begin the worship experience.
 
     expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(
-      screen.getByDisplayValue("Opening Song: Come Before His Presence"),
-    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Come Before His Presence")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
@@ -1598,7 +1597,8 @@ Opening Song to begin the worship experience.
       startTime: "09:00",
     });
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe("Blair");
-    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome home");
+    // Non-generic elementType wins over the longer content title.
+    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome");
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
@@ -1667,21 +1667,29 @@ Opening Song to begin the worship experience.
     await user.click(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
+    // Empty scratch can autosave under suite load; drain it so the assertion
+    // below is about the title edit, not the seed write.
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    mockSaveServicePlan.mockClear();
 
     // Seeded with one default section; Add item targets it without an extra pick.
     await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
+    // Add-item can autosave an empty title before the typed value flushes;
+    // wait for the save that includes the edited title.
     await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
+      const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
+      expect(body?.sections?.[0]?.elements?.[0]?.title).toEqual(
+        plainTextToRichText("Great Are You Lord"),
+      );
     }, { timeout: 2_500 });
-    const [churchId, planKey, body] = mockSaveServicePlan.mock.calls[0];
+    const [churchId, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(churchId).toBe("church-1");
     expect(planKey).toBe("service-1@2026-07-26");
     expect(body.serviceId).toBe("service-1");
-    expect(body.sections[0].elements[0].title).toEqual(
-      plainTextToRichText("Great Are You Lord"),
-    );
     // The first element added to an empty plan seeds the timing anchor from
     // the occurrence's own start time (14:00 UTC on 2026-07-26).
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
@@ -2375,6 +2383,171 @@ Opening Song to begin the worship experience.
     expect(await screen.findByText("Synced")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
+  });
+
+  it("catches up schedule progress and missed publicLive changes after a long resume under StrictMode", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const sections = [{
+      id: "section-1",
+      name: "Worship",
+      elements: [
+        {
+          id: "welcome",
+          type: "free",
+          title: plainTextToRichText("Welcome"),
+          startTime: "14:00",
+          durationMinutes: 5,
+        },
+        {
+          id: "message",
+          type: "free",
+          title: plainTextToRichText("Message"),
+          startTime: "14:05",
+          durationMinutes: 30,
+        },
+      ],
+    }];
+    const initialPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      revision: 4,
+      sections,
+      publicLive: { mode: "schedule" as const },
+    } as ServicePlan;
+    const resumedPlan = {
+      ...initialPlan,
+      publicLive: { mode: "manual" as const, currentElementId: "message" },
+    };
+    let getServicePlanCallCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({
+      success: true,
+      servicePlan:
+        getServicePlanCallCount++ < 2 ? initialPlan : resumedPlan,
+    }));
+
+    try {
+      render(
+        <StrictMode>
+          {editorTree()}
+        </StrictMode>,
+      );
+      expect(
+        await screen.findByLabelText("Live on schedule: Welcome"),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
+      expect(
+        screen.getByLabelText("Live (pinned): Message"),
+      ).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("preserves an unsaved draft and raises the existing conflict state on resume", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let resolveSave: (() => void) | null = null;
+    const initialPlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      revision: 1,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "welcome",
+          type: "free",
+          title: plainTextToRichText("Welcome"),
+        }],
+      }, {
+        id: "section-2",
+        name: "Response",
+        elements: [{
+          id: "response",
+          type: "free",
+          title: plainTextToRichText("Response"),
+        }],
+      }],
+    } as ServicePlan;
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: initialPlan })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: { ...initialPlan, revision: 9, name: "Remote version" },
+      });
+    mockSaveServicePlan.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = () =>
+            resolve({ success: true, servicePlan: initialPlan });
+        }),
+    );
+
+    try {
+      const user = userEvent.setup();
+      renderEditor({ initialEditing: true });
+      await screen.findByDisplayValue("Worship");
+      await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+      await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
+      expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+      expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+      expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
+      expect(screen.getByText("Plan changed elsewhere")).toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Reload latest" }),
+      ).toBeInTheDocument();
+    } finally {
+      const finishSave = resolveSave as (() => void) | null;
+      if (finishSave) {
+        await act(async () => finishSave());
+      }
+      nowSpy.mockRestore();
+    }
   });
 
   it("shares from plan actions on narrow layouts and lets an editor make an item live from its row", async () => {

@@ -1,8 +1,70 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { searchYouTubeVideos } from "../../api/auth";
 import { ItemDetailsEditorFields } from "./ItemDetailsModal";
 
+jest.mock("../../api/auth", () => ({
+  ...jest.requireActual("../../api/auth"),
+  searchYouTubeVideos: jest.fn(),
+}));
+
+const mockSearchYouTubeVideos = jest.mocked(searchYouTubeVideos);
+
 describe("ItemDetailsEditorFields song links", () => {
+  beforeEach(() => {
+    mockSearchYouTubeVideos.mockReset();
+    mockSearchYouTubeVideos.mockResolvedValue({
+      query: "Example song official",
+      cached: false,
+      results: [
+        {
+          videoId: "dQw4w9WgXcQ",
+          title: "Example song official video",
+          channelName: "Example Channel",
+          thumbnail: "https://img.example/thumb.jpg",
+          description: "",
+          embeddable: true,
+          watchUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+      ],
+    });
+  });
+
+  it("adds a selected YouTube result to the existing song-link save payload", async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    render(
+      <ItemDetailsEditorFields
+        isOpen
+        onClose={jest.fn()}
+        itemType="song"
+        itemName="Example song"
+        songMetadata={undefined}
+        songLinks={[]}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Find YouTube Video" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Link video" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Link video" })).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith({
+        name: "Example song",
+        songLinksPatch: [
+          {
+            id: expect.any(String),
+            label: "YouTube",
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          },
+        ],
+      });
+    });
+  });
+
   it("creates manual metadata when a song key is the only detail", async () => {
     const onSave = jest.fn().mockResolvedValue(undefined);
     render(

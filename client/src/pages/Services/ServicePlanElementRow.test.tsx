@@ -130,6 +130,7 @@ const renderRow = (
     teamNoteOptions?: ServicePlanTeamNoteOption[];
     roleNoteOptions?: ServicePlanRoleNoteOption[];
     onUpdate?: jest.Mock;
+    onSelect?: jest.Mock;
     onViewSongLyrics?: jest.Mock;
     onOpenContent?: jest.Mock;
     canCreateLibrarySong?: boolean;
@@ -152,6 +153,7 @@ const renderRow = (
           isEditing={overrides.isEditing ?? canEdit}
           onRemove={jest.fn()}
           onUpdate={overrides.onUpdate ?? jest.fn()}
+          onSelect={overrides.onSelect}
           onDurationChange={jest.fn()}
           onStartTimeChange={jest.fn()}
           assignedToHistoryValues={[]}
@@ -811,6 +813,41 @@ describe("ServicePlanElementRow", () => {
     expect(screen.getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
   });
 
+  it("previews titled and untitled linked resources in view mode without selecting the row", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+    const url = "https://example.test/resources/a-very-long-resource-name-that-must-stay-within-the-content-column.pdf";
+    const view = renderRow({
+      canEdit: false,
+      isEditing: false,
+      onSelect,
+      element: {
+        ...baseElement,
+        resources: [{ id: "titled", type: "url", title: "Service notes", url: "https://example.test/notes" }],
+      },
+    });
+
+    expect(screen.getByText("Service notes")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Preview Service notes" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
+    view.unmount();
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      onSelect,
+      element: {
+        ...baseElement,
+        resources: [{ id: "untitled", type: "url", title: "", url }],
+      },
+    });
+    const untitled = screen.getByRole("button", { name: `Preview ${url}` });
+    expect(screen.getByText(url)).toHaveClass("min-w-0", "truncate");
+    expect(untitled).toHaveAttribute("title", url);
+  });
+
   it("removes an inferred source-classified song instead of recreating it", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
@@ -1114,6 +1151,36 @@ describe("assignees and their microphones", () => {
       {
         assignees: [
           { id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+        ],
+      },
+      undefined,
+    );
+  });
+
+  it("swaps an assigned microphone from its chip", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: [orange, lapel],
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Pastor John", microphoneIds: [orange.id] }],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /Lapel 1/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      {
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-lapel"] },
         ],
       },
       undefined,

@@ -22,8 +22,14 @@ export type ServicePlanningLineItem = {
   sourceRowIndex: number;
   elementType: string;
   title: string;
+  contentTitle?: string;
   cleanedTitle: string;
   ledBy: string;
+  ledByAssignments?: Array<{
+    kind: "person" | "teamPosition";
+    id?: string;
+    name: string;
+  }>;
   /** Current Service Plan assignees; imported rows use `ledBy` as a fallback. */
   assigneeNames?: string[];
   attachedSongs?: Array<{ title: string; songId?: string; inLibrary: boolean }>;

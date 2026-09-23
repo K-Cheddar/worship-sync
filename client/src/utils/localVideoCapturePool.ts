@@ -14,6 +14,10 @@ import { publishLocalVideoPreview } from "./localVideoPreviewRelay";
 import { publishLocalVideoRealtime } from "./localVideoRealtimeRelay";
 import { DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE } from "./localVideoQuality";
 import { publishLocalVideoCaptureQuality } from "./localVideoCaptureQualityRelay";
+import {
+  localVideoDiagnosticsEnabled,
+  recordLocalVideoCapture,
+} from "./localVideoDiagnostics";
 
 type CaptureResult = {
   stream: MediaStream;
@@ -143,17 +147,30 @@ const openCapture = async (
   const desktopCapture = isDesktopCapture
     ? await openDesktopCapture(binding)
     : undefined;
+  const requestedConstraints: MediaTrackConstraints = {
+    deviceId: { exact: binding.deviceId },
+    width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
+    height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
+    frameRate: { ideal: 60 },
+  };
   const stream =
     desktopCapture?.stream ??
     (await mediaDevices.getUserMedia({
       audio: false,
-      video: {
-        deviceId: { exact: binding.deviceId },
-        width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
-        height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
-        frameRate: { ideal: 60 },
-      },
+      video: requestedConstraints,
     }));
+  const videoTrack = stream.getVideoTracks()[0];
+  if (videoTrack && localVideoDiagnosticsEnabled()) {
+    recordLocalVideoCapture(binding.sourceId, {
+      captureOwner: "hidden-capture-host",
+      captureKind: binding.captureKind ?? "device",
+      deviceLabel: binding.deviceLabel,
+      requestedConstraints,
+      settings: videoTrack.getSettings?.(),
+      capabilities: videoTrack.getCapabilities?.(),
+      constraints: videoTrack.getConstraints?.(),
+    });
+  }
 
   let audioError: unknown = desktopCapture?.systemAudioError;
   if (binding.audioDeviceId) {

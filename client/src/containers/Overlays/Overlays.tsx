@@ -238,7 +238,6 @@ const Overlays = ({
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "overlay-templates") {
-            console.log("updating overlay templates from remote", event);
             const update = _update as DBOverlayTemplates;
             dispatch(
               updateTemplatesFromRemote({

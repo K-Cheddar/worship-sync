@@ -4,6 +4,7 @@ import {
   findCurrentServiceOccurrence,
   formatLiveSlideProgress,
   getOccurrenceServices,
+  resolveLiveItemSource,
   listCurrentServiceOccurrences,
   resolveLiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
@@ -235,5 +236,65 @@ describe("resolveLiveSlideProgress", () => {
       name: "Monitor Song",
       slideLabel: "2 of 4",
     });
+  });
+});
+
+describe("resolveLiveItemSource", () => {
+  it("prefers the projector item when the projector and monitor differ", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "Projector Song", itemId: "projector-item" },
+        { name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Projector Song", itemId: "projector-item" });
+  });
+
+  it("prefers a projector list id over monitor identity", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "Projector Song", listId: "projector-row" },
+        { name: "Projector Song", itemId: "monitor-item", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Projector Song", listId: "projector-row" });
+  });
+
+  it("prefers a projector item id when no projector list id is available", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "Projector Song", itemId: "projector-item" },
+        { name: "Projector Song", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Projector Song", itemId: "projector-item" });
+  });
+
+  it("preserves compatible monitor ids for a projector name-only presentation", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: " Song A " },
+        { name: "song a", itemId: "song-a", listId: "song-a-second" },
+      ),
+    ).toEqual({
+      name: " Song A ",
+      itemId: "song-a",
+      listId: "song-a-second",
+    });
+  });
+
+  it("does not borrow monitor ids when projector and monitor names disagree", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "Song A" },
+        { name: "Song B", itemId: "song-b", listId: "song-b-row" },
+      ),
+    ).toEqual({ name: "Song A" });
+  });
+
+  it("falls back to the monitor when the projector is blank", () => {
+    expect(
+      resolveLiveItemSource(
+        { name: "", itemId: undefined, listId: undefined },
+        { name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" },
+      ),
+    ).toEqual({ name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" });
   });
 });

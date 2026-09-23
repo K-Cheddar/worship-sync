@@ -15,13 +15,19 @@ import Mux from "@mux/mux-node";
 import https from "https";
 import {
   authHandlers,
+  COLLECTIONS,
+  deleteDoc,
   getServerFirestore,
   getServerRealtimeDatabase,
   authSessionConfig,
+  getDoc,
+  nowIso,
+  queryDocs,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
   requireTeamsViewSession,
   assertServerCsrf,
+  setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
 import { createLyricsImportService } from "./lyricsImport.js";
@@ -52,6 +58,12 @@ import {
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
 import {
+  YouTubeSearchInputError,
+  YouTubeSearchNotConfiguredError,
+  YouTubeSearchUpstreamError,
+  createYouTubeSearchService,
+} from "./server/youtubeSearchService.js";
+import {
   createCanvaService,
   normalizeMuxStaticRenditions,
 } from "./server/canvaService.js";
@@ -62,12 +74,22 @@ import {
   SongAudioStorageNotConfiguredError,
   createSongAudioStorage,
 } from "./server/songAudioStorage.js";
+import {
+  createChurchResourceStorage,
+  getChurchResourceMaxBytes,
+} from "./server/churchResourceService.js";
+import { createChurchResourceHandlers } from "./server/churchResourceApi.js";
+import { createChurchResourceUploadGuard } from "./server/churchResourceUploadGuard.js";
 import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
 import {
   RichLinkPreviewInputError,
   RichLinkPreviewUnavailableError,
   createRichLinkPreviewService,
 } from "./server/richLinkPreview.js";
+import {
+  ExternalResourceError,
+  createExternalResourceService,
+} from "./server/externalResourceService.js";
 import {
   buildPublicShareImageUrl,
   isLinkPreviewCrawler,
@@ -284,6 +306,9 @@ const {
   requireChurchAdmin,
   requireSongAudioEditAccess,
   assertSongAudioChurchAccess,
+  requireChurchResourceBrowseAccess,
+  requireChurchResourceReferenceReadAccess,
+  requireChurchResourceEditAccess,
 } = createAppSessionGuards({
   resolveRequestBootstrap,
   assertRequestCsrf: assertServerCsrf,
@@ -299,7 +324,12 @@ const parseSongAudioBytes = express.raw({
   type: ["audio/mpeg", "audio/mp3", "audio/x-mpeg"],
   limit: songAudioMaxBytes,
 });
+const parseChurchResourceBytes = express.raw({
+  type: "*/*",
+  limit: getChurchResourceMaxBytes(),
+});
 const guardSongAudioUpload = createSongAudioUploadGuard();
+const guardChurchResourceUpload = createChurchResourceUploadGuard();
 const chatImageMaxBytes = (() => {
   const configured = Number(process.env.CHAT_IMAGE_MAX_BYTES);
   return Number.isSafeInteger(configured) && configured > 0
@@ -315,6 +345,13 @@ const guardChatImageFinalize = createChatImageFinalizeGuard();
 const richLinkPreviewService = createRichLinkPreviewService({
   httpClient: axios,
 });
+const externalResourceService = createExternalResourceService({
+  httpClient: axios,
+});
+const youtubeSearchService = createYouTubeSearchService({
+  httpClient: axios,
+  apiKey: process.env.YOUTUBE_API_KEY,
+});
 
 let songAudioStorage;
 const getSongAudioStorage = () => {
@@ -322,6 +359,22 @@ const getSongAudioStorage = () => {
     songAudioStorage = createSongAudioStorage();
   }
   return songAudioStorage;
+};
+
+let churchResourceHandlers;
+const getChurchResourceHandlers = () => {
+  if (!churchResourceHandlers) {
+    churchResourceHandlers = createChurchResourceHandlers({
+      COLLECTIONS,
+      deleteDoc,
+      getDoc,
+      nowIso,
+      queryDocs,
+      setDoc,
+      storageFactory: () => createChurchResourceStorage(),
+    });
+  }
+  return churchResourceHandlers;
 };
 
 let chatImageStorage;
@@ -895,6 +948,16 @@ app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
 app.post("/api/support/contact", authHandlers.submitSupportContact);
+app.post("/api/sms-consent", authHandlers.submitSmsConsent);
+app.post("/api/sms-consent/verify", authHandlers.verifySmsConsent);
+app.post("/api/sms-consent/:churchId", authHandlers.submitSmsConsent);
+app.post("/api/sms-consent/:churchId/verify", authHandlers.verifySmsConsent);
+// Twilio authenticates this endpoint with X-Twilio-Signature; it deliberately
+// does not use browser session or CSRF authentication.
+app.post(
+  "/api/webhooks/twilio/sms-status",
+  authHandlers.handleSmsStatusWebhook,
+);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",
@@ -989,6 +1052,77 @@ app.get("/api/link-previews", requireAppSession, async (req, res) => {
     return res.json({ preview });
   } catch (error) {
     return respondRichLinkPreviewError(res, error);
+  }
+});
+
+app.get("/api/resources/resolve", requireAppSession, async (req, res) => {
+  try {
+    const descriptor = await externalResourceService.resolveRateLimited(
+      req.query.url,
+      req.appSession.actorId || req.ip || "unknown",
+    );
+    return res.json({ resource: descriptor });
+  } catch (error) {
+    if (error instanceof ExternalResourceError) {
+      return res.status(error.statusCode).json({ error: error.message, code: error.code });
+    }
+    console.error("External resource resolution error:", error);
+    return res.status(502).json({ error: "That resource could not be resolved." });
+  }
+});
+
+// Media elements cannot attach the workstation/bearer headers used by the
+// resolver request. Authorization therefore comes from the short-lived,
+// target-bound capability issued only by authenticated /resolve requests; this
+// is not an unrestricted URL proxy. It intentionally does not forward app
+// cookies or third-party credentials to the upstream resource.
+app.get("/api/resources/proxy", (req, res) => {
+  void externalResourceService.handleProxy(req, res).catch((error) => {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    if (error instanceof ExternalResourceError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    console.error("External resource proxy error:", error);
+    res.status(502).json({ error: "That resource could not be loaded." });
+  });
+});
+
+const respondYouTubeSearchError = (res, error) => {
+  if (error instanceof YouTubeSearchInputError) {
+    return res.status(400).json({ errorMessage: error.message });
+  }
+  if (error instanceof YouTubeSearchNotConfiguredError) {
+    return res.status(503).json({
+      errorMessage: "YouTube search is not configured on this server yet.",
+    });
+  }
+  if (error instanceof YouTubeSearchUpstreamError) {
+    console.error("Error searching YouTube:", error.cause);
+  } else {
+    console.error("Error searching YouTube:", error);
+  }
+  return res.status(502).json({
+    errorMessage: "YouTube search is unavailable right now. Try again.",
+  });
+};
+
+app.get("/api/youtube/search", requireAppSession, async (req, res) => {
+  try {
+    const result = await youtubeSearchService.search({
+      title: req.query.title,
+      artist: req.query.artist,
+      album: req.query.album,
+      query: req.query.query,
+      forceRefresh:
+        req.query.refresh === "true" || req.query.refresh === "1",
+    });
+    return res.json(result);
+  } catch (error) {
+    return respondYouTubeSearchError(res, error);
   }
 });
 
@@ -1129,9 +1263,64 @@ app.delete(
     }
   },
 );
+
+app.use("/api/churches/:churchId/resources", requireAppSession);
+app.get(
+  "/api/churches/:churchId/resources",
+  requireChurchResourceBrowseAccess,
+  (req, res) => getChurchResourceHandlers().list(req, res),
+);
+app.get(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceReferenceReadAccess,
+  (req, res) => getChurchResourceHandlers().get(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/upload",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  guardChurchResourceUpload,
+  (req, res) => getChurchResourceHandlers().createUpload(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/:resourceId/complete",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().completeUpload(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/upload-from-app",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  // Apply the same quota before express.raw buffers the Electron fallback.
+  guardChurchResourceUpload,
+  parseChurchResourceBytes,
+  (req, res) => getChurchResourceHandlers().uploadFromApp(req, res),
+);
+app.get(
+  "/api/churches/:churchId/resources/:resourceId/url",
+  requireChurchResourceReferenceReadAccess,
+  (req, res) => getChurchResourceHandlers().createUrl(req, res),
+);
+app.patch(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().update(req, res),
+);
+app.delete(
+  "/api/churches/:churchId/resources/:resourceId",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().remove(req, res),
+);
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
+);
+app.get(
+  "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",
+  authHandlers.getTeamIntakeSmsAttempts,
 );
 app.post(
   "/api/churches/:churchId/team-intake/forms",
@@ -1146,11 +1335,35 @@ app.post(
   authHandlers.getTeamIntakeFormLink,
 );
 app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId/recipients",
+  authHandlers.createTeamIntakeRecipients,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/recipients/:recipientId/link",
+  authHandlers.getTeamIntakeRecipientLink,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/recipients/:recipientId/sms",
+  authHandlers.sendTeamIntakeRecipientSms,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/recipients/:recipientId/revoke",
+  authHandlers.revokeTeamIntakeRecipient,
+);
+app.post(
   "/api/churches/:churchId/team-intake/submissions/:submissionId",
   authHandlers.updateTeamIntakeSubmission,
 );
 app.get("/api/team-intake/preview", authHandlers.getTeamIntakePreview);
 app.post("/api/team-intake/submit", authHandlers.submitTeamIntake);
+app.get("/api/team-intake/recipient-preview", (req, res) => {
+  req.teamIntakeRecipientOnly = true;
+  return authHandlers.getTeamIntakePreview(req, res);
+});
+app.post("/api/team-intake/recipient-submit", (req, res) => {
+  req.teamIntakeRecipientOnly = true;
+  return authHandlers.submitTeamIntake(req, res);
+});
 app.post(
   "/api/churches/:churchId/team-roster-members",
   authHandlers.createTeamRosterMember,

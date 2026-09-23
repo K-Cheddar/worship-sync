@@ -27,6 +27,7 @@ describe("ToastContainer", () => {
     expect(screen.getByTestId("fn-child")).toHaveTextContent("b");
     expect(screen.getByTestId("toast-group-top-center")).toBeInTheDocument();
     expect(screen.getByTestId("toast-group-bottom-right")).toBeInTheDocument();
+    expect(screen.getByTestId("toast-container")).toHaveClass("fixed");
   });
 
   it("defaults position to top-center when omitted", () => {

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import Hls from "hls.js";
 import { Box, VideoBackgroundPlaybackCue } from "../../types";
 import {
@@ -19,6 +19,15 @@ import {
   getVideoSourceKind,
   isHLSVideoSource,
 } from "../../utils/isInstantVideoSource";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
+import { assignPlayableVideoSource } from "../../utils/mediaSource";
+import {
+  parseLocalVideoFileAssetId,
+} from "../../utils/localVideoFileAssets";
+import {
+  acquireLocalVideoFileUrl,
+  peekLocalVideoFileUrl,
+} from "../../utils/localVideoFileUrlCache";
 
 type HLSPlayerProps = {
   src: string;
@@ -75,29 +84,46 @@ const elementState = (video: HTMLVideoElement) => ({
   errorCode: video.error?.code,
 });
 
+const videoDiagnosticIdentity = (video: HTMLVideoElement) => ({
+  mediaKey: video.dataset.mediaKey,
+  outputId: video.dataset.outputId,
+  windowRole: video.dataset.windowRole,
+  src: video.currentSrc || video.src,
+});
+
 const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
-  logVideoCue("play.before", elementState(video));
+  logVideoCue("play.before", {
+    ...videoDiagnosticIdentity(video),
+    ...elementState(video),
+  });
   video
     .play()
     .then(() => {
-      logVideoCue("play.resolved", elementState(video));
+      logVideoCue("play.resolved", {
+        ...videoDiagnosticIdentity(video),
+        ...elementState(video),
+      });
       // If the promise resolved but the playhead never moves, the element is
       // stalled on the source rather than blocked by policy.
       window.setTimeout(
-        () => logVideoCue("play.after500ms", elementState(video)),
+        () =>
+          logVideoCue("play.after500ms", {
+            ...videoDiagnosticIdentity(video),
+            ...elementState(video),
+          }),
         500,
       );
     })
     .catch((e) => {
       logVideoCue("play.rejected", {
+        ...videoDiagnosticIdentity(video),
         name: (e as Error)?.name,
         message: (e as Error)?.message,
         ...elementState(video),
       });
       if (
         (e as Error)?.name === "AbortError" &&
-        expectedSrc &&
-        video.src !== expectedSrc
+        (!video.isConnected || (expectedSrc && video.src !== expectedSrc))
       ) {
         return;
       }
@@ -105,10 +131,49 @@ const startPlayback = (video: HTMLVideoElement, expectedSrc?: string) => {
     });
 };
 
+/**
+ * Resolve legacy local-video-file references before they reach a media element.
+ * Newer records normally arrive through useLocalVideoFileUrl, but HLSPlayer is
+ * also used by paths that only have the persisted URL. Keeping this guard at
+ * the player boundary prevents an opaque reference scheme from bypassing CSP.
+ */
+const useResolvedLocalVideoSource = (
+  value: string | undefined,
+): string | undefined => {
+  const assetId = parseLocalVideoFileAssetId(value) ?? undefined;
+  const [state, setState] = useState<{ value?: string; url?: string }>(() => ({
+    value,
+    url: assetId ? peekLocalVideoFileUrl(assetId) : undefined,
+  }));
+
+  useEffect(() => {
+    if (!assetId) {
+      setState({ value, url: undefined });
+      return;
+    }
+
+    let active = true;
+    const lease = acquireLocalVideoFileUrl(assetId);
+    setState({ value, url: peekLocalVideoFileUrl(assetId) });
+    void lease.url.then((url) => {
+      if (active) setState({ value, url });
+    });
+    return () => {
+      active = false;
+      lease.release();
+    };
+  }, [assetId, value]);
+
+  if (!isLocalMediaReferenceUrl(value)) return value;
+  if (!assetId || state.value !== value) return undefined;
+  return state.url;
+};
+
 const applyCueToVideo = (
   video: HTMLVideoElement,
   cue: VideoBackgroundPlaybackCue,
   options: { seek: boolean },
+  expectedSrc?: string,
 ) => {
   const shouldSeek = options.seek || cue.paused;
   if (shouldSeek) {
@@ -124,7 +189,7 @@ const applyCueToVideo = (
     video.pause();
     return;
   }
-  startPlayback(video);
+  startPlayback(video, expectedSrc);
 };
 
 const cueBelongsToMedia = (
@@ -152,10 +217,16 @@ const HLSPlayer = ({
 }: HLSPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const originalSrcRef = useRef(originalSrc);
-  originalSrcRef.current = originalSrc;
-  const srcRef = useRef(src);
-  srcRef.current = src;
+  const resolvedSrc = useResolvedLocalVideoSource(src);
+  const resolvedOriginalSrc = useResolvedLocalVideoSource(originalSrc);
+  const effectiveSrc = isLocalMediaReferenceUrl(src) ? resolvedSrc : src;
+  const effectiveOriginalSrc = isLocalMediaReferenceUrl(originalSrc)
+    ? resolvedOriginalSrc
+    : originalSrc;
+  const originalSrcRef = useRef(effectiveOriginalSrc);
+  originalSrcRef.current = effectiveOriginalSrc;
+  const srcRef = useRef<string | undefined>(effectiveSrc);
+  srcRef.current = effectiveSrc;
   const playbackRef = useRef(playback);
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
@@ -239,6 +310,10 @@ const HLSPlayer = ({
         clearPaintReadyWaits();
         logVideoCue("player.paintReady", {
           role: playbackRoleRef.current,
+          mediaKey: mediaKeyRef.current,
+          outputId,
+          windowRole,
+          src: videoSrc,
           ...elementState(video),
         });
         onLoadedDataRef.current?.();
@@ -285,7 +360,7 @@ const HLSPlayer = ({
 
       finish();
     },
-    [clearPaintReadyWaits],
+    [clearPaintReadyWaits, outputId, windowRole],
   );
 
   const notifyPaintReadyRef = useRef(notifyPaintReady);
@@ -379,6 +454,10 @@ const HLSPlayer = ({
       ((cue.applySeek || isFreshSrc) && awayFromCue);
     logVideoCue("player.apply", {
       role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src: activeSrc,
       generation: cue.generation,
       paused: cue.paused,
       seek,
@@ -388,21 +467,31 @@ const HLSPlayer = ({
       target: targetPosition,
       duration: video.duration,
     });
-    applyCueToVideo(video, cue, { seek });
+    applyCueToVideo(video, cue, { seek }, activeSrc);
     syncedSrcRef.current = activeSrc;
     appliedGenerationRef.current = cue.generation;
     appliedWithoutDurationRef.current = seek && !hasDuration;
     notifyPaintReadyRef.current(activeSrc);
-  }, []);
+  }, [outputId, windowRole]);
 
   const syncPlaybackRef = useRef(syncPlayback);
   syncPlaybackRef.current = syncPlayback;
 
   /** Metadata is loaded: the element now knows its duration and can be cued. */
   const handleMediaReady = useCallback((videoSrc: string) => {
+    const video = videoRef.current;
+    if (!video) return;
     readySrcRef.current = videoSrc;
+    logVideoCue("player.mediaReady", {
+      role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src: videoSrc,
+      ...elementState(video),
+    });
     syncPlaybackRef.current();
-  }, []);
+  }, [outputId, windowRole]);
 
   const handleEnded = useCallback(() => {
     const video = videoRef.current;
@@ -422,7 +511,15 @@ const HLSPlayer = ({
     (video: HTMLVideoElement, videoSrc: string) => {
       // Assign the next URL directly. Clearing to "" first blanks the element
       // for a frame before the new source can paint.
-      video.src = videoSrc;
+      if (
+        !assignPlayableVideoSource(video, videoSrc, {
+          mediaKey: mediaKeyRef.current,
+          renderer: windowRole,
+          path: "HLSVideoPlayer.playNative",
+        })
+      ) {
+        return () => {};
+      }
       let didFallback = false;
 
       const handleLoadedMetadata = () => handleMediaReady(videoSrc);
@@ -462,7 +559,8 @@ const HLSPlayer = ({
           !didFallback &&
           fallback &&
           fallback !== videoSrc &&
-          videoSrc.startsWith("media-cache://")
+          videoSrc.startsWith("media-cache://") &&
+          !isLocalMediaReferenceUrl(fallback)
         ) {
           didFallback = true;
           console.log(`[HLSPlayer] Falling back to original URL: ${fallback}`);
@@ -471,8 +569,15 @@ const HLSPlayer = ({
           rateCorrectionStartedAtRef.current = null;
           readySrcRef.current = null;
           syncedSrcRef.current = null;
-          video.src = fallback;
-          video.load();
+          if (
+            assignPlayableVideoSource(video, fallback, {
+              mediaKey: mediaKeyRef.current,
+              renderer: windowRole,
+              path: "HLSVideoPlayer.playNative.fallback",
+            })
+          ) {
+            video.load();
+          }
         }
       };
 
@@ -488,7 +593,7 @@ const HLSPlayer = ({
         video.removeEventListener("ended", handleEnded);
       };
     },
-    [handleEnded, handleMediaReady],
+    [handleEnded, handleMediaReady, windowRole],
   );
 
   const playHLS = useCallback(
@@ -539,8 +644,15 @@ const HLSPlayer = ({
       }
 
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = videoSrc;
-        video.load();
+        if (
+          assignPlayableVideoSource(video, videoSrc, {
+            mediaKey: mediaKeyRef.current,
+            renderer: windowRole,
+            path: "HLSVideoPlayer.playHLS.native",
+          })
+        ) {
+          video.load();
+        }
 
         video.addEventListener("loadedmetadata", handleLoadedMetadata);
         video.addEventListener("ended", handleEnded);
@@ -553,7 +665,7 @@ const HLSPlayer = ({
 
       return () => {};
     },
-    [handleEnded, handleMediaReady],
+    [handleEnded, handleMediaReady, windowRole],
   );
 
   useEffect(() => {
@@ -567,11 +679,20 @@ const HLSPlayer = ({
     appliedWithoutDurationRef.current = false;
     rateCorrectionStartedAtRef.current = null;
     if (video) video.playbackRate = 1;
-    if (!video || !src) return;
+    if (!video || !effectiveSrc) return;
+
+    logVideoCue("player.mount", {
+      role: playbackRoleRef.current,
+      mediaKey: mediaKeyRef.current,
+      outputId,
+      windowRole,
+      src: effectiveSrc,
+      sourceKind: getVideoSourceKind(effectiveSrc),
+    });
 
 
-    if (isHLSVideoSource(src)) {
-      const stopHls = playHLS(video, src);
+    if (isHLSVideoSource(effectiveSrc)) {
+      const stopHls = playHLS(video, effectiveSrc);
       return () => {
         clearPaintReadyWaits();
         paintReadyWaitGenerationRef.current += 1;
@@ -580,7 +701,7 @@ const HLSPlayer = ({
         rateCorrectionStartedAtRef.current = null;
       };
     }
-    const stopNative = playNative(video, src);
+    const stopNative = playNative(video, effectiveSrc);
     return () => {
       clearPaintReadyWaits();
       paintReadyWaitGenerationRef.current += 1;
@@ -588,7 +709,7 @@ const HLSPlayer = ({
       video.playbackRate = 1;
       rateCorrectionStartedAtRef.current = null;
     };
-  }, [src, playNative, playHLS, clearPaintReadyWaits]);
+  }, [effectiveSrc, playNative, playHLS, clearPaintReadyWaits, outputId, windowRole]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -614,6 +735,10 @@ const HLSPlayer = ({
       const handler = () =>
         logVideoCue(`element.${name}`, {
           role: playbackRoleRef.current,
+          mediaKey: mediaKeyRef.current,
+          outputId,
+          windowRole,
+          src: srcRef.current,
           ...elementState(video),
         });
       video.addEventListener(name, handler);
@@ -624,13 +749,13 @@ const HLSPlayer = ({
         video.removeEventListener(name, handler),
       );
     };
-  }, []);
+  }, [outputId, windowRole]);
 
   // Cue changes (and the load paths above) both route through syncPlayback,
   // which no-ops until the element has metadata for the current src.
   useEffect(() => {
     syncPlayback();
-  }, [playback, src, syncPlayback]);
+  }, [playback, effectiveSrc, syncPlayback]);
 
   // Hidden controller tabs keep the video element and decoded position alive,
   // but must not continue decoding or advancing a tile that is not visible.
@@ -827,12 +952,18 @@ const HLSPlayer = ({
     return subscribeVideoPreviewCommands(applyCommand);
   }, [playback, playbackRole]);
 
-  const preloadValue = getVideoPreload(src, preloadRole ?? playbackRole);
+  const preloadValue = getVideoPreload(
+    effectiveSrc ?? "",
+    preloadRole ?? playbackRole,
+  );
 
   return (
     <video
       ref={videoRef}
       data-testid="hls-video-player"
+      data-media-key={mediaKey}
+      data-output-id={outputId}
+      data-window-role={windowRole}
       preload={preloadValue}
       className={
         className ||

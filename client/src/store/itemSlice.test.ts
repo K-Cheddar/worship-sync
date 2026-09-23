@@ -341,6 +341,38 @@ describe("itemSlice", () => {
       expect(state.hasPendingUpdate).toBe(true);
     });
 
+    it("applies an already-persisted Canva replacement without marking the item dirty", () => {
+      const store = createStore();
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          _id: "item-canva",
+          name: "Welcome",
+          type: "song",
+          background: "https://cdn.example/old.png",
+          slides: [],
+          arrangements: [],
+        }),
+      );
+
+      store.dispatch(
+        itemSlice.actions.replaceMediaReferencesInActiveItem({
+          oldMedia: {
+            id: "media-1",
+            background: "https://cdn.example/old.png",
+          } as any,
+          newMedia: {
+            id: "media-1",
+            background: "https://cdn.example/new.png",
+          } as any,
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.background).toBe("https://cdn.example/new.png");
+      expect(state.baseItem?.background).toBe("https://cdn.example/new.png");
+      expect(state.hasPendingUpdate).toBe(false);
+    });
+
     it("markItemPersisted clears buffered remote state for the active item", () => {
       const pendingRemoteItem = {
         _id: "test-1",

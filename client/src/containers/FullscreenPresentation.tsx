@@ -71,6 +71,7 @@ const FullscreenPresentation = ({
     bibleInfoBox: displayInfo.bibleInfoBox,
     displayType: displayInfo.displayType,
     outputId,
+    currentItemId: displayInfo.itemId,
     // A live output surface, so it may open the capture device.
     canCaptureLocalVideo: true,
     timerInfo,

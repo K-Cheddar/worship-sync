@@ -1,4 +1,5 @@
 import { reportLocalVideoIssue } from "./localVideoIssues";
+import { assignPlayableVideoSource } from "./mediaSource";
 
 const CHANNEL_NAME = "worshipsync-local-video-media-v1";
 const CHUNK_INTERVAL_MS = 50;
@@ -386,7 +387,10 @@ export const subscribeLocalVideoMedia = (
     }
     mediaSource = new MediaSource();
     objectUrl = URL.createObjectURL(mediaSource);
-    video.src = objectUrl;
+    if (!assignPlayableVideoSource(video, objectUrl, { path: "local-video-relay" })) {
+      reportError("This display could not start the local video relay.");
+      return;
+    }
     mediaSource.addEventListener(
       "sourceopen",
       () => {

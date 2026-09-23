@@ -3,6 +3,9 @@ import { isPublicSharePathname } from "./publicSharePathRedirect";
 describe("isPublicSharePathname", () => {
   it("recognizes each public share path", () => {
     expect(isPublicSharePathname("/invite")).toBe(true);
+    expect(isPublicSharePathname("/sms-opt-in")).toBe(true);
+    expect(isPublicSharePathname("/privacy")).toBe(true);
+    expect(isPublicSharePathname("/terms")).toBe(true);
     expect(isPublicSharePathname("/services/tok")).toBe(true);
     expect(isPublicSharePathname("/schedule-response/tok")).toBe(true);
     expect(isPublicSharePathname("/teams/schedule/tok")).toBe(true);

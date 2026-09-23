@@ -284,6 +284,9 @@ export const cloneSectionsForTemplate = (
         songRefs: undefined,
         scriptureRef: undefined,
         scriptureRefs: undefined,
+        // Reusable file selections belong to the dated plan unless an
+        // operator deliberately adds them to a template itself.
+        resources: undefined,
         // The people go, the microphone plan stays: each assignee is kept as
         // the microphone slot it describes, and gains a name back when the
         // template is applied to a date. Slots holding nothing are dropped.

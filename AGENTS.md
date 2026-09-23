@@ -82,6 +82,8 @@ For stream, preserve transparency and use `$display-window` and `/overlay` for d
 
 Use existing architectural patterns unless there is a clear, evidence-based reason to improve them. Keep public data shapes stable unless an intentional migration changes them; preserve backward compatibility for persisted and synchronized data where feasible. Keep state ownership and synchronization boundaries explicit. New async behavior must be cancellation-safe or interruption-safe where relevant. Prefer graceful degradation for optional integrations.
 
+**Async UI rule:** Any user-triggered asynchronous operation must immediately communicate that the action was accepted, expose an appropriate pending/progress state for the lifetime of the operation, and prevent unsafe duplicate activation. A click followed by an unexplained pause is a UX bug.
+
 When async work can outlive the entity, route, item, plan, session, or controller that started it, capture the required identity and state with the work item and treat identity changes as boundaries. Stale results may be ignored, but pending unsaved work must be deliberately completed, preserved, or cancelled; test realistic resets, including counters or versions returning to zero.
 
 For multi-step operations, retries resume after the last successfully completed durable step. Distinguish completed durable mutations from later failed work so a retry does not duplicate an earlier side effect.

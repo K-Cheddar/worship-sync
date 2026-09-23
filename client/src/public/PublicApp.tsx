@@ -32,6 +32,9 @@ const TeamSchedulePublic = lazyRoute(
 const BoardPage = lazyRoute(() => import("../pages/BoardPage"));
 const BoardPresent = lazyRoute(() => import("../pages/BoardPresent"));
 const InviteAccept = lazyRoute(() => import("../pages/InviteAccept"));
+const PrivacyPolicy = lazyRoute(() => import("../pages/Legal/PrivacyPolicy"));
+const TermsOfService = lazyRoute(() => import("../pages/Legal/TermsOfService"));
+const SmsOptIn = lazyRoute(() => import("../pages/SmsOptIn"));
 
 const PublicFallback = () => (
   <div
@@ -71,6 +74,10 @@ const PublicApp = () => (
       <ErrorBoundary>
         <Suspense fallback={<PublicFallback />}>
           <Routes>
+            <Route path="/sms-opt-in" element={<SmsOptIn />} />
+            <Route path="/sms-opt-in/:churchId" element={<SmsOptIn />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/terms" element={<TermsOfService />} />
             <Route path="/services/:shareId" element={<ServicePublic />} />
             <Route
               path="/teams/schedule/:token"
@@ -78,6 +85,7 @@ const PublicApp = () => (
             />
             <Route path="/teams/intake/:token" element={<TeamIntakePublic />} />
             <Route path="/teams/intake" element={<TeamIntakePublic />} />
+            <Route path="/a/:token" element={<TeamIntakePublic />} />
             <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
             <Route path="/boards/:aliasId" element={<BoardPage />} />
             <Route element={<InviteProviderLayout />}>

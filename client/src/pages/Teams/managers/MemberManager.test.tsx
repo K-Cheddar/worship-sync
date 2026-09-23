@@ -66,6 +66,7 @@ const buildData = (overrides: Partial<TeamsData> = {}): TeamsData => ({
   schedules: [],
   intakeForms: [],
   intakeSubmissions: [],
+  intakeRecipients: [],
   ...overrides,
 }) as TeamsData;
 
@@ -196,6 +197,18 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("formats a U.S. phone number while it is entered", async () => {
+    const user = userEvent.setup();
+    renderManager();
+    await openCreateForm(user);
+
+    const phone = await screen.findByLabelText(/Mobile/);
+    await user.type(phone, "9545551234");
+
+    expect(phone).toHaveValue("(954) 555-1234");
+    expect(screen.queryByText(/E\.164/)).not.toBeInTheDocument();
+  });
+
   it("keeps create and filter actions usable while a member is open", async () => {
     const user = userEvent.setup();
     renderManager({ data: joinedData() });
@@ -682,6 +695,46 @@ describe("MemberManager notification readiness", () => {
     // Surfaced in the list so it is fixable where addresses are entered,
     // rather than only visible after opening each member.
     expect(screen.getByText("No email")).toBeInTheDocument();
+  });
+
+  it("offers contextual SMS opt-in link actions for a saved member", async () => {
+    const user = userEvent.setup();
+    const originalClipboard = navigator.clipboard;
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    const open = jest.spyOn(window, "open").mockImplementation(() => null);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+      await user.click(screen.getByRole("button", { name: /Has Email/ }));
+      await user.click(screen.getByRole("button", { name: /Member actions/i }));
+
+      await user.click(
+        screen.getByRole("menuitem", { name: /Open SMS opt-in page/i }),
+      );
+      expect(open).toHaveBeenCalledWith(
+        `${window.location.origin}/sms-opt-in/church-1`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+
+      await user.click(screen.getByRole("button", { name: /Member actions/i }));
+      await user.click(
+        screen.getByRole("menuitem", { name: /Copy SMS opt-in link/i }),
+      );
+      expect(writeText).toHaveBeenCalledWith(
+        `${window.location.origin}/sms-opt-in/church-1`,
+      );
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+      open.mockRestore();
+    }
   });
 
   it("shows the invite disabled, with the reason, when there is no address", async () => {

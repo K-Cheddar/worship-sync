@@ -2,11 +2,24 @@ import { getApiBasePath } from "../../utils/environment";
 
 export interface EventData {
   elementType: string;
+  /**
+   * Attached content title when the source exposes it separately from the
+   * service moment. `title` remains the legacy source-column fallback.
+   */
+  contentTitle?: string;
   title: string;
   ledBy: string;
+  /** Raw source Led By text when `ledBy` is reconstructed from assignees. */
+  sourceLedByRaw?: string;
+  /** Structured Planning Center assignments, when the API provides them. */
+  ledByAssignments?: Array<{
+    kind: "person" | "teamPosition";
+    id?: string;
+    name: string;
+  }>;
   /**
    * The current structured assignees from a WorshipSync Service Plan. This is
-   * display data only: `ledBy` retains the source text used by import rules.
+   * display data only; `sourceLedByRaw` retains the original source text.
    */
   assigneeNames?: string[];
   /** 24-hour HH:mm schedule time when the printout provides one. */

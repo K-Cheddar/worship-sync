@@ -82,6 +82,7 @@ const buildData = (overrides: Partial<TeamsData>): TeamsData => ({
   schedules: [],
   intakeForms: [],
   intakeSubmissions: [],
+  intakeRecipients: [],
   ...overrides,
 });
 

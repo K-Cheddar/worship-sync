@@ -785,14 +785,24 @@ const LocalVideoInputPicker = ({
               </div>
             ) : null}
             {!isDesktopMode ? (
-              <Select
-                label="Video input"
-                options={videoOptions}
-                value={videoDeviceId}
-                onChange={setVideoDeviceId}
-                selectClassName="w-full"
-                disabled={!hasEnumeratedDevices || videoInputs.length === 0}
-              />
+              <div className="flex items-end gap-2">
+                <Select
+                  label="Video input"
+                  options={videoOptions}
+                  value={videoDeviceId}
+                  onChange={setVideoDeviceId}
+                  selectClassName="w-full"
+                  className="flex-1"
+                  disabled={!hasEnumeratedDevices || videoInputs.length === 0}
+                />
+                <Button
+                  variant="tertiary"
+                  svg={RefreshCw}
+                  aria-label="Refresh video inputs"
+                  disabled={isLoading}
+                  onClick={() => void refresh()}
+                />
+              </div>
             ) : null}
             {!isDesktopMode || canListDesktopSources ? (
               <Select

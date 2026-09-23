@@ -34,6 +34,7 @@ import {
   putOverlayHistoryDocs,
   removeCreditHistoryDoc,
   removeOverlayHistoryDoc,
+  updateAllDocs,
 } from "./dbUtils";
 
 type MockDb = {
@@ -56,6 +57,35 @@ const createNotFoundError = () =>
 describe("dbUtils", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("loads complete song documents from the provided database", async () => {
+    const db = createDb();
+    const song = {
+      _id: "song-1",
+      name: "Trust and Obey",
+      type: "song",
+      songAudio: { id: "audio-1" },
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: song }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllSongDocs",
+      payload: [song],
+    });
+  });
+
+  it("does not dispatch a stale document load after its route is inactive", async () => {
+    const db = createDb();
+    db.allDocs.mockResolvedValue({ rows: [{ doc: { _id: "song-1", type: "song" } }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database, () => false)).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("builds overlay usage map from item lists and skips unreadable lists", async () => {

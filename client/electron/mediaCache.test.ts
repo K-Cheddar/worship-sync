@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
-import { MediaCacheManager } from "./mediaCache";
+import {
+  MediaCacheManager,
+  resolveMediaCacheRedirect,
+} from "./mediaCache";
 
 const mockGetPath = jest.fn();
 
@@ -111,5 +114,134 @@ describe("MediaCacheManager", () => {
     expect(map["https://stream.mux.com/playback-id/master.m3u8"]).toBe(
       "media-cache://playback-id.mp4",
     );
+  });
+
+  it("additively ensures unique cacheable URLs without removing unrelated entries", async () => {
+    const manager = new MediaCacheManager();
+    const unrelatedPath = join(tempRoot, "media-cache", "unrelated.mp4");
+    fs.writeFileSync(unrelatedPath, "video");
+    manager["cacheIndex"].set("https://cdn.example.com/unrelated.mp4", {
+      url: "https://cdn.example.com/unrelated.mp4",
+      localPath: unrelatedPath,
+      lastUsed: Date.now(),
+    });
+    const downloadMedia = jest
+      .spyOn(manager, "downloadMedia")
+      .mockResolvedValue(join(tempRoot, "media-cache", "new.mp4"));
+
+    const result = await manager.ensureMediaCached([
+      "https://stream.mux.com/playback-id.m3u8",
+      "https://stream.mux.com/playback-id/master.m3u8",
+      "https://example.com/live.m3u8",
+    ]);
+
+    expect(downloadMedia).toHaveBeenCalledTimes(1);
+    expect(downloadMedia).toHaveBeenCalledWith(
+      "https://stream.mux.com/playback-id.m3u8",
+    );
+    expect(result).toMatchObject({ requested: 3, cacheable: 1, downloaded: 1 });
+    expect(manager.getAllCachedUrls()).toContain(
+      "https://cdn.example.com/unrelated.mp4",
+    );
+  });
+
+  it("warms at most three uncached URLs concurrently and continues after failures", async () => {
+    const manager = new MediaCacheManager();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maximumActive = 0;
+    const downloadMedia = jest
+      .spyOn(manager, "downloadMedia")
+      .mockImplementation(
+        (url) =>
+          new Promise<string | null>((resolve) => {
+            active += 1;
+            maximumActive = Math.max(maximumActive, active);
+            releases.push(() => {
+              active -= 1;
+              resolve(url.endsWith("3.mp4") ? null : `${url}.cached`);
+            });
+          }),
+      );
+
+    const request = manager.ensureMediaCached(
+      Array.from({ length: 7 }, (_, index) =>
+        `https://cdn.example.com/${index}.mp4`,
+      ),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(downloadMedia).toHaveBeenCalledTimes(3);
+    while (releases.length > 0) {
+      releases.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await expect(request).resolves.toMatchObject({
+      requested: 7,
+      cacheable: 7,
+      downloaded: 6,
+      failed: 1,
+    });
+    expect(maximumActive).toBeLessThanOrEqual(3);
+  });
+
+  it("returns cache metadata for the dev prepared-video picker", () => {
+    const manager = new MediaCacheManager();
+    const localPath = join(tempRoot, "media-cache", "clip.mp4");
+    fs.writeFileSync(localPath, "video");
+    manager["cacheIndex"].set("https://cdn.example.com/clip.mp4", {
+      url: "https://cdn.example.com/clip.mp4",
+      localPath,
+      lastUsed: Date.now(),
+      contentType: "video/mp4",
+    });
+
+    expect(manager.getMediaCacheEntries()).toEqual([
+      {
+        source: "media-cache://clip.mp4",
+        sourceUrl: "https://cdn.example.com/clip.mp4",
+        contentType: "video/mp4",
+      },
+    ]);
+  });
+
+  it.each([301, 302, 303, 307, 308])(
+    "resolves %s redirects and releases the response before retrying",
+    (statusCode) => {
+      const resume = jest.fn();
+      const result = resolveMediaCacheRedirect(
+        {
+          statusCode,
+          headers: { location: "/final.mp4" },
+          resume,
+        },
+        "https://cdn.example.com/start.mp4",
+        5,
+      );
+
+      expect(result).toEqual({
+        targetUrl: "https://cdn.example.com/final.mp4",
+        redirectsLeft: 4,
+      });
+      expect(resume).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects an exhausted redirect chain without opening another request", () => {
+    const resume = jest.fn();
+
+    expect(() =>
+      resolveMediaCacheRedirect(
+        {
+          statusCode: 308,
+          headers: { location: "/final.mp4" },
+          resume,
+        },
+        "https://cdn.example.com/start.mp4",
+        0,
+      ),
+    ).toThrow("Too many redirects");
+    expect(resume).not.toHaveBeenCalled();
   });
 });

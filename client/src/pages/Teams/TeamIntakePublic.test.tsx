@@ -30,12 +30,13 @@ const preview = {
   teams: [{ teamId: "team_1", name: "Worship" }],
 };
 
-const renderPage = () =>
+const renderPage = (path = "/team-intake/tok_123") =>
   render(
     <ToastProvider>
-      <MemoryRouter initialEntries={["/team-intake/tok_123"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/team-intake/:token" element={<TeamIntakePublic />} />
+          <Route path="/a/:token" element={<TeamIntakePublic />} />
         </Routes>
       </MemoryRouter>
     </ToastProvider>,
@@ -52,7 +53,9 @@ test("renders the scoped form once the preview loads", async () => {
   expect(await screen.findByText("Fall Volunteers")).toBeInTheDocument();
   // Only the position the server scoped into the preview is offered.
   expect(screen.getByText("Vocalist")).toBeInTheDocument();
-  expect(mockGetPreview).toHaveBeenCalledWith("tok_123");
+  expect(mockGetPreview).toHaveBeenCalledWith("tok_123", {
+    personalized: false,
+  });
 });
 
 test("falls back to default wording when no custom messages are set", async () => {
@@ -133,8 +136,38 @@ test("submits the entered availability for the form token", async () => {
   expect(mockSubmit).toHaveBeenCalledWith(
     "tok_123",
     expect.objectContaining({ firstName: "Pat", lastName: "Reed" }),
+    { personalized: false },
   );
   expect(await screen.findByText(/thanks, pat/i)).toBeInTheDocument();
+});
+
+test("personalizes an individual request without re-entering identity", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    recipient: { firstName: "Kevin" },
+    form: {
+      ...preview.form,
+      enabledFields: ["firstName", "lastName", "email", "title", "birthDate"],
+    },
+  } as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage("/a/tok_123");
+
+  expect(await screen.findByText(/hi kevin/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/first name/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/last name/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+
+  await userEvent.click(
+    screen.getByRole("button", { name: /submit availability/i }),
+  );
+
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({ firstName: "", lastName: "", email: "" }),
+    { personalized: true },
+  );
 });
 
 test("renders only the fields selected by the form owner", async () => {
@@ -147,7 +180,7 @@ test("renders only the fields selected by the form owner", async () => {
         {
           occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
           serviceId: "service_1",
-          name: "Sunday service",
+          name: "Saturday service",
           startsAt: "2026-09-06T10:00:00.000Z",
         },
       ],
@@ -180,6 +213,38 @@ test("shows the added profile and scheduling fields when selected", async () => 
   expect(screen.getByText(/Birthday/)).toBeInTheDocument();
   expect(screen.getByLabelText("Serving frequency:")).toBeInTheDocument();
   expect(screen.getByText("Weeks you can usually serve")).toBeInTheDocument();
+});
+
+test("can show scheduling preferences without scheduling frequency", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["recurringAvailability"],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.getByText("Weeks you can usually serve")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Serving frequency:")).not.toBeInTheDocument();
+});
+
+test("can show scheduling frequency without scheduling preferences", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["schedulingFrequency"],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.getByLabelText("Serving frequency:")).toBeInTheDocument();
+  expect(
+    screen.queryByText("Weeks you can usually serve"),
+  ).not.toBeInTheDocument();
 });
 
 test("requires every selected member-detail field before submitting", async () => {

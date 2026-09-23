@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServiceManager from "./ServiceManager";
@@ -103,21 +103,26 @@ describe("ServiceManager combined services", () => {
     renderManager([sundayMorning, sundayLate, midweek]);
 
     await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
-    await user.clear(screen.getByLabelText(/^Name:?$/));
-    await user.type(screen.getByLabelText(/^Name:?$/), "Unsaved Service");
+    // Set the name in one event — character-by-character typing burns the
+    // default 5s test budget under full-suite load.
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), {
+      target: { value: "Unsaved Service" },
+    });
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Stay" }));
-    expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Edit service" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Unsaved Service");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
 
     expect(screen.queryByRole("heading", { name: "Edit service" })).not.toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("only offers services that can fall on the same day", async () => {
     const user = userEvent.setup();

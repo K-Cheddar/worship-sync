@@ -114,7 +114,7 @@ export const DevicePairingApproval = ({ requestId, onApproved, onComplete }: Dev
                 Configure this {request.kind}. {request.kind === "workstation" && request.platformType ? `It requested the ${request.platformType} app.` : ""}
               </p>
               <div className="mt-5 space-y-4">
-                <Input id="device-pairing-label" label="Label" value={label} onChange={(value) => setLabel(String(value))} />
+                <Input id="device-pairing-label" label="Label" labelClassName="text-gray-100" value={label} onChange={(value) => setLabel(String(value))} />
                 {request.kind === "workstation" ? (
                   <>
                     <Select id="device-pairing-access" label="Access" value={access} options={workstationAccessOptions} onChange={(value) => setAccess(value as WorkstationAccessOption)} />
@@ -122,8 +122,8 @@ export const DevicePairingApproval = ({ requestId, onApproved, onComplete }: Dev
                   </>
                 ) : (
                   <>
-                    <Select id="device-pairing-surface" label="Page type" value={surfaceType} options={displaySurfaceOptions} onChange={(value) => setSurfaceType(value as DisplaySurfaceOption)} />
-                    <Select id="device-pairing-output" label="Content output" value={outputId} options={outputOptions} onChange={setOutputId} />
+                    <Select id="device-pairing-surface" label="Page type" labelClassName="text-gray-100" value={surfaceType} options={displaySurfaceOptions} onChange={(value) => setSurfaceType(value as DisplaySurfaceOption)} />
+                    <Select id="device-pairing-output" label="Content output" labelClassName="text-gray-100" value={outputId} options={outputOptions} onChange={setOutputId} />
                   </>
                 )}
                 <Button className="w-full justify-center" variant="cta" onClick={() => void approve()} isLoading={approving} disabled={approving}>

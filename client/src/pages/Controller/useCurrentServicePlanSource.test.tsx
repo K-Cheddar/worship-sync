@@ -8,8 +8,14 @@ import servicePlanningImportReducer, {
   setServicePlanningServiceOutline,
   setStoredServicePlanningOutlineIfIdle,
 } from "../../store/servicePlanningImportSlice";
+import itemListsReducer, { initiateItemLists } from "../../store/itemListsSlice";
+import controllerProfilesReducer, {
+  setControllerProfilesFromRemote,
+} from "../../store/controllerProfilesSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import ActiveControllerContext from "../../context/activeController";
+import { ActiveControllerProvider } from "../../context/activeController";
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 
 const mockOccurrence = {
@@ -140,12 +146,91 @@ const makeStore = () =>
       ),
   });
 
+const AUX_CONTROLLER_ID = "ctrl_lobby";
+const PRESENTATION_CONTROLLER_ID = "presentation";
+
+type ControllerAwareUndoableState = {
+  present: Omit<typeof undoableState.present, "itemLists"> & {
+    itemLists: ReturnType<typeof itemListsReducer>;
+  };
+};
+
+const makeControllerAwareStore = () => {
+  const store = configureStore({
+    reducer: {
+      servicePlanningImport: servicePlanningImportReducer,
+      controllerProfiles: controllerProfilesReducer,
+      undoable: (
+        state: ControllerAwareUndoableState = {
+          present: {
+            ...undoableState.present,
+            itemLists: itemListsReducer(undefined, { type: "@@init" }),
+          },
+        },
+        action: Parameters<typeof itemListsReducer>[1],
+      ): ControllerAwareUndoableState => ({
+        present: {
+          ...state.present,
+          itemLists: itemListsReducer(state.present.itemLists, action),
+        },
+      }),
+    },
+  });
+  store.dispatch(
+    setControllerProfilesFromRemote([
+      {
+        id: AUX_CONTROLLER_ID,
+        type: "aux-presentation",
+        name: "Lobby",
+        description: "",
+        order: 2,
+        enabled: true,
+        outputIds: [],
+        outputsConfigured: true,
+        defaultSendOutputIds: [],
+        outlineScope: AUX_CONTROLLER_ID,
+      },
+    ]),
+  );
+  store.dispatch(
+    initiateItemLists([
+      { _id: "presentation-outline", name: "Sunday AM" },
+      {
+        _id: "aux-outline",
+        name: "Lobby",
+        controllerScope: AUX_CONTROLLER_ID,
+      },
+    ]),
+  );
+  return store;
+};
+
 type Result = ReturnType<typeof useCurrentServicePlanSource>;
 
 const Harness = ({ onResult }: { onResult: (result: Result) => void }) => {
   onResult(useCurrentServicePlanSource());
   return null;
 };
+
+const ControllerScopedHook = ({
+  profileId,
+  globalInfo,
+  controllerInfo,
+  onResult,
+}: {
+  profileId: string;
+  globalInfo: Record<string, unknown>;
+  controllerInfo: Record<string, unknown>;
+  onResult: (result: Result) => void;
+}) => (
+  <ActiveControllerProvider profileId={profileId}>
+    <GlobalInfoContext.Provider value={globalInfo as never}>
+      <ControllerInfoContext.Provider value={controllerInfo as never}>
+        <Harness onResult={onResult} />
+      </ControllerInfoContext.Provider>
+    </GlobalInfoContext.Provider>
+  </ActiveControllerProvider>
+);
 
 /** Latest hook result, refreshed on every render of the harness. */
 let latestResult: Result | null = null;
@@ -154,18 +239,21 @@ const renderHookWith = (
   store: ReturnType<typeof makeStore>,
   globalInfo: Record<string, unknown>,
   controllerInfo: Record<string, unknown> = {},
+  activeControllerId = "presentation",
 ) => {
-  render(
+  return render(
     <Provider store={store}>
-      <GlobalInfoContext.Provider value={globalInfo as never}>
-        <ControllerInfoContext.Provider value={controllerInfo as never}>
-          <Harness
-            onResult={(result) => {
-              latestResult = result;
-            }}
-          />
-        </ControllerInfoContext.Provider>
-      </GlobalInfoContext.Provider>
+      <ActiveControllerContext.Provider value={activeControllerId}>
+        <GlobalInfoContext.Provider value={globalInfo as never}>
+          <ControllerInfoContext.Provider value={controllerInfo as never}>
+            <Harness
+              onResult={(result) => {
+                latestResult = result;
+              }}
+            />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ActiveControllerContext.Provider>
     </Provider>,
   );
 };
@@ -236,7 +324,7 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
-  it("prefers the plan linked to the selected outline", async () => {
+  it("prefers the current occurrence over an old outline binding", async () => {
     mockGetServicePlan.mockResolvedValue({
       servicePlan: {
         ...planFixture,
@@ -259,10 +347,29 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() =>
       expect(mockGetServicePlan).toHaveBeenCalledWith(
         "church-1",
-        "service-2@2026-08-01",
+        "service-1@2026-08-01",
       ),
     );
-    expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
+    expect(latestResult?.selectedPlanKey).toBe("service-1@2026-08-01");
+  });
+
+  it("leaves the selection empty when the current occurrence has no plan", async () => {
+    mockListServicePlans.mockResolvedValueOnce({
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
   });
 
   it("persists a manually selected plan before its detail request finishes", async () => {
@@ -293,6 +400,185 @@ describe("useCurrentServicePlanSource", () => {
           planName: "Evening Service",
         }),
       ),
+    );
+  });
+
+  it("does not publish a late binding after the selected outline changes", async () => {
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          servicePlan:
+            planKey === "service-2@2026-08-01"
+              ? {
+                  ...planFixture,
+                  planKey,
+                  serviceId: "service-2",
+                  name: "Evening Service",
+                }
+              : planFixture,
+        }),
+    );
+    const resolveBindings: Array<() => void> = [];
+    mockPersistItemListServicePlanBinding.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveBindings.push(resolve);
+      }),
+    );
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: (
+          state: typeof undoableState = undoableState,
+          action: { type?: string },
+        ): typeof undoableState =>
+          action.type === "SWITCH_OUTLINE"
+            ? {
+                ...state,
+                present: {
+                  ...state.present,
+                  itemLists: {
+                    ...state.present.itemLists,
+                    selectedList: { _id: "outline-2", name: "Evening" },
+                  },
+                },
+              }
+            : state,
+      },
+    });
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        {},
+        "outline-1",
+        expect.objectContaining({ planKey: "service-2@2026-08-01" }),
+      ),
+    );
+
+    act(() => {
+      store.dispatch({ type: "SWITCH_OUTLINE" });
+    });
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "outline-2",
+      ),
+    );
+    await act(async () => {
+      resolveBindings.forEach((resolve) => resolve());
+    });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding).toBeNull();
+  });
+
+  it("does not carry late plan detail or binding results across controllers", async () => {
+    const store = makeControllerAwareStore();
+    let resolveOldPlan:
+      | ((value: { servicePlan: typeof planFixture }) => void)
+      | undefined;
+    let resolveOldBinding: (() => void) | undefined;
+    const oldControllerPlan = {
+      ...planFixture,
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) => {
+        if (planKey === oldControllerPlan.planKey) {
+          return new Promise<{ servicePlan: typeof oldControllerPlan }>((resolve) => {
+            resolveOldPlan = resolve;
+          });
+        }
+        return Promise.resolve({ servicePlan: planFixture });
+      },
+    );
+    mockPersistItemListServicePlanBinding.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveOldBinding = resolve;
+      }),
+    );
+
+    const view = render(
+      <Provider store={store}>
+        <ControllerScopedHook
+          profileId={AUX_CONTROLLER_ID}
+          globalInfo={enabledGlobalInfo}
+          controllerInfo={{ db: {} }}
+          onResult={(result) => {
+            latestResult = result;
+          }}
+        />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "aux-outline",
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+
+    act(() => {
+      latestResult?.selectPlan(oldControllerPlan.planKey);
+    });
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        {},
+        "aux-outline",
+        expect.objectContaining({ planKey: oldControllerPlan.planKey }),
+      ),
+    );
+
+    view.rerender(
+      <Provider store={store}>
+        <ControllerScopedHook
+          profileId={PRESENTATION_CONTROLLER_ID}
+          globalInfo={enabledGlobalInfo}
+          controllerInfo={{ db: {} }}
+          onResult={(result) => {
+            latestResult = result;
+          }}
+        />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "presentation-outline",
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    await waitFor(() =>
+      expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+        planFixture,
+        expect.anything(),
+      ),
+    );
+
+    await act(async () => {
+      resolveOldPlan?.({ servicePlan: oldControllerPlan });
+      resolveOldBinding?.();
+    });
+
+    const loadedPlanKeys = mockLoadPlanPreview.mock.calls.map(
+      ([plan]) => (plan as { planKey: string }).planKey,
+    );
+    expect(loadedPlanKeys).not.toContain(oldControllerPlan.planKey);
+    expect(
+      store.getState().servicePlanningImport.outlinePlanBinding,
+    ).toBeNull();
+    expect(dispatchedTypes).not.toContain(
+      setServicePlanningOutlinePlanBinding.type,
     );
   });
 
@@ -455,7 +741,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
   });
 
-  it("keeps a pinned plan selected when a new unbound outline loads", async () => {
+  it("keeps an explicit manual plan selected when its binding is cleared", async () => {
     mockGetServicePlan.mockImplementation(
       (_churchId: string, planKey: string) =>
         Promise.resolve({
@@ -480,16 +766,16 @@ describe("useCurrentServicePlanSource", () => {
     );
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() =>
-      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
     );
 
     act(() => {
-      latestResult?.pinSelectedPlan();
+      latestResult?.selectPlan("service-2@2026-08-01");
       store.dispatch(setServicePlanningOutlinePlanBinding(null));
     });
 
     expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
   });
 
   it("does nothing without Services view access", async () => {
@@ -1111,5 +1397,113 @@ describe("useCurrentServicePlanSource", () => {
         "service-2@2026-08-01",
       ),
     );
+    expect(latestResult?.selectedOccurrenceId).toBe(
+      mockOtherOccurrence.occurrenceId,
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-2");
+    expect(latestResult?.isManualSelection).toBe(true);
+  });
+
+  it("keeps an unmatched manual plan separate from the automatic occurrence", async () => {
+    const outsidePlanKey = "service-3@2026-08-01";
+    mockListServicePlans.mockResolvedValueOnce({
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+        {
+          planKey: outsidePlanKey,
+          serviceId: "service-3",
+          date: "2026-08-01",
+          name: "Outside Window Service",
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan(outsidePlanKey));
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(outsidePlanKey),
+    );
+    expect(latestResult?.selectedOccurrenceId).toBeNull();
+    expect(latestResult?.occurrence).toBeNull();
+    expect(latestResult?.isManualSelection).toBe(true);
+  });
+
+  it("resets manual context when the active Controller changes", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo, {}, "controller-a");
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan("service-2@2026-08-01"));
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBe(
+        mockOtherOccurrence.occurrenceId,
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.isManualSelection).toBe(true),
+    );
+
+    view.rerender(
+      <Provider store={store}>
+        <ActiveControllerContext.Provider value="controller-b">
+          <GlobalInfoContext.Provider value={enabledGlobalInfo as never}>
+            <ControllerInfoContext.Provider value={{} as never}>
+              <Harness
+                onResult={(result) => {
+                  latestResult = result;
+                }}
+              />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </ActiveControllerContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    await waitFor(() =>
+      expect(latestResult?.isManualSelection).toBe(false),
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-1");
+  });
+
+  it("returns a manually selected occurrence to the current service", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    const otherOccurrence = latestResult?.occurrences.find(
+      (candidate) => candidate.occurrenceId === mockOtherOccurrence.occurrenceId,
+    );
+    act(() => latestResult?.selectOccurrence(otherOccurrence?.occurrenceId ?? ""));
+
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBe(mockOtherOccurrence.occurrenceId),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+    );
+    expect(latestResult?.isManualSelection).toBe(true);
+
+    act(() => latestResult?.returnToCurrentService());
+
+    await waitFor(() => expect(latestResult?.selectedOccurrenceId).toBeNull());
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-1");
+    expect(latestResult?.isManualSelection).toBe(false);
   });
 });

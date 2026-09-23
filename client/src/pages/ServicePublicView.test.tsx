@@ -157,6 +157,47 @@ describe("ServicePublicView microphone assignments", () => {
     expect(within(item).getByText("John 4:23–24")).toBeInTheDocument();
   });
 
+  it("shows attached resources with their type, details, and safe links", () => {
+    render(
+      <ServicePublicView
+        snapshot={{
+          ...detailedSnapshot,
+          service: {
+            ...detailedSnapshot.service,
+            sections: [{
+              ...detailedSnapshot.service.sections[0],
+              items: [{
+                ...detailedSnapshot.service.sections[0].items[0],
+                resources: [
+                  {
+                    type: "url",
+                    title: "Rehearsal video",
+                    url: "https://example.com/rehearsal",
+                  },
+                  {
+                    type: "text",
+                    title: "Call notes",
+                    detail: "Bring the spare cable.",
+                  },
+                ],
+              }],
+            }],
+          },
+        }}
+      />,
+    );
+
+    const item = within(screen.getByRole("main")).getAllByRole("listitem")[0];
+    expect(within(item).getByRole("link", { name: /Rehearsal video/i })).toHaveAttribute(
+      "href",
+      "https://example.com/rehearsal",
+    );
+    expect(within(item).getByText("Web link")).toBeInTheDocument();
+    expect(within(item).getByText("Call notes")).toBeInTheDocument();
+    expect(within(item).getByText("Notes")).toBeInTheDocument();
+    expect(within(item).getByText("Bring the spare cable.")).toBeInTheDocument();
+  });
+
   it("opens a serving member image in a viewport-constrained modal", async () => {
     const user = userEvent.setup();
     render(<ServicePublicView snapshot={detailedSnapshot} embedded />);

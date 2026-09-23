@@ -80,6 +80,7 @@ import {
 import {
   formatOccurrenceLabel,
   getOccurrenceServices,
+  resolveLiveItemSource,
   resolveLiveSlideProgress,
   type LiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
@@ -287,12 +288,14 @@ const DisplaysPreview = ({
   progress = null,
   activeItemId = null,
   activeListId = null,
+  activeName = null,
   isVisible = true,
 }: {
   columns?: 1 | 2;
   progress?: LiveSlideProgress | null;
   activeItemId?: string | null;
   activeListId?: string | null;
+  activeName?: string | null;
   /** When false, pause mounted preview video and animation work. */
   isVisible?: boolean;
 }) => (
@@ -309,6 +312,7 @@ const DisplaysPreview = ({
     <CurrentServiceItemList
       activeItemId={activeItemId}
       activeListId={activeListId}
+      activeName={activeName}
     />
   </div>
 );
@@ -351,6 +355,7 @@ type PreviewPanelProps = {
   progress: LiveSlideProgress | null;
   activeItemId: string | null;
   activeListId: string | null;
+  activeName: string | null;
   assignmentTeams: ReturnType<typeof groupAssignmentSummaryByTeam>;
   microphones: ServicePlanMicrophone[];
   assignmentsStatus: AssignmentsStatus;
@@ -373,6 +378,7 @@ const PreviewPanelContent = ({
   progress,
   activeItemId,
   activeListId,
+  activeName,
   assignmentTeams,
   microphones,
   assignmentsStatus,
@@ -400,6 +406,7 @@ const PreviewPanelContent = ({
           columns={2}
           activeItemId={activeItemId}
           activeListId={activeListId}
+          activeName={activeName}
           isVisible={value === "displays"}
         />
       </div>
@@ -604,6 +611,10 @@ const CurrentServiceWorkspace = () => {
 
   const liveSlideProgress = useMemo(
     () => resolveLiveSlideProgress(projectorInfo, monitorInfo),
+    [monitorInfo, projectorInfo],
+  );
+  const liveItemSource = useMemo(
+    () => resolveLiveItemSource(projectorInfo, monitorInfo),
     [monitorInfo, projectorInfo],
   );
 
@@ -1157,8 +1168,9 @@ const CurrentServiceWorkspace = () => {
                             <DisplaysPreview
                               columns={2}
                               progress={liveSlideProgress}
-                              activeItemId={monitorInfo.itemId ?? null}
-                              activeListId={monitorInfo.listId ?? null}
+                              activeItemId={liveItemSource.itemId ?? null}
+                              activeListId={liveItemSource.listId ?? null}
+                              activeName={liveItemSource.name ?? null}
                               isVisible={resolvedTab === "displays"}
                             />
                           </section>
@@ -1263,8 +1275,9 @@ const CurrentServiceWorkspace = () => {
                 value={desktopPreviewTab}
                 onValueChange={setTab}
                 progress={liveSlideProgress}
-                activeItemId={monitorInfo.itemId ?? null}
-                activeListId={monitorInfo.listId ?? null}
+                activeItemId={liveItemSource.itemId ?? null}
+                activeListId={liveItemSource.listId ?? null}
+                activeName={liveItemSource.name ?? null}
                 assignmentTeams={assignmentTeams}
                 microphones={microphones}
                 assignmentsStatus={assignmentsStatus}

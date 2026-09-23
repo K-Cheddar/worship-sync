@@ -3,6 +3,7 @@ import {
   buildServicePlanSourceImport,
   guessServicePlanElementType,
 } from "./servicePlanFromImport";
+import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import { richTextToPlainText } from "../../types/richText";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
@@ -367,6 +368,247 @@ describe("buildServicePlanSectionsFromImport", () => {
       ),
     ];
     expect(sections[0].name).toBe("Section");
+  });
+
+  it.each([
+    ["Special Music", "Trust and Obey", "Special Music"],
+    ["Song", "Trust and Obey", "Trust and Obey"],
+    ["Hymn", "Amazing Grace", "Amazing Grace"],
+    ["Opening Song", "Trust and Obey", "Opening Song"],
+    ["Closing Song", "Trust and Obey", "Closing Song"],
+    ["Offering Song", "Trust and Obey", "Offering Song"],
+    ["Appeal Song", "Trust and Obey", "Appeal Song"],
+  ] as const)(
+    "keeps the service moment separate from generic song labels (%s | %s)",
+    (elementType, contentTitle, expectedTitle) => {
+      const [section] = buildServicePlanSectionsFromImport(
+        {
+          ...data,
+          sections: [
+            {
+              sectionName: "Music",
+              rows: [
+                {
+                  elementType,
+                  title: contentTitle,
+                  contentTitle,
+                  songTitle: contentTitle,
+                  ledBy: "Youth Choir",
+                },
+              ],
+            },
+          ],
+        },
+        [{ _id: "trust", name: "Trust and Obey" }],
+      );
+
+      expect(richTextToPlainText(section.elements[0].title)).toBe(
+        expectedTitle,
+      );
+      expect(section.elements[0].sourceContentTitleRaw).toBe(contentTitle);
+      expect(section.elements[0].songRef).toBeDefined();
+      expect(section.elements[0].assignees?.map(({ name }) => name)).toEqual([
+        "Youth Choir",
+      ]);
+    },
+  );
+
+  it("parses scripture from content independently of the service moment", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Message",
+            rows: [
+              {
+                elementType: "Scripture Reading",
+                title: "John 3:16-18",
+                contentTitle: "John 3:16-18",
+                ledBy: "Reader",
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    expect(richTextToPlainText(section.elements[0].title)).toBe(
+      "Scripture Reading",
+    );
+    expect(section.elements[0].scriptureRef).toMatchObject({
+      book: "John",
+      chapter: "3",
+      verseRange: "16-18",
+    });
+  });
+
+  it("uses content when Element is blank and falls back to a generic item", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Service",
+            rows: [
+              { elementType: "", title: "Welcome Video", contentTitle: "Welcome Video", ledBy: "" },
+              { elementType: "Item", title: "", ledBy: "" },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    expect(richTextToPlainText(section.elements[0].title)).toBe(
+      "Welcome Video",
+    );
+    expect(richTextToPlainText(section.elements[1].title)).toBe("Item");
+  });
+
+  it("keeps explicit timing while using the Element as the title", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Service",
+            rows: [
+              {
+                elementType: "Special Music",
+                title: "Trust and Obey",
+                contentTitle: "Trust and Obey",
+                songTitle: "Trust and Obey",
+                ledBy: "Choir A, Choir B",
+                startTime: "10:15",
+                durationMinutes: 2.5,
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    const [element] = section.elements;
+    expect(richTextToPlainText(element.title)).toBe("Special Music");
+    expect(element.startTime).toBe("10:15");
+    expect(element.durationSeconds).toBe(150);
+    expect(element.assignees?.map(({ name }) => name)).toEqual([
+      "Choir A",
+      "Choir B",
+    ]);
+  });
+
+  it("matches a Planning Center song by content while preserving its key", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Worship",
+            rows: [
+              {
+                elementType: "Song",
+                title: "Great Are You Lord â€” Acoustic (G)",
+                contentTitle: "Great Are You Lord â€” Acoustic (G)",
+                songTitle: "Great Are You Lord",
+                ledBy: "Jane Doe",
+              },
+            ],
+          },
+        ],
+      },
+      [{ _id: "song-1", name: "Great Are You Lord" }],
+    );
+
+    expect(section.elements[0].songRef).toEqual({
+      kind: "library",
+      songId: "song-1",
+      songName: "Great Are You Lord",
+      key: "G",
+    });
+    expect(richTextToPlainText(section.elements[0].title)).toBe(
+      "Great Are You Lord â€” Acoustic (G)",
+    );
+  });
+
+  it("keeps Planning Center positions as provenance instead of people", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome",
+                title: "Welcome",
+                ledBy: "Jane Doe, Host",
+                ledByAssignments: [
+                  { kind: "person", id: "p1", name: "Jane Doe" },
+                  { kind: "teamPosition", id: "tp1", name: "Host" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    expect(section.elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Jane Doe",
+    ]);
+    expect(section.elements[0].sourceLedByAssignments).toEqual([
+      { kind: "person", id: "p1", name: "Jane Doe" },
+      { kind: "teamPosition", id: "tp1", name: "Host" },
+    ]);
+  });
+
+  it("keeps a TeamPosition-only Led by value through a plan round trip", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome",
+                title: "Welcome",
+                ledBy: "Host",
+                ledByAssignments: [
+                  { kind: "teamPosition", id: "tp1", name: "Host" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+
+    const [element] = section.elements;
+    expect(element.assignees).toBeUndefined();
+    expect(element.sourceLedByRaw).toBe("Host");
+    expect(element.sourceLedByAssignments).toEqual([
+      { kind: "teamPosition", id: "tp1", name: "Host" },
+    ]);
+
+    const [roundTrippedRow] = servicePlanToImportData({
+      name: "Sunday Gathering",
+      sections: [section],
+    }).sections[0].rows;
+    expect(roundTrippedRow).toMatchObject({
+      ledBy: "Host",
+      sourceLedByRaw: "Host",
+      ledByAssignments: [
+        { kind: "teamPosition", id: "tp1", name: "Host" },
+      ],
+    });
+    expect(roundTrippedRow.assigneeNames).toBeUndefined();
   });
 });
 

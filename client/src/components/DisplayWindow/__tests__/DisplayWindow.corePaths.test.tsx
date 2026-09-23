@@ -6,6 +6,11 @@ import { setServerTimeOffset } from "../../../utils/serverTime";
 
 const mockUseSelector = jest.fn();
 const mockUseCachedVideoUrl = jest.fn((url?: string) => url);
+const mockPublishMediaPreparationManifest = jest.fn();
+const mockRemoteMediaPreparationManifest = jest.fn(() => ({
+  manifest: undefined,
+  cacheMap: {},
+}));
 let mockLocalVideoViewInstanceCounter = 0;
 let mockDisplayTransitionComplete: (() => void) | undefined;
 const mockDisplayTransitionTimeline = {
@@ -89,6 +94,17 @@ jest.mock("../../../hooks", () => ({
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedVideoUrl: (url?: string) => mockUseCachedVideoUrl(url),
+}));
+
+jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
+  usePublishMediaPreparationManifest: (
+    ...args: Parameters<typeof mockPublishMediaPreparationManifest>
+  ) =>
+    mockPublishMediaPreparationManifest(...args),
+  useRemoteMediaPreparationManifest: (
+    ...args: Parameters<typeof mockRemoteMediaPreparationManifest>
+  ) =>
+    mockRemoteMediaPreparationManifest(...args),
 }));
 
 jest.mock("../DisplayBox", () => ({
@@ -458,11 +474,13 @@ jest.mock("../HLSVideoPlayer", () => ({
     originalSrc,
     onLoadedData,
     muted,
+    playbackRole,
   }: {
     src: string;
     originalSrc: string;
     onLoadedData?: () => void;
     muted?: boolean;
+    playbackRole?: "preview" | "output";
   }) => (
     <button
       type="button"
@@ -470,6 +488,7 @@ jest.mock("../HLSVideoPlayer", () => ({
       data-src={src}
       data-original-src={originalSrc}
       data-muted={muted ? "true" : "false"}
+      data-playback-role={playbackRole}
       onClick={() => onLoadedData?.()}
     />
   ),
@@ -587,6 +606,10 @@ describe("DisplayWindow core paths", () => {
     mockLocalVideoViewInstanceCounter = 0;
     setServerTimeOffset(0);
     mockUseCachedVideoUrl.mockImplementation((url?: string) => url);
+    mockRemoteMediaPreparationManifest.mockReturnValue({
+      manifest: undefined,
+      cacheMap: {},
+    });
     mockUseSelector.mockImplementation((selector) => selector(baseState));
   });
 
@@ -2395,6 +2418,132 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
     expect(await screen.findByTestId("window-hls-player")).toBeInTheDocument();
+  });
+
+  it("keeps a controller projector preview on the preview playback role", async () => {
+    const videoBox: Box = {
+      ...baseBox,
+      id: "preview-video-box",
+      mediaInfo: {
+        id: "preview-video",
+        type: "video",
+        background: "https://cdn.example.com/preview.mp4",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+
+    render(
+      <DisplayWindow
+        displayType="projector"
+        outputId="projector"
+        boxes={[videoBox]}
+        shouldPlayVideo
+        videoPreloadRole="preview"
+      />,
+    );
+
+    expect(await screen.findByTestId("window-hls-player")).toHaveAttribute(
+      "data-playback-role",
+      "preview",
+    );
+  });
+
+  it("converges a projector preview through rapid A to B to C updates", () => {
+    const sharedMedia = {
+      id: "preview-shared-video",
+      type: "video" as const,
+      background: "https://cdn.example.com/preview-shared.mp4",
+    };
+    const slide = (words: string, id: string): Box => ({
+      ...baseBox,
+      id,
+      words,
+      mediaInfo: sharedMedia as NonNullable<Box["mediaInfo"]>,
+    });
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        outputId="projector"
+        boxes={[slide("A", "slide-a")]}
+        shouldPlayVideo
+        shouldAnimate
+        videoPreloadRole="preview"
+      />,
+    );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        outputId="projector"
+        boxes={[slide("B", "slide-b")]}
+        prevBoxes={[slide("A", "slide-a")]}
+        shouldPlayVideo
+        shouldAnimate
+        videoPreloadRole="preview"
+      />,
+    );
+    const obsoleteComplete = mockDisplayTransitionComplete;
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        outputId="projector"
+        boxes={[slide("C", "slide-c")]}
+        prevBoxes={[slide("B", "slide-b")]}
+        shouldPlayVideo
+        shouldAnimate
+        videoPreloadRole="preview"
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(
+      screen.getAllByTestId("display-box").map((node) => node.getAttribute("data-words")),
+    ).toContain("C");
+    expect(
+      screen.getAllByTestId("display-box").map((node) => node.getAttribute("data-words")),
+    ).not.toContain("B");
+
+    act(() => obsoleteComplete?.());
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+
+    act(() => mockDisplayTransitionComplete?.());
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
+    );
+    expect(
+      screen.getAllByTestId("display-box").map((node) => node.getAttribute("data-words")),
+    ).toEqual(["C"]);
+  });
+
+  it("publishes preparation only for output surfaces, not mounted previews", () => {
+    const props = {
+      displayType: "projector" as const,
+      outputId: "projector",
+      boxes: [baseBox],
+    };
+    const { rerender } = render(<DisplayWindow {...props} />);
+
+    expect(
+      mockPublishMediaPreparationManifest.mock.calls.at(-1)?.[0],
+    ).toMatchObject({ enabled: true, outputId: "projector" });
+
+    rerender(
+      <DisplayWindow
+        {...props}
+        videoPreloadRole="preview"
+      />,
+    );
+
+    expect(
+      mockPublishMediaPreparationManifest.mock.calls.at(-1)?.[0],
+    ).toMatchObject({ enabled: false, outputId: "projector" });
   });
 
   it("keeps the video poster up for media-cache URLs until the player is paint-ready", async () => {

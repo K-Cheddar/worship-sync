@@ -597,6 +597,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             onVideoComplete={c.addMuxVideo}
             onImageRefresh={c.refreshCanvaImage}
             onVideoRefresh={c.refreshCanvaVideo}
+            onUnprocessedAssetCleanup={c.cleanupCanvaAsset}
             onCreateDeckItem={c.createCanvaDeckItemFromMedia}
             existingMedia={c.list}
             sourceMedia={canvaSourceMedia}

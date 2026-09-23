@@ -15,6 +15,7 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname === "/support") return title("Support");
   if (pathname === "/privacy") return title("Privacy Policy");
   if (pathname === "/terms") return title("Terms of Service");
+  if (pathname === "/sms-opt-in") return title("SMS Messaging");
   if (pathname === "/login") return title("Sign In");
   if (pathname === "/login/desktop-sso-complete")
     return title("Desktop Sign In");

@@ -5,6 +5,7 @@ import type {
 } from "../../types";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import { logVideoCue } from "../../utils/videoBackgroundPlayback";
 import HLSPlayer from "./HLSVideoPlayer";
 import LocalVideoInputView from "./LocalVideoInputView";
 import type { LaneBackgroundMedia } from "./laneBackgroundMedia";
@@ -124,12 +125,40 @@ const LaneFullFrameMedia = ({
     ) {
       return;
     }
+    logVideoCue("lane.cacheResolved", {
+      outputId,
+      windowRole,
+      mediaKey: fileMediaKey,
+      originalSrc: fileOriginalSrc,
+      resolvedSrc: cachedRemoteUrl,
+    });
     setFrozenResolvedSrc((current) => current || cachedRemoteUrl);
   }, [
     cachedRemoteUrl,
     fileOriginalSrc,
+    fileMediaKey,
     isLocalProtocol,
     mediaKind,
+    outputId,
+    windowRole,
+  ]);
+
+  useEffect(() => {
+    if (mediaKind !== "fileVideo" || !fileOriginalSrc) return;
+    logVideoCue("lane.mount", {
+      outputId,
+      windowRole,
+      mediaKey: fileMediaKey,
+      originalSrc: fileOriginalSrc,
+      resolvedSrc: frozenResolvedSrc || undefined,
+    });
+  }, [
+    fileMediaKey,
+    fileOriginalSrc,
+    frozenResolvedSrc,
+    mediaKind,
+    outputId,
+    windowRole,
   ]);
 
   useEffect(() => {
@@ -239,6 +268,9 @@ const LaneFullFrameMedia = ({
         showErrors={local.showErrors}
         transparentBackground={local.transparentBackground}
         onPaintReadyChange={onPaintReadyChange}
+        outputId={outputId}
+        windowRole={windowRole}
+        laneRole={isPrevious ? "previous" : "current"}
       />
     </div>
   );

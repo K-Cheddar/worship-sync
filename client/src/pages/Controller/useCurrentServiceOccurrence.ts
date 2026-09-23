@@ -39,6 +39,7 @@ export type CurrentServiceOccurrence = {
   /** Set only once the operator has overridden the automatic pick. */
   selectedOccurrenceId: string | null;
   selectOccurrence: (occurrenceId: string) => void;
+  returnToCurrent: () => void;
 };
 
 const sessionDayKey = (nowMs: number): string => {
@@ -151,11 +152,16 @@ export const useCurrentServiceOccurrence = (
     [autoOccurrence, occurrences, selectedOccurrenceId],
   );
 
+  const returnToCurrent = useCallback(() => {
+    setSelectedOccurrenceId(null);
+  }, []);
+
   return {
     occurrences,
     occurrence,
     selectedOccurrenceId,
     selectOccurrence: setSelectedOccurrenceId,
+    returnToCurrent,
   };
 };
 

@@ -78,10 +78,14 @@ const BoardPresent = lazyRoute(() => import("./pages/BoardPresent"));
 const LocalVideoCaptureHost = lazyRoute(
   () => import("./pages/LocalVideoCaptureHost"),
 );
+const PreparedVideoSurfaces = lazyRoute(
+  () => import("./pages/PreparedVideoSurfaces"),
+);
 
 // Planning / people
 const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
 const Account = lazyRoute(() => import("./pages/Account"));
+const Resources = lazyRoute(() => import("./pages/Resources"));
 const TeamsAndServices = lazyRoute(
   () => import("./pages/Teams/TeamsAndServices"),
 );
@@ -390,6 +394,14 @@ const AppRoutes = () => {
                 }
               />
               <Route
+                path="/resources"
+                element={
+                  <AuthGate allowedKinds={["human"]}>
+                    <Resources />
+                  </AuthGate>
+                }
+              />
+              <Route
                 path="/teams-and-services/*"
                 element={
                   <AuthGate allowedKinds={["human"]}>
@@ -403,6 +415,7 @@ const AppRoutes = () => {
                 path="/teams/intake/:token"
                 element={<TeamIntakePublic />}
               />
+              <Route path="/a/:token" element={<TeamIntakePublic />} />
               <Route
                 path="/teams/intake"
                 element={<TeamIntakePublic />}
@@ -517,6 +530,7 @@ const AppRoutes = () => {
               path="/local-video-capture-host"
               element={<LocalVideoCaptureHost />}
             />
+            <Route path="/dev/prepared-video-surfaces" element={<PreparedVideoSurfaces />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

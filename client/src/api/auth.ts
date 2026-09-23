@@ -56,6 +56,8 @@ import type {
   TeamRole,
   TeamIntakeForm,
   TeamIntakePreview,
+  TeamIntakeRecipient,
+  SmsDeliveryAttempt,
   TeamIntakeSubmission,
   TeamRosterMember,
   TeamSchedule,
@@ -68,7 +70,9 @@ import type {
   WorkstationDeviceClient,
 } from "./authTypes";
 import type { SongAudio } from "../types";
+import type { ChurchResource } from "../types/churchResource";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
+import type { ExternalResourceResolution } from "./externalResource";
 
 export type RichLinkPreview = {
   provider: "youtube" | "spotify";
@@ -93,6 +97,18 @@ export type RichLinkPreview = {
   embedWidth?: number;
   embedHeight?: number;
   supportsSegments: boolean;
+};
+
+export type YouTubeSearchResult = {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnail: string;
+  description: string;
+  publishedAt?: string;
+  durationSeconds?: number;
+  embeddable?: boolean;
+  watchUrl: string;
 };
 
 export type { AuthBootstrap, ChurchStatus, SessionKind } from "./authTypes";
@@ -293,6 +309,39 @@ export const getRichLinkPreview = async (url: string) => {
   return result.preview;
 };
 
+export const getExternalResourceResolution = async (url: string) => {
+  const result = await apiFetch<{ resource: ExternalResourceResolution }>(
+    `api/resources/resolve?${new URLSearchParams({ url }).toString()}`,
+  );
+  return result.resource;
+};
+
+export const searchYouTubeVideos = async ({
+  title,
+  artist,
+  album,
+  query,
+  forceRefresh = false,
+}: {
+  title?: string;
+  artist?: string;
+  album?: string;
+  query?: string;
+  forceRefresh?: boolean;
+}) => {
+  const params = new URLSearchParams();
+  if (title?.trim()) params.set("title", title.trim());
+  if (artist?.trim()) params.set("artist", artist.trim());
+  if (album?.trim()) params.set("album", album.trim());
+  if (query?.trim()) params.set("query", query.trim());
+  if (forceRefresh) params.set("refresh", "true");
+  return apiFetch<{
+    query: string;
+    results: YouTubeSearchResult[];
+    cached: boolean;
+  }>(`api/youtube/search?${params.toString()}`);
+};
+
 const uploadSongAudioFromPackagedElectron = async ({
   churchId,
   songId,
@@ -477,6 +526,203 @@ export const deleteSongAudioWithRetry = async (
   }
 };
 
+type ChurchResourceUploadIntent = {
+  resourceUpload: {
+    id: string;
+    key: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    kind: ChurchResource["kind"];
+  };
+  uploadUrl: string;
+  expiresAt: string;
+};
+
+export type ChurchResourceUploadInput = {
+  churchId: string;
+  file: File;
+  name?: string;
+  description?: string;
+  onProgress?: (progress: number) => void;
+};
+
+const churchResourcesPath = (churchId: string) =>
+  `api/churches/${encodeURIComponent(churchId)}/resources`;
+
+const uploadChurchResourceFromPackagedElectron = async ({
+  churchId,
+  file,
+  name,
+  description,
+}: {
+  churchId: string;
+  file: File;
+  name?: string;
+  description?: string;
+}): Promise<ChurchResource> => {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiBasePath()}${churchResourcesPath(churchId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          ...(getHumanApiToken()
+            ? { Authorization: `Bearer ${getHumanApiToken()}` }
+            : {}),
+          ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
+          ...(name?.trim() ? { "x-resource-name": name.trim() } : {}),
+          ...(description?.trim()
+            ? { "x-resource-description": description.trim() }
+            : {}),
+        },
+        body: file,
+      },
+    );
+  } catch {
+    throw new AuthApiError(
+      "Could not upload this file. Check the connection and try again.",
+      { isReachabilityError: true },
+    );
+  }
+  const data = (await response.json().catch(() => ({}))) as {
+    resource?: ChurchResource;
+    error?: string;
+    errorMessage?: string;
+  };
+  if (!response.ok || !data.resource) {
+    throw new AuthApiError(
+      data.errorMessage || data.error || "The file upload was not accepted. Try again.",
+      { status: response.status },
+    );
+  }
+  return data.resource;
+};
+
+export const listChurchResources = async (churchId: string) =>
+  apiFetch<{ success: boolean; resources: ChurchResource[] }>(
+    churchResourcesPath(churchId),
+  );
+
+export const getChurchResource = async (
+  churchId: string,
+  resourceId: string,
+) =>
+  apiFetch<{ success: boolean; resource: ChurchResource }>(
+    `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
+  );
+
+export const uploadChurchResource = async ({
+  churchId,
+  file,
+  name,
+  description,
+  onProgress,
+}: ChurchResourceUploadInput): Promise<ChurchResource> => {
+  if (isPackagedElectronRenderer()) {
+    return uploadChurchResourceFromPackagedElectron({
+      churchId,
+      file,
+      name,
+      description,
+    });
+  }
+  const intent = await apiFetch<ChurchResourceUploadIntent>(
+    `${churchResourcesPath(churchId)}/upload`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+      }),
+    },
+  );
+  await new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", intent.uploadUrl);
+    request.setRequestHeader("Content-Type", intent.resourceUpload.contentType);
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress?.((event.loaded / event.total) * 100);
+    });
+    request.addEventListener("load", () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.(100);
+        resolve();
+        return;
+      }
+      reject(new AuthApiError("The file upload was not accepted. Try again.", { status: request.status }));
+    });
+    request.addEventListener("error", () => reject(new AuthApiError(
+      "Could not upload this file. Check the connection and try again.",
+      { isReachabilityError: true },
+    )));
+    request.addEventListener("abort", () => reject(new AuthApiError("The file upload was cancelled.")));
+    request.send(file);
+  });
+  const completed = await apiFetch<{ success: boolean; resource: ChurchResource }>(
+    `${churchResourcesPath(churchId)}/${encodeURIComponent(intent.resourceUpload.id)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        resourceUpload: intent.resourceUpload,
+        name: name?.trim() || file.name,
+        description: description?.trim() || undefined,
+      }),
+    },
+  );
+  return completed.resource;
+};
+
+export const getChurchResourceUrl = async ({
+  churchId,
+  resourceId,
+  disposition = "inline",
+}: {
+  churchId: string;
+  resourceId: string;
+  disposition?: "inline" | "attachment";
+}) =>
+  apiFetch<{ url: string; expiresAt: string }>(
+    `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}/url?${new URLSearchParams({ disposition }).toString()}`,
+  );
+
+export const updateChurchResource = async ({
+  churchId,
+  resourceId,
+  name,
+  description,
+  tags,
+}: {
+  churchId: string;
+  resourceId: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+}) =>
+  apiFetch<{ success: boolean; resource: ChurchResource }>(
+    `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ name, description, tags }),
+    },
+  );
+
+export const deleteChurchResource = async ({
+  churchId,
+  resourceId,
+}: {
+  churchId: string;
+  resourceId: string;
+}) =>
+  apiFetch<{ success: true }>(
+    `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
+    { method: "DELETE", body: JSON.stringify({}) },
+  );
+
 export const getAuthBootstrap = async ({
   workstationToken,
   displayToken,
@@ -627,6 +873,30 @@ export const submitSupportContact = async (body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+
+export const submitSmsConsent = async (churchId: string, body: {
+  phoneNumber: string;
+  consent: boolean;
+}) =>
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    verificationRequired: boolean;
+  }>(`api/sms-consent/${encodeURIComponent(churchId)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const verifySmsConsent = async (churchId: string, body: {
+  phoneNumber: string;
+  code: string;
+}) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean }>(
+    `api/sms-consent/${encodeURIComponent(churchId)}/verify`,
+    {
+    method: "POST",
+    body: JSON.stringify(body),
+    },
+  );
 
 export const updateHumanProfile = async (body: { displayName: string }) =>
   apiFetch<{
@@ -786,6 +1056,8 @@ export type TeamRosterMemberPayload = {
   lastName: string;
   /** Omit to leave an existing address untouched; send "" to clear it. */
   email?: string;
+  /** Omit to leave an existing number untouched; send "" to clear it. */
+  phoneNumber?: string;
   birthDate?: import("./authTypes").BirthDate | null;
   isMinor?: boolean;
   servingFrequency?: TeamRosterMember["servingFrequency"];
@@ -902,6 +1174,17 @@ export const getTeamsBootstrap = async (churchId: string) =>
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
   );
 
+export const getTeamIntakeSmsAttempts = async (
+  churchId: string,
+  formId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    attempts: SmsDeliveryAttempt[];
+  }>(
+    `api/churches/${churchId}/team-intake/forms/${formId}/sms-attempts`,
+  );
+
 /**
  * Hydrates one schedule plus the other teams' schedules overlapping its dates —
  * the latter back the "also scheduled on <team>" warning in the grid.
@@ -954,6 +1237,61 @@ export const getTeamIntakeFormLink = async (churchId: string, formId: string) =>
     body: JSON.stringify({}),
   });
 
+export const createTeamIntakeRecipients = async (
+  churchId: string,
+  formId: string,
+  memberIds: string[],
+) =>
+  apiFetch<{
+    success: boolean;
+    recipients: TeamIntakeRecipient[];
+  }>(`api/churches/${churchId}/team-intake/forms/${formId}/recipients`, {
+    method: "POST",
+    body: JSON.stringify({ memberIds }),
+  });
+
+export const getTeamIntakeRecipientLink = async (
+  churchId: string,
+  recipientId: string,
+  { markCopied = false }: { markCopied?: boolean } = {},
+) =>
+  apiFetch<{
+    success: boolean;
+    recipient: TeamIntakeRecipient;
+    publicUrl: string;
+  }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/link`, {
+    method: "POST",
+    body: JSON.stringify({ markCopied }),
+  });
+
+export const revokeTeamIntakeRecipient = async (
+  churchId: string,
+  recipientId: string,
+) =>
+  apiFetch<{ success: boolean; recipient: TeamIntakeRecipient }>(
+    `api/churches/${churchId}/team-intake/recipients/${recipientId}/revoke`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const sendTeamIntakeRecipientSms = async (
+  churchId: string,
+  recipientId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    recipient: TeamIntakeRecipient;
+    attempt: SmsDeliveryAttempt;
+    message: {
+      encoding: "gsm7" | "ucs2";
+      characterCount: number;
+      unitCount: number;
+      segmentCount: number;
+    };
+  }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
 export const applyTeamIntakeSubmission = async (
   churchId: string,
   submissionId: string,
@@ -974,9 +1312,12 @@ export const applyTeamIntakeSubmission = async (
     body: JSON.stringify(body),
   });
 
-export const getTeamIntakePreview = async (token: string) =>
+export const getTeamIntakePreview = async (
+  token: string,
+  { personalized = false }: { personalized?: boolean } = {},
+) =>
   apiFetch<TeamIntakePreview>(
-    `api/team-intake/preview?token=${encodeURIComponent(token)}`,
+    `api/team-intake/${personalized ? "recipient-preview" : "preview"}?token=${encodeURIComponent(token)}`,
   );
 
 export const getTeamSchedulePublicLink = async (
@@ -996,9 +1337,10 @@ export const getPublicTeamSchedule = async (token: string) =>
 export const submitTeamIntake = async (
   token: string,
   body: TeamIntakeSubmissionPayload,
+  { personalized = false }: { personalized?: boolean } = {},
 ) =>
   apiFetch<{ success: boolean; submissionId: string }>(
-    `api/team-intake/submit?token=${encodeURIComponent(token)}`,
+    `api/team-intake/${personalized ? "recipient-submit" : "submit"}?token=${encodeURIComponent(token)}`,
     {
       method: "POST",
       body: JSON.stringify(body),

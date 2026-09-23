@@ -1,4 +1,11 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import {
   FileQuestion,
@@ -93,6 +100,9 @@ const buildCreateItemOverrideState = (
 
 type MobileSongTab = "create" | "import";
 
+const getLyricsImportCandidateKey = (candidate: NormalizedLrclibTrack): string =>
+  `${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.lyricsOvhKey ?? candidate.trackName}-${candidate.artistName}`;
+
 export type CreateItemProps = {
   /**
    * `embedded`: song-only form for modals (no type picker, no navigation after create).
@@ -160,6 +170,12 @@ const CreateItem = ({
   const [removeParentheticals, setRemoveParentheticals] = useState(false);
   const [viewLyricsCandidate, setViewLyricsCandidate] =
     useState<NormalizedLrclibTrack | null>(null);
+  const [geniusHydrationFailures, setGeniusHydrationFailures] = useState<
+    Set<string>
+  >(() => new Set());
+  const lyricsImportRequestRef = useRef(0);
+  const createItemDraftRef = useRef(createItemDraft);
+  createItemDraftRef.current = createItemDraft;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const canCreateEmbeddedSong = Boolean(db && isAllItemsInitialized);
@@ -205,10 +221,14 @@ const CreateItem = ({
     title !== undefined ? title : isEmbedded ? "Create song" : "Create Item";
 
   const updateCreateItemDraft = (updates: Partial<CreateItemState>) => {
+    const nextDraft = {
+      ...createItemDraftRef.current,
+      ...updates,
+    };
+    createItemDraftRef.current = nextDraft;
     dispatch(
       setCreateItem({
-        ...createItemDraft,
-        ...updates,
+        ...nextDraft,
       })
     );
   };
@@ -350,7 +370,8 @@ const CreateItem = ({
       return;
     }
 
-    const startedAt = performance.now();
+    const requestId = lyricsImportRequestRef.current + 1;
+    lyricsImportRequestRef.current = requestId;
     setIsImportingLyrics(true);
     updateCreateItemDraft({ lyricsImportError: "" });
     setMobileSongTab("import");
@@ -361,6 +382,8 @@ const CreateItem = ({
         artistName: songArtist.trim() || undefined,
         albumName: songAlbum.trim() || undefined,
       });
+
+      if (lyricsImportRequestRef.current !== requestId) return;
 
       if (result.match) {
         await applyLrclibImport(result.match);
@@ -375,37 +398,67 @@ const CreateItem = ({
         return;
       }
 
-      const hydrationResults = await Promise.allSettled(
-        result.candidates.map(async (candidate) => {
-          if (
-            candidate.source !== "genius" ||
-            getImportableLyricsFromTrack(candidate)
-          ) {
-            return candidate;
-          }
+      updateCreateItemDraft({ lyricsImportCandidates: result.candidates });
+      setIsImportingLyrics(false);
+      setGeniusHydrationFailures((failures) => {
+        const nextFailures = new Set(failures);
+        result.candidates.forEach((candidate) => {
+          nextFailures.delete(getLyricsImportCandidateKey(candidate));
+        });
+        return nextFailures;
+      });
 
-          return fetchGeniusLyricsLocally(candidate);
-        }),
-      );
-      const hydratedCandidates = hydrationResults.map((hydration, index) =>
-        hydration.status === "fulfilled"
-          ? hydration.value
-          : result.candidates[index],
-      );
+      // Keep client-side Genius scraping, but do not make the operator wait for
+      // every hidden Genius page before showing the search matches.
+      result.candidates.forEach((candidate) => {
+        if (
+          candidate.source !== "genius" ||
+          getImportableLyricsFromTrack(candidate)
+        ) {
+          return;
+        }
 
-      updateCreateItemDraft({ lyricsImportCandidates: hydratedCandidates });
+        void fetchGeniusLyricsLocally(candidate)
+          .then((hydratedCandidate) => {
+            if (lyricsImportRequestRef.current !== requestId) return;
+
+            setGeniusHydrationFailures((failures) => {
+              const nextFailures = new Set(failures);
+              nextFailures.delete(getLyricsImportCandidateKey(candidate));
+              return nextFailures;
+            });
+
+            const currentCandidates = createItemDraftRef.current.lyricsImportCandidates;
+            const candidateIndex = currentCandidates.findIndex(
+              (currentCandidate) =>
+                getLyricsImportCandidateKey(currentCandidate) ===
+                getLyricsImportCandidateKey(candidate),
+            );
+            if (candidateIndex < 0) return;
+
+            const nextCandidates = [...currentCandidates];
+            nextCandidates[candidateIndex] = hydratedCandidate;
+            updateCreateItemDraft({ lyricsImportCandidates: nextCandidates });
+          })
+          .catch(() => {
+            if (lyricsImportRequestRef.current !== requestId) return;
+            setGeniusHydrationFailures((failures) => {
+              const nextFailures = new Set(failures);
+              nextFailures.add(getLyricsImportCandidateKey(candidate));
+              return nextFailures;
+            });
+          });
+      });
     } catch (error) {
+      if (lyricsImportRequestRef.current !== requestId) return;
       console.error("LRCLIB import failed:", error);
       updateCreateItemDraft({
         lyricsImportError: "Could not import lyrics right now. Try again.",
       });
     } finally {
-      if (import.meta.env.DEV) {
-        console.debug(
-          `[lyrics-import] total import search: ${(performance.now() - startedAt).toFixed(0)}ms`,
-        );
+      if (lyricsImportRequestRef.current === requestId) {
+        setIsImportingLyrics(false);
       }
-      setIsImportingLyrics(false);
     }
   };
 
@@ -605,11 +658,21 @@ const CreateItem = ({
         <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
           {lyricsImportCandidates.map((candidate) => {
             const lyricsText = getImportableLyricsFromTrack(candidate);
+            let lyricsStatus: ReactNode = null;
+            if (candidate.source === "genius") {
+              const candidateKey = getLyricsImportCandidateKey(candidate);
+              lyricsStatus = (
+                <p className="text-sm text-neutral-400" role="status">
+                  {geniusHydrationFailures.has(candidateKey)
+                    ? "Genius lyrics are unavailable for this result."
+                    : "Lyrics loading from Genius..."}
+                </p>
+              );
+            }
 
             return (
               <li
-                key={`${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.lyricsOvhKey ?? candidate.trackName
-                  }-${candidate.artistName}`}
+                key={getLyricsImportCandidateKey(candidate)}
                 className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
               >
                 <div className="flex flex-col gap-1">
@@ -634,7 +697,9 @@ const CreateItem = ({
                       {(candidate.durationMs / 1000).toFixed(0)} seconds
                     </p>
                   ) : null}
-                  <LyricsImportLyricsPreview lyricsText={lyricsText} />
+                  {lyricsText.trim() ? (
+                    <LyricsImportLyricsPreview lyricsText={lyricsText} />
+                  ) : lyricsStatus}
                   <div className="flex flex-wrap items-center gap-2 pt-2">
                     {lyricsText.trim() ? (
                       <Button

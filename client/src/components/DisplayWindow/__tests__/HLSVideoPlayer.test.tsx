@@ -1,6 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import HLSPlayer from "../HLSVideoPlayer";
 import { serverNow } from "../../../utils/serverTime";
+import {
+  acquireLocalVideoFileUrl,
+  peekLocalVideoFileUrl,
+} from "../../../utils/localVideoFileUrlCache";
 import {
   getVideoPreviewSnapshot,
   restartVideoPreview,
@@ -16,6 +20,8 @@ jest.mock("../../../utils/serverTime", () => ({
 }));
 
 const mockServerNow = serverNow as jest.Mock;
+const mockAcquireLocalVideoFileUrl = jest.mocked(acquireLocalVideoFileUrl);
+const mockPeekLocalVideoFileUrl = jest.mocked(peekLocalVideoFileUrl);
 
 const mockIsSupported = jest.fn(() => false);
 const mockInstances: any[] = [];
@@ -58,6 +64,11 @@ jest.mock("hls.js", () => {
     default: MockHls,
   };
 });
+
+jest.mock("../../../utils/localVideoFileUrlCache", () => ({
+  acquireLocalVideoFileUrl: jest.fn(),
+  peekLocalVideoFileUrl: jest.fn(),
+}));
 
 describe("HLSVideoPlayer", () => {
   const originalPlay = HTMLMediaElement.prototype.play;
@@ -102,6 +113,11 @@ describe("HLSVideoPlayer", () => {
     jest.spyOn(console, "error").mockImplementation(() => {});
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.spyOn(console, "log").mockImplementation(() => {});
+    mockPeekLocalVideoFileUrl.mockReturnValue(undefined);
+    mockAcquireLocalVideoFileUrl.mockReturnValue({
+      url: Promise.resolve("worshipsync-media://asset/local-video"),
+      release: jest.fn(),
+    });
 
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
@@ -197,6 +213,20 @@ describe("HLSVideoPlayer", () => {
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
   });
 
+  it("resolves legacy local video references before assigning media src", async () => {
+    render(<HLSPlayer src="local-video-file://local_video_1k08lk4nbr5oma60651s" />);
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    expect(video.src).not.toContain("local-video-file://");
+
+    await waitFor(() => {
+      expect(video.src).toBe("worshipsync-media://asset/local-video");
+    });
+    expect(mockAcquireLocalVideoFileUrl).toHaveBeenCalledWith(
+      "local_video_1k08lk4nbr5oma60651s",
+    );
+  });
+
   it("does not warn when play is rejected after the source is replaced", async () => {
     let rejectPlay: (error: Error) => void = () => undefined;
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
@@ -219,6 +249,44 @@ describe("HLSVideoPlayer", () => {
       "Error playing video",
       expect.anything(),
     );
+  });
+
+  it("does not warn when play is rejected after the player is unmounted", async () => {
+    let rejectPlay: (error: Error) => void = () => undefined;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      writable: true,
+      value: jest.fn(
+        () => new Promise<void>((_resolve, reject) => (rejectPlay = reject)),
+      ),
+    });
+
+    const { unmount } = render(<HLSPlayer src="media-cache://removed.mp4" />);
+    fireEvent.loadedMetadata(screen.getByTestId("hls-video-player"));
+    unmount();
+
+    await act(async () => {
+      rejectPlay(new DOMException("media removed", "AbortError"));
+    });
+
+    expect(console.warn).not.toHaveBeenCalledWith(
+      "Error playing video",
+      expect.anything(),
+    );
+  });
+
+  it("does not fall back to an opaque local reference", () => {
+    render(
+      <HLSPlayer
+        src="media-cache://video.mp4"
+        originalSrc="local-video-file://local-video"
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    fireEvent.error(video);
+
+    expect(video.src).not.toContain("local-video-file://");
   });
 
   it("still warns for an active-source playback failure", async () => {

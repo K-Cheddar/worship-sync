@@ -12,9 +12,11 @@ const mockNavigate = jest.fn();
 const mockSelectSlide = jest.fn();
 const mockOnSlideGridClick = jest.fn();
 const mockScrollToIndex = jest.fn();
+const mockVirtualizerMeasure = jest.fn();
 const mockUseOutlineItemDocs = jest.fn();
 let mockState: any;
 let mockDocsById: Map<string, DBItem>;
+const mockResizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -43,7 +45,7 @@ jest.mock("@tanstack/react-virtual", () => ({
         start: index * 40,
       })),
     measureElement: jest.fn(),
-    measure: jest.fn(),
+    measure: mockVirtualizerMeasure,
     scrollToIndex: (...args: unknown[]) => mockScrollToIndex(...args),
     getOffsetForIndex: (index: number) => [index * 40, "start"] as const,
   }),
@@ -62,15 +64,18 @@ jest.mock("./ItemSlide", () => ({
     index,
     slide,
     slideDomId,
+    canEdit,
     onSlideGridClick,
   }: {
     index: number;
     slide: { name: string };
     slideDomId?: string;
+    canEdit?: boolean;
     onSlideGridClick: (e: React.MouseEvent, index: number) => void;
   }) => (
     <button
       id={slideDomId}
+      data-testid={canEdit ? `active-outline-slide-${slide.name}` : undefined}
       type="button"
       onClick={(event) => onSlideGridClick(event, index)}
     >
@@ -121,6 +126,44 @@ const sizeConfig = {
   borderWidth: "2px",
 };
 
+const outlineScrollerUi = (
+  scrollRef: { current: HTMLElement | null },
+  selectedSlide = 0,
+) => (
+  <div
+    ref={(node) => {
+      scrollRef.current = node;
+    }}
+    data-testid="scroll-root"
+    style={{ height: 80, overflow: "auto" }}
+  >
+    <OutlineItemSlidesScroller
+      scrollRef={scrollRef}
+      cols={2}
+      size={2}
+      sizeConfig={sizeConfig}
+      isMobile={false}
+      isStreamFormat={false}
+      canEdit
+      selectedSlide={selectedSlide}
+      liveSlideIds={new Set()}
+      backgroundTargetSlideIds={[]}
+      draggedSection={null}
+      timers={[]}
+      selectSlide={mockSelectSlide}
+      onSlideGridClick={mockOnSlideGridClick}
+    />
+  </div>
+);
+
+const setBoundingRect = (element: HTMLElement, top: number, bottom: number) => {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({ top, bottom, height: bottom - top } as DOMRect),
+  });
+};
+
 const renderScroller = (selectedSlide = 0, cols = 2) => {
   const scrollRef = { current: null as HTMLElement | null };
   const setScrollNode = (node: HTMLElement | null) => {
@@ -129,6 +172,10 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
       Object.defineProperty(node, "clientHeight", {
         configurable: true,
         value: 80,
+      });
+      Object.defineProperty(node, "clientWidth", {
+        configurable: true,
+        value: 1000,
       });
     }
   };
@@ -210,6 +257,41 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
           />
         </div>,
       ),
+    rerenderWithContentSlides: (nextSlides: ItemSlideType[]) => {
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        arrangements: [
+          {
+            ...mockState.undoable.present.item.arrangements[0],
+            slides: nextSlides,
+          },
+        ],
+      };
+      view.rerender(
+        <div
+          ref={setScrollNode}
+          data-testid="scroll-root"
+          style={{ height: 80, overflow: "auto" }}
+        >
+          <OutlineItemSlidesScroller
+            scrollRef={scrollRef}
+            cols={cols}
+            size={cols}
+            sizeConfig={sizeConfig}
+            isMobile={false}
+            isStreamFormat={false}
+            canEdit
+            selectedSlide={selectedSlide}
+            liveSlideIds={new Set()}
+            backgroundTargetSlideIds={[]}
+            draggedSection={null}
+            timers={[]}
+            selectSlide={mockSelectSlide}
+            onSlideGridClick={mockOnSlideGridClick}
+          />
+        </div>,
+      );
+    },
   };
 };
 
@@ -217,6 +299,32 @@ describe("OutlineItemSlidesScroller", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    mockResizeObserverCallbacks.length = 0;
+    const resizeObserver = jest
+      .fn()
+      .mockImplementation((callback: ResizeObserverCallback) => {
+        mockResizeObserverCallbacks.push(callback);
+        return {
+          observe: jest.fn(),
+          unobserve: jest.fn(),
+          disconnect: jest.fn(),
+        };
+      });
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: resizeObserver,
+    });
+    Object.defineProperty(global, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: resizeObserver,
+    });
+    Object.defineProperty(window, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: resizeObserver,
+    });
     Object.defineProperty(window, "requestAnimationFrame", {
       writable: true,
       value: (callback: FrameRequestCallback) => {
@@ -235,6 +343,7 @@ describe("OutlineItemSlidesScroller", () => {
         ]),
       ],
       ["song-2", songDoc("song-2", [slide("s2a", "Song 2 A")])],
+      ["song-3", songDoc("song-3", [slide("s3a", "Song 3 A")])],
     ]);
     mockUseOutlineItemDocs.mockImplementation(() => mockDocsById);
     mockState = {
@@ -268,6 +377,7 @@ describe("OutlineItemSlidesScroller", () => {
               song("song-1", "l-1", "Song One"),
               { _id: "h1", listId: "h-1", name: "Section", type: "heading" },
               song("song-2", "l-2", "Song Two"),
+              song("song-3", "l-3", "Song Three"),
             ],
           },
         },
@@ -293,6 +403,68 @@ describe("OutlineItemSlidesScroller", () => {
       borderWidth: "2px",
     });
     expect(screen.queryByText("Section")).not.toBeInTheDocument();
+  });
+
+  it("switches the active rendered section across sequential item changes", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+
+    const renderCurrentItem = (id: string, listId: string, name: string, slideId: string, slideName: string) => {
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        _id: id,
+        listId,
+        name,
+        arrangements: [
+          {
+            ...mockState.undoable.present.item.arrangements[0],
+            slides: [slide(slideId, slideName)],
+          },
+        ],
+      };
+      mockState.undoable.present.itemList.selectedItemListId = listId;
+      rerender(outlineScrollerUi(scrollRef));
+    };
+
+    expect(screen.getByTestId("active-outline-slide-Song 1 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+
+    renderCurrentItem("song-2", "l-2", "Song Two", "s2a", "Song 2 A");
+    expect(screen.getByTestId("active-outline-slide-Song 2 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
+
+    renderCurrentItem("song-3", "l-3", "Song Three", "s3a", "Song 3 A");
+    expect(screen.getByTestId("active-outline-slide-Song 3 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+  });
+
+  it("does not let selection intent replace the active section before the item loads", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(screen.getByTestId("active-outline-slide-Song 1 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 2 A")).not.toBeInTheDocument();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+      name: "Song Two",
+      arrangements: [
+        {
+          ...mockState.undoable.present.item.arrangements[0],
+          slides: [slide("s2a", "Song 2 A")],
+        },
+      ],
+    };
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(screen.getByTestId("active-outline-slide-Song 2 A")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-outline-slide-Song 1 A")).not.toBeInTheDocument();
   });
 
   it("does not change item or slide selection on manual scroll", () => {
@@ -321,6 +493,23 @@ describe("OutlineItemSlidesScroller", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(mockSelectSlide).not.toHaveBeenCalled();
     expect(mockOnSlideGridClick).not.toHaveBeenCalled();
+  });
+
+  it("invalidates virtual row geometry when the content width changes", () => {
+    const { scrollRef } = renderScroller();
+    const root = screen.getByTestId("scroll-root");
+    expect(scrollRef.current).toBe(root);
+    mockVirtualizerMeasure.mockClear();
+
+    Object.defineProperty(root, "clientWidth", {
+      configurable: true,
+      value: 700,
+    });
+    act(() => {
+      mockResizeObserverCallbacks[0]?.([], {} as ResizeObserver);
+    });
+
+    expect(mockVirtualizerMeasure).toHaveBeenCalled();
   });
 
   it("scrolls to the selected outline item on mount", () => {
@@ -411,6 +600,30 @@ describe("OutlineItemSlidesScroller", () => {
     );
   });
 
+  it("keeps the selected slide in view when content rows rebuild", () => {
+    const { rerenderWithContentSlides } = renderScroller(0);
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+    mockDispatch.mockClear();
+
+    rerenderWithContentSlides([
+      slide("s1a", "Song 1 A updated"),
+      slide("s1b", "Song 1 B"),
+      slide("s1c", "Song 1 C"),
+      slide("s1d", "Song 1 D"),
+      slide("s1e", "Song 1 E"),
+    ]);
+
+    expect(mockScrollToIndex).toHaveBeenCalledWith(1, {
+      align: "center",
+      behavior: "auto",
+    });
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
   it("lets the newest rapid zoom change own selected-slide restoration", () => {
     const { rerenderWithCols } = renderScroller(2, 4);
 
@@ -452,6 +665,121 @@ describe("OutlineItemSlidesScroller", () => {
     expect(keepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({
         child: expect.objectContaining({ id: "item-slide-l-1-2" }),
+        shouldScrollToCenter: true,
+      }),
+    );
+  });
+
+  it("keeps a visible cross-item click stationary through active-row rebuild", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+    const root = screen.getByTestId("scroll-root");
+    const clickedSlide = screen.getByRole("button", { name: "Song 2 A" });
+    setBoundingRect(root, 0, 80);
+    setBoundingRect(clickedSlide, 20, 60);
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    root.scrollTop = 24;
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    fireEvent.click(clickedSlide);
+
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+    };
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(mockSelectSlide).toHaveBeenCalledWith(0, {
+      presentationOnly: true,
+      presentation: expect.objectContaining({ listId: "l-2" }),
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(setActiveItemInList("l-2"));
+    expect(root.scrollTop).toBe(24);
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(keepElementInView).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the selection path once for an offscreen cross-item click", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+    const root = screen.getByTestId("scroll-root");
+    const clickedSlide = screen.getByRole("button", { name: "Song 2 A" });
+    setBoundingRect(root, 0, 80);
+    setBoundingRect(clickedSlide, 100, 140);
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    fireEvent.click(clickedSlide);
+
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+    };
+    rerender(outlineScrollerUi(scrollRef));
+    act(() => {
+      jest.advanceTimersByTime(80);
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(setActiveItemInList("l-2"));
+    expect(mockSelectSlide).toHaveBeenCalledWith(0, {
+      presentationOnly: true,
+      presentation: expect.objectContaining({ listId: "l-2" }),
+    });
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(keepElementInView).toHaveBeenCalledTimes(1);
+    expect(keepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-l-2-0" }),
+        shouldScrollToCenter: true,
+      }),
+    );
+  });
+
+  it("does not scroll for a visible same-item slide click", () => {
+    renderScroller();
+    const root = screen.getByTestId("scroll-root");
+    const clickedSlide = screen.getByRole("button", { name: "Song 1 B" });
+    setBoundingRect(root, 0, 80);
+    setBoundingRect(clickedSlide, 20, 60);
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    fireEvent.click(clickedSlide);
+
+    expect(mockOnSlideGridClick).toHaveBeenCalledWith(expect.anything(), 1);
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(keepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("keeps externally driven item navigation scrolling to its selected slide", () => {
+    const scrollRef = { current: null as HTMLElement | null };
+    const { rerender } = render(outlineScrollerUi(scrollRef));
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    (keepElementInView as jest.Mock).mockClear();
+
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+    };
+    rerender(outlineScrollerUi(scrollRef));
+
+    expect(keepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-l-2-0" }),
         shouldScrollToCenter: true,
       }),
     );

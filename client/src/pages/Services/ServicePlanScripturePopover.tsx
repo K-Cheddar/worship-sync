@@ -33,7 +33,9 @@ export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-violet-300";
 type ServicePlanScripturePopoverProps = {
   disabled?: boolean;
   initialScriptureRef?: ServicePlanScriptureReference;
-  onSelect: (scriptureRef: ServicePlanScriptureReference) => void;
+  onSelect: (
+    scriptureRef: ServicePlanScriptureReference,
+  ) => void | Promise<void>;
   /** Controlled open. When set, pair with `onOpenChange` and optionally `anchor`. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -77,6 +79,7 @@ const ServicePlanScripturePopover = ({
   const [chapterIndex, setChapterIndex] = useState(0);
   const [startVerseIndex, setStartVerseIndex] = useState(0);
   const [endVerseIndex, setEndVerseIndex] = useState(0);
+  const [isAttaching, setIsAttaching] = useState(false);
   const isEditing = Boolean(initialScriptureRef);
 
   useEffect(() => {
@@ -171,20 +174,29 @@ const ServicePlanScripturePopover = ({
     ));
   };
 
-  const handleAttach = () => {
-    if (!parsedReference) return;
+  const handleAttach = async () => {
+    if (!parsedReference || isAttaching) return;
     const upperVersion = version.toUpperCase();
-    onSelect({
-      label: getBibleImportDisplayName(parsedReference, upperVersion),
-      book: parsedReference.book,
-      chapter: parsedReference.chapter,
-      verseRange: parsedReference.verseRange,
-      version: upperVersion,
-    });
-    reset();
-    setOpen(false);
+    setIsAttaching(true);
+    try {
+      await onSelect({
+        label: getBibleImportDisplayName(parsedReference, upperVersion),
+        book: parsedReference.book,
+        chapter: parsedReference.chapter,
+        verseRange: parsedReference.verseRange,
+        version: upperVersion,
+      });
+      reset();
+      setOpen(false);
+    } finally {
+      setIsAttaching(false);
+    }
   };
 
+  const actionLabel = isEditing ? "Update scripture" : "Attach scripture";
+  const pendingActionLabel = isEditing
+    ? "Updating scripture..."
+    : "Attaching scripture...";
   const showBuiltInTrigger = !isControlled && !anchor;
 
   return (
@@ -252,7 +264,7 @@ const ServicePlanScripturePopover = ({
             onKeyDown={(event) => {
               if (event.key === "Enter" && parsedReference) {
                 event.preventDefault();
-                handleAttach();
+                void handleAttach();
               }
             }}
           />
@@ -328,13 +340,15 @@ const ServicePlanScripturePopover = ({
           ) : null}
           <Button
             type="button"
+            variant="cta"
             svg={isEditing ? Check : undefined}
             color={isEditing ? "#22d3ee" : undefined}
-            className={isEditing ? "w-full justify-center" : undefined}
-            disabled={!parsedReference}
-            onClick={handleAttach}
+            className="w-full justify-center"
+            disabled={!parsedReference || isAttaching}
+            isLoading={isAttaching}
+            onClick={() => void handleAttach()}
           >
-            {isEditing ? "Update scripture" : "Attach scripture"}
+            {isAttaching ? pendingActionLabel : actionLabel}
           </Button>
         </div>
       </PopoverContent>

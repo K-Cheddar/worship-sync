@@ -17,6 +17,8 @@ export type LiveSlideProgress = {
   slideLabel: string;
 };
 
+export type LiveItemSource = Pick<Presentation, "name" | "itemId" | "listId">;
+
 /**
  * Compact producer chrome for the live item.
  * Returns null when there is nothing useful to show (cleared / incomplete).
@@ -51,6 +53,52 @@ export const resolveLiveSlideProgress = (
 ): LiveSlideProgress | null =>
   formatLiveSlideProgress(projectorInfo) ??
   formatLiveSlideProgress(monitorInfo);
+
+const hasLiveItemValue = (value: string | undefined): value is string =>
+  Boolean(value?.trim());
+
+const normalizeLiveItemName = (name: string): string =>
+  name.trim().toLocaleLowerCase();
+
+/**
+ * Use the projector's current item as the room-facing source when present.
+ * Historical projector payloads may lack outline IDs, so borrow monitor IDs
+ * only when both presentations name the same item.
+ */
+export const resolveLiveItemSource = (
+  projectorInfo: LiveItemSource,
+  monitorInfo: LiveItemSource,
+): LiveItemSource => {
+  const projectorHasContent =
+    hasLiveItemValue(projectorInfo.name) ||
+    hasLiveItemValue(projectorInfo.itemId) ||
+    hasLiveItemValue(projectorInfo.listId);
+  if (!projectorHasContent) return monitorInfo;
+
+  if (
+    hasLiveItemValue(projectorInfo.listId) ||
+    hasLiveItemValue(projectorInfo.itemId)
+  ) {
+    return projectorInfo;
+  }
+
+  const namesMatch =
+    hasLiveItemValue(projectorInfo.name) &&
+    hasLiveItemValue(monitorInfo.name) &&
+    normalizeLiveItemName(projectorInfo.name) ===
+      normalizeLiveItemName(monitorInfo.name);
+  if (!namesMatch) return projectorInfo;
+
+  return {
+    ...projectorInfo,
+    ...(hasLiveItemValue(monitorInfo.itemId)
+      ? { itemId: monitorInfo.itemId }
+      : {}),
+    ...(hasLiveItemValue(monitorInfo.listId)
+      ? { listId: monitorInfo.listId }
+      : {}),
+  };
+};
 
 /** Weekday + time is enough to tell nearby services apart in a picker. */
 export const formatOccurrenceLabel = (startsAt: string): string => {

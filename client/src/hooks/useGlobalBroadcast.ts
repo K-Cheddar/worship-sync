@@ -29,8 +29,6 @@ export const useGlobalBroadcast = (
 
       // Set new timeout for debounced callback
       timeoutRef.current = setTimeout(() => {
-        console.log("Updating from local machine", msg.data);
-
         const raw = msg.data?.data?.docs;
         const detail = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
         callbackRef.current({ detail });

@@ -35,6 +35,19 @@ import {
   parseSupportContactBody,
   resolveSupportInboxEmail,
 } from "./server/supportContact.js";
+import {
+  createSmsConsentChallenge,
+  normalizeUsPhoneNumber,
+  parseSmsConsentBody,
+  parseSmsConsentVerificationBody,
+  sendSmsConsentVerificationCode,
+  SMS_CONSENT_MAX_ATTEMPTS,
+  SMS_CONSENT_TEXT,
+  SMS_CONSENT_VERSION,
+  smsConsentIdForChurchPhone,
+  smsConsentIdForLegacyPhone,
+  verifySmsConsentCode,
+} from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
@@ -84,6 +97,13 @@ import {
   normalizeCurrentServiceWorkspacePatch,
 } from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
+import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
+import {
+  getSmsProviderForConfig,
+  normalizeTwilioStatus,
+  resolveTwilioStatusCallbackUrl,
+  validateTwilioWebhookSignature,
+} from "./server/smsProvider.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -140,7 +160,7 @@ const SESSION_ABSOLUTE_TTL_MS = Number(
   process.env.AUTH_SESSION_ABSOLUTE_TTL_MS || 30 * 24 * 60 * 60 * 1000,
 );
 
-const COLLECTIONS = {
+export const COLLECTIONS = {
   churches: "churches",
   users: "users",
   memberships: "memberships",
@@ -161,19 +181,24 @@ const COLLECTIONS = {
   teamSchedules: "teamSchedules",
   teamIntakeForms: "teamIntakeForms",
   teamIntakeSubmissions: "teamIntakeSubmissions",
+  teamIntakeRecipients: "teamIntakeRecipients",
   servicePlans: "servicePlans",
   servicePlanTemplates: "servicePlanTemplates",
   servicePlanAssignmentHistory: "servicePlanAssignmentHistory",
+  churchResources: "churchResources",
   adminRecoveryRequests: "adminRecoveryRequests",
   securityEvents: "securityEvents",
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
+  smsConsents: "smsConsents",
+  churchMessagingConfigs: "churchMessagingConfigs",
+  smsDeliveryAttempts: "smsDeliveryAttempts",
   emailCodeChallenges: "emailCodeChallenges",
   humanApiCredentials: "humanApiCredentials",
 };
 
 const normalizeEmail = (email = "") => email.trim().toLowerCase();
-const nowIso = () => new Date().toISOString();
+export const nowIso = () => new Date().toISOString();
 const createId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const createNumericCode = () => crypto.randomInt(100000, 1000000).toString();
 const hashValue = (value) =>
@@ -563,13 +588,18 @@ const memoryState = {
   teamSchedules: new Map(),
   teamIntakeForms: new Map(),
   teamIntakeSubmissions: new Map(),
+  teamIntakeRecipients: new Map(),
   churchServiceTimes: new Map(),
   servicePlans: new Map(),
   servicePlanTemplates: new Map(),
   servicePlanAssignmentHistory: new Map(),
+  churchResources: new Map(),
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
+  smsConsents: new Map(),
+  churchMessagingConfigs: new Map(),
+  smsDeliveryAttempts: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
 };
@@ -626,13 +656,18 @@ const collectionMap = {
   [COLLECTIONS.teamSchedules]: memoryState.teamSchedules,
   [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
   [COLLECTIONS.teamIntakeSubmissions]: memoryState.teamIntakeSubmissions,
+  [COLLECTIONS.teamIntakeRecipients]: memoryState.teamIntakeRecipients,
   [COLLECTIONS.servicePlans]: memoryState.servicePlans,
   [COLLECTIONS.servicePlanTemplates]: memoryState.servicePlanTemplates,
   [COLLECTIONS.servicePlanAssignmentHistory]:
     memoryState.servicePlanAssignmentHistory,
+  [COLLECTIONS.churchResources]: memoryState.churchResources,
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
+  [COLLECTIONS.smsConsents]: memoryState.smsConsents,
+  [COLLECTIONS.churchMessagingConfigs]: memoryState.churchMessagingConfigs,
+  [COLLECTIONS.smsDeliveryAttempts]: memoryState.smsDeliveryAttempts,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
   [COLLECTIONS.humanApiCredentials]: memoryState.humanApiCredentials,
 };
@@ -1127,7 +1162,7 @@ const assertCsrf = async (req) => {
   }
 };
 
-const getDoc = async (collectionName, id) => {
+export const getDoc = async (collectionName, id) => {
   const db = requireFirestore();
   if (db) {
     const snapshot = await db.collection(collectionName).doc(id).get();
@@ -1137,7 +1172,7 @@ const getDoc = async (collectionName, id) => {
   return item ? { id, ...item } : null;
 };
 
-const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
+export const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).set(data, { merge });
@@ -1231,7 +1266,7 @@ const updateDocMapKeys = async (
   store.set(id, { ...current, ...fields, [field]: nextMap });
 };
 
-const deleteDoc = async (collectionName, id) => {
+export const deleteDoc = async (collectionName, id) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).delete();
@@ -1240,7 +1275,7 @@ const deleteDoc = async (collectionName, id) => {
   collectionMap[collectionName].delete(id);
 };
 
-const queryDocs = async (
+export const queryDocs = async (
   collectionName,
   filters = [],
   { limit = 100 } = {},
@@ -1264,8 +1299,12 @@ const queryDocs = async (
   return store
     .filter((item) =>
       filters.every((filter) => {
-        if ((filter.op || "==") !== "==") return false;
-        return item[filter.field] === filter.value;
+        const operator = filter.op || "==";
+        if (operator === "==") return item[filter.field] === filter.value;
+        if (operator === "in") {
+          return Array.isArray(filter.value) && filter.value.includes(item[filter.field]);
+        }
+        return false;
       }),
     )
     .slice(0, limit);
@@ -1498,6 +1537,178 @@ const addSecurityEvent = async (event) => {
   await setDoc(COLLECTIONS.securityEvents, eventId, payload);
   logAuthEvent("log", event.type || "security_event", payload);
   return payload;
+};
+
+/**
+ * Store one consent record per church and normalized phone number. Legacy
+ * phone-global documents remain readable only for audit/migration tooling; no
+ * eligibility lookup falls back to them.
+ */
+const upsertSmsConsent = async (churchId, phoneNumber) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A church is required for SMS consent.");
+  const submittedAt = nowIso();
+  const challenge = createSmsConsentChallenge();
+  const challengeFields = {
+    verificationCodeHash: challenge.codeHash,
+    verificationCodeSalt: challenge.codeSalt,
+    verificationExpiresAt: challenge.expiresAt,
+    verificationAttempts: 0,
+    updatedAt: submittedAt,
+  };
+  const db = requireFirestore();
+
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const existing = snapshot.exists ? snapshot.data() : null;
+      if (existing?.status === "opted_out" || existing?.optedOutAt) {
+        throw httpError(400, "This phone number has opted out of SMS.");
+      }
+      if (existing?.status === "opted_in") {
+        // Anonymous resubmission may rotate the challenge, but not the verified snapshot.
+        transaction.set(consentRef, challengeFields, { merge: true });
+        return;
+      }
+      transaction.set(consentRef, {
+        consentId,
+        churchId,
+        phoneNumber: normalizedPhoneNumber,
+        phoneHash: hashValue(normalizedPhoneNumber),
+        status: "pending",
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+        consentText: SMS_CONSENT_TEXT,
+        consentSubmittedAt: submittedAt,
+        ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+        ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+        optedOutAt: existing?.optedOutAt || null,
+        createdAt: existing?.createdAt || submittedAt,
+        ...challengeFields,
+      });
+    });
+    return { consentId, challenge, shouldSend: true };
+  }
+
+  const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+  if (existing?.status === "opted_out" || existing?.optedOutAt) {
+    throw httpError(400, "This phone number has opted out of SMS.");
+  }
+  if (existing?.status === "opted_in") {
+    // Keep the in-memory fallback aligned with the transactional path above.
+    await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
+      merge: true,
+    });
+    return { consentId, challenge, shouldSend: true };
+  }
+  await setDoc(COLLECTIONS.smsConsents, consentId, {
+    consentId,
+    churchId,
+    phoneNumber: normalizedPhoneNumber,
+    phoneHash: hashValue(normalizedPhoneNumber),
+    status: "pending",
+    source: "web_form",
+    consentVersion: SMS_CONSENT_VERSION,
+    consentText: SMS_CONSENT_TEXT,
+    consentSubmittedAt: submittedAt,
+    ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+    ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+    optedOutAt: existing?.optedOutAt || null,
+    createdAt: existing?.createdAt || submittedAt,
+    ...challengeFields,
+  }, { merge: false });
+  return { consentId, challenge, shouldSend: true };
+};
+
+const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
+  const sentAt = nowIso();
+  await setDoc(
+    COLLECTIONS.smsConsents,
+    consentId,
+    {
+      verificationSentAt: sentAt,
+      verificationProvider: provider || "sms",
+      verificationMethod: method || "sms_otp",
+      updatedAt: sentAt,
+    },
+    { merge: true },
+  );
+  return sentAt;
+};
+
+const verifySmsConsent = async (churchId, phoneNumber, code) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A church is required for SMS consent.");
+  const db = requireFirestore();
+  const invalid = () => {
+    throw httpError(400, "That verification code is not valid or has expired.");
+  };
+
+  if (db) {
+    let verifiedAt;
+    await db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const record = snapshot.exists ? snapshot.data() : null;
+      const result = verifySmsConsentCode({ record, code });
+      if (!result.ok) {
+        const attempts = Number(record?.verificationAttempts || 0) + 1;
+        if (record) {
+          transaction.set(consentRef, {
+            verificationAttempts: attempts,
+            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+              ? { verificationCodeHash: null }
+              : {}),
+            updatedAt: nowIso(),
+          }, { merge: true });
+        }
+        invalid();
+      }
+      verifiedAt = nowIso();
+      transaction.set(consentRef, {
+        status: "opted_in",
+        ...(record?.status === "opted_in"
+          ? { verificationConfirmedAt: verifiedAt }
+          : { consentedAt: verifiedAt, verifiedAt }),
+        verificationCodeHash: null,
+        verificationCodeSalt: null,
+        verificationExpiresAt: null,
+        updatedAt: verifiedAt,
+      }, { merge: true });
+    });
+    return { consentId, verifiedAt };
+  }
+
+  const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+  const result = verifySmsConsentCode({ record, code });
+  if (!result.ok) {
+    if (record) {
+      const attempts = Number(record.verificationAttempts || 0) + 1;
+      await setDoc(COLLECTIONS.smsConsents, consentId, {
+        verificationAttempts: attempts,
+        ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+          ? { verificationCodeHash: null }
+          : {}),
+        updatedAt: nowIso(),
+      }, { merge: true });
+    }
+    invalid();
+  }
+  const verifiedAt = nowIso();
+  await setDoc(COLLECTIONS.smsConsents, consentId, {
+    status: "opted_in",
+    ...(record?.status === "opted_in"
+      ? { verificationConfirmedAt: verifiedAt }
+      : { consentedAt: verifiedAt, verifiedAt }),
+    verificationCodeHash: null,
+    verificationCodeSalt: null,
+    verificationExpiresAt: null,
+    updatedAt: verifiedAt,
+  }, { merge: true });
+  return { consentId, verifiedAt };
 };
 
 const buildDesktopAuthBrowserUrl = ({ desktopAuthId, provider }) =>
@@ -4443,6 +4654,84 @@ export const getRosterMemberForServerTests = async (memberId) => {
   return getDoc(COLLECTIONS.teamRosterMembers, memberId);
 };
 
+export const getSmsConsentForServerTests = async (churchId, phoneNumber) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "getSmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "getSmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  return getDoc(
+    COLLECTIONS.smsConsents,
+    smsConsentIdForChurchPhone(churchId, String(phoneNumber || "").trim()),
+  );
+};
+
+export const seedSmsConsentForServerTests = async ({
+  churchId,
+  phoneNumber,
+  status = "opted_in",
+  optedOutAt = null,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedSmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedSmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhone);
+  if (!consentId) throw new Error("seedSmsConsentForServerTests requires churchId and phoneNumber");
+  const record = {
+    consentId,
+    churchId,
+    phoneNumber: normalizedPhone,
+    phoneHash: hashValue(normalizedPhone),
+    status,
+    ...(optedOutAt ? { optedOutAt } : {}),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  await setDoc(COLLECTIONS.smsConsents, consentId, record, { merge: false });
+  return record;
+};
+
+export const seedLegacySmsConsentForServerTests = async ({
+  phoneNumber,
+  status = "opted_in",
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedLegacySmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedLegacySmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForLegacyPhone(normalizedPhone);
+  const record = {
+    consentId,
+    phoneNumber: normalizedPhone,
+    phoneHash: hashValue(normalizedPhone),
+    status,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  await setDoc(COLLECTIONS.smsConsents, consentId, record, { merge: false });
+  return record;
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -4957,6 +5246,12 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   // Assignment notifications need the same primitives the intake digest uses.
   getUserByUid,
   getChurchById,
+  getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
+    getDoc(
+      COLLECTIONS.smsConsents,
+      smsConsentIdForChurchPhone(churchId, String(phoneNumber || "").trim()),
+    ),
+  smsProviderFactory: getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail: resendServicePlanFromEmail,
   emailDeliveryConfigured: Boolean(resendClient),
@@ -4969,7 +5264,18 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   logAuthEvent,
 });
 
+const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
+  queryDocs,
+  setDoc,
+  nowIso,
+  validateSignature: validateTwilioWebhookSignature,
+  normalizeStatus: normalizeTwilioStatus,
+  getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
+  getCallbackUrl: (req) => resolveTwilioStatusCallbackUrl({ request: req }),
+});
+
 export const authHandlers = {
+  handleSmsStatusWebhook: smsStatusWebhookHandler,
   async getAuthMe(req, res) {
     try {
       const humanBootstrap = await resolveHumanBootstrap(req);
@@ -6129,6 +6435,122 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not send your message.",
+      });
+    }
+  },
+
+  /** Public SMS consent form. No session required; no phone existence is disclosed. */
+  async submitSmsConsent(req, res) {
+    try {
+      const churchId = String(
+        req.params?.churchId || req.body?.churchId || "",
+      ).trim();
+      if (!churchId) {
+        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+      }
+      const parsed = parseSmsConsentBody(req.body);
+      if (!parsed.ok) {
+        throw httpError(400, parsed.errorMessage);
+      }
+
+      const clientIp = getClientIp(req);
+      enforceRateLimit({
+        scope: "sms-consent-ip",
+        key: clientIp,
+        limit: 5,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      enforceRateLimit({
+        scope: "sms-consent-phone",
+        key: `${churchId}:${hashValue(parsed.phoneNumber)}`,
+        limit: 3,
+        windowMs: 60 * 60 * 1000,
+        blockMs: 60 * 60 * 1000,
+      });
+
+      const { consentId, challenge, shouldSend } = await upsertSmsConsent(
+        churchId,
+        parsed.phoneNumber,
+      );
+      if (shouldSend && challenge) {
+        const messagingConfig = await getDoc(
+          COLLECTIONS.churchMessagingConfigs,
+          churchId,
+        );
+        const delivery = await sendSmsConsentVerificationCode({
+          phoneNumber: parsed.phoneNumber,
+          code: challenge.code,
+          config: messagingConfig,
+        });
+        await markSmsConsentChallengeSent({
+          consentId,
+          provider: delivery?.provider,
+          method: delivery?.method,
+        });
+      }
+      await addSecurityEvent({
+        type: "sms_consent_verification_requested",
+        churchId,
+        consentId,
+        phoneHash: hashValue(parsed.phoneNumber),
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+      });
+
+      return res.json({ success: true, verificationRequired: true });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage:
+          statusCode >= 500
+            ? "Could not save your SMS consent right now. Please try again."
+            : error.message || "Could not save your SMS consent.",
+      });
+    }
+  },
+
+  /** Public SMS consent verification. No session required; failures are generic. */
+  async verifySmsConsent(req, res) {
+    try {
+      const churchId = String(
+        req.params?.churchId || req.body?.churchId || "",
+      ).trim();
+      if (!churchId) {
+        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+      }
+      const parsed = parseSmsConsentVerificationBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      enforceRateLimit({
+        scope: "sms-consent-verify-ip",
+        key: `${getClientIp(req)}:${hashValue(parsed.phoneNumber)}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      const result = await verifySmsConsent(
+        churchId,
+        parsed.phoneNumber,
+        parsed.code,
+      );
+      await addSecurityEvent({
+        type: "sms_consent_verified",
+        churchId,
+        consentId: result.consentId,
+        phoneHash: hashValue(parsed.phoneNumber),
+        source: "web_form",
+        verificationMethod: "sms_otp",
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage:
+          statusCode >= 500
+            ? "Could not verify your SMS consent right now. Please try again."
+            : error.message || "That verification code is not valid or has expired.",
       });
     }
   },

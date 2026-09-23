@@ -33,6 +33,50 @@ import type {
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
 
+/**
+ * These labels describe a content kind rather than a distinct service moment.
+ * Keep this list centralized: title selection must not grow a collection of
+ * unrelated keyword exceptions in each importer.
+ */
+const GENERIC_ELEMENT_LABELS = new Set([
+  "song",
+  "hymn",
+  "chorus",
+  "anthem",
+  "item",
+  "service item",
+  "content",
+]);
+
+const normalizedElementLabel = (value: string): string =>
+  value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+
+export const isGenericServicePlanElementLabel = (value: string): boolean =>
+  GENERIC_ELEMENT_LABELS.has(normalizedElementLabel(value));
+
+/** Select the visible service moment while retaining the source content title. */
+export const chooseServicePlanElementTitle = (
+  row: Pick<
+    EventData,
+    "elementType" | "title" | "contentTitle" | "songTitle"
+  >,
+): string => {
+  const elementLabel = row.elementType?.trim() || "";
+  const contentTitle =
+    row.contentTitle?.trim() || row.songTitle?.trim() || row.title?.trim() || "";
+  return (
+    (elementLabel && !isGenericServicePlanElementLabel(elementLabel)
+      ? elementLabel
+      : "") ||
+    contentTitle ||
+    elementLabel ||
+    "Untitled"
+  );
+};
+
+const getImportedContentTitle = (row: EventData): string =>
+  row.contentTitle?.trim() || row.songTitle?.trim() || row.title?.trim() || "";
+
 /** Words that name a song outright, wherever they appear in the row. */
 const SONG_WORDS = /\b(song|hymn|chorus|anthem)\b/;
 
@@ -93,27 +137,43 @@ const buildElementFromRow = <
   songs: T[],
   sourceMarksSongs: boolean,
 ): ServicePlanElement => {
+  const contentTitle = getImportedContentTitle(row);
   const type =
-    row.songTitle || hasPlanningKeySuffix(row.title)
+    row.songTitle || hasPlanningKeySuffix(contentTitle)
       ? "song"
-      : guessServicePlanElementType(row.elementType, row.title, {
+      : guessServicePlanElementType(row.elementType, contentTitle, {
           skipSongWords: sourceMarksSongs,
         });
-  const rawTitle = row.title?.trim() || row.elementType?.trim() || "Untitled";
+  const rawTitle = chooseServicePlanElementTitle(row);
   const ledBy = row.ledBy?.trim();
   // Structured imports (Planning Center paste) may already split people; Service
   // Planning printouts still arrive as one Led-by string.
   const assigneeNames = (row.assigneeNames || [])
     .map((name) => name.trim())
     .filter(Boolean);
+  const structuredPersonNames = (row.ledByAssignments || [])
+    .filter((assignment) => assignment.kind === "person")
+    .map((assignment) => assignment.name.trim())
+    .filter(Boolean);
   const resolvedAssigneeNames = assigneeNames.length
     ? assigneeNames
+    : row.ledByAssignments?.length
+      ? structuredPersonNames
     : ledBy
       ? splitServicePlanningLedByNames(ledBy)
       : [];
   const sourceLedByRaw =
+    row.sourceLedByRaw?.trim() ||
     ledBy ||
     (resolvedAssigneeNames.length ? resolvedAssigneeNames.join(", ") : "");
+
+  const sourceLedByAssignments = row.ledByAssignments?.length
+    ? row.ledByAssignments.map((assignment) => ({
+        kind: assignment.kind,
+        ...(assignment.id ? { id: assignment.id } : {}),
+        name: assignment.name,
+      }))
+    : undefined;
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
@@ -123,13 +183,17 @@ const buildElementFromRow = <
     ...(row.elementType?.trim()
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
+    ...(contentTitle ? { sourceContentTitleRaw: contentTitle } : {}),
+    ...(sourceLedByAssignments
+      ? { sourceLedByAssignments }
+      : {}),
+    ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(resolvedAssigneeNames.length
       ? {
           assignees: resolvedAssigneeNames.map((name) => ({
             id: generateRandomId(),
             name,
           })),
-          sourceLedByRaw,
         }
       : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
@@ -158,9 +222,11 @@ const buildElementFromRow = <
     // The marker names the song on its own; the row title can also carry the
     // element type ("Welcome Song") or a second line, so it only stands in
     // when the source marked nothing.
-    const cleanedTitle = cleanPlanningTitle(row.songTitle?.trim() || rawTitle);
+    const songContentTitle = row.songTitle?.trim() || contentTitle || rawTitle;
+    const cleanedTitle = cleanPlanningTitle(songContentTitle);
     const planningKey =
       extractPlanningKey(rawTitle) ||
+      extractPlanningKey(contentTitle) ||
       extractPlanningKey(row.songTitle?.trim() || "");
     const matched = findBestSongMatchByName(cleanedTitle, songs);
     if (matched) {
@@ -187,7 +253,7 @@ const buildElementFromRow = <
     // The source's own row is free text ("Reading: John 3:16"), so only attach
     // when it actually parses as a reference — otherwise it stays a plain item
     // the operator can attach scripture to by hand.
-    const parsed = parseBibleReference(rawTitle);
+    const parsed = parseBibleReference(contentTitle);
     if (parsed) {
       element.scriptureRef = {
         label: getBibleImportDisplayName(parsed, parsed.version),
@@ -200,7 +266,9 @@ const buildElementFromRow = <
   }
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row
-  // whose reference didn't parse doesn't claim to be a Bible item.
+  // whose reference didn't parse doesn't claim to be a Bible item. Video,
+  // image, and announcement are retained in sourceElementTypeRaw for matching,
+  // but remain free until the ServicePlan model gains those attachments.
   return { ...element, type: getServicePlanElementType(element) };
 };
 

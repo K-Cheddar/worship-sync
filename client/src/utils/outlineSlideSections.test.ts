@@ -6,7 +6,7 @@ import {
   buildOutlineVirtualRows,
   captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
-  captureOutlineZoomFocalPoint,
+  captureOutlineSlideFocalPoint,
   getControllerItemPath,
   getOutlineVirtualRowKey,
   getPinnedListIdFromVirtualItems,
@@ -384,7 +384,7 @@ describe("outlineSlideSections", () => {
     const getHeight = () => 40;
 
     expect(
-      captureOutlineZoomFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
+      captureOutlineSlideFocalPoint(rows, getStart, getHeight, 0, 80, "l-1", 0),
     ).toEqual({
       kind: "selected",
       listId: "l-1",
@@ -418,7 +418,7 @@ describe("outlineSlideSections", () => {
     const getStart = (index: number) => index * 40;
     const getHeight = () => 40;
     // label, tiles(a), label(b), tiles(b) — selected A1 is above the viewport.
-    const focal = captureOutlineZoomFocalPoint(
+    const focal = captureOutlineSlideFocalPoint(
       rows,
       getStart,
       getHeight,
@@ -469,7 +469,7 @@ describe("outlineSlideSections", () => {
         "item-20",
         selectedSlide,
       );
-      const focal = captureOutlineZoomFocalPoint(
+      const focal = captureOutlineSlideFocalPoint(
         beforeRows,
         getStart,
         getHeight,
@@ -518,7 +518,7 @@ describe("outlineSlideSections", () => {
       },
     ];
     const rows = buildOutlineVirtualRows(sections, 2);
-    const focal = captureOutlineZoomFocalPoint(
+    const focal = captureOutlineSlideFocalPoint(
       rows,
       (index) => index * 40,
       () => 40,
@@ -559,7 +559,7 @@ describe("outlineSlideSections", () => {
         "l-1",
         selectedSlide,
       );
-      const focal = captureOutlineZoomFocalPoint(
+      const focal = captureOutlineSlideFocalPoint(
         beforeRows,
         getStart,
         () => 40,
@@ -878,5 +878,206 @@ describe("outlineSlideSections", () => {
     ).toBe(
       firstRows.find((row) => row.listId === "l-c" && row.type === "tiles"),
     );
+  });
+
+  it("renders the active slides for sequential item changes", () => {
+    const items = [
+      outlineItem({ _id: "a", listId: "l-a", name: "A", type: "song" }),
+      outlineItem({ _id: "b", listId: "l-b", name: "B", type: "song" }),
+      outlineItem({ _id: "c", listId: "l-c", name: "C", type: "song" }),
+    ];
+    const docsById = buildDocsById({
+      allSongDocs: [
+        songDoc("a", "a-1", [slide("a1", "A1")]),
+        songDoc("b", "b-1", [slide("b1", "B1")]),
+        songDoc("c", "c-1", [slide("c1", "C1")]),
+      ],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const sectionCache = new Map();
+
+    const activeFor = (id: string, listId: string, slideId: string) => ({
+      _id: id,
+      listId,
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [{ slides: [slide(slideId, slideId.toUpperCase())] }],
+    });
+    const aSections = buildOutlineSlideSections(items, {
+      activeItem: activeFor("a", "l-a", "a1"),
+      docsById,
+      sectionCache,
+    });
+    const bSections = buildOutlineSlideSections(items, {
+      activeItem: activeFor("b", "l-b", "b1"),
+      docsById,
+      sectionCache,
+    });
+    const cSections = buildOutlineSlideSections(items, {
+      activeItem: activeFor("c", "l-c", "c1"),
+      docsById,
+      sectionCache,
+    });
+
+    expect(aSections.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "a1",
+    ]);
+    expect(bSections.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "b1",
+    ]);
+    expect(cSections.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "c1",
+    ]);
+    expect(cSections.find((section) => section.isActive)?.slides.map((s) => s.id)).not.toContain(
+      "a1",
+    );
+  });
+
+  it("keeps the previous active section until the selected item is loaded", () => {
+    const items = [
+      outlineItem({ _id: "a", listId: "l-a", name: "A", type: "song" }),
+      outlineItem({ _id: "b", listId: "l-b", name: "B", type: "song" }),
+    ];
+    const docsById = buildDocsById({
+      allSongDocs: [
+        songDoc("a", "a-1", [slide("a1", "A1")]),
+        songDoc("b", "b-1", [slide("b1", "B1")]),
+      ],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const sectionCache = new Map();
+    const beforeLoad = buildOutlineSlideSections(items, {
+      activeItem: {
+        _id: "a",
+        listId: "l-a",
+        type: "song",
+        arrangements: [{ slides: [slide("a-live", "A live")] }],
+        selectedArrangement: 0,
+      },
+      docsById,
+      sectionCache,
+    });
+    const duringLoad = buildOutlineSlideSections(items, {
+      activeItem: {
+        _id: "a",
+        listId: "l-a",
+        type: "song",
+        arrangements: [{ slides: [slide("a-live", "A live")] }],
+        selectedArrangement: 0,
+      },
+      docsById,
+      sectionCache,
+    });
+    const afterLoad = buildOutlineSlideSections(items, {
+      activeItem: {
+        _id: "b",
+        listId: "l-b",
+        type: "song",
+        arrangements: [{ slides: [slide("b-live", "B live")] }],
+        selectedArrangement: 0,
+      },
+      docsById,
+      sectionCache,
+    });
+
+    expect(duringLoad.find((section) => section.isActive)?.listId).toBe("l-a");
+    expect(duringLoad.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "a-live",
+    ]);
+    expect(afterLoad.find((section) => section.isActive)?.listId).toBe("l-b");
+    expect(afterLoad.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "b-live",
+    ]);
+    expect(afterLoad.find((section) => section.isActive)?.slides.map((s) => s.id)).not.toContain(
+      "a-live",
+    );
+    expect(beforeLoad.find((section) => section.isActive)?.slides.map((s) => s.id)).toEqual([
+      "a-live",
+    ]);
+  });
+
+  it("keeps duplicate outline occurrences distinct by listId", () => {
+    const items = [
+      outlineItem({ _id: "same", listId: "l-first", name: "First", type: "song" }),
+      outlineItem({ _id: "same", listId: "l-second", name: "Second", type: "song" }),
+    ];
+    const docsById = buildDocsById({
+      allSongDocs: [songDoc("same", "same-1", [slide("cached", "Cached")])],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const sections = buildOutlineSlideSections(items, {
+      activeItem: {
+        _id: "same",
+        listId: "l-first",
+        type: "song",
+        arrangements: [{ slides: [slide("live", "Live")] }],
+        selectedArrangement: 0,
+      },
+      docsById,
+    });
+    const rows = buildOutlineVirtualRows(sections, 1, new Map());
+
+    expect(sections.map((section) => [section.listId, section.slides[0]?.id])).toEqual([
+      ["l-first", "live"],
+      ["l-second", "cached"],
+    ]);
+    expect(rows.filter((row) => row.type === "tiles").map((row) => row.listId)).toEqual([
+      "l-first",
+      "l-second",
+    ]);
+  });
+
+  it("invalidates section and row caches when the source item changes", () => {
+    const sectionCache = new Map();
+    const rowCache = new Map();
+    const firstItem = outlineItem({
+      _id: "a",
+      listId: "shared-list-id",
+      name: "A",
+      type: "song",
+    });
+    const docsById = buildDocsById({
+      allSongDocs: [
+        songDoc("a", "a-1", [slide("a1", "A1")]),
+        songDoc("b", "b-1", [slide("b1", "B1")]),
+      ],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const activeSource = {
+      _id: "a",
+      listId: firstItem.listId,
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [{ slides: [slide("a-live", "A live")] }],
+    };
+    const firstSections = buildOutlineSlideSections([firstItem], {
+      activeItem: activeSource,
+      docsById,
+      sectionCache,
+    });
+    buildOutlineVirtualRows(firstSections, 1, rowCache);
+    firstItem._id = "b";
+    firstItem.name = "B";
+    activeSource._id = "b";
+    activeSource.arrangements = [{ slides: [slide("b-live", "B live")] }];
+    const secondSections = buildOutlineSlideSections([firstItem], {
+      activeItem: activeSource,
+      docsById,
+      sectionCache,
+    });
+    const secondRows = buildOutlineVirtualRows(secondSections, 1, rowCache);
+
+    expect(secondSections[0].itemId).toBe("b");
+    expect(secondSections[0].slides.map((s) => s.id)).toEqual(["b-live"]);
+    expect(secondRows.find((row) => row.type === "tiles")?.itemId).toBe("b");
+    expect(secondRows.find((row) => row.type === "tiles")?.firstSlideId).toBe("b-live");
   });
 });

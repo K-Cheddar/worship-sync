@@ -72,19 +72,20 @@ export const limitControllerServicePlans = ({
 
 export const chooseControllerServicePlanKey = ({
   plans,
-  boundPlanKey,
   currentOccurrencePlanKey,
+  hasCurrentOccurrence,
   nowMs = Date.now(),
 }: {
   plans: ServicePlanSummary[];
-  boundPlanKey?: string | null;
   currentOccurrencePlanKey?: string | null;
+  hasCurrentOccurrence: boolean;
   nowMs?: number;
 }): string | null => {
   const keys = new Set(plans.map((plan) => plan.planKey));
-  if (boundPlanKey && keys.has(boundPlanKey)) return boundPlanKey;
-  if (currentOccurrencePlanKey && keys.has(currentOccurrencePlanKey)) {
-    return currentOccurrencePlanKey;
+  if (hasCurrentOccurrence) {
+    return currentOccurrencePlanKey && keys.has(currentOccurrencePlanKey)
+      ? currentOccurrencePlanKey
+      : null;
   }
   return sortControllerServicePlans(plans, nowMs)[0]?.planKey ?? null;
 };

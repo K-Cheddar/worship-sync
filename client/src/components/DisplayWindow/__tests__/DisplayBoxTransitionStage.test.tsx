@@ -1,5 +1,5 @@
-import { act, render, screen, within } from "@testing-library/react";
-import { useEffect, type ReactElement } from "react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useEffect, useState, type ReactElement } from "react";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneRenderMediaOptions,
@@ -7,8 +7,13 @@ import DisplayBoxTransitionStage, {
 import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
 
 let mockTimelineComplete: (() => void) | undefined;
+const mockTimelineCompletions: Array<() => void> = [];
 let mockMediaReady = true;
 let mockLiveMediaReady = true;
+const mockReadinessByMedia = new Map<
+  string,
+  { paintReady: boolean; livePaintReady: boolean }
+>();
 const playbackCuesByMedia = new Map<string, string[]>();
 const mockTimeline = {
   addLabel: jest.fn(),
@@ -25,6 +30,7 @@ jest.mock("gsap", () => ({
     }),
     timeline: jest.fn((options?: { onComplete?: () => void }) => {
       mockTimelineComplete = options?.onComplete;
+      if (options?.onComplete) mockTimelineCompletions.push(options.onComplete);
       return mockTimeline;
     }),
   },
@@ -48,10 +54,19 @@ jest.mock("../LaneFullFrameMedia", () => ({
       cues.push(playback?.mediaKey ?? "none");
       playbackCuesByMedia.set(media.mediaKey ?? "", cues);
     }
+    const readiness = mockReadinessByMedia.get(media.mediaKey ?? "");
     useEffect(() => {
-      onPaintReadyChange(mockMediaReady);
-      onLivePaintReadyChange?.(mockLiveMediaReady);
-    }, [onLivePaintReadyChange, onPaintReadyChange]);
+      onPaintReadyChange(readiness?.paintReady ?? mockMediaReady);
+      onLivePaintReadyChange?.(
+        readiness?.livePaintReady ?? mockLiveMediaReady,
+      );
+    }, [
+      media.mediaKey,
+      onLivePaintReadyChange,
+      onPaintReadyChange,
+      readiness?.livePaintReady,
+      readiness?.paintReady,
+    ]);
     const id =
       media.kind === "fileVideo"
         ? media.mediaKey
@@ -131,18 +146,493 @@ const readyRenderLane =
       />
     );
 
+const StatefulLaneContent = ({
+  snapshot,
+  reportPaintReady,
+}: {
+  snapshot: DisplayBoxTransitionSnapshot;
+  reportPaintReady: (index: number, ready: boolean) => void;
+}) => {
+  const [mountedWords] = useState(
+    snapshot.boxes.map((box) => box.words ?? "").join("|") || "empty",
+  );
+
+  useEffect(() => {
+    snapshot.boxes.forEach((_, index) => reportPaintReady(index, true));
+  }, [reportPaintReady, snapshot.boxes]);
+
+  return (
+    <div data-testid={`stateful-content-${mountedWords}`}>{mountedWords}</div>
+  );
+};
+
+const statefulRenderLane = (
+  snapshot: DisplayBoxTransitionSnapshot,
+  _isPrevious: boolean,
+  reportPaintReady: (index: number, ready: boolean) => void,
+  laneMedia: LaneRenderMediaOptions,
+) =>
+  laneMedia.paintForeground ? (
+    <StatefulLaneContent
+      snapshot={snapshot}
+      reportPaintReady={reportPaintReady}
+    />
+  ) : null;
+
 describe("DisplayBoxTransitionStage", () => {
+  let presentedFrameCount = 0;
+  const originalLoad = HTMLMediaElement.prototype.load;
+  const originalPlay = HTMLMediaElement.prototype.play;
+  const originalPause = HTMLMediaElement.prototype.pause;
+  const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  const originalCurrentSrc = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "currentSrc",
+  );
+  const originalRequestVideoFrameCallback = (
+    HTMLVideoElement.prototype as HTMLVideoElement & {
+      requestVideoFrameCallback?: unknown;
+    }
+  ).requestVideoFrameCallback;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    presentedFrameCount = 0;
     mockTimelineComplete = undefined;
+    mockTimelineCompletions.length = 0;
     mockMediaReady = true;
     mockLiveMediaReady = true;
+    mockReadinessByMedia.clear();
     playbackCuesByMedia.clear();
   });
 
-  it("starts a different file-video transition from its fallback before live paint readiness", () => {
-    mockMediaReady = true;
-    mockLiveMediaReady = false;
+  afterEach(() => {
+    delete (window as { electronAPI?: unknown }).electronAPI;
+    Object.defineProperty(HTMLMediaElement.prototype, "load", {
+      configurable: true,
+      value: originalLoad,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: originalPlay,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: originalPause,
+    });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: originalGetBoundingClientRect,
+    });
+    if (originalCurrentSrc) {
+      Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", originalCurrentSrc);
+    }
+    if (originalRequestVideoFrameCallback) {
+      Object.defineProperty(
+        HTMLVideoElement.prototype,
+        "requestVideoFrameCallback",
+        {
+          configurable: true,
+          value: originalRequestVideoFrameCallback,
+        },
+      );
+    } else {
+      Reflect.deleteProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback");
+    }
+  });
+
+  it("uses the direct video lane for Electron transmit previews", () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalMediaPath: jest.fn().mockResolvedValue(null) },
+    });
+    const video = (name: string): DisplayBoxTransitionSnapshot => ({
+      key: name,
+      boxes: [{ id: "box", words: name, width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: `remote:${name}`,
+        originalSrc: `https://cdn.example.com/${name}.mp4`,
+      },
+    });
+    const mediaPlayback = {
+      outputId: "projector",
+      windowRole: "projector-preview",
+      playbackRole: "preview" as const,
+      showBackground: true,
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={video("first")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.queryByTestId("electron-media-surface-pool")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toHaveAttribute(
+      "data-media-id",
+      "remote:first",
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={video("second")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={video("latest")}
+        shouldAnimate
+        mediaPlayback={mediaPlayback}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.queryByTestId("electron-media-surface-pool")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("content-second")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-latest")).toBeInTheDocument();
+  });
+
+  it("integrates the Electron pool with canonical prepared identity and transition ownership", async () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalMediaPath: jest.fn().mockResolvedValue(null),
+        isDev: jest.fn().mockResolvedValue(false),
+      },
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "load", {
+      configurable: true,
+      value: jest.fn(function load(this: HTMLMediaElement) {
+        window.setTimeout(() => this.dispatchEvent(new Event("loadedmetadata")), 0);
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn().mockResolvedValue(undefined),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: jest.fn(),
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        presentedFrameCount += 1;
+        callback(performance.now(), {
+          width: 100,
+          height: 100,
+          presentationTime: performance.now(),
+          mediaTime: presentedFrameCount / 30,
+          presentedFrames: presentedFrameCount,
+          expectedDisplayTime: performance.now(),
+        });
+        return 1;
+      },
+    });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 860,
+        bottom: 483,
+        width: 860,
+        height: 483,
+        toJSON: () => undefined,
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", {
+      configurable: true,
+      get() {
+        const source = this.src;
+        return source ? `${source}/` : "";
+      },
+    });
+
+    const media = (mediaKey: string) => ({
+      ...sharedFileMedia,
+      mediaKey,
+      originalSrc: `https://cdn.example.com/${mediaKey}.mp4`,
+    });
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "pool-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: media("remote:pool-a"),
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "pool-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: media("remote:pool-b"),
+    };
+
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-a",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    expect(
+      (
+        window as Window & {
+          __wsMediaSurfacePoolDiagnostics?: {
+            surfaces: Array<{
+              mediaKey: string;
+              geometryReady?: boolean;
+              geometryReason?: string;
+              framePresentedReady?: boolean;
+              intrinsicVideoSize?: { width: number; height: number };
+            }>;
+          };
+        }
+      ).__wsMediaSurfacePoolDiagnostics?.surfaces.find(
+        (surface) =>
+          surface.mediaKey === "remote:pool-a" ||
+          surface.mediaKey === "remote:pool-b",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        geometryReady: true,
+        framePresentedReady: true,
+        intrinsicVideoSize: { width: 0, height: 0 },
+      }),
+    );
+    expect(screen.getByTestId("display-box-transition-media-a")).toBeInTheDocument();
+    expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveStyle({
+      opacity: "0",
+    });
+
+    const firstFallback = screen.getByTestId("display-box-transition-media-a");
+    const firstFallbackVideo = within(firstFallback).getByTestId(
+      "lane-full-frame-media-mock",
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          ...first,
+          key: "pool-a-lyrics",
+          boxes: [{ id: "box", words: "A2", width: 100, height: 100 }],
+        }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-a",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      ),
+    );
+    act(() => mockTimelineComplete?.());
+    expect(screen.getByTestId("display-box-transition-media-a")).toBe(firstFallback);
+    expect(within(firstFallback).getByTestId("lane-full-frame-media-mock")).toBe(
+      firstFallbackVideo,
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveStyle({
+      opacity: "0",
+    });
+
+    mockReadinessByMedia.set("remote:pool-b", {
+      paintReady: false,
+      livePaintReady: false,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(firstFallback).toBeInTheDocument();
+    expect(within(firstFallback).getByTestId("lane-full-frame-media-mock")).toBe(
+      firstFallbackVideo,
+    );
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    await waitFor(() => expect(play).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:pool-b")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    expect(screen.getByTestId("electron-media-surface-remote:pool-b")).toHaveAttribute(
+      "data-prepared-state",
+      "playing",
+    );
+    await waitFor(() => {
+      const value = screen
+        .getByTestId("display-box-transition-stage")
+        .getAttribute("data-prepared-media-status");
+      if (!value?.includes("remote:pool-b:active-playing")) {
+        throw new Error(`status=${JSON.stringify(value)}`);
+      }
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      ),
+    );
+    const adoptedSurface = screen.getByTestId("electron-media-surface-remote:pool-b");
+    expect(mockTimeline.fromTo.mock.calls.some(([element]) => element === adoptedSurface)).toBe(
+      true,
+    );
+    expect(adoptedSurface.style.opacity).toBe("");
+    expect(
+      screen.getByTestId("electron-media-surface-video-remote:pool-b"),
+    ).toHaveProperty("muted", true);
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(adoptedSurface.style.opacity).toBe("");
+
+    act(() => mockTimelineComplete?.());
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
+    );
+    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
+    expect(screen.getByTestId("electron-media-surface-remote:pool-b")).toBeInTheDocument();
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          ...second,
+          key: "pool-b-content-only",
+          boxes: [{ id: "box", words: "B2", width: 100, height: 100 }],
+        }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: true,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-mode",
+      "content",
+    );
+    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("electron-media-surface-remote:pool-b")).toHaveLength(1);
+
+    // Disposing the adopted pool surface must release ownership so the lane
+    // can immediately return to its normal fallback renderer.
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{ ...second, key: "pool-b-disposed" }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: false,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("electron-media-surface-remote:pool-b")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
+  });
+
+  it("keeps the pool disabled when the resolved display does not paint backgrounds", () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalMediaPath: jest.fn() },
+    });
+    render(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          key: "no-background-pool",
+          boxes: [{ id: "box", words: "Fallback", width: 100, height: 100 }],
+          backgroundMedia: {
+            ...sharedFileMedia,
+            mediaKey: "remote:no-background-pool",
+          },
+        }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "monitor",
+          windowRole: "monitor",
+          playbackRole: "output",
+          showBackground: false,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-media-a")).toBeInTheDocument();
+    expect(screen.queryByTestId("electron-media-surface-remote:no-background-pool")).not.toBeInTheDocument();
+  });
+
+  it("waits for live playback when replacing a moving file video", () => {
     const first: DisplayBoxTransitionSnapshot = {
       key: "fallback-a",
       boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
@@ -163,6 +653,14 @@ describe("DisplayBoxTransitionStage", () => {
         fallbackSrc: "https://cdn.example.com/b.jpg",
       },
     };
+    mockReadinessByMedia.set("remote:fallback-a", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    mockReadinessByMedia.set("remote:fallback-b", {
+      paintReady: true,
+      livePaintReady: false,
+    });
 
     const { rerender } = render(
       <DisplayBoxTransitionStage
@@ -181,9 +679,204 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
+      "preparing",
+    );
+
+    mockReadinessByMedia.set("remote:fallback-b", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
       "animating",
     );
+    expect(mockTimeline.fromTo).toHaveBeenCalled();
     expect(mockTimelineComplete).toBeDefined();
+  });
+
+  it("releases a failed prepared candidate to the live fallback", async () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalMediaPath: jest.fn().mockResolvedValue(null),
+        isDev: jest.fn().mockResolvedValue(false),
+      },
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "load", {
+      configurable: true,
+      value: jest.fn(function load(this: HTMLMediaElement) {
+        window.setTimeout(() => this.dispatchEvent(new Event("loadedmetadata")), 0);
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn(function play(this: HTMLMediaElement) {
+        return this.src.includes("b.mp4")
+          ? Promise.reject(new Error("incoming decode failure"))
+          : Promise.resolve();
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: jest.fn(),
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (
+        callback: (
+          now: number,
+          metadata: VideoFrameCallbackMetadata,
+        ) => void,
+      ) => {
+        presentedFrameCount += 1;
+        callback(performance.now(), {
+          width: 100,
+          height: 100,
+          presentationTime: performance.now(),
+          mediaTime: presentedFrameCount / 30,
+          presentedFrames: presentedFrameCount,
+          expectedDisplayTime: performance.now(),
+        });
+        return 1;
+      },
+    });
+    mockReadinessByMedia.set("remote:fallback-a", {
+      paintReady: true,
+      livePaintReady: false,
+    });
+    mockReadinessByMedia.set("remote:fallback-b", {
+      paintReady: true,
+      livePaintReady: false,
+    });
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "failure-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: { ...sharedFileMedia, mediaKey: "remote:fallback-a", originalSrc: "https://cdn.example.com/a.mp4" },
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "failure-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: { ...sharedFileMedia, mediaKey: "remote:fallback-b", originalSrc: "https://cdn.example.com/b.mp4" },
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        mediaPlayback={{ outputId: "projector", windowRole: "projector", playbackRole: "output", showBackground: true }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-a")).toHaveAttribute("data-prepared-state", "ready"));
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{ outputId: "projector", windowRole: "projector", playbackRole: "output", showBackground: true }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-b")).toHaveAttribute("data-prepared-state", "error"));
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute("data-transition-phase", "animating");
+    expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+
+    mockReadinessByMedia.set("remote:fallback-b", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        mediaPlayback={{ outputId: "projector", windowRole: "projector", playbackRole: "output", showBackground: true }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute("data-transition-phase", "animating"));
+  });
+
+  it("does not wait for live-video readiness when replacing image backgrounds", () => {
+    const image = (key: string, background: string): DisplayBoxTransitionSnapshot => ({
+      key,
+      boxes: [
+        {
+          id: "box",
+          words: "Image",
+          width: 100,
+          height: 100,
+          background,
+        },
+      ],
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    });
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={image("image-a", "https://cdn.example.com/a.jpg")}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={image("image-b", "https://cdn.example.com/b.jpg")}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+  });
+
+  it("does not wait for live-video readiness when replacing local video input", () => {
+    mockLiveMediaReady = false;
+    const localVideo = (
+      key: string,
+      sourceId: string,
+    ): DisplayBoxTransitionSnapshot => ({
+      key,
+      boxes: [{ id: "box", words: sourceId, width: 100, height: 100 }],
+      backgroundMedia: {
+        kind: "localVideo",
+        input: {
+          sourceId,
+          deviceLabel: sourceId,
+          ownerDeviceId: "device",
+          ownerLabel: "Booth",
+        },
+      },
+    });
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={localVideo("local-a", "camera-a")}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={localVideo("local-b", "camera-b")}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
   });
 
   it("keeps the outgoing video cue while the incoming video prepares", () => {
@@ -594,6 +1287,34 @@ describe("DisplayBoxTransitionStage", () => {
     );
   });
 
+  it("settles a zero-duration transition without creating a GSAP timeline", () => {
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={oldSnapshot}
+        shouldAnimate
+        transitionDurationMs={0}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={newSnapshot}
+        shouldAnimate
+        transitionDurationMs={0}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("content-Old")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-New")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
+    );
+  });
+
   it("same background + same text does not transition", () => {
     const first: DisplayBoxTransitionSnapshot = {
       key: "slide-1",
@@ -870,6 +1591,161 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-One")).toBeInTheDocument();
     expect(screen.getByTestId("content-Two")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+    const mediaFades = mockTimeline.fromTo.mock.calls.filter(
+      ([element]) =>
+        (element as HTMLElement).getAttribute("data-testid")?.includes(
+          "display-box-transition-media-",
+        ),
+    );
+    expect(mediaFades).toHaveLength(2);
+    expect(mediaFades.map(([, from, to]) => [from, to])).toEqual(
+      expect.arrayContaining([
+        [{ opacity: 1 }, expect.objectContaining({ opacity: 0 })],
+        [{ opacity: 0 }, expect.objectContaining({ opacity: 1 })],
+      ]),
+    );
+  });
+
+  it("does not restart a running fade when media readiness telemetry changes", () => {
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "telemetry-a",
+      boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:telemetry-a",
+        originalSrc: "https://cdn.example.com/telemetry-a.mp4",
+      },
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "telemetry-b",
+      boxes: [{ id: "box", words: "B", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:telemetry-b",
+        originalSrc: "https://cdn.example.com/telemetry-b.mp4",
+      },
+    };
+    mockReadinessByMedia.set("remote:telemetry-a", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    mockReadinessByMedia.set("remote:telemetry-b", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+
+    mockReadinessByMedia.set("remote:telemetry-b", {
+      paintReady: true,
+      livePaintReady: false,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(mockTimeline.kill).not.toHaveBeenCalled();
+  });
+
+  it("crossfades complete slides once the incoming live frame is ready", () => {
+    const mediaA = {
+      ...sharedFileMedia,
+      mediaKey: "remote:independent-a",
+      originalSrc: "https://cdn.example.com/independent-a.mp4",
+    };
+    const mediaB = {
+      ...sharedFileMedia,
+      mediaKey: "remote:independent-b",
+      originalSrc: "https://cdn.example.com/independent-b.mp4",
+    };
+    const first: DisplayBoxTransitionSnapshot = {
+      key: "independent-1",
+      boxes: [{ id: "box", words: "Old lyric", width: 100, height: 100 }],
+      backgroundMedia: mediaA,
+    };
+    const second: DisplayBoxTransitionSnapshot = {
+      key: "independent-2",
+      boxes: [{ id: "box", words: "New lyric", width: 100, height: 100 }],
+      backgroundMedia: mediaB,
+    };
+    mockReadinessByMedia.set("remote:independent-a", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    mockReadinessByMedia.set("remote:independent-b", {
+      paintReady: true,
+      livePaintReady: false,
+    });
+
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    expect(screen.getByTestId("content-Old lyric")).toBeInTheDocument();
+    expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
+    expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+    mockReadinessByMedia.set("remote:independent-b", {
+      paintReady: true,
+      livePaintReady: true,
+    });
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(mockTimelineCompletions).toHaveLength(1);
+    expect(mockTimeline.fromTo).toHaveBeenCalled();
+    act(() => mockTimelineCompletions[0]?.());
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
+    );
+    expect(screen.queryByTestId("content-Old lyric")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
   });
 
   it("rapid same-background lyric changes keep one media surface and skip obsolete lyrics", () => {
@@ -923,6 +1799,133 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("content-Verse 3")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(1);
     expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+
+    const next = {
+      ...verse(4),
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:next",
+        originalSrc: "https://cdn.example.com/next.mp4",
+      },
+    };
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={next}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(media).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-mode",
+      "full",
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{
+          ...next,
+          key: "v-5",
+          boxes: [{ id: "box", words: "Verse 5", width: 100, height: 100 }],
+        }}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(media).toBeInTheDocument();
+    expect(screen.queryByTestId("content-Verse 4")).not.toBeInTheDocument();
+  });
+
+  it("cancels a fade when rapid navigation returns to the visible slide", () => {
+    const slide = (key: string, words: string): DisplayBoxTransitionSnapshot => ({
+      key,
+      boxes: [{ id: "box", words, width: 100, height: 100 }],
+      backgroundMedia: sharedFileMedia,
+    });
+    const first = slide("first", "Verse 1");
+    const second = slide("second", "Verse 2");
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const media = screen.getByTestId("lane-full-frame-media-mock");
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={second}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    const fadeCount = mockTimeline.fromTo.mock.calls.length;
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase", "idle",
+    );
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(media);
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(screen.queryByTestId("content-Verse 2")).not.toBeInTheDocument();
+  });
+
+  it("remounts reused foreground lanes so stale multi-box text cannot survive", () => {
+    const slide = (key: string, words: string[]) => ({
+      key,
+      boxes: words.map((value, index) => ({
+        id: `box-${index}`,
+        words: value,
+        width: 100,
+        height: 50,
+      })),
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    });
+    const first = slide("stateful-a", ["A1", "A2"]);
+    const middle = slide("stateful-b", ["B1", "B2"]);
+    const latest = slide("stateful-c", ["C1", "C2"]);
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={first}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={middle}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+    const firstTransitionComplete = mockTimelineComplete;
+
+    // Reuse the incoming lane before A → B completes. Its content subtree must
+    // become C rather than retaining B's mounted child state.
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={latest}
+        shouldAnimate
+        renderLane={statefulRenderLane}
+      />,
+    );
+
+    expect(screen.queryByTestId("stateful-content-B1|B2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-A1|A2")).toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-C1|C2")).toBeInTheDocument();
+
+    act(() => firstTransitionComplete?.());
+    act(() => mockTimelineComplete?.());
+
+    expect(screen.queryByTestId("stateful-content-A1|A2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("stateful-content-B1|B2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stateful-content-C1|C2")).toBeInTheDocument();
   });
 
   const assertContentCrossfadeContract = (

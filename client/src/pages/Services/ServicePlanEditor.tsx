@@ -63,8 +63,13 @@ import { useToast } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateAllDocs } from "../../utils/dbUtils";
 import { initiateAllItemsList } from "../../store/allItemsSlice";
+import { upsertItemInAllDocs } from "../../store/allDocsSlice";
+import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
+import { broadcastItemUpdate } from "../../store/store";
+import { applyPouchAudit } from "../../utils/pouchAudit";
 import { sortNamesInList } from "../../utils/sort";
-import type { DBAllItems } from "../../types";
+import { getYouTubeVideoReference } from "../../utils/youtube";
+import type { DBAllItems, DBItem } from "../../types";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
@@ -77,12 +82,14 @@ import {
   unpublishServicePlan,
   updateServicePlanPublicLive,
   AuthApiError,
+  type YouTubeSearchResult,
   type ServicePlanPublicUrls,
   type ServicePlanShareVersion,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
+import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
   formatOccurrenceRowLabel,
@@ -927,58 +934,123 @@ const ServicePlanEditor = ({
     markConflict: markAutosaveConflict,
   } = autosave;
 
+  const planRef = useRef<ServicePlan | null>(plan);
+  planRef.current = plan;
+  const churchIdRef = useRef(churchId);
+  churchIdRef.current = churchId;
+  const planKeyRef = useRef(planKey);
+  planKeyRef.current = planKey;
+  const autosaveRef = useRef(autosave);
+  autosaveRef.current = autosave;
+  const isMountedRef = useRef(true);
+  const resumeReconciliationInFlightRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const applyRemoteServicePlan = useCallback(
+    (servicePlan: ServicePlan) => {
+      if (servicePlan.planKey !== planKeyRef.current) return;
+      const currentAutosave = autosaveRef.current;
+      const incomingRevision = servicePlan.revision ?? 0;
+      const knownRevision = currentAutosave.getRevision();
+      if (incomingRevision <= knownRevision) {
+        // Publishing and live-progress changes share the document but do not
+        // alter editable plan content. Keep those controls current without
+        // turning a local text edit into a content conflict.
+        if (incomingRevision === knownRevision) {
+          setPlan((current) => current ? {
+            ...current,
+            published: servicePlan.published,
+            publicLive: servicePlan.publicLive,
+            updatedAt: servicePlan.updatedAt,
+          } : current);
+          notifyPlanTimingChange(servicePlan.sections, servicePlan);
+        }
+        return;
+      }
+      const expectedInFlightRevision =
+        currentAutosave.getInFlightExpectedRevision();
+      if (incomingRevision === expectedInFlightRevision) {
+        // This is the broadcast echo of our in-flight save. Its HTTP response
+        // carries the same plan and will update the local revision moments later.
+        return;
+      }
+      if (expectedInFlightRevision !== null) {
+        // A revision beyond the expected acknowledgement is a real concurrent
+        // edit. Defer the conflict until our save response advances its revision.
+        pendingRemotePlanRef.current = servicePlan;
+        return;
+      }
+      if (currentAutosave.state !== "saved") {
+        // Never replace unsaved operator work with a resume snapshot. The
+        // existing revision/conflict UI remains the recovery boundary.
+        setConflictPlan(servicePlan);
+        currentAutosave.markConflict();
+        return;
+      }
+      setPlan(servicePlan);
+      setSections(servicePlan.sections);
+      setPlanName(servicePlan.name || occurrence.name || "");
+      setSourceImport(servicePlan.sourceImport);
+      notifyPlanTimingChange(servicePlan.sections, servicePlan);
+      resetDraftHistory();
+      currentAutosave.acceptRemoteRevision(servicePlan);
+    },
+    [notifyPlanTimingChange, occurrence.name, resetDraftHistory],
+  );
+
+  const reconcilePlanOnResume = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    setNowMs(serverNow());
+    if (!churchId || !planKey || !planRef.current) {
+      return;
+    }
+    const existing = resumeReconciliationInFlightRef.current;
+    if (existing) return existing;
+
+    const churchIdAtStart = churchId;
+    const planKeyAtStart = planKey;
+    let request!: Promise<void>;
+    request = getServicePlan(churchIdAtStart, planKeyAtStart)
+      .then((response) => {
+        if (
+          !isMountedRef.current ||
+          churchIdRef.current !== churchIdAtStart ||
+          planKeyRef.current !== planKeyAtStart ||
+          !planRef.current ||
+          response.servicePlan?.planKey !== planKeyAtStart
+        ) {
+          return;
+        }
+        if (response.servicePlan) applyRemoteServicePlan(response.servicePlan);
+      })
+      .catch((error) => {
+        // Resume recovery is best-effort; retain the usable local plan and let
+        // the next reconnect or page visit retry it.
+        console.error("Could not reconcile the service plan after resume:", error);
+      })
+      .finally(() => {
+        if (resumeReconciliationInFlightRef.current === request) {
+          resumeReconciliationInFlightRef.current = null;
+        }
+      });
+    resumeReconciliationInFlightRef.current = request;
+    return request;
+  }, [applyRemoteServicePlan, churchId, planKey]);
+
+  useSyncOnReconnect(reconcilePlanOnResume);
+
   // Clean editors follow remote plan changes. Local edits are never silently
   // replaced; the server's revision check turns that situation into a conflict.
   useTeamsLiveSync(churchId, (event) => {
     if (!isServicePlanUpdatedEvent(event)) return;
-    const { servicePlan } = event;
-    if (servicePlan.planKey !== planKey) return;
-    const incomingRevision = servicePlan.revision ?? 0;
-    const knownRevision = autosave.getRevision();
-    if (incomingRevision <= knownRevision) {
-      // Publishing and live-progress changes share the same document but do
-      // not alter editable plan content. Keep those controls current without
-      // turning a local text edit into a content conflict.
-      if (incomingRevision === knownRevision) {
-        setPlan((current) => current ? {
-          ...current,
-          published: servicePlan.published,
-          publicLive: servicePlan.publicLive,
-          updatedAt: servicePlan.updatedAt,
-        } : current);
-        notifyPlanTimingChange(servicePlan.sections, servicePlan);
-      }
-      return;
-    }
-    const expectedInFlightRevision = autosave.getInFlightExpectedRevision();
-    if (incomingRevision === expectedInFlightRevision) {
-      // This is the broadcast echo of our in-flight save. Its HTTP response
-      // carries the same plan and will update the local revision moments later.
-      return;
-    }
-    if (expectedInFlightRevision !== null) {
-      // A revision beyond the expected acknowledgement is a real concurrent
-      // edit. Defer the conflict until our save response advances its revision.
-      pendingRemotePlanRef.current = servicePlan;
-      return;
-    }
-    if (autosave.state !== "saved") {
-      // Our base revision is already behind, so the queued autosave could only
-      // come back 409. Raise the conflict now rather than leaving the operator
-      // reading "Saving soon" until that doomed round trip returns.
-      setConflictPlan(servicePlan);
-      autosave.markConflict();
-      return;
-    }
-    setPlan(servicePlan);
-    setSections(servicePlan.sections);
-    setPlanName(servicePlan.name || occurrence.name || "");
-    setSourceImport(servicePlan.sourceImport);
-    notifyPlanTimingChange(servicePlan.sections, servicePlan);
-    // This draft is now another editor's revision. Undoing past it would push
-    // our pre-sync snapshot back over their work as a fresh save.
-    resetDraftHistory();
-    autosave.acceptRemoteRevision(servicePlan);
+    applyRemoteServicePlan(event.servicePlan);
   });
 
   useEffect(() => {
@@ -1693,6 +1765,55 @@ const ServicePlanEditor = ({
   const resolvedSongRefs = useMemo(
     () => resolveServicePlanSongRefs(sections, allSongDocs),
     [sections, allSongDocs],
+  );
+  const linkYouTubeVideoToSong = useCallback(
+    async (song: DBItem, result: YouTubeSearchResult) => {
+      if (!db) throw new Error("The song library is not available. Try again.");
+      const existing = (await db.get(song._id)) as DBItem;
+      const currentLinks = existing.songLinks ?? [];
+      const existingYouTubeIndex = currentLinks.findIndex(
+        (link) => getYouTubeVideoReference(link.url)?.videoId === result.videoId,
+      );
+      if (existingYouTubeIndex >= 0) return;
+
+      const replacementIndex = currentLinks.findIndex((link) =>
+        getYouTubeVideoReference(link.url),
+      );
+      const nextLink = {
+        id:
+          replacementIndex >= 0
+            ? currentLinks[replacementIndex].id
+            : `youtube-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        label: "YouTube",
+        url: result.watchUrl,
+        ...(result.durationSeconds === undefined
+          ? {}
+          : { durationSeconds: result.durationSeconds }),
+      };
+      const nextLinks = [...currentLinks];
+      if (replacementIndex >= 0) nextLinks[replacementIndex] = nextLink;
+      else nextLinks.push(nextLink);
+
+      const audited = applyPouchAudit(
+        existing,
+        { ...existing, songLinks: nextLinks },
+        { isNew: false },
+      );
+      const savedResult = await db.put(audited);
+      const saved = { ...audited, _rev: savedResult.rev };
+      dispatch(upsertItemInAllDocs(saved));
+      dispatch(
+        upsertItemInAllItemsList({
+          _id: saved._id,
+          name: saved.name,
+          type: saved.type,
+          listId: saved._id,
+          background: typeof saved.background === "string" ? saved.background : "",
+        }),
+      );
+      broadcastItemUpdate(saved);
+    },
+    [db, dispatch],
   );
   const viewLibrarySong = useMemo(() => {
     if (!viewSongRef || viewSongRef.kind !== "library") return null;
@@ -2806,6 +2927,9 @@ const ServicePlanEditor = ({
               onCreatePendingSong={
                 canCreateLibrarySong ? openPendingSongCreator : undefined
               }
+              onLinkYouTubeVideo={
+                canEdit ? linkYouTubeVideoToSong : undefined
+              }
             />
           </TabsContent>
           {showMicrophoneTab ? (
@@ -2975,10 +3099,11 @@ const ServicePlanEditor = ({
               ) : null}
               {importSource !== "planningCenterPdf" ? (
                 <Button
-                  type="button"
-                  svg={hasPlanContent ? RefreshCw : undefined}
+                  variant="cta"
+                  svg={hasPlanContent ? RefreshCw : Upload}
                   iconSize="sm"
                   color={hasPlanContent ? "#22d3ee" : undefined}
+                  className="w-full justify-center"
                   onClick={() => void handleImportPlan()}
                   disabled={
                     importing ||
