@@ -340,7 +340,7 @@ describe("DisplayBoxTransitionStage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveAttribute(
         "data-prepared-state",
-        "ready",
+        "playing",
       ),
     );
     expect(
@@ -368,9 +368,9 @@ describe("DisplayBoxTransitionStage", () => {
         intrinsicVideoSize: { width: 0, height: 0 },
       }),
     );
-    expect(screen.getByTestId("display-box-transition-media-a")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-transition-media-a")).not.toBeInTheDocument();
     expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveStyle({
-      opacity: "0",
+      opacity: "1",
     });
 
     rerender(
@@ -632,7 +632,7 @@ describe("DisplayBoxTransitionStage", () => {
         renderLane={readyRenderLane()}
       />,
     );
-    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-a")).toHaveAttribute("data-prepared-state", "ready"));
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:fallback-a")).toHaveAttribute("data-prepared-state", "playing"));
 
     rerender(
       <DisplayBoxTransitionStage

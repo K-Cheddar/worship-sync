@@ -87,6 +87,11 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
   const originalLoad = HTMLMediaElement.prototype.load;
   const originalPlay = HTMLMediaElement.prototype.play;
   const originalPause = HTMLMediaElement.prototype.pause;
+  const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  const originalCurrentSrc = Object.getOwnPropertyDescriptor(
+    HTMLMediaElement.prototype,
+    "currentSrc",
+  );
   const originalRequestVideoFrameCallback =
     (HTMLVideoElement.prototype as HTMLVideoElement & {
       requestVideoFrameCallback?: unknown;
@@ -151,6 +156,27 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       configurable: true,
       value: jest.fn(),
     });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 860,
+        bottom: 483,
+        width: 860,
+        height: 483,
+        toJSON: () => undefined,
+      }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", {
+      configurable: true,
+      get() {
+        const source = this.src;
+        return source ? `${source}/` : "";
+      },
+    });
   });
 
   let mockFirstAdvancingFrameCallback: (() => void) | undefined;
@@ -169,6 +195,13 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       configurable: true,
       value: originalPause,
     });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: originalGetBoundingClientRect,
+    });
+    if (originalCurrentSrc) {
+      Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", originalCurrentSrc);
+    }
     if (originalRequestVideoFrameCallback) {
       Object.defineProperty(
         HTMLVideoElement.prototype,
@@ -181,7 +214,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     mockFirstAdvancingFrameCallback = undefined;
   });
 
-  it("keeps the outgoing video visible until the prepared video advances", async () => {
+  it("adopts the prepared surface immediately and fades after playback resumes", async () => {
     const play = jest.fn(() => {
       if (play.mock.calls.length <= mockPoolCandidates.length) {
         return Promise.resolve();
@@ -216,7 +249,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:prepared-a")).toHaveAttribute(
         "data-prepared-state",
-        "ready",
+        "playing",
       ),
     );
     await waitFor(() =>
@@ -241,29 +274,27 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
       />,
     );
 
-    await waitFor(() => expect(play).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(4));
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
     expect(
-      screen.getByTestId("electron-media-surface-remote:prepared-b"),
-    ).toHaveStyle({ opacity: "0" });
-    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
-
-    await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
-    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
-      "data-transition-phase",
-      "preparing",
+      screen.queryByTestId("display-box-transition-media-b"),
+    ).not.toBeInTheDocument();
+    const mediaFadeBeforeAdvancing = mockTimeline.fromTo.mock.calls.find(
+      (call) =>
+        call[0]?.getAttribute?.("data-testid") ===
+        "electron-media-surface-remote:prepared-b",
     );
+    expect(mediaFadeBeforeAdvancing?.[1]).toEqual({ opacity: 0 });
+    expect(mediaFadeBeforeAdvancing?.[2]).toMatchObject({
+      opacity: 1,
+      duration: 0.5,
+    });
+    await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
 
     mockFirstAdvancingFrameCallback?.();
-    await waitFor(() =>
-      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
-        "data-transition-phase",
-        "animating",
-      ),
-    );
     const mediaFadeCall = mockTimeline.fromTo.mock.calls.find(
       (call) =>
         call[0]?.getAttribute?.("data-testid") ===
@@ -287,7 +318,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         "display-box-transition-content-b",
     );
     expect(incomingContentFade?.[3]).toBe("crossfade+=0.1");
-    expect(play).toHaveBeenCalledTimes(3);
+    expect(play).toHaveBeenCalledTimes(4);
     let preparedB: {
       sendToTransitionStartMs?: number;
       sendToPlayResolvedMs?: number;
@@ -320,12 +351,12 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     expect(preparedB?.sendToPlayResolvedMs).toBeGreaterThanOrEqual(180);
     expect(preparedB?.sendToPlayResolvedMs).toBeLessThan(300);
     expect(preparedB?.sendToFirstAdvancingFrameMs).toBeGreaterThanOrEqual(180);
-    expect(preparedB?.sendToTransitionStartMs).toBeGreaterThanOrEqual(
+    expect(preparedB?.sendToTransitionStartMs).toBeLessThan(
       preparedB?.sendToFirstAdvancingFrameMs ?? Number.POSITIVE_INFINITY,
     );
   });
 
-  it("keeps the outgoing visual until a cold incoming surface is frame-ready", async () => {
+  it("keeps the outgoing visual until a cold incoming surface retains a frame", async () => {
     mockHoldInitialPreparedFrames = true;
     const first = snapshot("prepared-a", "A", "remote:prepared-a");
     const second = snapshot("prepared-b", "B", "remote:prepared-b");
@@ -349,7 +380,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:prepared-a")).toHaveAttribute(
         "data-prepared-state",
-        "ready",
+        "playing",
       ),
     );
 
@@ -383,5 +414,6 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         "animating",
       ),
     );
+    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
   });
 });
