@@ -1,4 +1,10 @@
-import { type CSSProperties, type ReactNode, type Ref, useMemo } from "react";
+import {
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+  type Ref,
+  useMemo,
+} from "react";
 import { ChevronRight, MoreVertical, Pencil } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
@@ -83,6 +89,19 @@ const EntityRow = ({
   }, [archived, canEdit, onArchive, onDelete]);
 
   const isClickable = Boolean(canEdit && onTitleClick);
+  const handleRowClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!isClickable) return;
+
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, textarea, select, [role='button']")
+    ) {
+      return;
+    }
+
+    onTitleClick?.();
+  };
   const showInlineBadge = Boolean(headerBadge) && headerBadgePlacement === "inline";
   const showCornerBadge = Boolean(headerBadge) && headerBadgePlacement === "top-end";
   const useFooterActions = !compact && actionsPlacement === "footer-end" && Boolean(actions);
@@ -200,6 +219,8 @@ const EntityRow = ({
     <div
       ref={rowRef}
       style={style}
+      data-testid="entity-row"
+      onClick={handleRowClick}
       className={cn(
         "group flex rounded-lg border border-gray-800 bg-gray-950/40",
         rootLayoutClassName,
