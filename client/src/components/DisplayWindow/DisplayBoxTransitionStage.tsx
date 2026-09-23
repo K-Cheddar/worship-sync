@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -27,10 +28,16 @@ import {
   VIDEO_CUE_HARD_SEEK_THRESHOLD_SECONDS,
 } from "../../utils/videoBackgroundPlayback";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
+import {
+  usePublishMediaPreparationManifest,
+  useRemoteMediaPreparationManifest,
+} from "../../hooks/useMediaPreparationManifest";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
-import type {
-  ElectronMediaSurfaceCandidate,
-  ElectronMediaSurfaceView,
+import {
+  selectElectronMediaSurfaceCandidates,
+  type ElectronMediaSurfaceCandidate,
+  type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
@@ -39,6 +46,11 @@ import {
   mediaSurfaceStatusKey,
   type MediaSurfaceStatus,
 } from "../../utils/mediaSurfaceLifecycle";
+import {
+  DISPLAY_TRANSITION_DURATION_DEFAULT_MS,
+  normalizeTransitionDurationMs,
+} from "../../utils/displaySettings";
+import { mediaPreparationManifestToCandidates } from "../../utils/mediaPreparationManifest";
 
 type LaneId = "a" | "b";
 
@@ -118,6 +130,8 @@ export type LaneRenderMediaOptions = {
 type DisplayBoxTransitionStageProps = {
   snapshot: DisplayBoxTransitionSnapshot;
   shouldAnimate: boolean;
+  /** Total visual transition duration for this output. */
+  transitionDurationMs?: number;
   mediaPlayback?: LaneMediaPlaybackOptions;
   renderLane: (
     snapshot: DisplayBoxTransitionSnapshot,
@@ -127,7 +141,6 @@ type DisplayBoxTransitionStageProps = {
   ) => ReactNode;
 };
 
-const TRANSITION_DURATION_SECONDS = 0.5;
 const CONTENT_INCOMING_OFFSET_SECONDS = 0.1;
 /** Front-loaded so the first frames of the fade are perceptible immediately. */
 const TRANSITION_EASE = "power2.out";
@@ -138,6 +151,35 @@ const TRANSITION_EASE = "power2.out";
  */
 const MEDIA_PLANE_Z = 0;
 const CONTENT_PLANE_Z = 10;
+
+const isRendererLocalCandidate = (candidate: ElectronMediaSurfaceCandidate) =>
+  candidate.sourceKind === "cache" ||
+  candidate.sourceKind === "local" ||
+  candidate.source.startsWith("media-cache://") ||
+  candidate.source.startsWith("worshipsync-media://") ||
+  candidate.source.startsWith("blob:");
+
+export const getDisplayTransitionTiming = (durationMs: number) => {
+  const durationSeconds =
+    normalizeTransitionDurationMs(
+      durationMs,
+      DISPLAY_TRANSITION_DURATION_DEFAULT_MS,
+    ) / 1000;
+  const incomingContentOffsetSeconds = Number(
+    Math.min(
+      CONTENT_INCOMING_OFFSET_SECONDS,
+      durationSeconds * 0.2,
+    ).toFixed(3),
+  );
+  return {
+    durationMs: durationSeconds * 1000,
+    durationSeconds,
+    incomingContentOffsetSeconds,
+    incomingContentDurationSeconds: Number(
+      Math.max(0, durationSeconds - incomingContentOffsetSeconds).toFixed(3),
+    ),
+  };
+};
 
 export const getDisplayBoxesLayerKey = (boxes: Box[]) =>
   JSON.stringify(boxes);
@@ -211,6 +253,7 @@ const hasPreparedFrame = (status: MediaSurfaceStatus | undefined) =>
 const DisplayBoxTransitionStage = ({
   snapshot,
   shouldAnimate,
+  transitionDurationMs = DISPLAY_TRANSITION_DURATION_DEFAULT_MS,
   mediaPlayback,
   renderLane,
 }: DisplayBoxTransitionStageProps) => {
@@ -279,6 +322,13 @@ const DisplayBoxTransitionStage = ({
       mediaPlayback.showBackground !== false &&
       window.electronAPI,
   );
+  const { sessionKind } = useContext(GlobalInfoContext) || {};
+  const servicePreparationEnabled = Boolean(
+    poolEnabled ||
+      (mediaPlayback?.playbackRole === "output" &&
+        mediaPlayback.outputId &&
+        sessionKind !== "display"),
+  );
   const currentPoolMedia = useMemo<ElectronMediaSurfaceCandidate | undefined>(
     () =>
       snapshot.backgroundMedia.kind === "fileVideo"
@@ -306,7 +356,7 @@ const DisplayBoxTransitionStage = ({
     [state.lanes],
   );
   const poolCandidateResult = useServiceVideoCandidates({
-    enabled: poolEnabled,
+    enabled: servicePreparationEnabled,
     outputId: mediaPlayback?.outputId,
     currentItemId: mediaPlayback?.currentItemId,
     outlineId: mediaPlayback?.preparedMediaOutlineId,
@@ -323,7 +373,71 @@ const DisplayBoxTransitionStage = ({
     outlineName: mediaPlayback?.preparedMediaContext?.outlineName,
     contextSource: mediaPlayback?.preparedMediaContext?.contextSource,
   });
-  const poolCandidates = poolCandidateResult.candidates;
+  const remotePreparation = useRemoteMediaPreparationManifest({
+    enabled: poolEnabled && sessionKind === "display",
+    outputId: mediaPlayback?.outputId,
+  });
+  usePublishMediaPreparationManifest({
+    enabled:
+      mediaPlayback?.playbackRole === "output" &&
+      sessionKind !== "display",
+    discovery: poolCandidateResult.discovery,
+    outputId: mediaPlayback?.outputId,
+  });
+  const remoteManifestCandidates = useMemo(
+    () =>
+      mediaPreparationManifestToCandidates(
+        remotePreparation.manifest,
+        remotePreparation.cacheMap,
+      ),
+    [remotePreparation.cacheMap, remotePreparation.manifest],
+  );
+  const poolCandidates = useMemo(() => {
+    if (sessionKind !== "display" || !remotePreparation.manifest) {
+      return poolCandidateResult.candidates;
+    }
+    // Keep the live current-media fallback while the controller's next
+    // structural manifest is still in flight. The remote renderer never reads
+    // controller-local PouchDB state.
+    const currentFallback = poolCandidateResult.candidates.filter(
+      (candidate) => candidate.mediaKey === currentPoolMedia?.mediaKey,
+    );
+    const currentFallbackByKey = new Map(
+      currentFallback.map((candidate) => [candidate.mediaKey, candidate]),
+    );
+    const manifestCandidates = remoteManifestCandidates.map(
+      (candidate) => {
+        const fallback = currentFallbackByKey.get(candidate.mediaKey);
+        return fallback && isRendererLocalCandidate(fallback)
+          ? fallback
+          : candidate;
+      },
+    );
+    const manifestKeys = new Set(
+      remoteManifestCandidates.map((candidate) => candidate.mediaKey),
+    );
+    return selectElectronMediaSurfaceCandidates({
+      candidates: [
+        ...manifestCandidates,
+        ...currentFallback.filter(
+          (candidate) => !manifestKeys.has(candidate.mediaKey),
+        ),
+      ],
+      currentMediaKey: currentPoolMedia?.mediaKey,
+      currentItemId: mediaPlayback?.currentItemId,
+      protectedMediaKeys: protectedPoolMediaKeys,
+      maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
+    });
+  }, [
+    currentPoolMedia?.mediaKey,
+    mediaPlayback?.currentItemId,
+    mediaPlayback?.preparedSurfaceBudget,
+    poolCandidateResult.candidates,
+    protectedPoolMediaKeys,
+    remoteManifestCandidates,
+    remotePreparation.manifest,
+    sessionKind,
+  ]);
   const lifecycleRoute = mediaPlayback?.windowRole ?? "display-window";
   const lifecycleRole = mediaPlayback?.isEditor
     ? "editor-preview"
@@ -1036,8 +1150,8 @@ const DisplayBoxTransitionStage = ({
     if (timelineRef.current) return;
     const outgoingKey = state.lanes[state.activeLaneId]?.key;
     const incomingKey = incomingSnapshot.key;
-    const timeline = gsap.timeline({
-      onComplete: () => {
+    const timing = getDisplayTransitionTiming(transitionDurationMs);
+    const completeTransition = () => {
         if (animationGeneration !== requestGenerationRef.current) return;
         timelineRef.current = null;
         logVideoCue("transition.complete", {
@@ -1194,8 +1308,25 @@ const DisplayBoxTransitionStage = ({
             mediaAnchorLaneId: currentIncomingLaneId,
           };
         });
-      },
-    });
+      };
+
+    // A cut still goes through the same readiness and lane-settle path, but it
+    // must not create a zero-length GSAP timeline or leave stale opacity on a
+    // lane that React is about to reuse.
+    if (timing.durationSeconds === 0) {
+      if (animateMedia && outgoingMedia && incomingMedia) {
+        gsap.set(outgoingMedia, { opacity: 0 });
+        gsap.set(incomingMedia, { opacity: 1 });
+      }
+      if (animateContent && outgoingContent && incomingContent) {
+        gsap.set(outgoingContent, { opacity: 0 });
+        gsap.set(incomingContent, { opacity: 1 });
+      }
+      completeTransition();
+      return;
+    }
+
+    const timeline = gsap.timeline({ onComplete: completeTransition });
     timelineRef.current = timeline;
     timeline.addLabel("crossfade", 0);
 
@@ -1207,7 +1338,7 @@ const DisplayBoxTransitionStage = ({
         { opacity: 1 },
         {
           opacity: 0,
-          duration: TRANSITION_DURATION_SECONDS,
+          duration: timing.durationSeconds,
           ease: TRANSITION_EASE,
         },
         "crossfade",
@@ -1217,7 +1348,7 @@ const DisplayBoxTransitionStage = ({
         { opacity: 0 },
         {
           opacity: 1,
-          duration: TRANSITION_DURATION_SECONDS,
+          duration: timing.durationSeconds,
           ease: TRANSITION_EASE,
         },
         "crossfade",
@@ -1230,7 +1361,7 @@ const DisplayBoxTransitionStage = ({
       timeline.fromTo(
         outgoingContent,
         { opacity: 1 },
-        { opacity: 0, duration: TRANSITION_DURATION_SECONDS, ease: TRANSITION_EASE },
+        { opacity: 0, duration: timing.durationSeconds, ease: TRANSITION_EASE },
         "crossfade",
       );
       timeline.fromTo(
@@ -1238,10 +1369,10 @@ const DisplayBoxTransitionStage = ({
         { opacity: 0 },
         {
           opacity: 1,
-          duration: TRANSITION_DURATION_SECONDS,
+          duration: timing.incomingContentDurationSeconds,
           ease: TRANSITION_EASE,
         },
-        `crossfade+=${CONTENT_INCOMING_OFFSET_SECONDS}`,
+        `crossfade+=${timing.incomingContentOffsetSeconds}`,
       );
     }
 
@@ -1257,6 +1388,7 @@ const DisplayBoxTransitionStage = ({
     state.phase,
     state.requestedKey,
     snapshot.key,
+    transitionDurationMs,
   ]);
 
   const hasFullFrameMedia = (laneSnapshot: DisplayBoxTransitionSnapshot) =>
@@ -1481,6 +1613,16 @@ const DisplayBoxTransitionStage = ({
           onSurfaceElement={reportPreparedMediaElement}
           discovery={poolCandidateResult.discovery}
           poolCapacity={poolCandidateResult.poolCapacity}
+          transitionDurationMs={normalizeTransitionDurationMs(
+            transitionDurationMs,
+          )}
+          preparationSource={
+            sessionKind === "display" ? "server-manifest" : "local-pouchdb"
+          }
+          manifestRevision={remotePreparation.manifest?.revision}
+          manifestOutlineId={remotePreparation.manifest?.outlineId}
+          manifestOutlineName={remotePreparation.manifest?.outlineName}
+          manifestPublishedAt={remotePreparation.manifest?.publishedAt}
           transitionStart={transitionStart}
           transitionComplete={transitionComplete}
           lastSendPath={lastSendPath}

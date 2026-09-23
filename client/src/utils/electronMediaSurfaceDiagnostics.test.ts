@@ -5,6 +5,10 @@ describe("electronMediaSurfaceDiagnostics", () => {
     const result = summarizeElectronMediaSurfaceDiagnostics({
       outputId: "projector",
       windowRole: "projector",
+      transitionDurationMs: 750,
+      preparationSource: "server-manifest",
+      manifestRevision: 3,
+      manifestOutlineId: "outline-1",
       candidateCount: 8,
       candidateDetails: [],
       evictions: [],
@@ -24,6 +28,10 @@ describe("electronMediaSurfaceDiagnostics", () => {
       playingCount: 1,
       resettingCount: 0,
       errorCount: 1,
+      transitionDurationMs: 750,
+      preparationSource: "server-manifest",
+      manifestRevision: 3,
+      manifestOutlineId: "outline-1",
     });
   });
 });

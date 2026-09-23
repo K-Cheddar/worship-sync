@@ -1596,6 +1596,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               showNextSlide={showNextSlide && (nextBoxes?.length ?? 0) > 0}
               showBackground={showBackground}
               shouldAnimate={shouldAnimate}
+              transitionDurationMs={resolvedDisplaySettings.transitionDurationMs}
               effectiveWidth={effectiveWidth}
               time={time}
               timerInfo={timerInfo}
@@ -1622,6 +1623,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             <DisplayBoxTransitionStage
               snapshot={displayBoxTransitionSnapshot}
               shouldAnimate={shouldAnimate}
+              transitionDurationMs={resolvedDisplaySettings.transitionDurationMs}
               mediaPlayback={laneMediaPlayback}
               renderLane={(
                 laneSnapshot,

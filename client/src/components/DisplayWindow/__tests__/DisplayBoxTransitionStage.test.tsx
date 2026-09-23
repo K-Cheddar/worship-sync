@@ -373,6 +373,10 @@ describe("DisplayBoxTransitionStage", () => {
       opacity: "0",
     });
 
+    mockReadinessByMedia.set("remote:pool-b", {
+      paintReady: false,
+      livePaintReady: false,
+    });
     rerender(
       <DisplayBoxTransitionStage
         snapshot={second}
@@ -415,12 +419,11 @@ describe("DisplayBoxTransitionStage", () => {
         "animating",
       ),
     );
-    expect(
-      mockTimeline.fromTo.mock.calls.some(([element]) =>
-        (element as HTMLElement).getAttribute("data-testid") ===
-        "display-box-transition-media-b",
-      ),
-    ).toBe(true);
+    const adoptedSurface = screen.getByTestId("electron-media-surface-remote:pool-b");
+    expect(mockTimeline.fromTo.mock.calls.some(([element]) => element === adoptedSurface)).toBe(
+      true,
+    );
+    expect(adoptedSurface.style.opacity).toBe("");
     expect(
       screen.getByTestId("electron-media-surface-video-remote:pool-b"),
     ).toHaveProperty("muted", true);
@@ -441,13 +444,14 @@ describe("DisplayBoxTransitionStage", () => {
       />,
     );
     expect(mockTimeline.fromTo).toHaveBeenCalledTimes(fadeCount);
+    expect(adoptedSurface.style.opacity).toBe("");
 
     act(() => mockTimelineComplete?.());
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
       "idle",
     );
-    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
     expect(screen.getByTestId("electron-media-surface-remote:pool-b")).toBeInTheDocument();
 
     rerender(
@@ -473,8 +477,30 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-mode",
       "content",
     );
-    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-transition-media-b")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("electron-media-surface-remote:pool-b")).toHaveLength(1);
+
+    // Disposing the adopted pool surface must release ownership so the lane
+    // can immediately return to its normal fallback renderer.
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={{ ...second, key: "pool-b-disposed" }}
+        shouldAnimate
+        mediaPlayback={{
+          outputId: "projector",
+          windowRole: "projector",
+          currentItemId: "item-b",
+          playbackRole: "output",
+          showBackground: false,
+          fileVideoAudioEnabled: true,
+        }}
+        renderLane={readyRenderLane()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("electron-media-surface-remote:pool-b")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("display-box-transition-media-b")).toBeInTheDocument();
   });
 
   it("keeps the pool disabled when the resolved display does not paint backgrounds", () => {
@@ -1159,6 +1185,34 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-mode",
       "full",
+    );
+  });
+
+  it("settles a zero-duration transition without creating a GSAP timeline", () => {
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={oldSnapshot}
+        shouldAnimate
+        transitionDurationMs={0}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={newSnapshot}
+        shouldAnimate
+        transitionDurationMs={0}
+        renderLane={readyRenderLane()}
+      />,
+    );
+
+    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("content-Old")).not.toBeInTheDocument();
+    expect(screen.getByTestId("content-New")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
     );
   });
 

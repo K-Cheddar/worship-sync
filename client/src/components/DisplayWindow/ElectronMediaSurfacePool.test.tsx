@@ -920,6 +920,118 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
+  it("keeps a READY surface through a same-media remote-to-cache promotion", async () => {
+    (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(null);
+    const remoteSource = "https://cdn.example.com/clip.mp4";
+    const cachedSource = "media-cache://clip.mp4";
+    const remoteCandidate: ElectronMediaSurfaceCandidate = {
+      ...candidate,
+      source: remoteSource,
+      originalSource: remoteSource,
+      sourceKind: "remote",
+    };
+    const cachedCandidate: ElectronMediaSurfaceCandidate = {
+      ...remoteCandidate,
+      source: cachedSource,
+      sourceKind: "cache",
+    };
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const makeView = (source: string, shouldPlay: boolean) => ({
+      ...view(shouldPlay),
+      source,
+    });
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[remoteCandidate]}
+        views={[makeView(remoteSource, false)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    const surface = screen.getByTestId("electron-media-surface-remote:clip");
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+    const falseCountBeforePromotion = onReadyChange.mock.calls.filter(
+      ([, ready]) => ready === false,
+    ).length;
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[cachedCandidate]}
+        views={[makeView(cachedSource, false)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toBe(surface);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+    expect(surface).toHaveAttribute("data-prepared-state", "ready");
+    expect(onReadyChange.mock.calls.filter(([, ready]) => ready === false)).toHaveLength(
+      falseCountBeforePromotion,
+    );
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[cachedCandidate]}
+        views={[makeView(cachedSource, true)]}
+        onReadyChange={onReadyChange}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+    await waitFor(() => expect(surface).toHaveAttribute("data-prepared-state", "playing"));
+  });
+
+  it("omits React opacity ownership when the view delegates to GSAP", async () => {
+    const delegatedView: ElectronMediaSurfaceView = {
+      ...view(false),
+      opacity: undefined,
+    };
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[delegatedView]}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "ready",
+      ),
+    );
+    const surface = screen.getByTestId("electron-media-surface-remote:clip");
+    expect(surface.style.opacity).toBe("");
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[delegatedView]}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    expect(surface.style.opacity).toBe("");
+  });
+
   it("keeps the active source frozen until playback intent ends", async () => {
     (window.electronAPI?.getLocalMediaPath as jest.Mock).mockResolvedValue(
       null,
@@ -937,14 +1049,16 @@ describe("ElectronMediaSurfacePool", () => {
       volume: 1,
     });
     const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
     const { rerender } = render(
       <ElectronMediaSurfacePool
         enabled
         candidates={[{ ...candidate, source: firstSource }]}
         views={[makeView(firstSource, true)]}
         onReadyChange={onReadyChange}
-        onFirstAdvancingFrameChange={jest.fn()}
-        onSurfaceElement={jest.fn()}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
       />,
     );
 
@@ -963,8 +1077,8 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[{ ...candidate, source: secondSource }]}
         views={[makeView(secondSource, true)]}
         onReadyChange={onReadyChange}
-        onFirstAdvancingFrameChange={jest.fn()}
-        onSurfaceElement={jest.fn()}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
       />,
     );
 
@@ -979,8 +1093,8 @@ describe("ElectronMediaSurfacePool", () => {
         candidates={[{ ...candidate, source: secondSource }]}
         views={[makeView(secondSource, false)]}
         onReadyChange={onReadyChange}
-        onFirstAdvancingFrameChange={jest.fn()}
-        onSurfaceElement={jest.fn()}
+        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
       />,
     );
 

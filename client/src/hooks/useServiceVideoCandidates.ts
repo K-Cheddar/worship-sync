@@ -39,6 +39,7 @@ import {
   type ElectronMediaDiscoveryRenderer,
 } from "../utils/electronMediaSurfaceDiagnostics";
 import { DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET } from "../utils/electronMediaSurfacePool";
+import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -213,6 +214,9 @@ const buildVideoDiscovery = async ({
   if (!mediaKey) return {};
 
   const originalSource = media.background;
+  const transportSource = isTransportSafeMediaUrl(media.localVideoFile?.cloudUrl)
+    ? media.localVideoFile?.cloudUrl
+    : undefined;
   const resolvedSource = await resolveFiniteSource(originalSource, cacheMap);
   if (!resolvedSource) {
     const isCacheableMux =
@@ -243,6 +247,7 @@ const buildVideoDiscovery = async ({
       diagnostic: {
         mediaKey,
         originalSource,
+        transportSource,
         sourceKind: getSourceKind(originalSource),
         ...state,
         itemId,
@@ -282,6 +287,7 @@ const buildVideoDiscovery = async ({
   const diagnostic: ElectronMediaSurfaceCandidateDiagnostic = {
     mediaKey,
     originalSource,
+    transportSource,
     resolvedSource,
     sourceKind,
     ...state,
@@ -1025,6 +1031,9 @@ export const useServiceVideoCandidates = ({
         videos: [...videos.values()].map((diagnostic) => ({
           mediaKey: diagnostic.mediaKey,
           source: diagnostic.resolvedSource ?? diagnostic.originalSource,
+          originalSource: diagnostic.originalSource,
+          transportSource: diagnostic.transportSource,
+          resolvedSource: diagnostic.resolvedSource,
           sourceKind: diagnostic.sourceKind,
           status: diagnostic.status,
           cacheStatus: diagnostic.cacheStatus,

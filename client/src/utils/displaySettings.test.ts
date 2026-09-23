@@ -26,6 +26,7 @@ describe("getApplicableSettingKeys", () => {
     expect(getApplicableSettingKeys("stream")).toEqual([
       "localVideoAudioEnabled",
       "localVideoVolume",
+      "transitionDurationMs",
     ]);
   });
 
@@ -96,6 +97,18 @@ describe("normalizeDisplaySettings", () => {
     ).toEqual({ localVideoVolume: 0 });
   });
 
+  it("clamps transition duration to the supported range", () => {
+    expect(
+      normalizeDisplaySettings({ transitionDurationMs: -10 }, "projector"),
+    ).toEqual({ transitionDurationMs: 0 });
+    expect(
+      normalizeDisplaySettings({ transitionDurationMs: 9999 }, "monitor"),
+    ).toEqual({ transitionDurationMs: 3000 });
+    expect(
+      normalizeDisplaySettings({ transitionDurationMs: "bad" }, "stream"),
+    ).toEqual({ transitionDurationMs: 500 });
+  });
+
   it("returns undefined for empty or malformed input", () => {
     expect(normalizeDisplaySettings(null, "monitor")).toBeUndefined();
     expect(normalizeDisplaySettings({}, "monitor")).toBeUndefined();
@@ -110,6 +123,14 @@ describe("resolveDisplaySettings", () => {
     );
   });
 
+  it("defaults transitions to 500ms and preserves an output value", () => {
+    expect(resolveDisplaySettings(undefined).transitionDurationMs).toBe(500);
+    expect(
+      resolveDisplaySettings({ transitionDurationMs: 125 }, undefined, "projector")
+        .transitionDurationMs,
+    ).toBe(125);
+  });
+
   it("uses the display default when the screen has no opinion", () => {
     expect(resolveDisplaySettings({ showClock: false }).showClock).toBe(false);
   });
@@ -120,6 +141,16 @@ describe("resolveDisplaySettings", () => {
     expect(
       resolveDisplaySettings(outputDefaults, { showClock: true }).showClock,
     ).toBe(true);
+  });
+
+  it("keeps transition timing at the output level", () => {
+    expect(
+      resolveDisplaySettings(
+        { transitionDurationMs: 900 },
+        { transitionDurationMs: 50 },
+        "projector",
+      ).transitionDurationMs,
+    ).toBe(900);
   });
 
   it("merges per field rather than wholesale", () => {

@@ -32,6 +32,7 @@ export type ElectronMediaSurfaceView = {
   mediaKey: string;
   source: string;
   videoBox: Box;
+  /** Omit while GSAP owns the surface opacity during a transition. */
   opacity?: number;
   zIndex: number;
   shouldPlay: boolean;

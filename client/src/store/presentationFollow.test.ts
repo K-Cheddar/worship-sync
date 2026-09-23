@@ -101,6 +101,43 @@ describe("resolving a followed display", () => {
     );
   });
 
+  it("carries the source video identity and playback cue into the follower", () => {
+    let state = baseState();
+    state = follow(state, "out_lobby", "projector");
+    const videoPlayback = {
+      mediaKey: "remote:sermon-video",
+      positionSeconds: 12.5,
+      paused: false,
+      atServerMs: 1000,
+      generation: 7,
+      applySeek: true,
+    };
+    state = reducer(
+      state,
+      updatePresentation({
+        ...slide("Sermon video"),
+        videoPlayback,
+        outputIds: ["projector"],
+      }),
+    ) as PresentationState;
+
+    const resolved = selectResolvedOutputSlot(wrap(state), "out_lobby");
+    expect(resolved.info.videoPlayback).toEqual(videoPlayback);
+    expect(resolved.info.slide?.id).toBe("slide-Sermon video");
+
+    state = reducer(
+      state,
+      updatePresentation({
+        ...slide("Cleared"),
+        videoPlayback: undefined,
+        outputIds: ["projector"],
+      }),
+    ) as PresentationState;
+    expect(
+      selectResolvedOutputSlot(wrap(state), "out_lobby").info.videoPlayback,
+    ).toBeUndefined();
+  });
+
   it("returns an existing slot object, so display windows do not re-render on every read", () => {
     let state = baseState();
     state = follow(state, "out_lobby", "projector");

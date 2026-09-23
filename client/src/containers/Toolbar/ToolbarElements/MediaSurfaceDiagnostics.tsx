@@ -126,6 +126,20 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                 <p className="mb-3 text-xs text-gray-400">{displayName(entry)}</p>
               )}
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                <Metric
+                  label="Preparation source"
+                  value={
+                    entry.preparationSource === "server-manifest"
+                      ? "server manifest"
+                      : entry.preparationSource === "local-pouchdb"
+                        ? "local PouchDB"
+                        : "—"
+                  }
+                />
+                <Metric label="Transition" value={entry.transitionDurationMs == null ? "—" : `${entry.transitionDurationMs}ms`} />
+                <Metric label="Manifest outline" value={entry.manifestOutlineName || entry.manifestOutlineId || "—"} />
+                <Metric label="Manifest revision" value={entry.manifestRevision ?? "—"} />
+                <Metric label="Manifest generated" value={entry.manifestPublishedAt ? new Date(entry.manifestPublishedAt).toLocaleString() : "—"} />
                 <Metric label="Controller selected outline" value={selectedOutline?.name || "—"} />
                 <Metric label="Controller selected ID" value={selectedOutline?._id || "—"} />
                 <Metric label="Controller selected scope" value={selectedOutlineScope || "—"} />

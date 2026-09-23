@@ -1,13 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getExternalResourceResolution } from "../../api/auth";
+import * as openExternalUrlModule from "../../utils/openExternalUrl";
 import ContentPreviewDialog from "./ContentPreviewDialog";
 
 jest.mock("../../api/auth", () => ({
   getExternalResourceResolution: jest.fn(),
 }));
 
+jest.mock("../../utils/openExternalUrl", () => ({
+  openExternalUrl: jest.fn(),
+}));
+
 const mockGetExternalResourceResolution = jest.mocked(getExternalResourceResolution);
+const mockOpenExternalUrl = jest.mocked(openExternalUrlModule.openExternalUrl);
 
 const dropboxMp4Url =
   "https://www.dropbox.com/scl/fi/abc123/Pathfinder-Day-Ingles-1.mp4?rlkey=secret&st=abc&dl=0";
@@ -25,6 +31,11 @@ const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["res
 describe("ContentPreviewDialog", () => {
   beforeEach(() => {
     mockGetExternalResourceResolution.mockReset();
+    mockOpenExternalUrl.mockReset();
+    mockOpenExternalUrl.mockImplementation(async (url) => {
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      return Boolean(opened);
+    });
     mockGetExternalResourceResolution.mockImplementation(async (url) => {
       const isWeb = /page$/i.test(url);
       const isDropbox = url.includes("dropbox.com");
@@ -85,7 +96,7 @@ describe("ContentPreviewDialog", () => {
     expect(screen.getByText("Dropbox • Video")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
-    expect(open).toHaveBeenCalledWith(dropboxMp4Url, "_blank", "noopener,noreferrer");
+    await waitFor(() => expect(open).toHaveBeenCalledWith(dropboxMp4Url, "_blank", "noopener,noreferrer"));
   });
 
   it("uses the existing YouTube player", async () => {
@@ -118,7 +129,7 @@ describe("ContentPreviewDialog", () => {
 
     expect(await screen.findByText("This site doesn’t allow an embedded preview.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
-    expect(open).toHaveBeenCalledWith("https://example.test/page", "_blank", "noopener,noreferrer");
+    await waitFor(() => expect(open).toHaveBeenCalledWith("https://example.test/page", "_blank", "noopener,noreferrer"));
     jest.useRealTimers();
   });
 
@@ -145,6 +156,46 @@ describe("ContentPreviewDialog", () => {
     view.rerender(<ContentPreviewDialog resource={{ id: "unsafe-1", title: "Unsafe", url: unsafeUrl }} onClose={jest.fn()} />);
     expect(await screen.findByText("This resource does not contain a previewable link.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open in new tab" })).not.toBeInTheDocument();
+  });
+
+  it("shows pending state and prevents duplicate opening or copying", async () => {
+    const user = userEvent.setup();
+    let resolveOpen: (opened: boolean) => void = () => undefined;
+    const openPromise = new Promise<boolean>((resolve) => {
+      resolveOpen = resolve;
+    });
+    mockOpenExternalUrl.mockReturnValueOnce(openPromise);
+
+    let resolveCopy: () => void = () => undefined;
+    const copyPromise = new Promise<void>((resolve) => {
+      resolveCopy = resolve;
+    });
+    const writeText = jest.fn().mockReturnValue(copyPromise);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderPreview({ id: "web-1", title: "Pending actions", url: "https://example.test/page" });
+
+    const openButton = screen.getByRole("button", { name: "Open in new tab" });
+    await user.click(openButton);
+    expect(openButton).toBeDisabled();
+    expect(openButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("Opening…")).toBeInTheDocument();
+    await user.click(openButton);
+    expect(mockOpenExternalUrl).toHaveBeenCalledTimes(1);
+
+    resolveOpen(true);
+    await waitFor(() => expect(openButton).not.toBeDisabled());
+
+    const copyButton = screen.getByRole("button", { name: "Copy link" });
+    await user.click(copyButton);
+    expect(copyButton).toBeDisabled();
+    expect(copyButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("Copying…")).toBeInTheDocument();
+    await user.click(copyButton);
+    expect(writeText).toHaveBeenCalledTimes(1);
+
+    resolveCopy();
+    await waitFor(() => expect(copyButton).not.toBeDisabled());
+    expect(copyButton).toHaveTextContent("Copied");
   });
 
   it("shows loading while a private resource URL resolves and ignores a rejected resolver", async () => {
@@ -185,6 +236,6 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
     expect(screen.getByText("Preview service is unavailable.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
-    expect(open).toHaveBeenCalledWith("https://cdn.example.test/clip.mp4", "_blank", "noopener,noreferrer");
+    await waitFor(() => expect(open).toHaveBeenCalledWith("https://cdn.example.test/clip.mp4", "_blank", "noopener,noreferrer"));
   });
 });

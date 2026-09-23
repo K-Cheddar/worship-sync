@@ -42,6 +42,11 @@ export type ElectronMediaDiscoveryRenderer = "projector" | "editor";
 export type ElectronMediaDiscoveryVideo = {
   mediaKey: string;
   source: string;
+  /** Original portable source before a renderer-local cache/path adapter. */
+  originalSource?: string;
+  /** Cloud-backed source for a file that is local on the controller. */
+  transportSource?: string;
+  resolvedSource?: string;
   sourceKind: ElectronMediaCandidateSourceKind;
   status: ElectronMediaCandidateStatus;
   cacheStatus: ElectronMediaCandidateCacheStatus;
@@ -78,6 +83,7 @@ export type ElectronMediaDiscovery = {
 export type ElectronMediaSurfaceCandidateDiagnostic = {
   mediaKey: string;
   originalSource: string;
+  transportSource?: string;
   resolvedSource?: string;
   sourceKind: ElectronMediaCandidateSourceKind;
   status: ElectronMediaCandidateStatus;
@@ -169,6 +175,12 @@ export type ElectronMediaSurfaceDiagnostic = {
 export type ElectronMediaSurfacePoolDiagnostics = {
   outputId?: string;
   windowRole: string;
+  transitionDurationMs?: number;
+  preparationSource?: "local-pouchdb" | "server-manifest";
+  manifestRevision?: number;
+  manifestOutlineId?: string | null;
+  manifestOutlineName?: string;
+  manifestPublishedAt?: number;
   candidateCount: number;
   discoveredCount: number;
   finiteVideoCount?: number;
@@ -205,6 +217,12 @@ export const ELECTRON_MEDIA_SURFACE_DIAGNOSTICS_CHANNEL =
 export const summarizeElectronMediaSurfaceDiagnostics = ({
   outputId,
   windowRole,
+  transitionDurationMs,
+  preparationSource,
+  manifestRevision,
+  manifestOutlineId,
+  manifestOutlineName,
+  manifestPublishedAt,
   candidateCount,
   discoveredCount,
   pendingCacheCount,
@@ -253,6 +271,12 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
 }): ElectronMediaSurfacePoolDiagnostics => ({
   outputId,
   windowRole,
+  transitionDurationMs,
+  preparationSource,
+  manifestRevision,
+  manifestOutlineId,
+  manifestOutlineName,
+  manifestPublishedAt,
   candidateCount,
   discoveredCount:
     discoveredCount ?? candidateDetails?.length ?? candidateCount,

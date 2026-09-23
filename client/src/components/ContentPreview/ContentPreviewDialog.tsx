@@ -8,7 +8,7 @@ import {
   LoaderCircle,
   Video,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
@@ -86,6 +86,9 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
   const [renderStatus, setRenderStatus] = useState<RenderStatus>("loading");
   const [actionError, setActionError] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [openingExternal, setOpeningExternal] = useState(false);
+  const [copyingLink, setCopyingLink] = useState(false);
+  const actionGenerationRef = useRef(0);
 
   const resourceKey = resource
     ? `${resource.id}:${resource.url || ""}:${resource.mediaId || ""}:${resource.mimeType || ""}`
@@ -105,6 +108,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
   const canOpenExternally = Boolean(getSafeHttpUrl(externalUrl));
 
   useEffect(() => {
+    actionGenerationRef.current += 1;
     if (!resource) return;
 
     let active = true;
@@ -114,6 +118,8 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     setResolveError("");
     setActionError("");
     setCopyState("idle");
+    setOpeningExternal(false);
+    setCopyingLink(false);
     setRenderStatus("loading");
 
     if (!resource.resolveSource) {
@@ -144,6 +150,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       }
       return () => {
         active = false;
+        actionGenerationRef.current += 1;
       };
     }
 
@@ -167,6 +174,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
 
     return () => {
       active = false;
+      actionGenerationRef.current += 1;
     };
   }, [resource, resourceKey]);
 
@@ -196,22 +204,43 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
   }, [kind, renderStatus, resolveError, resolving, sourceUrl]);
 
   const handleOpenExternal = async () => {
-    if (!externalUrl) return;
+    if (!externalUrl || openingExternal) return;
+    const actionGeneration = actionGenerationRef.current;
+    setOpeningExternal(true);
     setActionError("");
-    const opened = await openExternalUrl(externalUrl, { allowArbitraryHttps: true });
-    if (!opened) setActionError("The external browser could not be opened.");
+    try {
+      const opened = await openExternalUrl(externalUrl, { allowArbitraryHttps: true });
+      if (actionGenerationRef.current === actionGeneration && !opened) {
+        setActionError("The external browser could not be opened.");
+      }
+    } catch {
+      if (actionGenerationRef.current === actionGeneration) {
+        setActionError("The external browser could not be opened.");
+      }
+    } finally {
+      if (actionGenerationRef.current === actionGeneration) setOpeningExternal(false);
+    }
   };
 
   const handleCopyLink = async () => {
+    if (copyingLink) return;
+    const actionGeneration = actionGenerationRef.current;
+    setCopyingLink(true);
+    setCopyState("idle");
     if (!externalUrl || !navigator.clipboard?.writeText) {
-      setCopyState("error");
+      if (actionGenerationRef.current === actionGeneration) {
+        setCopyState("error");
+        setCopyingLink(false);
+      }
       return;
     }
     try {
       await navigator.clipboard.writeText(externalUrl);
-      setCopyState("copied");
+      if (actionGenerationRef.current === actionGeneration) setCopyState("copied");
     } catch {
-      setCopyState("error");
+      if (actionGenerationRef.current === actionGeneration) setCopyState("error");
+    } finally {
+      if (actionGenerationRef.current === actionGeneration) setCopyingLink(false);
     }
   };
 
@@ -328,14 +357,14 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       headerAction={(
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {canOpenExternally ? (
-            <Button type="button" variant="secondary" svg={ExternalLink} className="max-md:min-h-0" onClick={() => void handleOpenExternal()}>
-              Open in new tab
+            <Button type="button" variant="secondary" svg={ExternalLink} className="max-md:min-h-0" isLoading={openingExternal} disabled={openingExternal} onClick={() => void handleOpenExternal()}>
+              {openingExternal ? "Opening…" : "Open in new tab"}
             </Button>
           ) : null}
           {canOpenExternally ? (
-            <Button type="button" variant="tertiary" svg={Copy} aria-label="Copy link" className="max-md:min-h-0" onClick={() => void handleCopyLink()}>
+            <Button type="button" variant="tertiary" svg={Copy} aria-label={copyingLink ? "Copying link" : "Copy link"} className="max-md:min-h-0" isLoading={copyingLink} disabled={copyingLink} onClick={() => void handleCopyLink()}>
               <span className="sr-only">Copy link</span>
-              {copyState === "copied" ? "Copied" : "Copy"}
+              {copyingLink ? "Copying…" : copyState === "copied" ? "Copied" : "Copy"}
             </Button>
           ) : null}
         </div>

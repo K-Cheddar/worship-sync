@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { act } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import TransmitHandler from "./TransmitHandler";
@@ -347,6 +348,9 @@ describe("mirror controls on an auxiliary controller", () => {
     const stopButton = preview.getByRole("button", {
       name: "Stop mirroring",
     });
+    expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
+      "Mirroring Main",
+    );
     expect(stopButton).toHaveAttribute("aria-pressed", "true");
     expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
       "projector",
@@ -357,6 +361,39 @@ describe("mirror controls on an auxiliary controller", () => {
     expect(
       preview.getByRole("button", { name: "Mirror Main" }),
     ).toHaveAttribute("aria-pressed", "false");
+    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
+      "",
+    );
+  });
+
+  it("keeps an unavailable mirror visible so the operator can stop it", async () => {
+    const user = userEvent.setup();
+    const store = createAuxStore();
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    const preview = within(screen.getByTestId("preview-Lobby"));
+    await user.click(preview.getByRole("button", { name: "Mirror Main" }));
+    act(() => {
+      store.dispatch(
+        setDisplayOutputsFromRemote({
+          projector: { ...REGISTRY.projector, enabled: false },
+          out_lobby: REGISTRY.out_lobby,
+          monitor: REGISTRY.monitor,
+          stream: REGISTRY.stream,
+        }),
+      );
+    });
+
+    expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
+      "Mirror source unavailable",
+    );
+    await user.click(preview.getByRole("button", { name: "Stop mirroring" }));
     expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
       "",
     );

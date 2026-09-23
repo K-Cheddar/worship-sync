@@ -75,6 +75,12 @@ type ElectronMediaSurfacePoolProps = {
   posterShown?: boolean;
   outputId?: string;
   windowRole?: string;
+  transitionDurationMs?: number;
+  preparationSource?: "local-pouchdb" | "server-manifest";
+  manifestRevision?: number;
+  manifestOutlineId?: string | null;
+  manifestOutlineName?: string;
+  manifestPublishedAt?: number;
   discovery?: ElectronMediaDiscovery;
   poolCapacity?: number;
 };
@@ -393,7 +399,12 @@ const PreparedSurface = ({
   const mountedRef = useRef(true);
   const surfaceElementRef = useRef<HTMLDivElement>(null);
   const resolvedSourceRef = useRef<string | undefined>(undefined);
+  const preparedResolutionRef = useRef<string | undefined>(undefined);
   const frozenSourceRef = useRef<string | undefined>(undefined);
+  const frozenSourceKindRef = useRef<
+    ElectronMediaSurfaceCandidate["sourceKind"]
+  >(undefined);
+  const sourceAliasRef = useRef(candidate.originalSource ?? candidate.source);
   const pendingSourceRef = useRef<string | undefined>(undefined);
   const shouldPlayRef = useRef(view?.shouldPlay);
   const viewRef = useRef(view);
@@ -413,6 +424,33 @@ const PreparedSurface = ({
   onStatusChangeRef.current = onStatusChange;
   sourceKindRef.current = sourceKind;
   resolvedSourceRef.current = resolvedSource;
+
+  const isSameMediaCachePromotion = useCallback(
+    (
+      nextSource: string,
+      nextSourceKind: ElectronMediaSurfaceCandidate["sourceKind"],
+      nextOriginalSource: string | undefined,
+    ) => {
+      if (
+        nextSourceKind !== "cache" ||
+        !nextOriginalSource ||
+        !areEquivalentMediaSources(
+          nextOriginalSource,
+          sourceAliasRef.current,
+        )
+      ) {
+        return false;
+      }
+      // A changed cached representation is a real source change once the
+      // current surface is already backed by cached bytes. Keep the existing
+      // surface only for the first remote -> cache promotion.
+      return (
+        frozenSourceKindRef.current !== "cache" ||
+        areEquivalentMediaSources(nextSource, frozenSourceRef.current)
+      );
+    },
+    [],
+  );
 
   const publishLifecycleStatus = useCallback(
     (
@@ -558,6 +596,8 @@ const PreparedSurface = ({
       // cache promotion for this media key must not reprepare a valid surface
       // while the display stage owns it.
       frozenSourceRef.current = resolvedSource;
+      frozenSourceKindRef.current = sourceKindRef.current;
+      sourceAliasRef.current = candidate.originalSource ?? candidate.source;
       pendingSourceRef.current = undefined;
       onReadyChange(candidate.mediaKey, true);
       publishLifecycleStatus("ready-paused", { geometryReady: geometryReadyRef.current });
@@ -585,6 +625,8 @@ const PreparedSurface = ({
     }
   }, [
     candidate.mediaKey,
+    candidate.originalSource,
+    candidate.source,
     onPreparationFailure,
     enabled,
     onFirstAdvancingFrameChange,
@@ -867,7 +909,14 @@ const PreparedSurface = ({
     mountedRef.current = true;
     let active = true;
     if (frozenSourceRef.current) {
-      if (candidate.source !== frozenSourceRef.current) {
+      if (
+        candidate.source !== frozenSourceRef.current &&
+        !isSameMediaCachePromotion(
+          candidate.source,
+          candidate.sourceKind,
+          candidate.originalSource,
+        )
+      ) {
         pendingSourceRef.current = candidate.source;
       }
       return () => {
@@ -946,12 +995,23 @@ const PreparedSurface = ({
     };
   }, [
     candidate.mediaKey,
+    candidate.originalSource,
     candidate.source,
+    candidate.sourceKind,
+    isSameMediaCachePromotion,
     publishLifecycleStatus,
   ]);
 
   useEffect(() => {
-    if (!enabled || !resolvedSource) return;
+    if (
+      !enabled ||
+      !resolvedSource ||
+      frozenSourceRef.current ||
+      preparedResolutionRef.current === resolvedSource
+    ) {
+      return;
+    }
+    preparedResolutionRef.current = resolvedSource;
     void prepare();
   }, [enabled, prepare, resolvedSource]);
 
@@ -959,7 +1019,12 @@ const PreparedSurface = ({
     if (view?.shouldPlay) return;
     const pendingSource =
       pendingSourceRef.current ??
-      (candidate.source !== lifecycleSourceRef.current
+      (!isSameMediaCachePromotion(
+        candidate.source,
+        candidate.sourceKind,
+        candidate.originalSource,
+      ) &&
+      candidate.source !== lifecycleSourceRef.current
         ? candidate.source
         : undefined);
     if (!pendingSource) return;
@@ -974,7 +1039,13 @@ const PreparedSurface = ({
     return () => {
       active = false;
     };
-  }, [candidate.source, view?.shouldPlay]);
+  }, [
+    candidate.originalSource,
+    candidate.source,
+    candidate.sourceKind,
+    isSameMediaCachePromotion,
+    view?.shouldPlay,
+  ]);
 
   const hasView = view !== undefined;
 
@@ -1236,8 +1307,13 @@ const PreparedSurface = ({
     publishLifecycleStatus,
   ]);
 
-  const opacity = view?.opacity;
   const videoBox = view?.videoBox;
+  const opacityStyle: { opacity?: number } = {};
+  if (view === undefined) {
+    opacityStyle.opacity = 0;
+  } else if (view.opacity !== undefined) {
+    opacityStyle.opacity = view.opacity;
+  }
   const surfaceRef = useCallback(
     (element: HTMLDivElement | null) => {
       surfaceElementRef.current = element;
@@ -1255,7 +1331,7 @@ const PreparedSurface = ({
       data-media-lifecycle={lifecyclePhaseRef.current}
       data-source-kind={sourceKind}
       style={{
-        opacity: view ? opacity : 0,
+        ...opacityStyle,
         zIndex: view?.zIndex ?? 0,
         willChange: "opacity",
       }}
@@ -1302,6 +1378,12 @@ const ElectronMediaSurfacePool = ({
   posterShown,
   outputId,
   windowRole,
+  transitionDurationMs,
+  preparationSource,
+  manifestRevision,
+  manifestOutlineId,
+  manifestOutlineName,
+  manifestPublishedAt,
   discovery,
   poolCapacity,
 }: ElectronMediaSurfacePoolProps) => {
@@ -1623,6 +1705,12 @@ const ElectronMediaSurfacePool = ({
     const value = summarizeElectronMediaSurfaceDiagnostics({
       outputId,
       windowRole,
+      transitionDurationMs,
+      preparationSource,
+      manifestRevision,
+      manifestOutlineId,
+      manifestOutlineName,
+      manifestPublishedAt,
       candidateCount: currentCandidates.length,
       discoveredCount: details.length,
       pendingCacheCount: details.filter(
@@ -1696,6 +1784,12 @@ const ElectronMediaSurfacePool = ({
     rendererMetrics,
     transitionComplete,
     transitionStart,
+    transitionDurationMs,
+    preparationSource,
+    manifestRevision,
+    manifestOutlineId,
+    manifestOutlineName,
+    manifestPublishedAt,
     windowRole,
     discovery,
   ]);

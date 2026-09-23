@@ -47,11 +47,28 @@ const MirrorDisplayTile = ({
       ),
     [outputs, sourceOutputIds],
   );
+  const followingSource = outputs.find((output) => output.id === followingId);
+  const followingSourceAvailable = sources.some(
+    (source) => source.id === followingId,
+  );
 
-  if (sources.length === 0) return null;
+  if (sources.length === 0 && !followingId) return null;
 
   return (
-    <div className={cn("flex min-h-10 w-full items-center gap-2", className)}>
+    <div className={cn("flex min-h-10 w-full flex-wrap items-center gap-2", className)}>
+      {followingId && (
+        <p
+          className={cn(
+            "w-full text-xs",
+            followingSourceAvailable ? "text-gray-300" : "text-amber-300",
+          )}
+          data-testid={`mirror-status-${outputId}`}
+        >
+          {followingSourceAvailable && followingSource
+            ? `Mirroring ${followingSource.name}`
+            : "Mirror source unavailable"}
+        </p>
+      )}
       {sources.map((source) => (
         <Button
           key={source.id}
@@ -71,6 +88,20 @@ const MirrorDisplayTile = ({
           {followingId === source.id ? "Stop mirroring" : `Mirror ${source.name}`}
         </Button>
       ))}
+      {followingId && !followingSourceAvailable && (
+        <Button
+          svg={Link2Off}
+          variant="secondary"
+          className="min-w-0 flex-1 justify-center text-sm"
+          onClick={() =>
+            dispatch(
+              setOutputFollowing({ outputId, followingOutputId: "" }),
+            )
+          }
+        >
+          Stop mirroring
+        </Button>
+      )}
     </div>
   );
 };
