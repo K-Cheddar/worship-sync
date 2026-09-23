@@ -658,6 +658,8 @@ export type SmsDeliveryAttempt = {
   churchId: string;
   recipientType: "team_intake";
   recipientId: string;
+  /** Present on new attempts; legacy records are scoped by recipient lookup. */
+  formId?: string;
   memberId: string;
   provider: string;
   purpose: "initial" | "reminder";

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { AuthApiError, submitSmsConsent, verifySmsConsent } from "../api/auth";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import AuthScreenMain from "../components/AuthScreenMain";
@@ -24,6 +24,7 @@ const isValidUsPhone = (value: string) => {
 };
 
 const SmsOptIn = () => {
+  const { churchId = "" } = useParams<{ churchId: string }>();
   const [phoneNumber, setPhoneNumber] = useState("");
   const [consent, setConsent] = useState(false);
   const [phoneError, setPhoneError] = useState("");
@@ -53,7 +54,11 @@ const SmsOptIn = () => {
 
     setIsSubmitting(true);
     try {
-      await submitSmsConsent({ phoneNumber, consent: true });
+      if (!churchId) {
+        setErrorMessage("Open the SMS opt-in link provided by your church.");
+        return;
+      }
+      await submitSmsConsent(churchId, { phoneNumber, consent: true });
       setVerificationPending(true);
     } catch (error) {
       setErrorMessage(
@@ -76,7 +81,14 @@ const SmsOptIn = () => {
     }
     setIsVerifying(true);
     try {
-      await verifySmsConsent({ phoneNumber, code: verificationCode.trim() });
+      if (!churchId) {
+        setVerificationError("Open the SMS opt-in link provided by your church.");
+        return;
+      }
+      await verifySmsConsent(churchId, {
+        phoneNumber,
+        code: verificationCode.trim(),
+      });
       setDidOptIn(true);
       setVerificationPending(false);
     } catch (error) {
@@ -107,6 +119,11 @@ const SmsOptIn = () => {
             <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               SMS Messaging
             </h1>
+            {!churchId ? (
+              <p className="text-sm text-gray-300">
+                Open the SMS opt-in link provided by your church to continue.
+              </p>
+            ) : null}
           </div>
 
           {didOptIn ? (

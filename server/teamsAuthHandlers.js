@@ -52,6 +52,7 @@ import {
 import {
   normalizeSmsDeliveryStatus,
 } from "./smsDeliveryAttempts.js";
+import { resolveTwilioStatusCallbackUrl } from "./smsProvider.js";
 import {
   createTeamIntakeRecipientToken,
   decryptTeamIntakeRecipientToken,
@@ -150,7 +151,7 @@ export const createTeamsAuthHandlers = ({
   updateDocMapKeys,
   getUserByUid,
   getChurchById,
-  getSmsConsentForPhone = async () => null,
+  getSmsConsentForChurchPhone = async () => null,
   smsProviderFactory = getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail,
@@ -2767,7 +2768,7 @@ export const createTeamsAuthHandlers = ({
     return safeAttempt;
   };
 
-  const buildSmsEligibilityByMemberId = async (members) => {
+  const buildSmsEligibilityByMemberId = async (churchId, members) => {
     const phoneNumbers = [
       ...new Set(
         members
@@ -2785,7 +2786,7 @@ export const createTeamsAuthHandlers = ({
       await Promise.all(
         phoneNumbers.map(async (phoneNumber) => [
           phoneNumber,
-          await getSmsConsentForPhone(phoneNumber),
+          await getSmsConsentForChurchPhone(churchId, phoneNumber),
         ]),
       ),
     );
@@ -2800,7 +2801,11 @@ export const createTeamsAuthHandlers = ({
         }
         return [
           member.memberId,
-          resolveSmsMemberEligibility(member, consentByPhone.get(phoneNumber)),
+          resolveSmsMemberEligibility({
+            member,
+            churchId,
+            consent: consentByPhone.get(phoneNumber),
+          }),
         ];
       }),
     );
@@ -2943,7 +2948,6 @@ export const createTeamsAuthHandlers = ({
       rawIntakeForms,
       intakeSubmissions,
       intakeRecipients,
-      smsDeliveryAttempts,
     ] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
@@ -2999,14 +3003,11 @@ export const createTeamsAuthHandlers = ({
         churchId,
         { truncatedCollections },
       ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.smsDeliveryAttempts,
-        "attemptId",
-        churchId,
-        { truncatedCollections },
-      ),
     ]);
-    const smsEligibilityByMemberId = await buildSmsEligibilityByMemberId(members);
+    const smsEligibilityByMemberId = await buildSmsEligibilityByMemberId(
+      churchId,
+      members,
+    );
     const submissionCountByForm = new Map();
     intakeSubmissions.forEach((submission) => {
       submissionCountByForm.set(
@@ -3072,9 +3073,6 @@ export const createTeamsAuthHandlers = ({
       intakeForms,
       intakeSubmissions,
       intakeRecipients: intakeRecipients.map(sanitizeTeamIntakeRecipientForAdmin),
-      smsDeliveryAttempts: smsDeliveryAttempts
-        .map(sanitizeSmsDeliveryAttemptForAdmin)
-        .filter(Boolean),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -6799,6 +6797,69 @@ export const createTeamsAuthHandlers = ({
     },
 
     /**
+     * Delivery history is loaded only for the intake form the operator opened.
+     * Recipient IDs scope legacy attempts that predate the stored formId, while
+     * the church filter keeps the query tenant-safe and indexable.
+     */
+    async getTeamIntakeSmsAttempts(req, res) {
+      try {
+        await requireTeamsView(req, req.params.churchId);
+        const form = await getDoc(
+          COLLECTIONS.teamIntakeForms,
+          req.params.formId,
+        );
+        if (!form || form.churchId !== req.params.churchId) {
+          throw httpError(404, "Intake form not found.");
+        }
+        const recipients = await queryDocs(
+          COLLECTIONS.teamIntakeRecipients,
+          [
+            { field: "churchId", value: req.params.churchId },
+            { field: "formId", value: req.params.formId },
+          ],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT },
+        );
+        const recipientIds = recipients
+          .map((recipient) => String(recipient.recipientId || recipient.id || "").trim())
+          .filter(Boolean);
+        const attempts = [];
+        for (let index = 0; index < recipientIds.length; index += 30) {
+          const batch = recipientIds.slice(index, index + 30);
+          attempts.push(
+            ...(await queryDocs(
+              COLLECTIONS.smsDeliveryAttempts,
+              [
+                { field: "churchId", value: req.params.churchId },
+                { field: "recipientId", op: "in", value: batch },
+              ],
+              { limit: TEAM_COLLECTION_QUERY_LIMIT },
+            )),
+          );
+        }
+        const uniqueAttempts = new Map(
+          attempts.map((attempt) => [attempt.attemptId || attempt.id, attempt]),
+        );
+        return res.json({
+          success: true,
+          attempts: [...uniqueAttempts.values()]
+            .sort(
+              (a, b) =>
+                new Date(b.createdAt || 0).getTime() -
+                new Date(a.createdAt || 0).getTime(),
+            )
+            .map(sanitizeSmsDeliveryAttemptForAdmin)
+            .filter(Boolean),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load SMS delivery history.",
+        );
+      }
+    },
+
+    /**
      * Hydrates one schedule on demand, together with the other teams' schedules
      * that overlap its date window. The companions are what the grid needs to
      * warn "also scheduled on <team>" when assigning a member, so they must
@@ -8433,11 +8494,22 @@ export const createTeamsAuthHandlers = ({
           throw httpError(404, "Individual request not found.");
         }
         const { form, member } = await getTeamIntakeRecipientContext(recipient);
-        const preliminaryEligibility = resolveSmsMemberEligibility(member, null);
+        const preliminaryEligibility = resolveSmsMemberEligibility({
+          member,
+          churchId: req.params.churchId,
+          consent: null,
+        });
         const consent = preliminaryEligibility.phoneNumber
-          ? await getSmsConsentForPhone(preliminaryEligibility.phoneNumber)
+          ? await getSmsConsentForChurchPhone(
+              req.params.churchId,
+              preliminaryEligibility.phoneNumber,
+            )
           : null;
-        const eligibility = resolveSmsMemberEligibility(member, consent);
+        const eligibility = resolveSmsMemberEligibility({
+          member,
+          churchId: req.params.churchId,
+          consent,
+        });
         if (!eligibility.eligible) {
           const messages = {
             no_mobile: "This member does not have a valid mobile number.",
@@ -8454,6 +8526,7 @@ export const createTeamsAuthHandlers = ({
         if (!isChurchMessagingReady(config)) {
           throw httpError(503, "Church SMS messaging is not configured and enabled.");
         }
+        const statusCallbackUrl = resolveTwilioStatusCallbackUrl();
 
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
@@ -8472,6 +8545,7 @@ export const createTeamsAuthHandlers = ({
           churchId: req.params.churchId,
           recipientType: "team_intake",
           recipientId: recipient.recipientId,
+          formId: form.formId,
           memberId: member.memberId,
           phoneNumberSnapshot: eligibility.phoneNumber,
           provider: config.provider,
@@ -8495,9 +8569,7 @@ export const createTeamsAuthHandlers = ({
           const result = await provider.sendMessage({
             to: eligibility.phoneNumber,
             body: message.body,
-            statusCallbackUrl:
-              process.env.TWILIO_STATUS_CALLBACK_URL ||
-              `${APP_BASE_URL}/api/webhooks/twilio/sms-status`,
+            statusCallbackUrl,
           });
           const providerMessageId = String(result?.providerMessageId || "").trim();
           if (!providerMessageId) {
@@ -8524,7 +8596,9 @@ export const createTeamsAuthHandlers = ({
             recipient: sanitizeTeamIntakeRecipientForAdmin(ensured.recipient),
             attempt: sanitizeSmsDeliveryAttemptForAdmin(savedAttempt),
             message: {
+              encoding: message.encoding,
               characterCount: message.characterCount,
+              unitCount: message.unitCount,
               segmentCount: message.segmentCount,
             },
           });

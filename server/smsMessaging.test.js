@@ -9,11 +9,13 @@ import {
   isChurchMessagingReady,
   normalizeChurchMessagingConfig,
 } from "./churchMessagingConfig.js";
-import { buildTeamIntakeSms } from "./smsMessage.js";
+import { buildTeamIntakeSms, measureSmsMessage } from "./smsMessage.js";
 import {
   createFakeSmsProvider,
   createTwilioSmsProvider,
   normalizeTwilioStatus,
+  resolveTwilioAccountConfiguration,
+  resolveTwilioStatusCallbackUrl,
   validateTwilioWebhookSignature,
 } from "./smsProvider.js";
 import {
@@ -23,33 +25,82 @@ import {
 
 const member = (phoneNumber) => ({ memberId: "member_1", phoneNumber });
 
-test("SMS eligibility requires a phone-level opted-in consent", () => {
-  assert.equal(canSmsMember(member("(954) 555-1234"), null), false);
+test("SMS eligibility requires a church-scoped opted-in consent", () => {
+  assert.equal(
+    canSmsMember({
+      member: member("(954) 555-1234"),
+      churchId: "church_1",
+      consent: null,
+    }),
+    false,
+  );
   assert.deepEqual(
-    resolveSmsMemberEligibility(member("(954) 555-1234"), {
-      status: "opted_in",
+    resolveSmsMemberEligibility({
+      member: member("(954) 555-1234"),
+      churchId: "church_1",
+      consent: { churchId: "church_1", status: "opted_in" },
     }),
     { status: "enabled", eligible: true, phoneNumber: "+19545551234" },
   );
 });
 
-test("phone-level opt-out wins and applies to shared numbers without linking members", () => {
-  const consent = { status: "opted_out", optedOutAt: "2026-09-23T00:00:00.000Z" };
-  const first = resolveSmsMemberEligibility(member("+19545551234"), consent);
-  const second = resolveSmsMemberEligibility(
-    { memberId: "member_2", phoneNumber: "(954) 555-1234" },
+test("phone-level opt-out wins for every shared-number member in one church", () => {
+  const consent = {
+    churchId: "church_1",
+    status: "opted_out",
+    optedOutAt: "2026-09-23T00:00:00.000Z",
+  };
+  const first = resolveSmsMemberEligibility({
+    member: member("+19545551234"),
+    churchId: "church_1",
     consent,
-  );
+  });
+  const second = resolveSmsMemberEligibility({
+    member: { memberId: "member_2", phoneNumber: "(954) 555-1234" },
+    churchId: "church_1",
+    consent,
+  });
   assert.equal(first.status, "opted_out");
   assert.equal(second.status, "opted_out");
   assert.equal(first.memberId, undefined);
   assert.equal(second.memberId, undefined);
 });
 
-test("invalid and missing member phone numbers are not eligible", () => {
-  assert.equal(resolveSmsMemberEligibility(member(""), { status: "opted_in" }).status, "no_mobile");
+test("identical shared numbers remain independent between churches", () => {
+  const memberRecord = member("+19545551234");
   assert.equal(
-    resolveSmsMemberEligibility(member("+11235551234"), { status: "opted_in" }).status,
+    resolveSmsMemberEligibility({
+      member: memberRecord,
+      churchId: "church_a",
+      consent: { churchId: "church_a", status: "opted_in" },
+    }).status,
+    "enabled",
+  );
+  assert.equal(
+    resolveSmsMemberEligibility({
+      member: memberRecord,
+      churchId: "church_b",
+      consent: { churchId: "church_a", status: "opted_in" },
+    }).status,
+    "consent_needed",
+  );
+});
+
+test("invalid and missing member phone numbers are not eligible", () => {
+  assert.equal(
+    resolveSmsMemberEligibility({
+      member: member(""),
+      churchId: "church_1",
+      consent: { status: "opted_in" },
+    }).status,
+    "no_mobile",
+  );
+  assert.equal(
+    resolveSmsMemberEligibility({
+      member: member("+11235551234"),
+      churchId: "church_1",
+      consent: { status: "opted_in" },
+    }).status,
     "no_mobile",
   );
 });
@@ -66,6 +117,7 @@ test("church messaging config is server-side and only approved enabled configs s
   });
   assert.equal(isChurchMessagingReady(config), true);
   assert.equal(config.authToken, undefined);
+  assert.equal(config.twilioAccountSid, "AC123");
   assert.equal(
     isChurchMessagingReady({ ...config, registrationStatus: "pending" }),
     false,
@@ -85,6 +137,33 @@ test("centralized intake SMS contains a personalized URL and exposes segment len
   assert.equal(message.segmentCount, 1);
 });
 
+test("SMS measurement counts GSM-7 extension characters as two septets", () => {
+  assert.deepEqual(measureSmsMessage("A^B\\C\u20acD"), {
+    encoding: "gsm7",
+    characterCount: 7,
+    unitCount: 10,
+    segmentCount: 1,
+  });
+  assert.equal(measureSmsMessage("A".repeat(160)).segmentCount, 1);
+  assert.equal(measureSmsMessage("A".repeat(161)).segmentCount, 2);
+  assert.equal(measureSmsMessage("A".repeat(153)).segmentCount, 1);
+  assert.equal(measureSmsMessage("A".repeat(154)).segmentCount, 1);
+  assert.equal(measureSmsMessage("^".repeat(80)).segmentCount, 1);
+  assert.equal(measureSmsMessage("^".repeat(81)).segmentCount, 2);
+});
+
+test("SMS measurement uses UCS-2 units and concatenated limits for Unicode", () => {
+  assert.deepEqual(measureSmsMessage("\u{1f642}"), {
+    encoding: "ucs2",
+    characterCount: 1,
+    unitCount: 2,
+    segmentCount: 1,
+  });
+  assert.equal(measureSmsMessage("\u{1f642}".repeat(70)).segmentCount, 3);
+  assert.equal(measureSmsMessage("\u{1f642}".repeat(35)).segmentCount, 1);
+  assert.equal(measureSmsMessage("\u{1f642}".repeat(36)).segmentCount, 2);
+});
+
 test("fake provider is deterministic and Twilio responses normalize inside the provider boundary", async () => {
   const fake = createFakeSmsProvider();
   const result = await fake.sendMessage({ to: "+19545551234", body: "hello" });
@@ -94,18 +173,23 @@ test("fake provider is deterministic and Twilio responses normalize inside the p
   assert.equal(normalizeTwilioStatus("delivered"), "delivered");
 
   const created = [];
+  let factoryArgs;
   const provider = createTwilioSmsProvider({
-    accountSid: "AC123",
+    accountSid: "AC_subaccount",
+    parentAccountSid: "AC_parent",
     authToken: "token",
     messagingServiceId: "MG123",
-    clientFactory: () => ({
-      messages: {
-        create: async (input) => {
-          created.push(input);
-          return { sid: "SM123", status: "queued" };
+    clientFactory: (...args) => {
+      factoryArgs = args;
+      return {
+        messages: {
+          create: async (input) => {
+            created.push(input);
+            return { sid: "SM123", status: "queued" };
+          },
         },
-      },
-    }),
+      };
+    },
   });
   assert.deepEqual(
     await provider.sendMessage({ to: "+19545551234", body: "hello" }),
@@ -113,6 +197,40 @@ test("fake provider is deterministic and Twilio responses normalize inside the p
   );
   assert.equal(created[0].messagingServiceSid, "MG123");
   assert.equal(created[0].from, undefined);
+  assert.deepEqual(factoryArgs, [
+    "AC_parent",
+    "token",
+    { accountSid: "AC_subaccount" },
+  ]);
+  assert.deepEqual(
+    resolveTwilioAccountConfiguration({
+      config: { twilioAccountSid: "AC_subaccount" },
+      env: { TWILIO_ACCOUNT_SID: "AC_parent" },
+    }),
+    { parentAccountSid: "AC_parent", targetAccountSid: "AC_subaccount" },
+  );
+});
+
+test("production callback URL is explicit and proxy request data cannot change it", () => {
+  const env = {
+    NODE_ENV: "production",
+    TWILIO_STATUS_CALLBACK_URL: "https://canonical.example/twilio/status",
+  };
+  assert.equal(
+    resolveTwilioStatusCallbackUrl({
+      env,
+      request: {
+        protocol: "http",
+        originalUrl: "/api/webhooks/twilio/sms-status",
+        get: () => "internal.herokuapp.com",
+      },
+    }),
+    env.TWILIO_STATUS_CALLBACK_URL,
+  );
+  assert.throws(
+    () => resolveTwilioStatusCallbackUrl({ env: { NODE_ENV: "production" } }),
+    /TWILIO_STATUS_CALLBACK_URL must be set in production/,
+  );
 });
 
 test("Twilio webhook validation accepts the signed callback and rejects mutations", () => {

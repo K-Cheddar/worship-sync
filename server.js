@@ -950,6 +950,8 @@ app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
 app.post("/api/support/contact", authHandlers.submitSupportContact);
 app.post("/api/sms-consent", authHandlers.submitSmsConsent);
 app.post("/api/sms-consent/verify", authHandlers.verifySmsConsent);
+app.post("/api/sms-consent/:churchId", authHandlers.submitSmsConsent);
+app.post("/api/sms-consent/:churchId/verify", authHandlers.verifySmsConsent);
 // Twilio authenticates this endpoint with X-Twilio-Signature; it deliberately
 // does not use browser session or CSRF authentication.
 app.post(
@@ -1315,6 +1317,10 @@ app.delete(
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
+);
+app.get(
+  "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",
+  authHandlers.getTeamIntakeSmsAttempts,
 );
 app.post(
   "/api/churches/:churchId/team-intake/forms",

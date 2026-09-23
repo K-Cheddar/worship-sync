@@ -75,6 +75,7 @@ const PublicApp = () => (
         <Suspense fallback={<PublicFallback />}>
           <Routes>
             <Route path="/sms-opt-in" element={<SmsOptIn />} />
+            <Route path="/sms-opt-in/:churchId" element={<SmsOptIn />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/services/:shareId" element={<ServicePublic />} />

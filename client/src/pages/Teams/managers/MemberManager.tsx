@@ -569,7 +569,9 @@ const MemberManager = ({
     }
 
     try {
-      const url = buildShareablePublicPathUrl("/sms-opt-in");
+      const url = buildShareablePublicPathUrl(
+        `/sms-opt-in/${encodeURIComponent(churchId)}`,
+      );
       await navigator.clipboard.writeText(url);
       showToast("SMS opt-in link copied.");
     } catch {
@@ -1163,7 +1165,9 @@ const MemberManager = ({
                       text: "Open SMS opt-in page",
                       onClick: () => {
                         window.open(
-                          buildShareablePublicPathUrl("/sms-opt-in"),
+                          buildShareablePublicPathUrl(
+                            `/sms-opt-in/${encodeURIComponent(churchId)}`,
+                          ),
                           "_blank",
                           "noopener,noreferrer",
                         );

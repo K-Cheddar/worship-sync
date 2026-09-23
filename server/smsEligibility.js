@@ -23,12 +23,15 @@ const isOptedOutConsent = (consent) =>
 /**
  * SMS communication eligibility is deliberately separate from email/account
  * notification eligibility. A phone number is a communication address, not an
- * identity, so shared numbers receive the same phone-level consent decision.
+ * identity, so shared numbers receive the same church-scoped consent decision.
  */
-export const resolveSmsMemberEligibility = (member, consent) => {
+export const resolveSmsMemberEligibility = ({ member, churchId, consent }) => {
   const phoneNumber = normalizeMemberPhoneNumber(member?.phoneNumber);
   if (!phoneNumber) {
     return { status: "no_mobile", eligible: false, phoneNumber: "" };
+  }
+  if (!churchId || consent?.churchId !== churchId) {
+    return { status: "consent_needed", eligible: false, phoneNumber };
   }
   if (isOptedOutConsent(consent)) {
     return { status: "opted_out", eligible: false, phoneNumber };
@@ -39,6 +42,5 @@ export const resolveSmsMemberEligibility = (member, consent) => {
   return { status: "enabled", eligible: true, phoneNumber };
 };
 
-export const canSmsMember = (member, consent) =>
-  resolveSmsMemberEligibility(member, consent).eligible;
-
+export const canSmsMember = ({ member, churchId, consent }) =>
+  resolveSmsMemberEligibility({ member, churchId, consent }).eligible;

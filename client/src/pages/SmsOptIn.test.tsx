@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { submitSmsConsent, verifySmsConsent } from "../api/auth";
 import SmsOptIn, { SMS_CONSENT_TEXT } from "./SmsOptIn";
 
@@ -25,8 +25,10 @@ const mockedVerifySmsConsent = verifySmsConsent as jest.MockedFunction<
 
 const renderPage = () =>
   render(
-    <MemoryRouter initialEntries={["/sms-opt-in"]}>
-      <SmsOptIn />
+    <MemoryRouter initialEntries={["/sms-opt-in/church_1"]}>
+      <Routes>
+        <Route path="/sms-opt-in/:churchId" element={<SmsOptIn />} />
+      </Routes>
     </MemoryRouter>,
   );
 
@@ -96,7 +98,7 @@ describe("SmsOptIn", () => {
     await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: /agree & continue/i }));
 
-    expect(mockedSubmitSmsConsent).toHaveBeenCalledWith({
+    expect(mockedSubmitSmsConsent).toHaveBeenCalledWith("church_1", {
       phoneNumber: "(954) 555-1234",
       consent: true,
     });
@@ -104,7 +106,7 @@ describe("SmsOptIn", () => {
     expect(screen.getByText(/sent a 6-digit verification code/i)).toBeInTheDocument();
     await user.type(screen.getByLabelText(/Verification code/), "123456");
     await user.click(screen.getByRole("button", { name: /verify phone/i }));
-    expect(mockedVerifySmsConsent).toHaveBeenCalledWith({
+    expect(mockedVerifySmsConsent).toHaveBeenCalledWith("church_1", {
       phoneNumber: "(954) 555-1234",
       code: "123456",
     });

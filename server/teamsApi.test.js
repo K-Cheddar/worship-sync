@@ -8051,7 +8051,11 @@ test("individual intake SMS creates auditable attempts, retries preserve history
   const memberId = memberIds.Sms;
   const phoneNumber = "+19545551234";
   await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
-  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_in" });
+  await seedSmsConsentForServerTests({
+    churchId: context.churchId,
+    phoneNumber,
+    status: "opted_in",
+  });
   await setDoc(
     "churchMessagingConfigs",
     context.churchId,
@@ -8125,7 +8129,13 @@ test("individual intake SMS creates auditable attempts, retries preserve history
       bootstrap.payload.smsEligibilityByMemberId[memberId].status,
       "enabled",
     );
-    assert.equal(bootstrap.payload.smsDeliveryAttempts.length, 2);
+    assert.equal(bootstrap.payload.smsDeliveryAttempts, undefined);
+    const history = await callHandler(authHandlers.getTeamIntakeSmsAttempts, {
+      context,
+      params: { formId },
+    });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.payload.attempts.length, 2);
   } finally {
     setSmsProviderForServerTests(null);
   }
@@ -8164,7 +8174,11 @@ test("individual intake SMS records provider failure and blocks missing consent,
   assert.equal(noConsent.statusCode, 400);
   assert.match(noConsent.payload.errorMessage, /consent/i);
 
-  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_in" });
+  await seedSmsConsentForServerTests({
+    churchId: context.churchId,
+    phoneNumber,
+    status: "opted_in",
+  });
   await setDoc(
     "churchMessagingConfigs",
     context.churchId,

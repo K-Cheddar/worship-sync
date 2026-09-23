@@ -83,6 +83,14 @@
         { "fieldPath": "sessionId", "order": "ASCENDING" },
         { "fieldPath": "messageTimestamp", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "smsDeliveryAttempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "recipientId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

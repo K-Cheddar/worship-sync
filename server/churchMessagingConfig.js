@@ -17,8 +17,12 @@ export const normalizeChurchMessagingConfig = (value, churchId = "") => {
   return {
     churchId: normalizedChurchId,
     provider: "twilio",
-    ...(String(value.providerAccountId || "").trim()
-      ? { providerAccountId: String(value.providerAccountId).trim() }
+    ...(String(value.twilioAccountSid || value.providerAccountId || "").trim()
+      ? {
+          twilioAccountSid: String(
+            value.twilioAccountSid || value.providerAccountId,
+          ).trim(),
+        }
       : {}),
     ...(String(value.messagingServiceId || "").trim()
       ? { messagingServiceId: String(value.messagingServiceId).trim() }
@@ -40,4 +44,3 @@ export const isChurchMessagingReady = (config) =>
       config.enabled === true &&
       config.registrationStatus === "approved",
   );
-

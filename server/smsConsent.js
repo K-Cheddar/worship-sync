@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { createSmsProviderForConfig } from "./smsProvider.js";
 
-export const SMS_CONSENT_VERSION = "2026-09-20";
+export const SMS_CONSENT_VERSION = "2026-09-23-church-scoped";
 
 export const SMS_CONSENT_CODE_TTL_MS = 10 * 60 * 1000;
 export const SMS_CONSENT_MAX_ATTEMPTS = 5;
@@ -27,6 +27,36 @@ export const normalizeUsPhoneNumber = (value = "") => {
   if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber)) return null;
 
   return `+1${nationalNumber}`;
+};
+
+const normalizeChurchId = (value) => String(value || "").trim();
+
+/**
+ * Consent is deliberately scoped to the church that will send the message.
+ * Phone numbers are addresses, not identities, so the same normalized number
+ * may have independent consent records in multiple churches.
+ */
+export const smsConsentKeyForChurchPhone = (churchId, phoneNumber) => {
+  const normalizedChurchId = normalizeChurchId(churchId);
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  if (!normalizedChurchId || !normalizedPhoneNumber) return null;
+  return `${normalizedChurchId}:${normalizedPhoneNumber}`;
+};
+
+export const smsConsentIdForChurchPhone = (churchId, phoneNumber) => {
+  const key = smsConsentKeyForChurchPhone(churchId, phoneNumber);
+  if (!key) return null;
+  return `smsConsent_${crypto.createHash("sha256").update(key).digest("hex")}`;
+};
+
+/** Legacy phone-global IDs are retained only for migration/audit inspection. */
+export const smsConsentIdForLegacyPhone = (phoneNumber) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  if (!normalizedPhoneNumber) return null;
+  return `smsConsent_${crypto
+    .createHash("sha256")
+    .update(normalizedPhoneNumber)
+    .digest("hex")}`;
 };
 
 export const parseSmsConsentBody = (body = {}) => {
@@ -103,16 +133,23 @@ export const setSmsConsentSenderForServerTests = (sender) => {
   smsConsentSender = typeof sender === "function" ? sender : null;
 };
 
-export const sendSmsConsentVerificationCode = async ({ phoneNumber, code }) => {
+export const sendSmsConsentVerificationCode = async ({
+  phoneNumber,
+  code,
+  config,
+} = {}) => {
   if (smsConsentSender) {
     return smsConsentSender({ phoneNumber, code });
   }
 
   const provider = createSmsProviderForConfig({
     config: {
+      ...config,
       provider: "twilio",
-      messagingServiceId: process.env.TWILIO_MESSAGING_SERVICE_SID,
+      messagingServiceId:
+        config?.messagingServiceId || process.env.TWILIO_MESSAGING_SERVICE_SID,
       senderPhoneNumber:
+        config?.senderPhoneNumber ||
         process.env.TWILIO_SMS_FROM_NUMBER ||
         process.env.TWILIO_FROM_NUMBER ||
         process.env.TWILIO_PHONE_NUMBER,

@@ -874,26 +874,29 @@ export const submitSupportContact = async (body: {
     body: JSON.stringify(body),
   });
 
-export const submitSmsConsent = async (body: {
+export const submitSmsConsent = async (churchId: string, body: {
   phoneNumber: string;
   consent: boolean;
 }) =>
   apiFetchWithoutAuthRecovery<{
     success: boolean;
     verificationRequired: boolean;
-  }>("api/sms-consent", {
+  }>(`api/sms-consent/${encodeURIComponent(churchId)}`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 
-export const verifySmsConsent = async (body: {
+export const verifySmsConsent = async (churchId: string, body: {
   phoneNumber: string;
   code: string;
 }) =>
-  apiFetchWithoutAuthRecovery<{ success: boolean }>("api/sms-consent/verify", {
+  apiFetchWithoutAuthRecovery<{ success: boolean }>(
+    `api/sms-consent/${encodeURIComponent(churchId)}/verify`,
+    {
     method: "POST",
     body: JSON.stringify(body),
-  });
+    },
+  );
 
 export const updateHumanProfile = async (body: { displayName: string }) =>
   apiFetch<{
@@ -1171,6 +1174,17 @@ export const getTeamsBootstrap = async (churchId: string) =>
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
   );
 
+export const getTeamIntakeSmsAttempts = async (
+  churchId: string,
+  formId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    attempts: SmsDeliveryAttempt[];
+  }>(
+    `api/churches/${churchId}/team-intake/forms/${formId}/sms-attempts`,
+  );
+
 /**
  * Hydrates one schedule plus the other teams' schedules overlapping its dates —
  * the latter back the "also scheduled on <team>" warning in the grid.
@@ -1267,7 +1281,12 @@ export const sendTeamIntakeRecipientSms = async (
     success: boolean;
     recipient: TeamIntakeRecipient;
     attempt: SmsDeliveryAttempt;
-    message: { characterCount: number; segmentCount: number };
+    message: {
+      encoding: "gsm7" | "ucs2";
+      characterCount: number;
+      unitCount: number;
+      segmentCount: number;
+    };
   }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
     method: "POST",
     body: JSON.stringify({}),

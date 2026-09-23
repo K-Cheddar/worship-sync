@@ -20,6 +20,10 @@ jest.mock("../../../api/auth", () => ({
   createTeamIntakeForm: jest.fn(),
   createTeamIntakeRecipients: jest.fn(),
   getTeamIntakeFormLink: jest.fn(),
+  getTeamIntakeSmsAttempts: jest.fn().mockResolvedValue({
+    success: true,
+    attempts: [],
+  }),
   getTeamIntakeRecipientLink: (...args: unknown[]) => mockGetRecipientLink(...args),
   revokeTeamIntakeRecipient: jest.fn(),
   sendTeamIntakeRecipientSms: (...args: unknown[]) => mockSendSms(...args),

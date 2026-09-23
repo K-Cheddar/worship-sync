@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useMemo, useState } from "react";
+import { type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -19,6 +19,7 @@ import {
   applyTeamIntakeSubmission,
   createTeamIntakeRecipients,
   createTeamIntakeForm,
+  getTeamIntakeSmsAttempts,
   getTeamIntakeRecipientLink,
   getTeamIntakeFormLink,
   revokeTeamIntakeRecipient,
@@ -194,7 +195,7 @@ const IntakeManager = ({
   submissions,
   intakeRecipients,
   smsEligibilityByMemberId,
-  smsDeliveryAttempts = [],
+  smsDeliveryAttempts: initialSmsDeliveryAttempts = [],
   services,
   members,
   positions,
@@ -214,6 +215,9 @@ const IntakeManager = ({
   const [draft, setDraft] = useState<TeamIntakeFormPayload>(emptyDraft);
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
   const [selectedForm, setSelectedForm] = useState<TeamIntakeForm | null>(null);
+  const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
+    SmsDeliveryAttempt[]
+  >(initialSmsDeliveryAttempts);
   const [showCreate, setShowCreate] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -498,6 +502,29 @@ const IntakeManager = ({
       forms.find((form) => form.formId === selectedForm.formId) ?? selectedForm
     );
   }, [forms, selectedForm]);
+  const activeSelectedFormId = activeSelectedForm?.formId || "";
+
+  useEffect(() => {
+    if (!churchId || !activeSelectedFormId) return;
+    let cancelled = false;
+    setSmsDeliveryAttempts([]);
+    void getTeamIntakeSmsAttempts(churchId, activeSelectedFormId)
+      .then((response) => {
+        if (!cancelled) setSmsDeliveryAttempts(response.attempts || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showApiErrorToast(
+            showToast,
+            error,
+            "Could not load SMS delivery history.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSelectedFormId, churchId, showToast]);
 
   const selectedFormSubmissions = useMemo(
     () =>
@@ -634,6 +661,12 @@ const IntakeManager = ({
         recipient.recipientId,
       );
       onRecipientSaved(response.recipient);
+      setSmsDeliveryAttempts((current) => [
+        ...current.filter(
+          (attempt) => attempt.attemptId !== response.attempt.attemptId,
+        ),
+        response.attempt,
+      ]);
       onSmsDeliveryAttemptSaved?.(response.attempt);
       showToast("SMS sent.", "success");
     } catch (error) {

@@ -716,7 +716,7 @@ describe("MemberManager notification readiness", () => {
         screen.getByRole("menuitem", { name: /Open SMS opt-in page/i }),
       );
       expect(open).toHaveBeenCalledWith(
-        `${window.location.origin}/sms-opt-in`,
+        `${window.location.origin}/sms-opt-in/church-1`,
         "_blank",
         "noopener,noreferrer",
       );
@@ -726,7 +726,7 @@ describe("MemberManager notification readiness", () => {
         screen.getByRole("menuitem", { name: /Copy SMS opt-in link/i }),
       );
       expect(writeText).toHaveBeenCalledWith(
-        `${window.location.origin}/sms-opt-in`,
+        `${window.location.origin}/sms-opt-in/church-1`,
       );
     } finally {
       Object.defineProperty(navigator, "clipboard", {

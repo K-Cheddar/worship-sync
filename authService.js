@@ -37,12 +37,15 @@ import {
 } from "./server/supportContact.js";
 import {
   createSmsConsentChallenge,
+  normalizeUsPhoneNumber,
   parseSmsConsentBody,
   parseSmsConsentVerificationBody,
   sendSmsConsentVerificationCode,
   SMS_CONSENT_MAX_ATTEMPTS,
   SMS_CONSENT_TEXT,
   SMS_CONSENT_VERSION,
+  smsConsentIdForChurchPhone,
+  smsConsentIdForLegacyPhone,
   verifySmsConsentCode,
 } from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
@@ -98,6 +101,7 @@ import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
 import {
   getSmsProviderForConfig,
   normalizeTwilioStatus,
+  resolveTwilioStatusCallbackUrl,
   validateTwilioWebhookSignature,
 } from "./server/smsProvider.js";
 
@@ -1295,8 +1299,12 @@ export const queryDocs = async (
   return store
     .filter((item) =>
       filters.every((filter) => {
-        if ((filter.op || "==") !== "==") return false;
-        return item[filter.field] === filter.value;
+        const operator = filter.op || "==";
+        if (operator === "==") return item[filter.field] === filter.value;
+        if (operator === "in") {
+          return Array.isArray(filter.value) && filter.value.includes(item[filter.field]);
+        }
+        return false;
       }),
     )
     .slice(0, limit);
@@ -1531,17 +1539,15 @@ const addSecurityEvent = async (event) => {
   return payload;
 };
 
-const smsConsentIdForPhone = (phoneNumber) =>
-  `smsConsent_${hashValue(phoneNumber)}`;
-
 /**
- * Store one consent record per normalized phone number. The deterministic
- * document ID makes repeat opt-ins idempotent and keeps phone-number lookups
- * out of the public API. Firestore uses a transaction to serialize concurrent
- * first submissions for the same number.
+ * Store one consent record per church and normalized phone number. Legacy
+ * phone-global documents remain readable only for audit/migration tooling; no
+ * eligibility lookup falls back to them.
  */
-const upsertSmsConsent = async (phoneNumber) => {
-  const consentId = smsConsentIdForPhone(phoneNumber);
+const upsertSmsConsent = async (churchId, phoneNumber) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A church is required for SMS consent.");
   const submittedAt = nowIso();
   const challenge = createSmsConsentChallenge();
   const challengeFields = {
@@ -1568,8 +1574,9 @@ const upsertSmsConsent = async (phoneNumber) => {
       }
       transaction.set(consentRef, {
         consentId,
-        phoneNumber,
-        phoneHash: hashValue(phoneNumber),
+        churchId,
+        phoneNumber: normalizedPhoneNumber,
+        phoneHash: hashValue(normalizedPhoneNumber),
         status: "pending",
         source: "web_form",
         consentVersion: SMS_CONSENT_VERSION,
@@ -1598,8 +1605,9 @@ const upsertSmsConsent = async (phoneNumber) => {
   }
   await setDoc(COLLECTIONS.smsConsents, consentId, {
     consentId,
-    phoneNumber,
-    phoneHash: hashValue(phoneNumber),
+    churchId,
+    phoneNumber: normalizedPhoneNumber,
+    phoneHash: hashValue(normalizedPhoneNumber),
     status: "pending",
     source: "web_form",
     consentVersion: SMS_CONSENT_VERSION,
@@ -1630,8 +1638,10 @@ const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
   return sentAt;
 };
 
-const verifySmsConsent = async (phoneNumber, code) => {
-  const consentId = smsConsentIdForPhone(phoneNumber);
+const verifySmsConsent = async (churchId, phoneNumber, code) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A church is required for SMS consent.");
   const db = requireFirestore();
   const invalid = () => {
     throw httpError(400, "That verification code is not valid or has expired.");
@@ -4644,7 +4654,7 @@ export const getRosterMemberForServerTests = async (memberId) => {
   return getDoc(COLLECTIONS.teamRosterMembers, memberId);
 };
 
-export const getSmsConsentForServerTests = async (phoneNumber) => {
+export const getSmsConsentForServerTests = async (churchId, phoneNumber) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
       "getSmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
@@ -4657,11 +4667,12 @@ export const getSmsConsentForServerTests = async (phoneNumber) => {
   }
   return getDoc(
     COLLECTIONS.smsConsents,
-    smsConsentIdForPhone(String(phoneNumber || "").trim()),
+    smsConsentIdForChurchPhone(churchId, String(phoneNumber || "").trim()),
   );
 };
 
 export const seedSmsConsentForServerTests = async ({
+  churchId,
   phoneNumber,
   status = "opted_in",
   optedOutAt = null,
@@ -4676,14 +4687,44 @@ export const seedSmsConsentForServerTests = async ({
       "seedSmsConsentForServerTests refuses to run while Firestore is configured",
     );
   }
-  const normalizedPhone = String(phoneNumber || "").trim();
-  const consentId = smsConsentIdForPhone(normalizedPhone);
+  const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhone);
+  if (!consentId) throw new Error("seedSmsConsentForServerTests requires churchId and phoneNumber");
+  const record = {
+    consentId,
+    churchId,
+    phoneNumber: normalizedPhone,
+    phoneHash: hashValue(normalizedPhone),
+    status,
+    ...(optedOutAt ? { optedOutAt } : {}),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  await setDoc(COLLECTIONS.smsConsents, consentId, record, { merge: false });
+  return record;
+};
+
+export const seedLegacySmsConsentForServerTests = async ({
+  phoneNumber,
+  status = "opted_in",
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedLegacySmsConsentForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedLegacySmsConsentForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForLegacyPhone(normalizedPhone);
   const record = {
     consentId,
     phoneNumber: normalizedPhone,
     phoneHash: hashValue(normalizedPhone),
     status,
-    ...(optedOutAt ? { optedOutAt } : {}),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
@@ -5205,10 +5246,10 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   // Assignment notifications need the same primitives the intake digest uses.
   getUserByUid,
   getChurchById,
-  getSmsConsentForPhone: (phoneNumber) =>
+  getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
     getDoc(
       COLLECTIONS.smsConsents,
-      smsConsentIdForPhone(String(phoneNumber || "").trim()),
+      smsConsentIdForChurchPhone(churchId, String(phoneNumber || "").trim()),
     ),
   smsProviderFactory: getSmsProviderForConfig,
   sendEmail,
@@ -5230,11 +5271,7 @@ const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   validateSignature: validateTwilioWebhookSignature,
   normalizeStatus: normalizeTwilioStatus,
   getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
-  getCallbackUrl: (req) =>
-    String(
-      process.env.TWILIO_STATUS_CALLBACK_URL ||
-        `${req.protocol}://${req.get("host")}${req.originalUrl}`,
-    ).trim(),
+  getCallbackUrl: (req) => resolveTwilioStatusCallbackUrl({ request: req }),
 });
 
 export const authHandlers = {
@@ -6405,6 +6442,12 @@ export const authHandlers = {
   /** Public SMS consent form. No session required; no phone existence is disclosed. */
   async submitSmsConsent(req, res) {
     try {
+      const churchId = String(
+        req.params?.churchId || req.body?.churchId || "",
+      ).trim();
+      if (!churchId) {
+        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+      }
       const parsed = parseSmsConsentBody(req.body);
       if (!parsed.ok) {
         throw httpError(400, parsed.errorMessage);
@@ -6420,19 +6463,25 @@ export const authHandlers = {
       });
       enforceRateLimit({
         scope: "sms-consent-phone",
-        key: hashValue(parsed.phoneNumber),
+        key: `${churchId}:${hashValue(parsed.phoneNumber)}`,
         limit: 3,
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
 
       const { consentId, challenge, shouldSend } = await upsertSmsConsent(
+        churchId,
         parsed.phoneNumber,
       );
       if (shouldSend && challenge) {
+        const messagingConfig = await getDoc(
+          COLLECTIONS.churchMessagingConfigs,
+          churchId,
+        );
         const delivery = await sendSmsConsentVerificationCode({
           phoneNumber: parsed.phoneNumber,
           code: challenge.code,
+          config: messagingConfig,
         });
         await markSmsConsentChallengeSent({
           consentId,
@@ -6442,6 +6491,7 @@ export const authHandlers = {
       }
       await addSecurityEvent({
         type: "sms_consent_verification_requested",
+        churchId,
         consentId,
         phoneHash: hashValue(parsed.phoneNumber),
         source: "web_form",
@@ -6464,6 +6514,12 @@ export const authHandlers = {
   /** Public SMS consent verification. No session required; failures are generic. */
   async verifySmsConsent(req, res) {
     try {
+      const churchId = String(
+        req.params?.churchId || req.body?.churchId || "",
+      ).trim();
+      if (!churchId) {
+        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+      }
       const parsed = parseSmsConsentVerificationBody(req.body);
       if (!parsed.ok) throw httpError(400, parsed.errorMessage);
       enforceRateLimit({
@@ -6473,9 +6529,14 @@ export const authHandlers = {
         windowMs: 15 * 60 * 1000,
         blockMs: 30 * 60 * 1000,
       });
-      const result = await verifySmsConsent(parsed.phoneNumber, parsed.code);
+      const result = await verifySmsConsent(
+        churchId,
+        parsed.phoneNumber,
+        parsed.code,
+      );
       await addSecurityEvent({
         type: "sms_consent_verified",
+        churchId,
         consentId: result.consentId,
         phoneHash: hashValue(parsed.phoneNumber),
         source: "web_form",

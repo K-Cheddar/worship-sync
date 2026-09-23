@@ -19,7 +19,10 @@ const {
   canSeedHumanBearerAuthForServerTests,
   getSmsConsentForServerTests,
   seedSmsConsentForServerTests,
+  seedLegacySmsConsentForServerTests,
 } = await import("../authService.js");
+
+const CHURCH_ID = "church_sms_consent_test";
 
 let sentCodes = new Map();
 setSmsConsentSenderForServerTests(({ phoneNumber, code }) => {
@@ -29,6 +32,7 @@ setSmsConsentSenderForServerTests(({ phoneNumber, code }) => {
 
 const createReq = ({ body = {}, ip = "127.0.0.1" } = {}) => ({
   body,
+  params: { churchId: CHURCH_ID },
   headers: {},
   session: {},
   ip,
@@ -85,7 +89,7 @@ test("persists server-side consent fields without linking a member", async (t) =
     createReq({ body: validBody("(954) 555-1234"), ip: "sms-audit-ip" }),
     res,
   );
-  const record = await getSmsConsentForServerTests("+19545551234");
+  const record = await getSmsConsentForServerTests(CHURCH_ID, "+19545551234");
 
   assert.deepEqual(res.payload, { success: true, verificationRequired: true });
   assert.equal(record?.phoneNumber, "+19545551234");
@@ -118,7 +122,7 @@ test("correct verification transitions pending consent to opted in", async (t) =
     createReq({ body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)), ip: "sms-verify-ip" }),
     verify,
   );
-  const record = await getSmsConsentForServerTests(phoneNumber);
+  const record = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
 
   assert.deepEqual(verify.payload, { success: true });
   assert.equal(record?.status, "opted_in");
@@ -149,7 +153,7 @@ test("incorrect and expired codes never become affirmative consent", async (t) =
     invalid,
   );
   assert.equal(invalid.statusCode, 400);
-  assert.equal((await getSmsConsentForServerTests(phoneNumber))?.status, "pending");
+  assert.equal((await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))?.status, "pending");
 
   const challenge = createSmsConsentChallenge({ now: Date.now() - 20 * 60 * 1000 });
   assert.deepEqual(
@@ -181,10 +185,10 @@ test("reverification protects the verified snapshot and records confirmation sep
     createReq({ body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)), ip: "sms-safe-retry-ip" }),
     verify,
   );
-  const before = await getSmsConsentForServerTests(phoneNumber);
+  const before = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
   const second = createRes();
   await authHandlers.submitSmsConsent(createReq({ body: validBody(phoneNumber), ip: "sms-safe-retry-ip-2" }), second);
-  const afterSubmission = await getSmsConsentForServerTests(phoneNumber);
+  const afterSubmission = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
 
   assert.equal(afterSubmission?.status, "opted_in");
   for (const field of [
@@ -207,7 +211,7 @@ test("reverification protects the verified snapshot and records confirmation sep
     invalid,
   );
   assert.equal(invalid.statusCode, 400);
-  const afterInvalid = await getSmsConsentForServerTests(phoneNumber);
+  const afterInvalid = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
   assert.equal(afterInvalid?.status, "opted_in");
   for (const field of [
     "consentedAt",
@@ -225,7 +229,7 @@ test("reverification protects the verified snapshot and records confirmation sep
     createReq({ body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)), ip: "sms-safe-retry-ip-2" }),
     reverification,
   );
-  const afterReverification = await getSmsConsentForServerTests(phoneNumber);
+  const afterReverification = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
 
   assert.deepEqual(reverification.payload, { success: true });
   assert.equal(afterReverification?.status, "opted_in");
@@ -271,7 +275,11 @@ test("opted-out consent cannot be silently reactivated through the public form",
     return;
   }
   const phoneNumber = "+19545551239";
-  await seedSmsConsentForServerTests({ phoneNumber, status: "opted_out" });
+  await seedSmsConsentForServerTests({
+    churchId: CHURCH_ID,
+    phoneNumber,
+    status: "opted_out",
+  });
   const response = createRes();
   await authHandlers.submitSmsConsent(
     createReq({
@@ -283,7 +291,20 @@ test("opted-out consent cannot be silently reactivated through the public form",
   assert.equal(response.statusCode, 400);
   assert.match(response.payload.errorMessage, /opted out/i);
   assert.equal(
-    (await getSmsConsentForServerTests(phoneNumber)).status,
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber)).status,
     "opted_out",
+  );
+});
+
+test("legacy phone-global consent does not authorize a church-scoped lookup", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("SMS consent migration tests use the in-memory store only.");
+    return;
+  }
+  const phoneNumber = "+19545551240";
+  await seedLegacySmsConsentForServerTests({ phoneNumber, status: "opted_in" });
+  assert.equal(
+    await getSmsConsentForServerTests(CHURCH_ID, phoneNumber),
+    null,
   );
 });
