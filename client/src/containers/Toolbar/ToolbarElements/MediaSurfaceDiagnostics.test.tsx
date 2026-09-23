@@ -3,7 +3,6 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import MediaSurfaceDiagnostics from "./MediaSurfaceDiagnostics";
 import displayOutputsReducer from "../../../store/displayOutputsSlice";
-import itemListsReducer from "../../../store/itemListsSlice";
 import type { DisplayOutput } from "../../../utils/displayOutputs";
 
 const renderDiagnostics = () => {
@@ -12,17 +11,11 @@ const renderDiagnostics = () => {
     { id: "lobby", type: "projector", name: "Lobby", order: 1, enabled: true },
   ];
   const store = configureStore({
-    reducer: {
-      displayOutputs: displayOutputsReducer,
-      undoable: (state = { present: { itemLists: itemListsReducer(undefined, { type: "@@init" }) } }) => state,
-    },
+    reducer: { displayOutputs: displayOutputsReducer },
     preloadedState: {
       displayOutputs: {
         isLoaded: true,
         list,
-      },
-      undoable: {
-        present: { itemLists: itemListsReducer(undefined, { type: "@@init" }) },
       },
     },
   });

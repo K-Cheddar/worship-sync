@@ -711,50 +711,6 @@ describe("ElectronMediaSurfacePool", () => {
     expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
   });
 
-  it("keeps an overlapping surface mounted when the preparation outline changes", async () => {
-    const onReadyChange = jest.fn();
-    const onFirstAdvancingFrameChange = jest.fn();
-    const onSurfaceElement = jest.fn();
-    const { rerender } = render(
-      <ElectronMediaSurfacePool
-        enabled
-        candidates={[candidate]}
-        views={[view(false)]}
-        outlineId="outline-a"
-        onReadyChange={onReadyChange}
-        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
-        onSurfaceElement={onSurfaceElement}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("electron-media-surface-remote:clip"),
-      ).toHaveAttribute("data-prepared-state", "ready"),
-    );
-    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
-    const falseCount = onReadyChange.mock.calls.filter(([, ready]) => !ready).length;
-
-    rerender(
-      <ElectronMediaSurfacePool
-        enabled
-        candidates={[candidate]}
-        views={[view(false)]}
-        outlineId="outline-b"
-        onReadyChange={onReadyChange}
-        onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
-        onSurfaceElement={onSurfaceElement}
-      />,
-    );
-
-    expect(
-      screen.getByTestId("electron-media-surface-video-remote:clip"),
-    ).toBe(video);
-    expect(onReadyChange.mock.calls.filter(([, ready]) => !ready).length).toBe(
-      falseCount,
-    );
-  });
-
   it("invalidates a READY surface before re-preparing a changed source", async () => {
     const onReadyChange = jest.fn();
     const { rerender } = render(

@@ -31,13 +31,10 @@ import type {
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   isMediaSurfaceVisible,
-  isMediaSurfacePaintReady,
-  isMediaSurfacePlaybackResumed,
   mediaSurfaceStatusKey,
   type MediaSurfaceStatus,
 } from "../../utils/mediaSurfaceLifecycle";
 import { areEquivalentMediaSources } from "../../utils/mediaSource";
-import { serverNow } from "../../utils/serverTime";
 
 type LaneId = "a" | "b";
 
@@ -218,9 +215,6 @@ const DisplayBoxTransitionStage = ({
   const timelineRef = useRef<GSAPTimeline | null>(null);
   const preparedMediaRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const preparedMediaStatusRef = useRef<Record<string, MediaSurfaceStatus>>({});
-  const preparedMediaOwnershipRef = useRef<
-    Record<string, { sourceIdentity: string; generation: number }>
-  >({});
   const [preparedMediaStatuses, setPreparedMediaStatuses] = useState<
     Record<string, MediaSurfaceStatus>
   >({});
@@ -230,16 +224,7 @@ const DisplayBoxTransitionStage = ({
   const [lastMediaKey, setLastMediaKey] = useState<string | undefined>();
   const [posterShown, setPosterShown] = useState<boolean | undefined>();
   const [transitionStart, setTransitionStart] = useState<
-    { mediaKey: string; timestamp: number; controllerActionTimestamp?: number } | undefined
-  >();
-  const [transitionVisible, setTransitionVisible] = useState<
-    | {
-        mediaKey: string;
-        timestamp: number;
-        wallClockTimestamp: number;
-        controllerActionTimestamp?: number;
-      }
-    | undefined
+    { mediaKey: string; timestamp: number } | undefined
   >();
   const [transitionComplete, setTransitionComplete] = useState<
     { mediaKey: string; timestamp: number } | undefined
@@ -371,7 +356,6 @@ const DisplayBoxTransitionStage = ({
       }
       if (status.phase === "disposed") {
         delete preparedMediaStatusRef.current[key];
-        delete preparedMediaOwnershipRef.current[status.mediaKey];
         setPreparedMediaStatuses((all) => {
           if (!(key in all)) return all;
           const next = { ...all };
@@ -379,18 +363,6 @@ const DisplayBoxTransitionStage = ({
           return next;
         });
         return;
-      }
-      if (
-        status.error ||
-        status.phase === "retiring/resetting" ||
-        status.phase === "preparing"
-      ) {
-        delete preparedMediaOwnershipRef.current[status.mediaKey];
-      } else if (isMediaSurfacePaintReady(status)) {
-        preparedMediaOwnershipRef.current[status.mediaKey] = {
-          sourceIdentity: status.sourceIdentity,
-          generation: status.generation,
-        };
       }
       preparedMediaStatusRef.current[key] = status;
       setPreparedMediaStatuses((all) =>
@@ -751,17 +723,7 @@ const DisplayBoxTransitionStage = ({
       const preparedKey = getLanePreparedMediaKey(media);
       if (!poolEnabled || preparedKey === "none") return false;
       const status = preparedStatusForKey(preparedKey);
-      const owner = preparedMediaOwnershipRef.current[preparedKey];
-      return Boolean(
-        status &&
-          owner &&
-          owner.sourceIdentity === status.sourceIdentity &&
-          owner.generation === status.generation &&
-          status.phase !== "disposed" &&
-          status.phase !== "preparing" &&
-          status.phase !== "retiring/resetting" &&
-          !status.error,
-      );
+      return isMediaSurfaceVisible(status);
     },
     [
       poolEnabled,
@@ -806,7 +768,7 @@ const DisplayBoxTransitionStage = ({
       mode === "content" ||
       mediaKey === "none" ||
       (usesPrepared
-        ? isMediaSurfacePaintReady(preparedStatus)
+        ? isMediaSurfaceVisible(preparedStatus)
         : mediaState?.mediaKey === mediaKey && mediaState.ready);
     const activeSnapshot = state.lanes[state.activeLaneId];
     const outgoingMediaKey = getLaneBackgroundMediaKey(
@@ -838,17 +800,16 @@ const DisplayBoxTransitionStage = ({
     const incomingLiveMedia = mediaLivePaintReadiness[laneId];
     const incomingLiveReady =
       incomingUsesPreparedSurface
-        ? isMediaSurfacePlaybackResumed(preparedStatus)
+        ? isMediaSurfaceVisible(preparedStatus)
         : incomingLiveMedia?.mediaKey === mediaKey && incomingLiveMedia.ready;
 
-    // READY means the retained starting frame can paint while hidden. The
-    // selected pool surface owns that frame immediately; if the outgoing file
-    // video is moving, keep it visible until incoming play() resumes. The
-    // advancing-frame signal remains diagnostic and is not required for every
-    // prepared transition.
+    // READY means the retained starting frame can paint while hidden. When a
+    // different prepared file video replaces a live outgoing file video, the
+    // incoming surface must also resume playback and present an advancing
+    // frame before it is allowed to cover the outgoing surface.
     if (
       preparedCandidateSelected &&
-      (!isMediaSurfacePaintReady(preparedStatus) ||
+      (!isMediaSurfaceVisible(preparedStatus) ||
         (incomingFileVideoMustBeLive && !incomingLiveReady))
     ) {
       return false;
@@ -923,9 +884,7 @@ const DisplayBoxTransitionStage = ({
         setTransitionStart({
           mediaKey: incomingPreparedKey,
           timestamp: performance.now(),
-          controllerActionTimestamp: incomingSnapshot?.time,
         });
-        setTransitionVisible(undefined);
       }
     } else {
       setLastMediaKey(undefined);
@@ -969,37 +928,6 @@ const DisplayBoxTransitionStage = ({
     state.mode,
     state.lanes,
     state.phase,
-  ]);
-
-  useLayoutEffect(() => {
-    if (
-      state.phase !== "animating" ||
-      (state.mode !== "full" && state.mode !== "media") ||
-      !incomingSnapshot ||
-      incomingSnapshot.backgroundMedia.kind !== "fileVideo" ||
-      !usesPreparedSurface(incomingLaneId, incomingSnapshot.backgroundMedia) ||
-      transitionVisible?.mediaKey ===
-        getLanePreparedMediaKey(incomingSnapshot.backgroundMedia)
-    ) {
-      return;
-    }
-    const mediaKey = getLanePreparedMediaKey(incomingSnapshot.backgroundMedia);
-    const frameId = window.requestAnimationFrame(() => {
-      setTransitionVisible({
-        mediaKey,
-        timestamp: performance.now(),
-        wallClockTimestamp: serverNow(),
-        controllerActionTimestamp: incomingSnapshot.time,
-      });
-    });
-    return () => window.cancelAnimationFrame(frameId);
-  }, [
-    incomingLaneId,
-    incomingSnapshot,
-    state.mode,
-    state.phase,
-    transitionVisible?.mediaKey,
-    usesPreparedSurface,
   ]);
 
   useLayoutEffect(() => {
@@ -1417,10 +1345,9 @@ const DisplayBoxTransitionStage = ({
         mediaKey: preparedMediaKey,
         source: media.originalSrc,
         videoBox: media.videoBox,
-         // The pool receives the selected incoming view while it is still
-         // ready-paused so it can request activation. The retained prepared
-         // frame owns the media plane; opacity stays at the lane value until
-         // the transition boundary.
+         // The pool must receive the selected incoming view while it is still
+         // ready-paused so it can request activation. It remains transparent
+         // until the shared lifecycle reports active-playing.
          opacity: laneView.usesPreparedSurface ? laneView.mediaOpacity : 0,
         zIndex: laneView.stackOffset,
          shouldPlay:
@@ -1471,7 +1398,6 @@ const DisplayBoxTransitionStage = ({
           discovery={poolCandidateResult.discovery}
           poolCapacity={poolCandidateResult.poolCapacity}
           transitionStart={transitionStart}
-          transitionVisible={transitionVisible}
           transitionComplete={transitionComplete}
           lastSendPath={lastSendPath}
           lastMediaKey={lastMediaKey}

@@ -220,12 +220,6 @@ const MediaSurfaceDiagnostics = () => {
                         prepare→frame ready {surface.prepareToFrameReadyMs?.toFixed(0) ?? "—"} ms · send→transition {surface.sendToTransitionStartMs?.toFixed(0) ?? "—"} ms · send→play {surface.sendToPlayRequestMs?.toFixed(0) ?? "—"} ms · send→resolved {surface.sendToPlayResolvedMs?.toFixed(0) ?? "—"} ms · send→advancing frame {surface.sendToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
                       </div>
                       <div className="text-gray-400">
-                        controller→first visible {surface.controllerToFirstVisibleFrameMs?.toFixed(0) ?? "—"} ms · controller→first advancing {surface.controllerToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
-                      </div>
-                      <div className="text-gray-400">
-                        controller action {surface.controllerActionTimestamp ? new Date(surface.controllerActionTimestamp).toLocaleTimeString() : "—"} · first visible {surface.firstVisibleFrameWallClockTimestamp ? new Date(surface.firstVisibleFrameWallClockTimestamp).toLocaleTimeString() : "—"} · first advancing {surface.firstAdvancingFrameWallClockTimestamp ? new Date(surface.firstAdvancingFrameWallClockTimestamp).toLocaleTimeString() : "—"}
-                      </div>
-                      <div className="text-gray-400">
                         send state {surface.sendStateBeforeRequest ?? "—"} · last used {surface.lastUsedAt ? new Date(surface.lastUsedAt).toLocaleTimeString() : "—"}
                       </div>
                       <div className="text-gray-400">

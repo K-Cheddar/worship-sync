@@ -37,10 +37,7 @@ export type ElectronMediaOutlineLoadState =
   | "error"
   | "retrying";
 
-export type ElectronMediaDiscoveryRenderer =
-  | "projector"
-  | "projector-preview"
-  | "editor";
+export type ElectronMediaDiscoveryRenderer = "projector" | "editor";
 
 export type ElectronMediaDiscoveryVideo = {
   mediaKey: string;
@@ -125,7 +122,6 @@ export type ElectronMediaSurfaceDiagnostic = {
   lifecycleRole?: string;
   lifecycleOutlineId?: string | null;
   lifecycleGeneration?: number;
-  playbackResumed?: boolean;
   lifecycleFrame?: {
     mediaTime?: number;
     presentedFrames?: number;
@@ -160,12 +156,6 @@ export type ElectronMediaSurfaceDiagnostic = {
   playResolvedTimestamp?: number;
   transitionStartTimestamp?: number;
   firstAdvancingFrameTimestamp?: number;
-  firstAdvancingFrameWallClockTimestamp?: number;
-  controllerActionTimestamp?: number;
-  firstVisibleFrameTimestamp?: number;
-  firstVisibleFrameWallClockTimestamp?: number;
-  controllerToFirstVisibleFrameMs?: number;
-  controllerToFirstAdvancingFrameMs?: number;
   transitionCompleteTimestamp?: number;
   sendToTransitionStartMs?: number;
   sendToPlayRequestMs?: number;

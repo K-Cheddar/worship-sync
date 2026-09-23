@@ -1,8 +1,6 @@
 import {
   isAdvancingMediaFrame,
   isCurrentMediaSurfaceStatus,
-  isMediaSurfacePaintReady,
-  isMediaSurfacePlaybackResumed,
   isMediaSurfaceVisible,
   type MediaSurfaceStatus,
 } from "./mediaSurfaceLifecycle";
@@ -29,30 +27,6 @@ describe("media surface lifecycle", () => {
       ),
     ).toBe(false);
     expect(isMediaSurfaceVisible(status())).toBe(true);
-  });
-
-  it("separates retained-frame ownership from playback and frame advancement", () => {
-    const ready = status({
-      phase: "ready-paused",
-      advancingFrame: false,
-      playbackResumed: false,
-    });
-    expect(isMediaSurfacePaintReady(ready)).toBe(true);
-    expect(isMediaSurfacePlaybackResumed(ready)).toBe(false);
-    expect(
-      isMediaSurfacePaintReady(
-        status({
-          phase: "activation-requested",
-          advancingFrame: false,
-          playbackResumed: true,
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      isMediaSurfacePlaybackResumed(
-        status({ phase: "activation-requested", playbackResumed: true }),
-      ),
-    ).toBe(true);
   });
 
   it("requires monotonic frame metadata rather than a callback alone", () => {
@@ -90,3 +64,4 @@ describe("media surface lifecycle", () => {
     ).toBe(false);
   });
 });
+
