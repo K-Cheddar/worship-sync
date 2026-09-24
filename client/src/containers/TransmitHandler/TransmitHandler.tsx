@@ -129,15 +129,14 @@ const TransmitHandler = ({
     [ownedOutputs, visibleScreens],
   );
 
-  // An aux projector is the TVs output. Keep its live/resolved preview first,
-  // then show either the presentation projector or its own staged slot below.
-  // The mirror relationship remains owned by presentation.followingOutputId.
+  // The first enabled projector in registry order is the Aux Controller's
+  // primary TVs output. Keep additional assigned projectors in the normal list.
   const auxTvOutput =
     controllerProfile.type === "aux-presentation"
       ? visibleOutputs.find((output) => output.type === "projector")
       : undefined;
   const auxTvFollowingId = auxTvOutput
-    ? followingOutputIdByOutputId[auxTvOutput.id] ?? ""
+    ? (followingOutputIdByOutputId[auxTvOutput.id] ?? "")
     : "";
 
   // Aux controllers join another room's screen for a shared moment (sermon,
@@ -209,14 +208,14 @@ const TransmitHandler = ({
   ]);
 
   const auxProjectorSource = auxTvOutput
-    ? displayOutputs.find(
+    ? (displayOutputs.find(
         (output) =>
           output.id === "projector" &&
           mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id),
       ) ??
       displayOutputs.find((output) =>
         mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id),
-      )
+      ))
     : undefined;
 
   // The overlay controller's focused header acts on the first stream output it
@@ -625,32 +624,48 @@ const TransmitHandler = ({
                     ) : undefined
                   }
                 />
-                {auxTvFollowingId ? (
+                {/* Keep both secondary previews mounted so toggling mirrors
+                    preserves the staged video element and its playhead. The
+                    inactive card is hidden and its media playback is suspended. */}
+                {auxProjectorSource && (
+                  <div
+                    data-testid="aux-projector-preview"
+                    hidden={Boolean(auxTvFollowingId)}
+                    aria-hidden={Boolean(auxTvFollowingId)}
+                  >
                   <ProjectorPresentationPreview
-                    outputId={auxTvOutput.id}
-                    name="Staged for TVs"
-                    readOnly
-                    resolveOwnOutput
-                    quickLinks={[]}
-                    toggleIsTransmitting={NOOP_TOGGLE}
-                    isMobile={isMobile}
-                    previewScale={previewScale}
-                    fillWidth={fillWidth}
-                    isVisible={isPreviewActive}
-                  />
-                ) : auxProjectorSource ? (
-                  <ProjectorPresentationPreview
-                    outputId={auxProjectorSource.id}
-                    name="Projector"
+                      outputId={auxProjectorSource.id}
+                      name="Projector"
                     readOnly
                     quickLinks={[]}
                     toggleIsTransmitting={NOOP_TOGGLE}
                     isMobile={isMobile}
                     previewScale={previewScale}
                     fillWidth={fillWidth}
-                    isVisible={isPreviewActive}
+                      isVisible={isPreviewActive && !auxTvFollowingId}
                   />
-                ) : null}
+                  </div>
+                )}
+                {auxTvOutput && (
+                  <div
+                    data-testid="aux-staged-preview"
+                    hidden={!auxTvFollowingId}
+                    aria-hidden={!auxTvFollowingId}
+                  >
+                  <ProjectorPresentationPreview
+                      outputId={auxTvOutput.id}
+                      name="Staged for TVs"
+                    readOnly
+                      resolveOwnOutput
+                    quickLinks={[]}
+                    toggleIsTransmitting={NOOP_TOGGLE}
+                    isMobile={isMobile}
+                    previewScale={previewScale}
+                    fillWidth={fillWidth}
+                      isVisible={isPreviewActive && Boolean(auxTvFollowingId)}
+                  />
+                  </div>
+                )}
               </Fragment>
             )}
             {previewOutputs
@@ -660,7 +675,8 @@ const TransmitHandler = ({
                   !(
                     auxTvOutput &&
                     isMirrorSource &&
-                    mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id)
+                    (output.id === auxProjectorSource?.id ||
+                      output.id === auxTvFollowingId)
                   ),
               )
               .map(({ output, isMirrorSource }) => {
@@ -674,8 +690,7 @@ const TransmitHandler = ({
               // read as one control surface for the screen they affect.
               // Mirror controls stay on the follower only. The source does not
               // need a "mirrored by" badge — that status is irrelevant there.
-              const displayFooter =
-                isMirrorSource ? (
+                const displayFooter = isMirrorSource ? (
                   <div className="w-full px-2 pb-2 text-center text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
                     SOURCE
                   </div>
@@ -708,7 +723,7 @@ const TransmitHandler = ({
                 : toggleByOutputId[output.id];
               const outputQuickLinks = isMirrorSource
                 ? []
-                : quickLinksByOutputId[output.id] ?? [];
+                  : (quickLinksByOutputId[output.id] ?? []);
 
               if (output.type === "projector") {
                 return (
