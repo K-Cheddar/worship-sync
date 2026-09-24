@@ -56,7 +56,7 @@ const getOutlineStepLabel = (step: ServicePlanningOutlineSyncStep): StepLabel =>
 
   const { candidate } = step;
   const headingName =
-    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd" || step.kind === "insertCustomDocumentAtEnd"
       ? null
       : step.headingName;
 
