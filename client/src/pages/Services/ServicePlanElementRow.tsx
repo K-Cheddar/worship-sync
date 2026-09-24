@@ -79,6 +79,7 @@ import {
 import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchResource, getChurchResourceUrl } from "../../api/auth";
 import generateRandomId from "../../utils/generateRandomId";
@@ -87,6 +88,7 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDefinition,
   getServicePlanResourceDisplayLabel,
+  getServicePlanCustomDocumentDisplayLabel,
   getServicePlanResourceText,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
@@ -116,6 +118,7 @@ import type {
 } from "../../types/servicePlan";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import {
+  getServicePlanCustomDocumentId,
   getServicePlanElementAssignees,
   getServicePlanElementLead,
   getServicePlanElementScriptureRefs,
@@ -1607,6 +1610,7 @@ const ServicePlanElementRow = ({
   };
 
   const contentResources = element.resources || [];
+  const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
   const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel) || contentResources.length > 0;
   const contentReferenceCount = songRefs.length + scriptureRefs.length + contentResources.length;
 
@@ -2060,6 +2064,12 @@ const ServicePlanElementRow = ({
           }
           const definition = getServicePlanResourceDefinition(resource.type);
           const ResourceIcon = definition.icon;
+          const customDocument = resource.type === "custom-document"
+            ? allFreeFormDocs.find((doc) => doc._id === getServicePlanCustomDocumentId(resource))
+            : undefined;
+          const resourceLabel = resource.type === "custom-document"
+            ? getServicePlanCustomDocumentDisplayLabel(resource, customDocument)
+            : getServicePlanResourceDisplayLabel(resource);
           return (
             <span
               key={resource.id}
@@ -2077,8 +2087,8 @@ const ServicePlanElementRow = ({
                   "box-border flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300",
                   placement === "summary" && "px-1.5",
                 )}
-                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${getServicePlanResourceDisplayLabel(resource)}`}
-                title={getServicePlanResourceDisplayLabel(resource)}
+                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${resourceLabel}`}
+                title={resourceLabel}
                 onClick={(event) => {
                   if (allowEdit) {
                     if (usesContentPanel) openContent(event.currentTarget);
@@ -2090,7 +2100,7 @@ const ServicePlanElementRow = ({
                 }}
               >
                 <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
-                <span className="min-w-0 flex-1 truncate leading-5">{getServicePlanResourceDisplayLabel(resource)}</span>
+                <span className="min-w-0 flex-1 truncate leading-5">{resourceLabel}</span>
               </button>
               {allowEdit ? (
                 <Button

@@ -7,6 +7,7 @@ import {
   Eye,
   ExternalLink,
   FilePlus,
+  Files,
   FileText,
   Link as LinkIcon,
   Music,
@@ -24,6 +25,7 @@ import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
+import ServicePlanCustomDocumentPicker from "./ServicePlanCustomDocumentPicker";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 import {
   DropdownMenu,
@@ -38,6 +40,7 @@ import { openExternalUrl } from "../../utils/openExternalUrl";
 import {
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
+  getServicePlanCustomDocumentId,
   type ServicePlanContentResource,
   type ServicePlanElement,
   type ServicePlanScriptureReference,
@@ -52,6 +55,7 @@ import {
 } from "../../types/richText";
 import {
   createServicePlanAudioResource,
+  createServicePlanCustomDocumentReference,
   createServicePlanChurchResourceReference,
   createServicePlanGenericResource,
   createServicePlanLinkResource,
@@ -60,6 +64,7 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDataString,
   getServicePlanResourceDisplayLabel,
+  getServicePlanCustomDocumentDisplayLabel,
   getServicePlanResourceNotes,
   getServicePlanResourceText,
   isHttpUrl,
@@ -131,7 +136,9 @@ const ServicePlanContentPanel = ({
 }: ServicePlanContentPanelProps) => {
   const { churchId } = useContext(GlobalInfoContext) || {};
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [customDocumentPickerOpen, setCustomDocumentPickerOpen] = useState(false);
   const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const [scriptureAddOpen, setScriptureAddOpen] = useState(false);
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
@@ -157,6 +164,7 @@ const ServicePlanContentPanel = ({
 
   useEffect(() => {
     setPickerOpen(false);
+    setCustomDocumentPickerOpen(false);
     setScriptureEditIndex(null);
     setScriptureAddOpen(false);
     setAudioPickerOpen(false);
@@ -168,9 +176,22 @@ const ServicePlanContentPanel = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [element.id]);
 
+  useEffect(() => {
+    setCustomDocumentPickerOpen(false);
+  }, [churchId]);
+
   const songs = getServicePlanElementSongRefs(element);
   const scriptures = getServicePlanElementScriptureRefs(element);
   const resources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const customDocumentResources = resources.filter(
+    (resource) => resource.type === "custom-document",
+  );
+  const otherResources = resources.filter(
+    (resource) => resource.type !== "custom-document",
+  );
+  const attachedCustomDocumentIds = customDocumentResources
+    .map(getServicePlanCustomDocumentId)
+    .filter(Boolean);
   const referencedChurchResourceIds = useMemo(
     () => [
       ...new Set(
@@ -645,9 +666,27 @@ const ServicePlanContentPanel = ({
         {allowEdit ? <Button type="button" variant="primary" svg={BookOpen} color="#c4b5fd" iconSize="sm" className="max-md:min-h-0" onClick={() => { setScriptureAddOpen(true); onScriptureAttachModeChange?.(true); }}>Add scripture</Button> : null}
       </section>
 
+      <section className="space-y-2" aria-label="Attached custom documents">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Custom Documents</h3>
+        {customDocumentResources.length ? customDocumentResources.map((resource) => {
+          const documentId = getServicePlanCustomDocumentId(resource);
+          const document = allFreeFormDocs.find((candidate) => candidate._id === documentId);
+          const label = getServicePlanCustomDocumentDisplayLabel(resource, document);
+          return (
+            <div key={resource.id} className="flex min-w-0 items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1.5">
+              <Icon svg={Files} size="xs" className="shrink-0 text-indigo-300" />
+              <span className="min-w-0 flex-1 truncate text-sm text-gray-100" title={label}>{label}</span>
+              {!document ? <span className="shrink-0 text-xs text-amber-200">Unavailable</span> : null}
+              {allowEdit ? <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-5 w-5" svg={X} aria-label={`Remove custom document ${label}`} onClick={() => updateResources(resources.filter((candidate) => candidate.id !== resource.id))} /> : null}
+            </div>
+          );
+        }) : <p className="text-sm text-gray-500">No custom documents attached.</p>}
+        {allowEdit ? <Button type="button" variant="primary" svg={Files} color="#c4b5fd" iconSize="sm" className="max-md:min-h-0" onClick={() => setCustomDocumentPickerOpen(true)}>Add custom document</Button> : null}
+      </section>
+
       <section className="space-y-2" aria-label="Attached resources">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Resources</h3>
-        {resources.length ? resources.map((resource) => {
+        {otherResources.length ? otherResources.map((resource) => {
           const churchResource = isServicePlanChurchResourceReference(resource)
             ? referencedChurchResources[getServicePlanChurchResourceId(resource)]
             : undefined;
@@ -703,6 +742,24 @@ const ServicePlanContentPanel = ({
       </section>
 
       {pickerOpen ? <ServicePlanLibraryPicker isOpen onClose={() => setPickerOpen(false)} onSelectSong={(song) => { updateSongs([...songs, song]); setPickerOpen(false); }} /> : null}
+      {customDocumentPickerOpen ? (
+        <ServicePlanCustomDocumentPicker
+          isOpen
+          onClose={() => setCustomDocumentPickerOpen(false)}
+          attachedDocumentIds={attachedCustomDocumentIds}
+          onSelectDocument={(document) => {
+            const documentId = document._id;
+            if (!documentId || attachedCustomDocumentIds.includes(documentId)) return;
+            updateResources([
+              ...resources,
+              createServicePlanCustomDocumentReference({
+                documentId,
+                title: document.name,
+              }),
+            ]);
+          }}
+        />
+      ) : null}
       {audioPickerOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose media">
           <div className="max-h-[min(32rem,calc(100vh-2rem))] w-[min(30rem,100%)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-3 shadow-xl">

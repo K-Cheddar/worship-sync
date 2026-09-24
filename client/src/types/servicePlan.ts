@@ -145,6 +145,7 @@ export type ServicePlanContentResourceType =
   | "youtube"
   | "audio"
   | "document"
+  | "custom-document"
   | "url"
   | "text"
   | "generic";
@@ -171,6 +172,14 @@ export type ServicePlanContentResource = {
   mediaId?: string;
   data?: Record<string, unknown>;
   metadata?: ServicePlanContentResourceMetadata;
+};
+
+export const getServicePlanCustomDocumentId = (
+  resource: ServicePlanContentResource,
+): string => {
+  if (resource.type !== "custom-document") return "";
+  const value = resource.data?.customDocumentId;
+  return typeof value === "string" ? value.trim() : "";
 };
 
 export type ServicePlanElement = {

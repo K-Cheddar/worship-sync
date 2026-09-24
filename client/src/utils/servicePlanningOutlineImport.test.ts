@@ -166,6 +166,56 @@ describe("insertServicePlanningOutlineCandidates", () => {
     ]);
   });
 
+  it("inserts existing custom documents in reference order without copying slides", async () => {
+    const first = {
+      _id: "document-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "document-1",
+    } as any;
+    const second = {
+      _id: "document-2",
+      name: "Prayer Guide",
+      type: "free",
+      listId: "document-2",
+    } as any;
+    const result = await insertServicePlanningOutlineCandidates({
+      outlineCandidates: [first, second].map((document) => ({
+        sectionName: "Service",
+        headingName: "Presentation",
+        sourceRowIndex: 0,
+        elementType: "free",
+        title: document.name,
+        outlineItemType: "custom-document" as const,
+        customDocumentId: document._id,
+        cleanedTitle: document.name,
+        matchedLibraryItem: document,
+        parsedRef: null,
+        overlayReady: false,
+        outlineAlreadyPresent: false,
+      })),
+      currentList: [{
+        _id: "heading-1",
+        name: "Presentation",
+        type: "heading",
+        listId: "heading-list-1",
+      }],
+      allItems: [],
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(result.inserted).toBe(2);
+    expect(result.newList.slice(1).map(({ _id, name, type }) => ({ _id, name, type }))).toEqual([
+      { _id: "document-1", name: "Welcome Slides", type: "free" },
+      { _id: "document-2", name: "Prayer Guide", type: "free" },
+    ]);
+    expect(result.newList.slice(1).every((item) => !("slides" in item))).toBe(true);
+  });
+
   it("does not plan steps for items already present under the matched heading", () => {
     const candidate = {
       sectionName: "Worship",

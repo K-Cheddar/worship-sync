@@ -3,6 +3,7 @@ import {
   BookOpen,
   FileQuestion,
   FileText,
+  Files,
   Link as LinkIcon,
   Music,
   StickyNote,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import { getServicePlanCustomDocumentId } from "../../types/servicePlan";
 import type {
   ServicePlanContentResource,
   ServicePlanContentResourceType,
@@ -47,10 +49,33 @@ export const SERVICE_PLAN_RESOURCE_REGISTRY: Record<
   youtube: { label: "YouTube", icon: SquarePlay, toneClassName: "text-red-300", canEdit: false },
   audio: { label: "Audio", icon: AudioLines, toneClassName: "text-amber-300", canEdit: false },
   document: { label: "File", icon: FileText, toneClassName: "text-cyan-300", canEdit: false },
+  "custom-document": { label: "Custom document", icon: Files, toneClassName: "text-indigo-300", canEdit: false },
   url: { label: "Web link", icon: LinkIcon, toneClassName: "text-blue-300", canEdit: true },
   text: { label: "Notes", icon: StickyNote, toneClassName: "text-emerald-300", canEdit: true },
   generic: { label: "Other", icon: FileQuestion, toneClassName: "text-gray-300", canEdit: true },
 };
+
+/** Store a PouchDB custom-item id and its current name, never its slide data. */
+export const createServicePlanCustomDocumentReference = ({
+  documentId,
+  title,
+}: {
+  documentId: string;
+  title: string;
+}): ServicePlanContentResource => ({
+  id: generateRandomId(),
+  type: "custom-document",
+  title: title.trim() || "Untitled custom document",
+  data: { customDocumentId: documentId },
+});
+
+export const getServicePlanCustomDocumentDisplayLabel = (
+  resource: ServicePlanContentResource,
+  document?: { _id: string; name: string },
+): string =>
+  (document?._id === getServicePlanCustomDocumentId(resource)
+    ? document.name.trim()
+    : "") || resource.title.trim() || "Untitled custom document";
 
 export const getServicePlanResourceDefinition = (
   type: string,

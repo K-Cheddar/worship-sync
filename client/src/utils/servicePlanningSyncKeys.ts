@@ -30,7 +30,7 @@ export const getOutlineCandidateLineItemKey = (
     sectionName: candidate.sectionName,
     sourceRowIndex: candidate.sourceRowIndex,
     elementType: candidate.elementType,
-    title: candidate.title,
+    title: candidate.sourceLineItemTitle || candidate.title,
   });
 
 export const getOverlayPlanLineItemKey = (item: OverlaySyncPlanItem) =>

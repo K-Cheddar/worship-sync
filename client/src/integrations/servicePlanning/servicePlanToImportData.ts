@@ -29,6 +29,7 @@ import type {
 } from "../../types/servicePlan";
 import {
   getServicePlanElementAssigneeNames,
+  getServicePlanCustomDocumentId,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
@@ -70,6 +71,13 @@ const elementToRow = (element: ServicePlanElement): EventData => {
       version,
     }),
   );
+  const customDocumentRefs = (element.resources ?? [])
+    .filter((resource) => resource.type === "custom-document")
+    .map((resource) => ({
+      documentId: getServicePlanCustomDocumentId(resource),
+      title: resource.title,
+    }))
+    .filter((reference) => Boolean(reference.documentId));
 
   const contentTitle =
     element.sourceContentTitleRaw?.trim() ||
@@ -78,6 +86,7 @@ const elementToRow = (element: ServicePlanElement): EventData => {
         ? songRefs[0].songName.trim()
         : songRefs[0].title.trim()
       : scriptureRefs[0]?.label.trim()) ||
+    customDocumentRefs[0]?.title.trim() ||
     "";
   const sourceLedByRaw = element.sourceLedByRaw?.trim() || "";
 
@@ -96,6 +105,7 @@ const elementToRow = (element: ServicePlanElement): EventData => {
     ...(notes ? { note: notes } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
     ...(scriptureRefs.length ? { scriptureRefs } : {}),
+    ...(customDocumentRefs.length ? { customDocumentRefs } : {}),
   };
   const mappedSongs = songRefs.map((songRef) =>
     songRef.kind === "library"

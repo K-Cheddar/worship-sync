@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -221,7 +221,9 @@ const hasSyncableOutlineItems = (preview: ServicePlanningPreview | null): boolea
         (
           (candidate.outlineItemType === "song" &&
             Boolean(candidate.matchedLibraryItem)) ||
-          (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
+          (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)) ||
+          (candidate.outlineItemType === "custom-document" &&
+            candidate.matchedLibraryItem?.type === "free")
         ),
     ),
   );
@@ -322,6 +324,7 @@ const ServicePlanningSyncFloatingWindow = ({
   } = useCurrentServicePlanSource();
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
+  const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
   const overlays = useSelector(
     (s: RootState) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
   );
@@ -1112,6 +1115,27 @@ const ServicePlanningSyncFloatingWindow = ({
                                       ) : null}
                                     </div>
                                   ))}
+                                </div>
+                              ) : null}
+                              {item.attachedCustomDocuments?.length ? (
+                                <div className="flex flex-col gap-1 border-l border-indigo-500/40 pl-2 text-xs text-indigo-200">
+                                  {item.attachedCustomDocuments.map((document, documentIndex) => {
+                                    const currentDocument = allFreeFormDocs.find(
+                                      (candidate) => candidate._id === document.documentId && candidate.type === "free",
+                                    );
+                                    const title = currentDocument?.name?.trim() || document.title;
+                                    return (
+                                      <div key={`${document.documentId}:${documentIndex}`} className="flex flex-wrap items-center gap-1.5">
+                                        <FileText size={11} className="shrink-0 text-indigo-300" aria-hidden />
+                                        <span className="wrap-break-word">{title}</span>
+                                        {currentDocument ? (
+                                          <Check size={13} className="text-emerald-400" aria-label={`${title} is in the library`} />
+                                        ) : (
+                                          <span className="text-amber-200">Unavailable</span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               ) : null}
 

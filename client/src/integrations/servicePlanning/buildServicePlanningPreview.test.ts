@@ -3,6 +3,7 @@ import type { EventData } from "../../containers/Overlays/eventParser";
 import type { DBItem, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
 import { mergeSongLibraryItems } from "../../utils/songLibrary";
+import { getOutlineCandidateLineItemKey, getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 
 const song = (id: string, name: string): ServiceItem => ({
   _id: id,
@@ -43,6 +44,7 @@ const buildPreview = (
   row: EventData,
   allItems: ServiceItem[],
   allSongDocs: DBItem[] = [],
+  customDocumentLibrary: ServiceItem[] = [],
 ) =>
   buildServicePlanningPreview({
     importData: {
@@ -53,6 +55,7 @@ const buildPreview = (
     servicePlanning,
     overlays: [],
     songLibrary: mergeSongLibraryItems(allItems, allSongDocs),
+    customDocumentLibrary,
     activeOutlineList: [],
   });
 
@@ -202,5 +205,68 @@ describe("buildServicePlanningPreview scripture matching", () => {
     );
 
     expect(outlineCandidates).toHaveLength(0);
+  });
+});
+
+describe("buildServicePlanningPreview custom documents", () => {
+  const document = (id: string, name: string): ServiceItem => ({
+    _id: id,
+    name,
+    type: "free",
+    listId: id,
+  });
+
+  it("resolves attached document ids to current church documents in order", () => {
+    const { outlineCandidates, lineItems } = buildPreview(
+      {
+        elementType: "free",
+        title: "Special Feature",
+        ledBy: "",
+        customDocumentRefs: [
+          { documentId: "doc-2", title: "Old title" },
+          { documentId: "doc-1", title: "Second" },
+        ],
+      },
+      [],
+      [],
+      [document("doc-1", "Updated First"), document("doc-2", "Current Second")],
+    );
+
+    expect(lineItems[0].attachedCustomDocuments).toEqual([
+      { documentId: "doc-2", title: "Current Second", inLibrary: true },
+      { documentId: "doc-1", title: "Updated First", inLibrary: true },
+    ]);
+    expect(outlineCandidates.map((candidate) => candidate.customDocumentId)).toEqual([
+      "doc-2",
+      "doc-1",
+    ]);
+    expect(outlineCandidates.map((candidate) => candidate.matchedLibraryItem?.name)).toEqual([
+      "Current Second",
+      "Updated First",
+    ]);
+    expect(getOutlineCandidateLineItemKey(outlineCandidates[0])).toBe(
+      getServicePlanningLineItemKey(lineItems[0]),
+    );
+  });
+
+  it("keeps a missing document visible but prevents syncing it", () => {
+    const { outlineCandidates, lineItems } = buildPreview(
+      {
+        elementType: "free",
+        title: "Special Feature",
+        ledBy: "",
+        customDocumentRefs: [{ documentId: "deleted-doc", title: "Deleted document" }],
+      },
+      [],
+    );
+
+    expect(lineItems[0].attachedCustomDocuments).toEqual([
+      { documentId: "deleted-doc", title: "Deleted document", inLibrary: false },
+    ]);
+    expect(outlineCandidates[0]).toMatchObject({
+      outlineItemType: "custom-document",
+      customDocumentId: "deleted-doc",
+      matchedLibraryItem: null,
+    });
   });
 });

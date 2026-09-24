@@ -16,6 +16,13 @@ import type {
   ServicePlanSongReference,
 } from "../../types/servicePlan";
 
+let mockSongDocs: Array<Record<string, unknown>> = [];
+let mockFreeFormDocs: Array<{ _id: string; name: string }> = [];
+jest.mock("../../hooks", () => ({
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ allDocs: { allSongDocs: mockSongDocs, allFreeFormDocs: mockFreeFormDocs } }),
+}));
+
 // Both read Redux song state; the row's contract is only which one opens, with
 // which title, and that the popover can escalate to the picker.
 jest.mock("./ServicePlanLibraryPicker", () => ({
@@ -104,6 +111,27 @@ describe("richTextOneLinePreview", () => {
         ],
       }),
     ).toBe("First line Second");
+  });
+});
+
+describe("custom document content badges", () => {
+  it("uses the current document title in the Content column", () => {
+    mockFreeFormDocs = [{ _id: "document-1", name: "Updated presentation" }];
+    renderRow({
+      canEdit: false,
+      element: {
+        ...baseElement,
+        resources: [{
+          id: "custom-document-ref",
+          type: "custom-document",
+          title: "Old title",
+          data: { customDocumentId: "document-1" },
+        }],
+      },
+    });
+
+    expect(screen.getByText("Updated presentation")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview Updated presentation" })).toBeInTheDocument();
   });
 });
 

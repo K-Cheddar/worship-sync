@@ -3,7 +3,9 @@ import {
   createServicePlanGenericResource,
   createServicePlanChurchResourceReference,
   createServicePlanDocumentResource,
+  createServicePlanCustomDocumentReference,
   getEffectiveServicePlanResourceDefinition,
+  getServicePlanCustomDocumentDisplayLabel,
   getServicePlanChurchResourceId,
   getServicePlanResourceDisplayLabel,
   isServicePlanChurchResourceReference,
@@ -79,6 +81,25 @@ describe("service-plan content resources", () => {
     expect(
       getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label,
     ).toBe("Audio");
+  });
+
+  it("persists custom documents by stable id and resolves their current title", () => {
+    const reference = createServicePlanCustomDocumentReference({
+      documentId: "free-document-1",
+      title: "  Service Notes  ",
+    });
+    expect(reference).toMatchObject({
+      type: "custom-document",
+      title: "Service Notes",
+      data: { customDocumentId: "free-document-1" },
+    });
+    expect(reference).not.toHaveProperty("slides");
+    expect(getServicePlanCustomDocumentDisplayLabel(reference, {
+      _id: "free-document-1",
+      name: "Updated Service Notes",
+    })).toBe("Updated Service Notes");
+    expect(getServicePlanCustomDocumentDisplayLabel(reference)).toBe("Service Notes");
+    expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("Custom document");
   });
 
   it("projects legacy song and scripture fields when resources is absent", () => {

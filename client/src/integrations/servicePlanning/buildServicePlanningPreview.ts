@@ -78,9 +78,16 @@ export const dedupeOutlineCandidatesForPreview = (
   candidates: OutlineItemCandidate[],
 ): OutlineItemCandidate[] => {
   const seenSongKeys = new Set<string>();
+  const seenCustomDocumentKeys = new Set<string>();
 
   return candidates.filter((candidate) => {
     if (candidate.outlineItemType !== "song") {
+      if (candidate.outlineItemType !== "custom-document" || !candidate.customDocumentId) {
+        return true;
+      }
+      const key = `${candidate.headingName?.toLowerCase() || "__no_heading__"}::${candidate.customDocumentId}`;
+      if (seenCustomDocumentKeys.has(key)) return false;
+      seenCustomDocumentKeys.add(key);
       return true;
     }
 
@@ -178,6 +185,8 @@ export type BuildServicePlanningPreviewInput = {
   overlays: OverlayInfo[];
   /** Canonical merged song library, used to match planning titles to songs. */
   songLibrary: ServiceItem[];
+  /** Current church's custom-item index, resolved by stable document id. */
+  customDocumentLibrary?: ServiceItem[];
   /** The live outline, used to flag rows already present. */
   activeOutlineList: ServiceItem[];
   /**
@@ -193,6 +202,7 @@ export const buildServicePlanningPreview = ({
   servicePlanning: sp,
   overlays,
   songLibrary,
+  customDocumentLibrary = [],
   activeOutlineList,
   teamAssignments,
 }: BuildServicePlanningPreviewInput): ServicePlanningPreview => {
@@ -333,6 +343,11 @@ export const buildServicePlanningPreview = ({
   }
 
   const songs = songLibrary;
+  const customDocumentsById = new Map(
+    customDocumentLibrary
+      .filter((item) => item.type === "free")
+      .map((item) => [item._id, item]),
+  );
   const outlineCandidates: OutlineItemCandidate[] = [];
   const lineItems: ServicePlanningLineItem[] = [];
 
@@ -355,6 +370,15 @@ export const buildServicePlanningPreview = ({
       // match the source's free-text element type, which a hand-added element
       // ("bible") was never going to satisfy. Only plan-sourced rows carry any.
       const attachedScriptureRefs = row.scriptureRefs ?? [];
+      const customDocumentRefs = row.customDocumentRefs ?? [];
+      const attachedCustomDocuments = customDocumentRefs.map((reference) => {
+        const document = customDocumentsById.get(reference.documentId);
+        return {
+          documentId: reference.documentId,
+          title: document?.name?.trim() || reference.title.trim() || "Custom document",
+          inLibrary: Boolean(document),
+        };
+      });
       const outlineItemType = attachedScriptureRefs.length
         ? "bible"
         : elementRule?.outlineSync?.itemType ?? "none";
@@ -412,6 +436,7 @@ export const buildServicePlanningPreview = ({
               })),
             }
           : {}),
+        ...(attachedCustomDocuments.length ? { attachedCustomDocuments } : {}),
         outlineItemType,
         matchedLibraryItem,
         // One row, one line item: the preview mirrors the source order of
@@ -423,6 +448,7 @@ export const buildServicePlanningPreview = ({
 
       const syncsToOutline =
         attachedScriptureRefs.length > 0 ||
+        customDocumentRefs.length > 0 ||
         (Boolean(elementRule?.outlineSync) && outlineItemType !== "none");
 
       lineItems.push({
@@ -432,9 +458,12 @@ export const buildServicePlanningPreview = ({
 
       if (!syncsToOutline) continue;
 
-      if (!attachedScriptureRefs.length) {
+      if (
+        !attachedScriptureRefs.length &&
+        Boolean(elementRule?.outlineSync) &&
+        outlineItemType !== "none"
+      ) {
         outlineCandidates.push({ ...baseCandidate, cleanedTitle });
-        continue;
       }
 
       // Every attached passage becomes its own outline item, named by the
@@ -448,6 +477,22 @@ export const buildServicePlanningPreview = ({
           title: passageTitle || row.title,
           cleanedTitle: passageTitle || cleanedTitle,
           parsedRef: parsedRefs[attachedIndex],
+        });
+      });
+
+      customDocumentRefs.forEach((reference) => {
+        const document = customDocumentsById.get(reference.documentId) ?? null;
+        const documentTitle =
+          document?.name?.trim() || reference.title.trim() || "Custom document";
+        outlineCandidates.push({
+          ...baseCandidate,
+          title: documentTitle,
+          sourceLineItemTitle: row.title,
+          cleanedTitle: documentTitle,
+          outlineItemType: "custom-document",
+          customDocumentId: reference.documentId,
+          matchedLibraryItem: document,
+          parsedRef: null,
         });
       });
     }
