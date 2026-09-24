@@ -110,7 +110,6 @@ describe("storage usage formatting and indicators", () => {
     expect(screen.getByRole("group", { name: "Storage usage" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("region", { name: "File storage loading" })).toBeInTheDocument();
     expect(await screen.findByText("Storage usage unavailable")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("region", { name: "File storage" })).toHaveTextContent("3.5 MB / 500 MB");
     expect(mockGetQuota).toHaveBeenCalledTimes(2);
