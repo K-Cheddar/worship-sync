@@ -355,6 +355,9 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
   };
 };
 
+const makeStateWithItem = (item: Partial<any>) =>
+  makeBaseState({ undoable: { present: { item } } });
+
 const makeOnChangePayload = (overrides: Partial<{
   index: number;
   value: string;
@@ -1001,6 +1004,131 @@ describe("SlideEditor", () => {
     });
 
     jest.useRealTimers();
+  });
+
+  it("updates renamed free headings across section slides, clearing, and reload", () => {
+    const slides = ["Section 4", "Section 4A", "Section 4B"].map(
+      (name, index) => ({
+        id: `section-4-${index}`,
+        type: "Media",
+        name,
+        boxes: [
+          { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+          { width: 100, height: 100, words: "Section text", x: 0, y: 0 },
+        ],
+      }),
+    );
+    let item: any = {
+      selectedSlide: 0,
+      slides,
+      formattedSections: [
+        { sectionNum: 4, words: "Section text", slideSpan: 3 },
+      ],
+    };
+    mockState = makeStateWithItem(item);
+    const { rerender, unmount } = render(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent(
+      "Section 4",
+    );
+
+    item = {
+      ...item,
+      formattedSections: [
+        {
+          sectionNum: 4,
+          name: "First",
+          words: "Section text",
+          slideSpan: 3,
+        },
+      ],
+    };
+    mockState = makeStateWithItem(item);
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent("First");
+
+    for (const selectedSlide of [1, 2]) {
+      mockState = makeStateWithItem({ ...item, selectedSlide });
+      rerender(<SlideEditor access="full" />);
+      expect(screen.getByTestId("section-text-editor")).toHaveTextContent("First");
+    }
+
+    const renamedSection = item.formattedSections[0];
+    item = {
+      ...item,
+      formattedSections: [
+        { sectionNum: 4, words: renamedSection.words, slideSpan: 3 },
+      ],
+    };
+    mockState = makeStateWithItem(item);
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Section 4");
+
+    fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
+    expect(mockUpdateSlides).toHaveBeenCalledWith({
+      slides,
+      formattedSections: [
+        { sectionNum: 4, words: "Updated section text", slideSpan: 3 },
+      ],
+    });
+
+    // Reopening the editor with the saved item shape keeps the custom name.
+    unmount();
+    mockState = makeStateWithItem({
+      ...item,
+      formattedSections: [
+        { ...renamedSection, name: "First" },
+      ],
+    });
+    render(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent("First");
+  });
+
+  it("keeps song and Bible section headings unchanged", () => {
+    const songSlides = [
+      {
+        id: "song-slide",
+        type: "Media",
+        name: "Verse 1A",
+        boxes: [
+          { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+          { width: 100, height: 100, words: "Lyrics", x: 0, y: 0 },
+        ],
+      },
+    ];
+    mockState = makeStateWithItem({
+      type: "song",
+      slides: songSlides,
+      arrangements: [
+        {
+          name: "Default",
+          slides: songSlides,
+          formattedLyrics: [{ name: "Verse 1", words: "Lyrics" }],
+          songOrder: [{ name: "Verse 1" }],
+        },
+      ],
+      selectedArrangement: 0,
+      selectedSlide: 0,
+    });
+    const { rerender } = render(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Verse 1");
+
+    mockState = makeStateWithItem({
+      type: "bible",
+      selectedSlide: 0,
+      slides: [
+        {
+          id: "bible-slide",
+          type: "Media",
+          name: "Psalm 23",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Psalm text", x: 0, y: 0 },
+          ],
+        },
+      ],
+    });
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Psalm 23");
   });
 
   it("keeps the latest free slide formatting when a debounced text reformat completes", () => {

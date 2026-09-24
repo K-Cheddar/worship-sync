@@ -771,7 +771,7 @@ const MemberManager = ({
       // The server reconciles `team.memberIds` from the teams (and positions)
       // this save asked for. Apply the rosters it changed now so the Teams tab
       // and schedule reflect the join or removal right away, rather than
-      // waiting for the next poll.
+      // waiting for the next stale-focus bootstrap.
       response.teams?.forEach((team) => onTeamSaved(team));
       showToast(saveToastMessage, "success");
       if (profileImageUploadFailed) {

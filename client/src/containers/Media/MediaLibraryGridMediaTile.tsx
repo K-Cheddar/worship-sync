@@ -8,6 +8,7 @@ import { getMediaLibraryOriginBadgeLabel } from "./mediaLibraryOrigin";
 import { useDraggable } from "@dnd-kit/core";
 import type { MediaDragData } from "../../utils/presentationDnd";
 import MediaLibraryMediaVisual from "./MediaLibraryMediaVisual";
+import { Check } from "lucide-react";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -98,10 +99,10 @@ export default function MediaLibraryGridMediaTile({
       }
       className={cn(
         "flex h-auto w-full flex-col items-center justify-center overflow-hidden rounded-md border-2",
-        isMultiSelected
+        mediaMultiSelectMode && isMultiSelected
           ? "border-cyan-400 bg-cyan-400/10"
           : isSelected
-            ? "border-cyan-400"
+            ? "border-cyan-300 bg-cyan-400/20 ring-2 ring-inset ring-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.35)]"
           : "border-gray-500 hover:border-gray-300",
         isDragging && "opacity-50",
       )}
@@ -164,6 +165,12 @@ export default function MediaLibraryGridMediaTile({
             isSelected={isMultiSelected}
             frameClassName="absolute left-1.5 top-1.5 z-10 size-5"
           />
+          {isSelected && !mediaMultiSelectMode ? (
+            <span className="absolute left-1.5 top-1.5 z-10 inline-flex items-center gap-1 rounded bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-950 shadow-md">
+              <Check aria-hidden="true" className="size-3" />
+              Selected
+            </span>
+          ) : null}
           <MediaLibraryMediaVisual
             mediaItem={mediaItem}
             imageClassName="max-w-full max-h-full"

@@ -39,7 +39,10 @@ import {
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
+import {
+  addItemToAllItemsList,
+  upsertItemInAllItemsList,
+} from "../../store/allItemsSlice";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
@@ -494,7 +497,11 @@ const CreateItem = ({
       _id: item._id,
       listId: "",
     };
-    dispatch(addItemToAllItemsList(listItem));
+    if (item.type === "free") {
+      dispatch(upsertItemInAllItemsList(listItem));
+    } else {
+      dispatch(addItemToAllItemsList(listItem));
+    }
     dispatch(upsertItemInAllDocs(item));
 
     if (isEmbedded) {

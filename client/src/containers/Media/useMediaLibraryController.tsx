@@ -101,7 +101,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
+import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
@@ -734,7 +734,7 @@ export function useMediaLibraryController({
       };
       dispatch(setActiveItem(newItem));
       const addedAction = dispatch(addItemToItemList(listItem));
-      dispatch(addItemToAllItemsList(listItem));
+      dispatch(upsertItemInAllItemsList(listItem));
       navigate(
         getControllerItemPath(
           { _id: newItem._id, listId: addedAction.payload.listId },
@@ -1598,7 +1598,7 @@ export function useMediaLibraryController({
         };
         dispatch(setActiveItem(newItem));
         const addedAction = dispatch(addItemToItemList(listItem));
-        dispatch(addItemToAllItemsList(listItem));
+        dispatch(upsertItemInAllItemsList(listItem));
         navigate(
           getControllerItemPath(
             { _id: newItem._id, listId: addedAction.payload.listId },

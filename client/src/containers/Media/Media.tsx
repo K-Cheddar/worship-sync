@@ -267,11 +267,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             "rounded-t-md mt-2",
           )}
         >
-          <h2 className="font-semibold">Media</h2>
+          <h2 className="font-semibold">Sources</h2>
           <div className="flex-1 flex items-center justify-center">
             <Button
               variant="tertiary"
               svg={c.isMediaExpanded ? ChevronDown : ChevronUp}
+              title={c.isMediaExpanded ? "Collapse Sources" : "Expand Sources"}
+              aria-label={
+                c.isMediaExpanded ? "Collapse Sources" : "Expand Sources"
+              }
               onClick={() => {
                 dispatch(setIsMediaExpanded(!c.isMediaExpanded));
                 if (c.isMediaExpanded) {

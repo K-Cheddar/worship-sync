@@ -529,7 +529,7 @@ describe("MemberManager team membership", () => {
     await user.click(screen.getByRole("button", { name: "Save member" }));
 
     // Without this the Teams tab and schedule roster stay stale until the next
-    // poll, which is what pushed admins to re-add the member by hand.
+    // stale-focus bootstrap, which is what pushed admins to re-add the member by hand.
     await waitFor(() => expect(onTeamSaved).toHaveBeenCalledWith(joinedTeam));
   });
 

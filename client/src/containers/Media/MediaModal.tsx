@@ -75,7 +75,7 @@ import MediaOriginFilter from "./MediaOriginFilter";
 import type { MediaOriginFilterValue } from "./mediaLibraryOrigin";
 import { calculateMediaLibraryGridColumns } from "./mediaLibraryGridColumns";
 import { Slider } from "../../components/ui/Slider";
-import { VirtualMediaGrid } from "./VirtualMediaGrid";
+import { VirtualMediaGrid, type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { useNativeFileDrop } from "./useNativeFileDrop";
@@ -411,6 +411,8 @@ const MediaModal = ({
       : calculateMediaLibraryGridColumns(window.innerWidth),
   );
   const modalGridRef = useRef<HTMLElement>(null);
+  const modalVirtualGridRef = useRef<VirtualMediaGridHandle>(null);
+  const modalSelectionScrollRef = useRef<AbortController | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculatedGridCols = useMemo(() => {
@@ -873,8 +875,36 @@ const MediaModal = ({
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
+
+      const selectedId = selectedMedia.id;
+      if (selectedId && filteredList.some((item) => item.id === selectedId)) {
+        const controller = new AbortController();
+        modalSelectionScrollRef.current?.abort();
+        modalSelectionScrollRef.current = controller;
+
+        const scrollToSelection = () => {
+          if (controller.signal.aborted) return;
+          const grid = modalVirtualGridRef.current;
+          if (!grid) {
+            requestAnimationFrame(scrollToSelection);
+            return;
+          }
+
+          void grid.scrollToMediaId(selectedId, { signal: controller.signal }).then(
+            (result) => {
+              if (!controller.signal.aborted && result.status === "not-ready") {
+                requestAnimationFrame(scrollToSelection);
+              }
+            },
+          );
+        };
+
+        requestAnimationFrame(scrollToSelection);
+      }
     }
     if (!isOpen && wasModalOpenRef.current) {
+      modalSelectionScrollRef.current?.abort();
+      modalSelectionScrollRef.current = null;
       clearModalSelection();
       setIsExpanded(false);
     }
@@ -884,11 +914,17 @@ const MediaModal = ({
     selectedMedia,
     selectedMediaIds,
     previewMedia,
+    filteredList,
     setModalSelectedMedia,
     setModalSelectedMediaIds,
     setModalPreviewMedia,
     clearModalSelection,
   ]);
+
+  useEffect(
+    () => () => modalSelectionScrollRef.current?.abort(),
+    [],
+  );
 
   // Modal keeps its own selection; after deletes the list updates but parent clearSelection does not reach here.
   useEffect(() => {
@@ -1305,6 +1341,7 @@ const MediaModal = ({
               className="scrollbar-variable overflow-y-auto min-h-0 flex-1 bg-black/30"
             >
               <VirtualMediaGrid
+                ref={modalVirtualGridRef}
                 scrollRef={modalGridRef}
                 mediaItems={filteredList}
                 cols={calculatedGridCols}

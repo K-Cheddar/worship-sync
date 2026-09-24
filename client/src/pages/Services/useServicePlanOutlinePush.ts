@@ -10,6 +10,7 @@ import { useCallback, useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
+import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItems,
   type ServicePlanOutlinePushResult,
@@ -42,6 +43,11 @@ export const useServicePlanOutlinePush = () => {
       });
       if (result.items.length > 0) {
         dispatch(updateItemList([...currentList, ...result.items]));
+        for (const item of result.items) {
+          if (db && (item.type === "free" || item.type === "bible")) {
+            dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
+          }
+        }
       }
       return result;
     },

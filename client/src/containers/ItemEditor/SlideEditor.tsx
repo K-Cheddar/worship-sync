@@ -101,6 +101,7 @@ import {
 import type { PresentationControllerMode } from "../../context/presentationControllerMode";
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
+import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -1081,9 +1082,14 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     }
 
     if (type === "free") {
-      // For free types, show "Section X"
-      const sectionMatch = currentSlide.name?.match(/Section (\d+)/);
-      const name = sectionMatch ? `Section ${sectionMatch[1]}` : currentSlide.name;
+      const sectionNum = getFreeSectionNumber(currentSlide);
+      let name = currentSlide.name;
+      if (sectionNum !== null) {
+        const customName = item.formattedSections?.find(
+          (section) => section.sectionNum === sectionNum,
+        )?.name;
+        name = customName?.trim() || `Section ${sectionNum}`;
+      }
       const bgColor = itemSectionBgColorMap.get("Section") || "bg-stone-500";
       return { sectionName: name, sectionColor: bgColor };
     }

@@ -4,7 +4,7 @@ import type { ContextType } from "react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import type { ServiceTime } from "../types";
-import type { ServicePlan, ServicePlanSummary } from "../types/servicePlan";
+import type { ServicePlan } from "../types/servicePlan";
 import {
   buildCurrentServiceViewerOptions,
   default as CurrentServiceViewer,
@@ -19,17 +19,16 @@ import store from "../store/store";
 import { initiateServices } from "../store/serviceTimesSlice";
 import {
   getServicePlanViewer,
-  listServicePlans,
 } from "../api/auth";
 import { useChat } from "../chat/ChatContext";
+import { useTeamsLiveSync } from "./Teams/hooks/useTeamsLiveSync";
 
 jest.mock("../api/auth", () => ({
   getServicePlanViewer: jest.fn(),
-  listServicePlans: jest.fn(),
 }));
 
 jest.mock("./Teams/hooks/useTeamsLiveSync", () => ({
-  isServicePlanUpdatedEvent: jest.fn(() => false),
+  isServicePlanUpdatedEvent: jest.fn((event: { type: string }) => event.type === "service-plan-updated"),
   useTeamsLiveSync: jest.fn(),
 }));
 
@@ -104,20 +103,6 @@ const tomorrowService = service("svc-2", "2026-09-14T13:00:00.000Z");
 
 const mockedUseChat = jest.mocked(useChat);
 
-const summary = (serviceItem: ServiceTime): {
-  planKey: string;
-  serviceId: string;
-  date: string;
-  name: string;
-  startsAt: string;
-} => ({
-  planKey: `${serviceItem.id}@${serviceItem.dateTimeISO?.slice(0, 10)}`,
-  serviceId: serviceItem.id,
-  date: serviceItem.dateTimeISO?.slice(0, 10) ?? "",
-  name: `${serviceItem.name} Plan`,
-  startsAt: serviceItem.dateTimeISO ?? "",
-});
-
 const renderViewer = (services: ServiceTime[], canViewTeams = false) => {
   store.dispatch(initiateServices(services));
   const context = createMockGlobalContext({
@@ -148,7 +133,7 @@ describe("CurrentServiceViewer", () => {
     cleanup();
     store.dispatch(initiateServices([]));
     jest.mocked(getServicePlanViewer).mockReset();
-    jest.mocked(listServicePlans).mockReset();
+    jest.mocked(useTeamsLiveSync).mockReset();
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
@@ -216,14 +201,10 @@ describe("CurrentServiceViewer", () => {
     ]);
   });
 
-  it("loads the automatically selected service and its saved plan", async () => {
+  it("loads only the automatically selected occurrence plan", async () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [summary(morningService)],
-    });
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan,
@@ -239,16 +220,13 @@ describe("CurrentServiceViewer", () => {
       "church-1",
       "svc-1@2026-09-13",
     );
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
   });
 
   it("shows a clear empty state when the selected service has no saved plan", async () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [],
-    });
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan: null,
@@ -271,16 +249,10 @@ describe("CurrentServiceViewer", () => {
     );
   });
 
-  it("renders the active service before a slow plan list completes", async () => {
+  it("does not wait for a church-wide service-plan list", async () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    let resolveList: ((value: { success: true; servicePlans: ServicePlanSummary[] }) => void) | undefined;
-    jest.mocked(listServicePlans).mockReturnValue(
-      new Promise((resolve) => {
-        resolveList = resolve;
-      }),
-    );
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan,
@@ -290,8 +262,8 @@ describe("CurrentServiceViewer", () => {
     renderViewer([morningService]);
 
     expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
-    expect(screen.queryByText("Loading service plans")).not.toBeInTheDocument();
-    resolveList?.({ success: true, servicePlans: [summary(morningService)] });
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+    expect(getServicePlanViewer).toHaveBeenCalledWith("church-1", "svc-1@2026-09-13");
   });
 
   it("groups bounded manual choices as recent, today, and upcoming", () => {
@@ -359,10 +331,6 @@ describe("CurrentServiceViewer", () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [summary(morningService), summary(tomorrowService)],
-    });
     jest.mocked(getServicePlanViewer).mockImplementation(async (_churchId, planKey) => ({
       success: true,
       plan: { ...plan, planKey, name: planKey },
@@ -376,21 +344,25 @@ describe("CurrentServiceViewer", () => {
     await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
     await user.click(await screen.findByRole("option", { name: /svc-2/ }));
     expect(await screen.findByRole("heading", { name: "svc-2@2026-09-14" })).toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith(
+      "church-1",
+      "svc-2@2026-09-14",
+    );
     expect(
       screen.getByRole("button", { name: /return to current service/i }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /return to current service/i }));
     expect(await screen.findByRole("heading", { name: "svc-1@2026-09-13" })).toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
   });
 
   it("refreshes after a meaningful hidden-to-visible transition", async () => {
     let nowMs = Date.parse("2026-09-13T12:00:00.000Z");
     jest.spyOn(Date, "now").mockImplementation(() => nowMs);
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [summary(morningService)],
-    });
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan,
@@ -405,7 +377,7 @@ describe("CurrentServiceViewer", () => {
 
     renderViewer([morningService]);
     await screen.findByRole("heading", { name: "Welcome" });
-    expect(listServicePlans).toHaveBeenCalledTimes(1);
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
 
     act(() => {
       setVisibility("hidden");
@@ -415,10 +387,106 @@ describe("CurrentServiceViewer", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
-    await waitFor(() => expect(listServicePlans).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith("church-1", "svc-1@2026-09-13");
     await act(async () => {
       await Promise.resolve();
     });
+  });
+
+  it("refreshes only the active plan after the ten-minute stale interval", async () => {
+    jest.useFakeTimers();
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan,
+      snapshot: null,
+    });
+
+    renderViewer([morningService, tomorrowService]);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(10 * 60 * 1000);
+      await Promise.resolve();
+    });
+
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
+  });
+
+  it("updates and removes the active plan from live events", async () => {
+    const updatedPlan = { ...plan, name: "Updated live service" };
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({ success: true, plan, snapshot: null })
+      .mockResolvedValueOnce({ success: true, plan: updatedPlan, snapshot: null });
+
+    renderViewer([morningService]);
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    const onMessage = jest.mocked(useTeamsLiveSync).mock.calls[0]?.[1];
+    expect(onMessage).toBeDefined();
+
+    act(() => {
+      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+    });
+    expect(await screen.findByRole("heading", { name: "Updated live service" })).toBeInTheDocument();
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
+    expect(getServicePlanViewer).toHaveBeenLastCalledWith(
+      "church-1",
+      "svc-1@2026-09-13",
+    );
+
+    act(() => {
+      onMessage?.({ type: "service-plan-removed", planKey: "svc-1@2026-09-13" });
+    });
+    expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not carry an old request error into a newly selected occurrence", async () => {
+    let rejectFirstRequest: ((error: Error) => void) | undefined;
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(getServicePlanViewer)
+      .mockReturnValueOnce(new Promise((_, reject) => {
+        rejectFirstRequest = reject;
+      }))
+      .mockImplementation(async (_churchId, planKey) => ({
+        success: true,
+        plan: { ...plan, planKey, name: planKey },
+        snapshot: null,
+      }));
+    const user = userEvent.setup();
+
+    renderViewer([morningService, tomorrowService]);
+    await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
+    await user.click(await screen.findByRole("option", { name: /svc-2/ }));
+    expect(await screen.findByRole("heading", { name: "svc-2@2026-09-14" })).toBeInTheDocument();
+
+    await act(async () => {
+      rejectFirstRequest?.(new Error("old occurrence failed"));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("old occurrence failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "svc-2@2026-09-14" })).toBeInTheDocument();
   });
 
   it("rechecks the automatic choice when the scheduled start arrives", () => {
@@ -450,10 +518,6 @@ describe("CurrentServiceViewer", () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [],
-    });
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan: null,
@@ -489,10 +553,6 @@ describe("CurrentServiceViewer", () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(listServicePlans).mockResolvedValue({
-      success: true,
-      servicePlans: [],
-    });
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan: null,

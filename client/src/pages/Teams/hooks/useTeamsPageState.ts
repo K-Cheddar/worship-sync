@@ -51,17 +51,18 @@ import {
 } from "../../../api/authTypes";
 import { scheduleDateRangesOverlap } from "../schedule/scheduleConflicts";
 
-// After a local optimistic edit, ignore inbound polls/pushes for this long so a
+// After a local optimistic edit, ignore inbound bootstraps/pushes for this long so a
 // slightly-stale server snapshot (or an echo of our own change) can't revert it.
 const LOCAL_EDIT_COOLDOWN_MS = 3000;
+const TEAMS_FOCUS_REFRESH_MAX_AGE_MS = 5 * 60 * 1000;
 // Keep the "Syncing…" toolbar chip visible at least this long after the last
 // teams save settles, so a fast REST round-trip still registers visually.
 const TEAMS_AUTOSAVE_LINGER_MS = 800;
 
-// Structural equality for a teams collection, used to decide whether a polled
+// Structural equality for a teams collection, used to decide whether a fetched
 // snapshot actually changed before applying it. Preferred over `JSON.stringify`
 // comparison: it short-circuits on the first difference (cheaper than
-// serializing whole collections on every 15s poll), is insensitive to object
+// serializing whole collections), is insensitive to object
 // key order (no false "changed" from server vs. locally-built objects), and —
 // unlike an updatedAt/length signature — can never miss a real change. Arrays
 // stay order-sensitive, which is correct: collection ordering is meaningful and
@@ -137,22 +138,24 @@ export const useTeamsPageState = () => {
   // Latest churchId, read inside async loads to skip stale-church writes after
   // the active church changes mid-request.
   const churchIdRef = useRef(churchId);
+  // Time at which this church's bootstrap was last accepted as current.
+  const lastSuccessfulBootstrapAtRef = useRef(0);
   // Timestamp of the last local optimistic edit, used to gate inbound sync.
   const lastLocalEditAtRef = useRef(0);
   // Number of teams saves still in flight (schedule grid, position reorder, …).
   // Schedule assignment saves in particular are serialized and can take longer
   // than the fixed edit cooldown to drain; inbound sync stays gated while any
-  // remain so a poll/SSE can't apply a server snapshot missing not-yet-saved
+  // remain so a bootstrap/SSE can't apply a server snapshot missing not-yet-saved
   // edits.
   const pendingTeamsSavesRef = useRef(0);
-  // Set while an inbound (poll/SSE) change is being applied so it isn't mistaken
+  // Set while an inbound (bootstrap/SSE) change is being applied so it isn't mistaken
   // for a local edit — applying a remote update must not start the local-edit
   // cooldown (which would needlessly defer further inbound syncs).
   const applyingRemoteRef = useRef(false);
-  // Separate in-flight gate for background polling so a silent poll never trips
+  // Separate in-flight gate for background bootstrap recovery so it never trips
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
-  // Cleared on unmount so a background poll that resolves after the page is gone
+  // Cleared on unmount so a background request that resolves after the page is gone
   // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
   const deferredRefreshTimeoutRef = useRef<ReturnType<
@@ -175,6 +178,10 @@ export const useTeamsPageState = () => {
 
   useEffect(() => {
     churchIdRef.current = churchId;
+  }, [churchId]);
+
+  useEffect(() => {
+    lastSuccessfulBootstrapAtRef.current = 0;
   }, [churchId]);
 
   useEffect(() => {
@@ -309,7 +316,7 @@ export const useTeamsPageState = () => {
     (scheduleId: string) => {
       // Note: changing which schedule is in view is not a data edit, so it must
       // NOT start the local-edit cooldown — doing so would needlessly block
-      // inbound SSE/poll grid updates for a few seconds after every dropdown
+      // inbound SSE/bootstrap grid updates for a few seconds after every dropdown
       // switch. Only edits to schedule data set lastLocalEditAtRef.
       setSelectedScheduleId(scheduleId);
       selectedScheduleIdRef.current = scheduleId;
@@ -470,6 +477,7 @@ export const useTeamsPageState = () => {
         if (churchIdRef.current !== churchId) return;
         const nextData = buildTeamsDataFromBootstrap(response);
         nextData.schedules = withRetainedHydration(nextData.schedules);
+        lastSuccessfulBootstrapAtRef.current = Date.now();
         const nextSelectedScheduleId =
           selectedScheduleIdRef.current &&
           nextData.schedules.some(
@@ -591,7 +599,7 @@ export const useTeamsPageState = () => {
       }));
       try {
         // Gate inbound sync on the real save (same as schedule edits) so a slow
-        // reorder can't be reverted by a poll landing mid-request.
+        // reorder can't be reverted by a bootstrap landing mid-request.
         await trackTeamsSave(
           reorderTeamPositions(churchId, {
             teamId,
@@ -627,16 +635,16 @@ export const useTeamsPageState = () => {
     [],
   );
 
-  // Silent background re-fetch used by polling and (as a fallback) by the live
-  // channel. Unlike `refresh`, it never toggles `loading`, diff-gates so it
-  // stays a no-op when nothing changed, and bails out while a local edit is
-  // settling so it can't clobber optimistic state.
+  // Silent background bootstrap used for SSE reconnect recovery and as a
+  // bounded stale-on-focus fallback. Unlike `refresh`, it never toggles
+  // `loading`, diff-gates unchanged data, and bails out while a local edit is
+  // settling so it cannot clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
     if (!churchId) return;
-    // Don't pile onto a full (loading) refresh, and don't run two polls at once.
-    // A poll uses its own in-flight gate so it never trips `refresh`'s dedupe
-    // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a poll
-    // in flight during a church switch would make refresh skip the real load.
+    // Don't pile onto a full (loading) refresh or another background request.
+    // A background request uses its own gate so it never trips `refresh`'s dedupe
+    // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a
+    // background request during a church switch would make refresh skip the load.
     if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current)
       return;
     if (isLocalEditCoolingDown()) return;
@@ -654,6 +662,7 @@ export const useTeamsPageState = () => {
       const changedKeys = teamsDataKeys.filter(
         (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
       );
+      lastSuccessfulBootstrapAtRef.current = Date.now();
       if (changedKeys.length === 0) return;
       setData((current) => {
         let merged = current;
@@ -676,8 +685,8 @@ export const useTeamsPageState = () => {
         writeSelectedScheduleId(churchId, nextSelectedScheduleId);
       }
     } catch (error) {
-      // Background sync failures are non-fatal: the next poll, focus, or manual
-      // refresh recovers. Stay silent so we don't toast on a repeating timer.
+      // Background sync failures are non-fatal: a later focus, reconnect, or
+      // manual refresh can recover. Stay silent to avoid interrupting operators.
       console.error("Could not background-sync teams.", error);
     } finally {
       backgroundRefreshInFlightRef.current = false;
@@ -859,14 +868,18 @@ export const useTeamsPageState = () => {
   ]);
 
   // Run a guarded background refresh once the local-edit cooldown clears. Used
-  // when a live event arrives mid-edit and we defer applying it.
+  // when a live event or reconnect recovery arrives mid-edit.
   const scheduleDeferredBackgroundRefresh = useCallback(() => {
     if (deferredRefreshTimeoutRef.current) return;
     deferredRefreshTimeoutRef.current = setTimeout(() => {
       deferredRefreshTimeoutRef.current = null;
-      void backgroundRefresh();
+      if (isLocalEditCoolingDown()) {
+        scheduleDeferredBackgroundRefresh();
+      } else {
+        void backgroundRefresh();
+      }
     }, LOCAL_EDIT_COOLDOWN_MS);
-  }, [backgroundRefresh]);
+  }, [backgroundRefresh, isLocalEditCoolingDown]);
 
   // Apply a pushed scheduling-grid change from another admin. The event carries
   // the full schedule doc, so we merge it straight into state via the same
@@ -941,16 +954,52 @@ export const useTeamsPageState = () => {
     ],
   );
 
-  useTeamsLiveSync(churchId, applyTeamsStreamEvent);
+  const { connectionState, reconnectVersion } = useTeamsLiveSync(
+    churchId,
+    applyTeamsStreamEvent,
+  );
 
-  // Refresh when the Teams tab regains focus/visibility so changes that occurred
-  // while it was inactive are recovered without repeatedly reloading the full
-  // bootstrap while the tab remains open. Schedule changes still arrive through
-  // the Teams SSE channel.
+  const handledReconnectVersionRef = useRef(0);
+  const handledReconnectChurchIdRef = useRef("");
+
+  useEffect(() => {
+    if (handledReconnectChurchIdRef.current !== churchId) {
+      handledReconnectChurchIdRef.current = churchId;
+      handledReconnectVersionRef.current = reconnectVersion;
+      return;
+    }
+    if (reconnectVersion <= handledReconnectVersionRef.current) return;
+    handledReconnectVersionRef.current = reconnectVersion;
+    if (isLocalEditCoolingDown()) {
+      scheduleDeferredBackgroundRefresh();
+    } else {
+      void backgroundRefresh();
+    }
+  }, [
+    backgroundRefresh,
+    churchId,
+    isLocalEditCoolingDown,
+    reconnectVersion,
+    scheduleDeferredBackgroundRefresh,
+  ]);
+
+  // Focus recovery is bounded: SSE covers schedule and service-plan changes,
+  // while the bootstrap fills remaining Teams data gaps after an outage or when
+  // the last accepted snapshot has become stale.
   useEffect(() => {
     if (!churchId) return undefined;
     const handleVisible = () => {
-      if (document.visibilityState === "visible") void backgroundRefresh();
+      if (document.visibilityState !== "visible") return;
+      const snapshotIsStale =
+        Date.now() - lastSuccessfulBootstrapAtRef.current >
+        TEAMS_FOCUS_REFRESH_MAX_AGE_MS;
+      if (connectionState === "unavailable") {
+        if (snapshotIsStale) void backgroundRefresh();
+        return;
+      }
+      if (connectionState !== "connected" || snapshotIsStale) {
+        void backgroundRefresh();
+      }
     };
     window.addEventListener("focus", handleVisible);
     document.addEventListener("visibilitychange", handleVisible);
@@ -958,7 +1007,7 @@ export const useTeamsPageState = () => {
       window.removeEventListener("focus", handleVisible);
       document.removeEventListener("visibilitychange", handleVisible);
     };
-  }, [backgroundRefresh, churchId]);
+  }, [backgroundRefresh, churchId, connectionState]);
 
   useEffect(() => {
     // Set in the effect body (not just init) so a StrictMode/remount re-run

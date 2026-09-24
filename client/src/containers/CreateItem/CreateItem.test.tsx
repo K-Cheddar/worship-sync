@@ -455,6 +455,43 @@ describe("CreateItem", () => {
     expect(store.getState().itemList.list).toHaveLength(1);
   });
 
+  it("registers an ordinarily created custom item in the library", async () => {
+    mockedCreateNewFreeForm.mockResolvedValue(
+      createMockItem({
+        name: "Welcome Slides",
+        _id: "welcome-slides",
+        type: "free",
+        background: "welcome-background",
+        slides: [{ id: "slide-1" }] as ItemState["slides"],
+      }),
+    );
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: true,
+        name: "Welcome Slides",
+        text: "Welcome",
+      },
+    });
+
+    renderCreateItem({ store });
+    fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
+
+    await waitFor(() => {
+      expect(store.getState().allItems.list).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            _id: "welcome-slides",
+            name: "Welcome Slides",
+            type: "free",
+          }),
+        ]),
+      );
+    });
+    expect(store.getState().allItems.list).toHaveLength(1);
+  });
+
   it("navigates to the inserted outline row listId after creating a song", async () => {
     mockedCreateNewSong.mockResolvedValue(
       createMockItem({

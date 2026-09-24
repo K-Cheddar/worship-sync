@@ -78,6 +78,25 @@ describe("dbUtils", () => {
     });
   });
 
+  it("loads durable custom documents from the same initialization scan", async () => {
+    const db = createDb();
+    const welcomeSlides = {
+      _id: "welcome-slides",
+      name: "Welcome Slides",
+      type: "free",
+      slides: [{ id: "slide-1" }, { id: "slide-2" }],
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: welcomeSlides }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllFreeFormDocs",
+      payload: [welcomeSlides],
+    });
+  });
+
   it("does not dispatch a stale document load after its route is inactive", async () => {
     const db = createDb();
     db.allDocs.mockResolvedValue({ rows: [{ doc: { _id: "song-1", type: "song" } }] });

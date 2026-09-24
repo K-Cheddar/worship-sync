@@ -319,7 +319,7 @@ const ScheduleTab = ({
   /** Clears a draft key after a successful create so New schedule starts fresh. */
   onScheduleDraftClear: (draftKey: string) => void;
   // Registers an in-flight schedule save with the page so inbound sync stays
-  // gated until it settles (prevents a poll/SSE from reverting pending edits).
+  // gated until it settles (prevents a bootstrap/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
 }) => {
   const context = useContext(GlobalInfoContext);
@@ -826,7 +826,7 @@ const ScheduleTab = ({
         () => undefined,
       );
       // Keep inbound sync gated until this save (and the rest of the queue)
-      // has drained, so a poll/SSE can't apply a snapshot missing it.
+      // has drained, so a bootstrap/SSE can't apply a snapshot missing it.
       return trackTeamsSave(run);
     },
     [trackTeamsSave],

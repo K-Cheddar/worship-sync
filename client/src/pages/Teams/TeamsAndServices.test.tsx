@@ -753,14 +753,14 @@ describe("Teams", () => {
         }),
       ).toHaveTextContent("No microphone");
 
-      // A later bootstrap often returns this schedule as a summary (maps omitted).
+      // A stale-on-focus bootstrap often returns this schedule as a summary (maps omitted).
       // Retained hydration must reuse the cleared maps from the local save — not
       // the pre-clear snapshot that was retained when the grid first opened.
       mockGetTeamsBootstrap.mockResolvedValue(
         asTeamsBootstrapResponse(summaryRefresh as unknown as TestTeamsBootstrap),
       );
       await act(async () => {
-        jest.advanceTimersByTime(3500);
+        jest.advanceTimersByTime(5 * 60 * 1000 + 3500);
         document.dispatchEvent(new Event("visibilitychange"));
       });
       await waitFor(() => {

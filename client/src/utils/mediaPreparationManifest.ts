@@ -129,6 +129,7 @@ export const buildMediaPreparationManifest = ({
   const previousStructure = previous
     ? getMediaPreparationManifestStructure(previous)
     : undefined;
+  const outlineName = discovery.outlineName ?? discovery.targetOutlineName;
   return {
     contract: "worshipsync.media-preparation",
     version: MEDIA_PREPARATION_MANIFEST_VERSION,
@@ -138,11 +139,17 @@ export const buildMediaPreparationManifest = ({
         : (previous?.revision ?? 0) + 1,
     publishedAt,
     outputId,
-    controllerProfileId: discovery.controllerProfileId,
-    controllerProfileName: discovery.controllerProfileName,
-    outlineScope: discovery.outlineScope,
+    ...(discovery.controllerProfileId !== undefined && {
+      controllerProfileId: discovery.controllerProfileId,
+    }),
+    ...(discovery.controllerProfileName !== undefined && {
+      controllerProfileName: discovery.controllerProfileName,
+    }),
+    ...(discovery.outlineScope !== undefined && {
+      outlineScope: discovery.outlineScope,
+    }),
     outlineId: nextShape.outlineId,
-    outlineName: discovery.outlineName ?? discovery.targetOutlineName,
+    ...(outlineName !== undefined && { outlineName }),
     items,
   };
 };
