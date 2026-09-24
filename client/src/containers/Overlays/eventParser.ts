@@ -26,6 +26,19 @@ export interface EventData {
   startTime?: string;
   /** Supports source durations such as 1m 30s without rounding them away. */
   durationMinutes?: number;
+  /** Saved-plan content shown in the Controller preview. */
+  contentResources?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    url?: string;
+    detail?: string;
+  }>;
+  /** Saved-plan microphone assignments, grouped by the person carrying them. */
+  microphoneAssignments?: Array<{
+    assigneeName?: string;
+    microphoneIds: string[];
+  }>;
   /** Shared/default note for everyone viewing the service. */
   note?: string;
   /** Notes from custom printout columns, scoped to their column heading. */
