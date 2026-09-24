@@ -156,14 +156,20 @@ export const isMediaPreparationManifest = (
     if (!isRecord(item)) return false;
     if (
       typeof item.itemId !== "string" ||
-      !Number.isFinite(item.itemIndex) ||
+      item.itemId.length === 0 ||
+      !Number.isInteger(item.itemIndex) ||
+      item.itemIndex < 0 ||
       typeof item.itemName !== "string" ||
       !Array.isArray(item.media)
     ) {
       return false;
     }
     return item.media.every((media) => {
-      if (!isRecord(media) || typeof media.mediaKey !== "string") return false;
+      if (
+        !isRecord(media) ||
+        typeof media.mediaKey !== "string" ||
+        media.mediaKey.length === 0
+      ) return false;
       const source = media.source;
       return (
         isRecord(source) &&
@@ -177,11 +183,21 @@ export const isMediaPreparationManifest = (
     candidate.contract === "worshipsync.media-preparation" &&
     candidate.version === MEDIA_PREPARATION_MANIFEST_VERSION &&
     typeof candidate.revision === "number" &&
-    Number.isFinite(candidate.revision) &&
+    Number.isInteger(candidate.revision) &&
     candidate.revision >= 1 &&
     typeof candidate.publishedAt === "number" &&
     Number.isFinite(candidate.publishedAt) &&
     typeof candidate.outputId === "string" &&
+    candidate.outputId.length > 0 &&
+    (candidate.controllerProfileId === undefined ||
+      typeof candidate.controllerProfileId === "string") &&
+    (candidate.outlineScope === undefined ||
+      typeof candidate.outlineScope === "string") &&
+    (candidate.outlineId === undefined ||
+      candidate.outlineId === null ||
+      typeof candidate.outlineId === "string") &&
+    (candidate.outlineName === undefined ||
+      typeof candidate.outlineName === "string") &&
     validItems
   );
 };

@@ -42,6 +42,7 @@ import { presentationCollisionDetection } from "../../utils/presentationDnd";
 import { useSensors } from "../../utils/dndUtils";
 import MediaDragOverlay from "../../containers/Media/MediaDragOverlay";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import ControllerMediaPreparationPublisher from "../../containers/Media/ControllerMediaPreparationPublisher";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -129,6 +130,7 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ControllerMediaPreparationPublisher />
       <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button

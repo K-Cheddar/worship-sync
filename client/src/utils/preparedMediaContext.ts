@@ -8,7 +8,10 @@ export type PreparedMediaContext = {
   outlineScope: string;
   outlineId: string | null;
   outlineName?: string;
-  contextSource: "local runtime selection" | "persisted ItemLists fallback";
+  contextSource:
+    | "local runtime selection"
+    | "persisted ItemLists fallback"
+    | "effective mirrored output source";
 };
 
 const PREPARED_MEDIA_CONTEXT_EVENT = "worshipsync-prepared-media-context";

@@ -54,6 +54,7 @@ import MediaDragOverlay from "../../containers/Media/MediaDragOverlay";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 import { useServicePlanningSyncRunner } from "../Controller/useServicePlanningSyncRunner";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
+import ControllerMediaPreparationPublisher from "../../containers/Media/ControllerMediaPreparationPublisher";
 
 /**
  * Presentation controller for one auxiliary audience screen.
@@ -121,6 +122,7 @@ const AuxControllerBody = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ControllerMediaPreparationPublisher />
       <ServicePlanningSyncFloatingWindow allowOverlaySync={false} />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button

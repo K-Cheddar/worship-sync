@@ -2,6 +2,7 @@ import {
   buildMediaPreparationManifest,
   getMediaPreparationManifestStructure,
   isTransportSafeMediaUrl,
+  isMediaPreparationManifest,
   mediaPreparationManifestToCandidates,
 } from "./mediaPreparationManifest";
 import type { ElectronMediaDiscovery } from "./electronMediaSurfaceDiagnostics";
@@ -136,5 +137,29 @@ describe("media preparation manifest", () => {
         }),
       ]),
     );
+  });
+
+  it("rejects unsupported versions and malformed structural payloads", () => {
+    const valid = buildMediaPreparationManifest({
+      discovery: discovery(),
+      outputId: "projector",
+    });
+    expect(isMediaPreparationManifest({ ...valid, version: 2 })).toBe(false);
+    expect(
+      isMediaPreparationManifest({
+        ...valid,
+        items: [
+          {
+            ...valid.items[0],
+            media: [
+              {
+                mediaKey: "",
+                source: valid.items[0].media[0].source,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 });

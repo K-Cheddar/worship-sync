@@ -42,6 +42,7 @@ import {
   selectDisplayOutputsLoaded,
 } from "../../store/displayOutputsSlice";
 import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
+import { selectResolvedOutputSlot } from "../../store/presentationSlice";
 import { getOwningControllerProfile } from "../../utils/controllerProfiles";
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import {
@@ -562,6 +563,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const registryOutputs = useSelector(selectDisplayOutputs);
     const registryLoaded = useSelector(selectDisplayOutputsLoaded);
     const controllerProfiles = useSelector(selectControllerProfiles);
+    const preparationSourceOutputId = useSelector((state) =>
+      outputId
+        ? selectResolvedOutputSlot(state, outputId, fallbackOutputType).id
+        : undefined,
+    );
     const preparedMediaOutlines = useSelector(
       (state) => state.undoable?.present?.itemLists?.currentLists ?? [],
     );
@@ -578,8 +584,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         | "outlineName"
       >
     >(() => {
-      const owner = outputId
-        ? getOwningControllerProfile(controllerProfiles, outputId)
+      const owner = preparationSourceOutputId
+        ? getOwningControllerProfile(
+            controllerProfiles,
+            preparationSourceOutputId,
+          )
         : controllerProfiles.find((profile) => profile.type === "presentation");
       const outline = owner
         ? resolveOutlineForScope(
@@ -597,7 +606,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       };
     }, [
       controllerProfiles,
-      outputId,
+      preparationSourceOutputId,
       preparedMediaOutlines,
       preparedMediaSelectedIds,
     ]);

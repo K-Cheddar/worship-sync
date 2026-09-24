@@ -1,6 +1,6 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { onValue, ref, set } from "firebase/database";
+import { onValue, ref, runTransaction } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   useRemoteMediaPreparationManifest,
@@ -12,12 +12,12 @@ import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagno
 jest.mock("firebase/database", () => ({
   onValue: jest.fn(),
   ref: jest.fn((_db: unknown, path: string) => ({ path })),
-  set: jest.fn(),
+  runTransaction: jest.fn(),
 }));
 
 const onValueMock = jest.mocked(onValue) as jest.Mock;
 const refMock = jest.mocked(ref);
-const setMock = jest.mocked(set);
+const runTransactionMock = jest.mocked(runTransaction) as jest.Mock;
 
 const manifest: MediaPreparationManifest = {
   contract: "worshipsync.media-preparation",
@@ -50,8 +50,13 @@ describe("useRemoteMediaPreparationManifest", () => {
   beforeEach(() => {
     onValueMock.mockReset();
     refMock.mockClear();
-    setMock.mockReset();
-    setMock.mockResolvedValue(undefined);
+    runTransactionMock.mockReset();
+    runTransactionMock.mockImplementation(
+      async (_target: unknown, update: (current: unknown) => unknown) => {
+        const value = update(undefined);
+        return { snapshot: { val: () => value } };
+      },
+    );
     localStorage.clear();
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
@@ -168,13 +173,13 @@ describe("useRemoteMediaPreparationManifest", () => {
       },
     );
 
-    await waitFor(() => expect(setMock).toHaveBeenCalled());
+    await waitFor(() => expect(runTransactionMock).toHaveBeenCalled());
     expect(refMock).toHaveBeenCalledWith(
       { name: "shared" },
       "churches/church-1/data/presentation/mediaPreparation/projector",
     );
 
-    setMock.mockClear();
+    runTransactionMock.mockClear();
     renderHook(
       () =>
         usePublishMediaPreparationManifest({
@@ -184,6 +189,83 @@ describe("useRemoteMediaPreparationManifest", () => {
         }),
       { wrapper: makeWrapper("display") },
     );
-    expect(setMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older queued outline load publish after a newer selection", async () => {
+    const pending: Array<{
+      update: (current: unknown) => unknown;
+      resolve: (value: unknown) => void;
+    }> = [];
+    runTransactionMock.mockImplementation(
+      async (
+        _target: unknown,
+        update: (current: unknown) => unknown,
+      ) =>
+        new Promise((resolve) => {
+          pending.push({ update, resolve });
+        }),
+    );
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider
+        value={
+          {
+            firebaseDb: { name: "shared" },
+            churchId: "church-race",
+            sharedDataReady: true,
+            sessionKind: "controller",
+          } as never
+        }
+      >
+        {children}
+      </GlobalInfoContext.Provider>
+    );
+    const makeDiscovery = (
+      outlineId: string,
+      outlineLoadState: ElectronMediaDiscovery["outlineLoadState"] = "loaded",
+    ): ElectronMediaDiscovery => ({
+      renderer: "projector",
+      outputId: "race-output",
+      controllerProfileId: "aux",
+      outlineScope: "aux",
+      outlineId,
+      outlineLoadState,
+      itemCount: 0,
+      uniqueFiniteVideoCount: 0,
+      items: [],
+    });
+
+    const view = renderHook(
+      ({ discovery }: { discovery: ElectronMediaDiscovery }) =>
+        usePublishMediaPreparationManifest({
+          enabled: true,
+          discovery,
+          outputId: "race-output",
+        }),
+      {
+        initialProps: { discovery: makeDiscovery("outline-a") },
+        wrapper,
+      },
+    );
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    view.rerender({ discovery: makeDiscovery("outline-b", "loading") });
+
+    let staleValue: unknown;
+    await act(async () => {
+      staleValue = pending[0].update(undefined);
+      pending[0].resolve({ snapshot: { val: () => staleValue } });
+    });
+    view.rerender({ discovery: makeDiscovery("outline-b") });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    const latestValue = pending[1].update(undefined);
+    pending[1].resolve({ snapshot: { val: () => latestValue } });
+
+    expect(staleValue).toBeUndefined();
+    await waitFor(() =>
+      expect(latestValue).toEqual(
+        expect.objectContaining({ outlineId: "outline-b", revision: 1 }),
+      ),
+    );
   });
 });

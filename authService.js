@@ -5364,6 +5364,7 @@ export const authHandlers = {
         appAccess: bootstrap.appAccess || "view",
         role: bootstrap.role || null,
         deviceId: bootstrap.device?.deviceId || null,
+        outputId: bootstrap.device?.outputId || null,
       });
 
       setNoStoreHeaders(res);
