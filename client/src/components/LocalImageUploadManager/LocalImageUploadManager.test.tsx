@@ -2,6 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
+import { commitCloudinaryMediaAsset } from "../../api/providerStorage";
 import {
   claimLocalImageUploadJob,
   deleteLocalImageUploadJob,
@@ -40,11 +41,19 @@ jest.mock("../../utils/localImageAssets", () => ({
 jest.mock("../../containers/Media/utils/cloudinaryUpload", () => ({
   uploadImageToCloudinary: jest.fn(),
 }));
+jest.mock("../../api/providerStorage", () => ({
+  commitCloudinaryMediaAsset: jest.fn(() => Promise.resolve({ asset: {
+    provider: "cloudinary", assetId: "provider-asset-1", publicId: "cloud-public-id",
+    churchId: "church-1", permanent: true, bytes: 5,
+  } })),
+  deleteCloudinaryMediaAsset: jest.fn(() => Promise.resolve({ success: true })),
+}));
 jest.mock("../../containers/Media/utils/cloudinaryMediaItem", () => ({
   createCloudinaryImageMediaItem: jest.fn(() => ({
     id: "generated-media-id",
     name: "Welcome.png",
     type: "image",
+    publicId: "cloud-public-id",
     background: "https://res.cloudinary.com/example/welcome.png",
   })),
 }));
@@ -53,6 +62,7 @@ const mockListJobs = jest.mocked(listLocalImageUploadJobs);
 const mockClaimJob = jest.mocked(claimLocalImageUploadJob);
 const mockGetLocalImage = jest.mocked(getLocalImage);
 const mockUpload = jest.mocked(uploadImageToCloudinary);
+const mockCommitCloudinary = jest.mocked(commitCloudinaryMediaAsset);
 const mockPersistCloudCopy = jest.mocked(persistLocalImageCloudCopy);
 const mockDeleteJob = jest.mocked(deleteLocalImageUploadJob);
 const mockReleaseLease = jest.mocked(releaseLocalImageUploadJobLease);
@@ -129,7 +139,9 @@ describe("LocalImageUploadManager", () => {
       "preset",
       "portable-media",
       expect.any(Object),
+      { folder: "worship-sync/churches/church-1/media" },
     );
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
     expect(mockUpdateJob).toHaveBeenCalledWith(
       expect.objectContaining({
         assetId: "asset-1",
@@ -235,6 +247,7 @@ describe("LocalImageUploadManager", () => {
 
     await waitFor(() => expect(mockDeleteJob).toHaveBeenCalledWith("asset-1"));
     expect(mockPersistCloudCopy).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "media/updateMediaItemFields",

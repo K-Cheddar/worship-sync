@@ -1,12 +1,8 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getDatabase } from "firebase-admin/database";
 import {
   FieldPath,
   FieldValue,
-  getFirestore,
   Timestamp,
 } from "firebase-admin/firestore";
 import { Resend } from "resend";
@@ -49,6 +45,7 @@ import {
   verifySmsConsentCode,
 } from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
+import { getFirebaseAdminRuntime } from "./server/firebaseAdminRuntime.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
 import {
@@ -382,67 +379,15 @@ const validateUpdateInviteAccessPayload = (body) => {
   };
 };
 
-/** Service account keys in .env are often one line with literal \n — normalize for PEM parsing. */
-const normalizeFirebasePrivateKey = (raw) => {
-  if (raw == null || String(raw).trim() === "") {
-    return null;
-  }
-  let key = String(raw)
-    .trim()
-    .replace(/^\uFEFF/, "");
-  if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
-  ) {
-    key = key.slice(1, -1);
-  }
-  return key.replace(/\\n/g, "\n").replace(/\r\n/g, "\n");
-};
-
-const firebaseCredentials = () => {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = normalizeFirebasePrivateKey(
-    process.env.FIREBASE_PRIVATE_KEY,
-  );
-  if (!projectId || !clientEmail || !privateKey) {
-    return null;
-  }
-  try {
-    return cert({ projectId, clientEmail, privateKey });
-  } catch (error) {
+const firebaseRuntime = getFirebaseAdminRuntime({
+  onInvalidCredentials: (error) =>
     logAuthEvent("error", "firebase.admin.credentials.invalid", {
       message: error.message,
       hint: "FIREBASE_PRIVATE_KEY must be the exact private_key string from the Firebase service account JSON. In .env use one line with \\n between PEM lines, or real newlines inside double quotes.",
-    });
-    return null;
-  }
-};
+    }),
+});
 
-const firebaseRuntime = (() => {
-  const credential = firebaseCredentials();
-  if (!credential) {
-    return null;
-  }
-  const databaseURL =
-    process.env.FIREBASE_DATABASE_URL ||
-    process.env.VITE_FIREBASE_DATABASE_URL ||
-    undefined;
-  const app =
-    getApps()[0] ||
-    initializeApp({
-      credential,
-      ...(databaseURL ? { databaseURL } : {}),
-    });
-  const db = getFirestore(app);
-  db.settings({ ignoreUndefinedProperties: true });
-  const rtdb = databaseURL ? getDatabase(app) : null;
-  return {
-    auth: getAuth(app),
-    db,
-    rtdb,
-  };
-})();
+let firestoreTestOverride = null;
 
 /** In production, auth persistence must use Firestore — in-memory Maps are not safe for deploys. */
 if (process.env.NODE_ENV === "production" && !firebaseRuntime?.db) {
@@ -1064,7 +1009,16 @@ const requireFirebaseAdmin = () => {
   return firebaseRuntime.auth;
 };
 
-const requireFirestore = () => firebaseRuntime?.db || null;
+const requireFirestore = () => firestoreTestOverride || firebaseRuntime?.db || null;
+
+export const setServerFirestoreForTests = (db) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setServerFirestoreForTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  firestoreTestOverride = db || null;
+};
 
 const readDeviceFingerprint = (body = {}) =>
   hashValue(
@@ -1648,8 +1602,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
   };
 
   if (db) {
-    let verifiedAt;
-    await db.runTransaction(async (transaction) => {
+    const transactionResult = await db.runTransaction(async (transaction) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const record = snapshot.exists ? snapshot.data() : null;
@@ -1665,9 +1618,12 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
             updatedAt: nowIso(),
           }, { merge: true });
         }
-        invalid();
+        return {
+          status:
+            attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : "invalid",
+        };
       }
-      verifiedAt = nowIso();
+      const verifiedAt = nowIso();
       transaction.set(consentRef, {
         status: "opted_in",
         ...(record?.status === "opted_in"
@@ -1678,7 +1634,11 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
         verificationExpiresAt: null,
         updatedAt: verifiedAt,
       }, { merge: true });
+      return { status: "verified", verifiedAt };
     });
+
+    if (transactionResult.status !== "verified") invalid();
+    const { verifiedAt } = transactionResult;
     return { consentId, verifiedAt };
   }
 

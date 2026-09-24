@@ -2,9 +2,8 @@ import { useRef, useEffect, useCallback, useState } from "react";
 import Hls from "hls.js";
 import { Box, VideoBackgroundPlaybackCue } from "../../types";
 import {
-  clearVideoPreviewState,
+  createVideoPreviewReporter,
   logVideoCue,
-  reportVideoPreviewState,
   resolveVideoCueCorrection,
   resolveVideoCueDrift,
   resolveVideoPlaybackPosition,
@@ -45,6 +44,8 @@ type HLSPlayerProps = {
   playbackRole?: "preview" | "output";
   /** Buffering policy can differ from playback behavior for controller tiles. */
   preloadRole?: "preview" | "output";
+  /** Only the selected editor player may report or receive local transport. */
+  transportRole?: "editor" | "none";
   /** Keep the element mounted but pause it while its containing preview is hidden. */
   suspendPlayback?: boolean;
   mediaKey?: string;
@@ -209,6 +210,7 @@ const HLSPlayer = ({
   volume = 1,
   playbackRole,
   preloadRole,
+  transportRole = "none",
   suspendPlayback = false,
   mediaKey,
   playback,
@@ -527,6 +529,13 @@ const HLSPlayer = ({
       const handleError = (e: Event) => {
         const el = e.target as HTMLVideoElement;
         const error = el.error;
+        logVideoCue("player.error", {
+          ...videoDiagnosticIdentity(el),
+          errorCode: error?.code,
+          errorMessage: error?.message,
+          networkState: el.networkState,
+          readyState: el.readyState,
+        });
         console.error(`[HLSPlayer] Error loading video: ${videoSrc}`, {
           error,
           errorCode: error?.code,
@@ -607,6 +616,12 @@ const HLSPlayer = ({
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
+            logVideoCue("player.hlsFatalError", {
+              ...videoDiagnosticIdentity(video),
+              source: videoSrc,
+              type: data.type,
+              details: data.details,
+            });
             console.error(`[HLSPlayer] HLS fatal error: ${data.type}`, data);
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               hls.startLoad();
@@ -886,12 +901,13 @@ const HLSPlayer = ({
   // including while a cue drives it — the transport scrubber needs a duration
   // whether or not the slide is live.
   useEffect(() => {
-    if (playbackRole !== "preview") return;
+    if (transportRole !== "editor") return;
     const video = videoRef.current;
     if (!video || !mediaKey) return;
+    const reporter = createVideoPreviewReporter(mediaKey);
 
     const report = () => {
-      reportVideoPreviewState({
+      reporter.report({
         mediaKey,
         currentTime: video.currentTime || 0,
         duration: Number.isFinite(video.duration) ? video.duration : 0,
@@ -914,14 +930,14 @@ const HLSPlayer = ({
       video.removeEventListener("seeked", report);
       video.removeEventListener("loadedmetadata", report);
       video.removeEventListener("durationchange", report);
-      clearVideoPreviewState(mediaKey);
+      reporter.clear();
     };
-  }, [playbackRole, mediaKey]);
+  }, [transportRole, mediaKey]);
 
   // Local transport commands only apply when no cue is driving this surface;
   // once the slide is live the cue is the single authority.
   useEffect(() => {
-    if (playbackRole !== "preview" || playback) return;
+    if (transportRole !== "editor" || !mediaKey || playback) return;
     const applyCommand = (command: VideoPreviewCommand) => {
       const video = videoRef.current;
       if (!video) return;
@@ -949,8 +965,8 @@ const HLSPlayer = ({
       startPlayback(video, srcRef.current);
     };
 
-    return subscribeVideoPreviewCommands(applyCommand);
-  }, [playback, playbackRole]);
+    return subscribeVideoPreviewCommands(mediaKey, applyCommand);
+  }, [mediaKey, playback, transportRole]);
 
   const preloadValue = getVideoPreload(
     effectiveSrc ?? "",

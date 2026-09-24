@@ -28,6 +28,7 @@ import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImpo
 import type {
   AuthBootstrap,
   ChurchBranding,
+  ChurchStorageQuotaUsage,
   ChurchInviteRow,
   ChurchMemberRow,
   CurrentServiceWorkspaceConfig,
@@ -205,7 +206,7 @@ const verifyCurrentAppSession = async (): Promise<SessionVerification> => {
   }
 };
 
-const apiFetch = async <T>(
+export const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
   extraHeaders?: Record<string, string>,
@@ -355,30 +356,42 @@ const uploadSongAudioFromPackagedElectron = async ({
   contentType: string;
   previousAudio?: SongAudio;
 }): Promise<SongAudio> => {
-  let response: Response;
-  try {
-    response = await fetch(
-      `${getApiBasePath()}${songAudioPath(churchId, songId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": contentType,
-          ...(getHumanApiToken()
-            ? { Authorization: `Bearer ${getHumanApiToken()}` }
-            : {}),
-          ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
-          ...(previousAudio
-            ? {
-                "x-song-audio-id": previousAudio.id,
-                "x-song-audio-key": previousAudio.key,
-              }
-            : {}),
-        },
-        body: file,
-      },
-    );
-  } catch {
+  const uploadId = globalThis.crypto.randomUUID();
+  const request = {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": contentType,
+      "x-song-audio-upload-id": uploadId,
+      ...(getHumanApiToken()
+        ? { Authorization: `Bearer ${getHumanApiToken()}` }
+        : {}),
+      ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
+      ...(previousAudio
+        ? {
+            "x-song-audio-id": previousAudio.id,
+            "x-song-audio-key": previousAudio.key,
+          }
+        : {}),
+    },
+    body: file,
+  } satisfies RequestInit;
+  const url = `${getApiBasePath()}${songAudioPath(churchId, songId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`;
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await fetch(url, request);
+      if (response.ok || response.status < 500 || attempt === 1) break;
+    } catch {
+      if (attempt === 1) {
+        throw new AuthApiError(
+          "Could not upload the MP3. Check the connection and try again.",
+          { isReachabilityError: true },
+        );
+      }
+    }
+  }
+  if (!response) {
     throw new AuthApiError(
       "Could not upload the MP3. Check the connection and try again.",
       {
@@ -605,6 +618,11 @@ const uploadChurchResourceFromPackagedElectron = async ({
 export const listChurchResources = async (churchId: string) =>
   apiFetch<{ success: boolean; resources: ChurchResource[] }>(
     churchResourcesPath(churchId),
+  );
+
+export const getChurchStorageQuota = async (churchId: string) =>
+  apiFetch<{ success: boolean; quotas: ChurchStorageQuotaUsage }>(
+    `api/churches/${encodeURIComponent(churchId)}/storage-quota`,
   );
 
 export const getChurchResource = async (

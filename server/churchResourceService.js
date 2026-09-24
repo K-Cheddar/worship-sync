@@ -209,7 +209,7 @@ export const createChurchResourceStorage = ({
     };
   };
 
-  const completeUpload = async ({ churchId, upload }) => {
+  const completeUpload = async ({ churchId, upload, beforePromote }) => {
     const validated = validateChurchResourceUpload(upload, env);
     const id = normalizeId(validated.id);
     const pendingKey = requireNonEmptyString(upload?.key, "Storage key");
@@ -277,6 +277,16 @@ export const createChurchResourceStorage = ({
       throw error;
     }
 
+    try {
+      await beforePromote?.({ churchId, resourceId: id, sizeBytes });
+    } catch (error) {
+      try {
+        await objectStorage.delete({ key: pendingKey });
+      } catch (cleanupError) {
+        console.error("Error cleaning rejected church resource quota upload:", cleanupError);
+      }
+      throw error;
+    }
     await objectStorage.copy({
       sourceKey: pendingKey,
       targetKey: finalKey,
@@ -299,13 +309,13 @@ export const createChurchResourceStorage = ({
     };
   };
 
-  const uploadFromServer = async ({ churchId, upload, body }) => {
+  const uploadFromServer = async ({ churchId, upload, body, resourceId: suppliedId }) => {
     const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body || []);
     const validated = validateChurchResourceUpload(
       { ...upload, sizeBytes: bytes.byteLength },
       env,
     );
-    const id = randomId();
+    const id = suppliedId ? normalizeId(suppliedId) : randomId();
     const key = buildChurchResourceKey({ churchId, resourceId: id });
     await objectStorage.put({
       key,

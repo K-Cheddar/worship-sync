@@ -59,6 +59,7 @@ const SECTION_LABEL_HEIGHT = 36;
 const EMPTY_ROW_HEIGHT = 28;
 const INITIAL_TILE_ROW_HEIGHT = 140;
 const ROW_GAP = 4;
+const EMPTY_STAGED_SLIDE_IDS = new Set<string>();
 
 type SizeConfig = {
   borderWidth: string;
@@ -76,6 +77,7 @@ type OutlineItemSlidesScrollerProps = {
   canEdit: boolean;
   selectedSlide: number;
   liveSlideIds: Set<string>;
+  stagedSlideIds?: Set<string>;
   backgroundTargetSlideIds: string[];
   draggedSection: string | null;
   timers: TimerInfo[];
@@ -166,6 +168,7 @@ type OutlineVirtualSlideProps = {
   index: number;
   selectedSlide: number;
   isLive: boolean;
+  isStaged: boolean;
   size: number;
   sizeConfig: SizeConfig;
   isMobile: boolean;
@@ -192,6 +195,7 @@ const OutlineVirtualSlide = memo(
     index,
     selectedSlide,
     isLive,
+    isStaged,
     size,
     sizeConfig,
     isMobile,
@@ -227,6 +231,7 @@ const OutlineVirtualSlide = memo(
           timerInfo={timerInfo}
           formattedSections={section.formattedSections}
           isLive={isLive}
+          isStaged={isStaged}
           onSlideGridClick={handleClick}
           slideDomId={`item-slide-${section.listId}-${index}`}
           bibleInfo={bibleInfo}
@@ -246,6 +251,7 @@ const OutlineVirtualSlide = memo(
         selectSlide={selectSlide}
         isSelected={index === selectedSlide}
         isLive={isLive}
+        isStaged={isStaged}
         size={size}
         itemType={section.type}
         isMobile={isMobile}
@@ -279,6 +285,7 @@ const OutlineItemSlidesScroller = ({
   canEdit,
   selectedSlide,
   liveSlideIds,
+  stagedSlideIds = EMPTY_STAGED_SLIDE_IDS,
   backgroundTargetSlideIds,
   draggedSection,
   timers,
@@ -1286,6 +1293,11 @@ const OutlineItemSlidesScroller = ({
                         index={index}
                         selectedSlide={selectedSlide}
                         isLive={isActive && liveSlideIds.has(slide.id)}
+                        isStaged={
+                          isActive &&
+                          !liveSlideIds.has(slide.id) &&
+                          stagedSlideIds.has(slide.id)
+                        }
                         size={size}
                         sizeConfig={sizeConfig}
                         isMobile={isMobile}

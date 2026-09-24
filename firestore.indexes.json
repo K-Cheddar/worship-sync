@@ -61,6 +61,14 @@
       "collectionGroup": "chatMessages",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "attachmentCleanupPending", "order": "ASCENDING" },
+        { "fieldPath": "attachmentCleanupAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "dayKey", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
@@ -90,6 +98,15 @@
       "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "recipientId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "churchStorageQuotaReservations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
       ]
     }
   ],
@@ -124,6 +141,12 @@
     },
     {
       "collectionGroup": "restreamConnectRequests",
+      "fieldPath": "ttlExpireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "churchStorageQuotaReservations",
       "fieldPath": "ttlExpireAt",
       "ttl": true,
       "indexes": []

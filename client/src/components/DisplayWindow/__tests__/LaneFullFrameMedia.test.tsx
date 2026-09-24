@@ -12,10 +12,12 @@ jest.mock("../HLSVideoPlayer", () => ({
     playback,
     paintReady,
     onLoadedData,
+    onError,
   }: {
     playback?: VideoBackgroundPlaybackCue;
     paintReady?: boolean;
     onLoadedData?: () => void;
+    onError?: () => void;
   }) => (
     <div
       data-testid="mock-hls-player"
@@ -23,6 +25,7 @@ jest.mock("../HLSVideoPlayer", () => ({
       data-playback-position={playback?.positionSeconds}
       data-paint-ready={paintReady ? "true" : "false"}
       onClick={onLoadedData}
+      onError={onError}
     />
   ),
 }));
@@ -82,6 +85,7 @@ describe("LaneFullFrameMedia", () => {
   it("reports a loaded fallback as lane-ready before the live video paints", () => {
     const visualReady = jest.fn();
     const liveReady = jest.fn();
+    const posterReady = jest.fn();
     const media = {
       kind: "fileVideo" as const,
       mediaKey: "remote:video-b",
@@ -96,6 +100,7 @@ describe("LaneFullFrameMedia", () => {
         isPrevious={false}
         onPaintReadyChange={visualReady}
         onLivePaintReadyChange={liveReady}
+        onPosterPaintReadyChange={posterReady}
       />,
     );
 
@@ -103,6 +108,7 @@ describe("LaneFullFrameMedia", () => {
 
     expect(visualReady).toHaveBeenLastCalledWith(true);
     expect(liveReady).toHaveBeenLastCalledWith(false);
+    expect(posterReady).toHaveBeenLastCalledWith(true);
     expect(screen.getByTestId("mock-hls-player")).toHaveAttribute(
       "data-paint-ready",
       "false",
@@ -131,11 +137,33 @@ describe("LaneFullFrameMedia", () => {
 
     fireEvent.load(fallback);
     expect(fallback).toHaveStyle({ opacity: "1" });
+    expect(fallback).toHaveStyle({ transitionDuration: "200ms" });
     expect(player).toHaveAttribute("data-paint-ready", "false");
 
     fireEvent.click(player);
 
     expect(fallback).toHaveStyle({ opacity: "0" });
     expect(player).toHaveAttribute("data-paint-ready", "true");
+  });
+
+  it("retains a ready poster when video playback fails", () => {
+    const media = {
+      kind: "fileVideo" as const,
+      mediaKey: "remote:video-error",
+      originalSrc: "https://cdn.example.com/video-error.mp4",
+      fallbackSrc: "https://cdn.example.com/video-error.jpg",
+      videoBox: { id: "video-error", width: 100, height: 100, words: "" },
+    };
+    render(
+      <LaneFullFrameMedia
+        media={media}
+        isPrevious={false}
+        onPaintReadyChange={() => undefined}
+      />,
+    );
+    const poster = screen.getByTestId("file-video-fallback");
+    fireEvent.load(poster);
+    fireEvent.error(screen.getByTestId("mock-hls-player"));
+    expect(poster).toHaveStyle({ opacity: "1" });
   });
 });

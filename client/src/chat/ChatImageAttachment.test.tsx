@@ -35,6 +35,7 @@ describe("ChatImageAttachment", () => {
           height: 800,
           thumbnailWidth: 480,
           thumbnailHeight: 320,
+          expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
         }}
       />,
     );
@@ -58,5 +59,29 @@ describe("ChatImageAttachment", () => {
     expect(
       screen.queryByRole("dialog", { name: "Photo from Alex" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows an expired placeholder for legacy images without expiry metadata", () => {
+    render(
+      <ChatImageAttachment
+        churchId="church_1"
+        messageId="message_legacy"
+        authorName="Alex"
+        attachment={{
+          type: "image",
+          id: "legacy-image",
+          contentType: "image/webp",
+          sizeBytes: 1200,
+          thumbnailSizeBytes: 300,
+          width: 1200,
+          height: 800,
+          thumbnailWidth: 480,
+          thumbnailHeight: 320,
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Image expired");
+    expect(mockedGetChatImageUrl).not.toHaveBeenCalled();
   });
 });

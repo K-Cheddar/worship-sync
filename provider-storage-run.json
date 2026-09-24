@@ -1,0 +1,30 @@
+{
+  "dryRun": false,
+  "complete": true,
+  "churches": [
+    {
+      "churchId": "church_9aba2b32-cced-4910-8a11-24e142935759",
+      "cloudinaryBytes": 0,
+      "muxMinutes": 0,
+      "processedAssets": 0,
+      "issues": [],
+      "ready": true
+    },
+    {
+      "churchId": "demo",
+      "cloudinaryBytes": 11473186,
+      "muxMinutes": 19.632401700000003,
+      "processedAssets": 40,
+      "issues": [],
+      "ready": true
+    },
+    {
+      "churchId": "eliathah",
+      "cloudinaryBytes": 63050028,
+      "muxMinutes": 780.3541555166661,
+      "processedAssets": 983,
+      "issues": [],
+      "ready": true
+    }
+  ]
+}

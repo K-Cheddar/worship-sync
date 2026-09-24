@@ -40,9 +40,20 @@ test("cloudinary delete and mux upload routes remain registered", () => {
     serverSource,
     /app\.delete\(\s*["']\/api\/cloudinary\/delete["']/,
   );
-  assert.match(serverSource, /app\.post\(\s*["']\/api\/mux\/upload["']/);
   assert.match(
     serverSource,
-    /app\.delete\(\s*["']\/api\/mux\/asset\/:assetId["']/,
+    /app\.delete\(\s*["']\/api\/cloudinary\/delete["']\s*,\s*requireAppSession\s*,\s*requireFullAppAccess\s*,\s*requireMutationCsrf/,
+  );
+  assert.match(
+    serverSource,
+    /providerStorageService\.deleteCloudinaryImage\(\{\s*churchId:\s*req\.appSession\.churchId/,
+  );
+  assert.match(
+    serverSource,
+    /app\.post\(\s*["']\/api\/churches\/:churchId\/mux\/uploads["']/,
+  );
+  assert.match(
+    serverSource,
+    /app\.post\(\s*["']\/api\/churches\/:churchId\/mux\/assets\/:assetId\/delete["']/,
   );
 });

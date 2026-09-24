@@ -27,8 +27,10 @@ import {
   type ElectronMediaSurfaceDiagnostic,
   type ElectronMediaDiscovery,
   type ElectronMediaDiscoveryRenderer,
+  type VideoTransitionPath,
 } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
+  createVideoPreviewReporter,
   resolveVideoCueDrift,
   resolveVideoCueCorrection,
   resolveVideoPlaybackPosition,
@@ -70,7 +72,7 @@ type ElectronMediaSurfacePoolProps = {
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
   transitionStart?: { mediaKey: string; timestamp: number };
   transitionComplete?: { mediaKey: string; timestamp: number };
-  lastSendPath?: "pool" | "fallback";
+  lastSendPath?: VideoTransitionPath;
   lastMediaKey?: string;
   posterShown?: boolean;
   outputId?: string;
@@ -422,6 +424,52 @@ const PreparedSurface = ({
   onPreparationFailureRef.current = onPreparationFailure;
   onDiagnosticChangeRef.current = onDiagnosticChange;
   onStatusChangeRef.current = onStatusChange;
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      route !== "editor" ||
+      role !== "editor-preview" ||
+      !view?.reportsEditorTransport ||
+      view.opacity !== 1 ||
+      view.mediaKey !== candidate.mediaKey
+    ) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) return;
+    const reporter = createVideoPreviewReporter(candidate.mediaKey);
+    const report = () => {
+      reporter.report({
+        mediaKey: candidate.mediaKey,
+        currentTime: video.currentTime || 0,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+        paused: video.paused,
+      });
+    };
+    const events = [
+      "timeupdate",
+      "play",
+      "pause",
+      "seeked",
+      "loadedmetadata",
+      "durationchange",
+    ] as const;
+    events.forEach((event) => video.addEventListener(event, report));
+    report();
+    return () => {
+      events.forEach((event) => video.removeEventListener(event, report));
+      reporter.clear();
+    };
+  }, [
+    candidate.mediaKey,
+    enabled,
+    role,
+    route,
+    view?.mediaKey,
+    view?.opacity,
+    view?.reportsEditorTransport,
+  ]);
   sourceKindRef.current = sourceKind;
   resolvedSourceRef.current = resolvedSource;
 

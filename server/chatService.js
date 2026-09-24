@@ -4,6 +4,7 @@ export const CHAT_MESSAGE_COLLECTION = "chatMessages";
 export const CHAT_SETTINGS_COLLECTION = "chatSettings";
 export const CHAT_MESSAGE_MAX_LENGTH = 1000;
 export const CHAT_RETENTION_DAYS = 365;
+export const CHAT_IMAGE_RETENTION_DAYS = 30;
 export const CHAT_TYPING_TTL_MS = 10_000;
 export const CHAT_TYPING_ROOT = "worshipsyncChatTyping";
 export const CHAT_REACTION_EMOJIS = Object.freeze([
@@ -59,6 +60,10 @@ const timestampMs = (value) => {
   if (typeof value === "string") return Date.parse(value);
   return 0;
 };
+
+export const isChatImageExpired = (attachment, currentMs = Date.now()) =>
+  !timestampMs(attachment?.expiresAt) ||
+  timestampMs(attachment.expiresAt) <= currentMs;
 
 export const isValidChatTimeZone = (value) => {
   const timeZone = String(value || "").trim();
@@ -165,6 +170,9 @@ const normalizeImageAttachment = (value) => {
     height: Number(value.height),
     thumbnailWidth: Number(value.thumbnailWidth),
     thumbnailHeight: Number(value.thumbnailHeight),
+    ...(timestampMs(value.expiresAt) > 0
+      ? { expiresAt: timestampMs(value.expiresAt) }
+      : {}),
   };
 };
 
@@ -186,6 +194,7 @@ const serializeImageAttachment = (attachment) => {
     height: normalized.height,
     thumbnailWidth: normalized.thumbnailWidth,
     thumbnailHeight: normalized.thumbnailHeight,
+    ...(normalized.expiresAt ? { expiresAt: normalized.expiresAt } : {}),
   };
 };
 
@@ -203,11 +212,6 @@ const chatMessageId = ({ churchId, actorId, clientMessageId }) =>
     .update(`${churchId}:${actorId}:${clientMessageId}`)
     .digest("hex")
     .slice(0, 32)}`;
-
-const isAlreadyExistsError = (error) =>
-  error?.code === 6 ||
-  error?.code === "already-exists" ||
-  /already exists/i.test(String(error?.message || ""));
 
 const normalizeDayKey = (value) => {
   const dayKey = String(value || "").trim();
@@ -271,6 +275,8 @@ export const createChatService = ({
   getRealtimeDatabase,
   now = () => new Date(),
   onAttachmentRemoved = async () => {},
+  onAttachmentAttached = async () => {},
+  onAttachmentAborted = async () => {},
 } = {}) => {
   const memoryMessages = new Map();
   const memorySettings = new Map();
@@ -484,8 +490,32 @@ export const createChatService = ({
       throw createChatError("Write a message or add a photo before sending it.");
     }
     const normalizedClientId = normalizeClientMessageId(clientMessageId);
+    const messageId = chatMessageId({
+      churchId,
+      actorId: actor.actorId,
+      clientMessageId: normalizedClientId,
+    });
+    const db = getDb();
+    const ref = db?.collection(CHAT_MESSAGE_COLLECTION).doc(messageId);
+    const existingSnapshot = ref ? await ref.get() : null;
+    const existingMemoryMessage = db ? null : memoryMessages.get(messageId);
+    const existingMessage = existingSnapshot?.exists
+      ? { id: existingSnapshot.id, ...existingSnapshot.data() }
+      : existingMemoryMessage;
+    if (existingMessage) {
+      if (existingMessage.attachment) {
+        await onAttachmentAttached({
+          churchId,
+          attachment: existingMessage.attachment,
+        });
+      }
+      return serializeChatMessage(existingMessage);
+    }
+
     const context = await getContext({ churchId, session, timeZoneHint });
+    let completedByStorage = false;
     if (typeof completeAttachment === "function") {
+      completedByStorage = true;
       normalizedAttachment = normalizeImageAttachment(
         await completeAttachment(),
       );
@@ -493,12 +523,17 @@ export const createChatService = ({
     if (!normalizedText && !normalizedAttachment) {
       throw createChatError("Write a message or add a photo before sending it.");
     }
-    const messageId = chatMessageId({
-      churchId,
-      actorId: actor.actorId,
-      clientMessageId: normalizedClientId,
-    });
     const createdAt = now();
+    if (normalizedAttachment && !normalizedAttachment.expiresAt) {
+      normalizedAttachment = {
+        ...normalizedAttachment,
+        expiresAt:
+          createdAt.getTime() + CHAT_IMAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      };
+    }
+    const attachmentCleanupAt = normalizedAttachment
+      ? new Date(normalizedAttachment.expiresAt)
+      : undefined;
     const expiresAt = new Date(
       createdAt.getTime() + CHAT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     );
@@ -515,21 +550,59 @@ export const createChatService = ({
       expiresAt,
       reactions: [],
       ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}),
+      ...(normalizedAttachment
+        ? { attachmentCleanupAt, attachmentCleanupPending: true }
+        : {}),
     };
-    const db = getDb();
+    if (completedByStorage && normalizedAttachment) {
+      // Commit actual processed bytes before the message write. A failed or
+      // ambiguous Firestore write then remains charged until a retry resolves
+      // it, so an expired reservation cannot admit more storage over quota.
+      await onAttachmentAttached({ churchId, attachment: normalizedAttachment });
+    }
     if (db) {
-      const ref = db.collection(CHAT_MESSAGE_COLLECTION).doc(messageId);
       try {
         await ref.create(message);
       } catch (error) {
-        if (!isAlreadyExistsError(error)) throw error;
-        const existing = await ref.get();
-        if (!existing.exists) throw error;
-        return serializeChatMessage({ id: existing.id, ...existing.data() });
+        let existing;
+        let readCompleted = false;
+        try {
+          const snapshot = await ref.get();
+          readCompleted = true;
+          if (snapshot.exists) existing = { id: snapshot.id, ...snapshot.data() };
+        } catch {
+          // The write outcome is unknown; leave its R2 reservation for retry
+          // or expiry rather than deleting an object a saved message may use.
+        }
+        if (existing) {
+          if (
+            completedByStorage &&
+            existing.attachment?.id === normalizedAttachment?.id
+          ) {
+            await onAttachmentAttached({
+              churchId,
+              attachment: existing.attachment,
+            });
+          } else if (completedByStorage && normalizedAttachment) {
+            await onAttachmentAborted({ churchId, attachment: normalizedAttachment });
+          }
+          return serializeChatMessage(existing);
+        }
+        if (readCompleted && completedByStorage && normalizedAttachment) {
+          await onAttachmentAborted({ churchId, attachment: normalizedAttachment });
+        }
+        throw error;
       }
     } else {
       const existing = memoryMessages.get(messageId);
-      if (existing) return serializeChatMessage(existing);
+      if (existing) {
+        if (completedByStorage && existing.attachment?.id === normalizedAttachment?.id) {
+          await onAttachmentAttached({ churchId, attachment: existing.attachment });
+        } else if (completedByStorage && normalizedAttachment) {
+          await onAttachmentAborted({ churchId, attachment: normalizedAttachment });
+        }
+        return serializeChatMessage(existing);
+      }
       memoryMessages.set(messageId, message);
       emitMemoryEvent(churchId, message.dayKey, {
         type: "message-updated",
@@ -587,6 +660,111 @@ export const createChatService = ({
     return serializeChatMessage(updated);
   };
 
+  const cleanupAttachmentRecord = async ({
+    churchId,
+    messageId,
+    attachment,
+    ref,
+  }) => {
+    try {
+      await onAttachmentRemoved({
+        churchId,
+        attachment,
+        expired: isChatImageExpired(attachment, now().getTime()),
+      });
+    } catch (error) {
+      console.error("Error removing chat image attachment:", error);
+      return false;
+    }
+
+    const db = getDb();
+    if (db && ref) {
+      await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return;
+        const current = snapshot.data();
+        if (
+          current?.attachment?.id !== attachment.id ||
+          current?.attachmentCleanupPending !== true
+        ) return;
+        transaction.update(ref, {
+          attachmentCleanupPending: false,
+          ...(current.deletedAt ? { attachment: null } : {}),
+        });
+      });
+      return true;
+    }
+
+    const current = memoryMessages.get(messageId);
+    if (current?.attachment?.id !== attachment.id) return true;
+    const next = {
+      ...current,
+      attachmentCleanupPending: false,
+      ...(current.deletedAt ? { attachment: null } : {}),
+    };
+    memoryMessages.set(messageId, next);
+    emitMemoryEvent(churchId, next.dayKey, {
+      type: "message-updated",
+      message: serializeChatMessage(next),
+    });
+    return true;
+  };
+
+  const cleanupDueAttachments = async ({ limit = 500 } = {}) => {
+    const db = getDb();
+    const currentMs = now().getTime();
+    let rows;
+    if (db) {
+      const snapshot = await db
+        .collection(CHAT_MESSAGE_COLLECTION)
+        .where("attachmentCleanupPending", "==", true)
+        .where("attachmentCleanupAt", "<=", new Date(currentMs))
+        .orderBy("attachmentCleanupAt", "asc")
+        .limit(Math.max(1, Math.min(Number(limit) || 500, 1000)))
+        .get();
+      rows = snapshot.docs.map((doc) => ({
+        messageId: doc.id,
+        data: doc.data(),
+        ref: doc.ref,
+      }));
+    } else {
+      rows = Array.from(memoryMessages.entries()).map(([messageId, data]) => ({
+        messageId,
+        data,
+      }));
+    }
+
+    const report = { scanned: rows.length, due: 0, cleaned: 0, failed: 0 };
+    for (const row of rows) {
+      if (
+        !row.data?.attachmentCleanupPending ||
+        !row.data?.attachment ||
+        timestampMs(row.data.attachmentCleanupAt || row.data.attachment.expiresAt) > currentMs
+      ) continue;
+      let attachment;
+      try {
+        attachment = normalizeImageAttachment(row.data.attachment);
+      } catch {
+        continue;
+      }
+      report.due += 1;
+      try {
+        const cleaned = await cleanupAttachmentRecord({
+          churchId: row.data.churchId,
+          messageId: row.messageId,
+          attachment,
+          ref: row.ref,
+        });
+        if (cleaned) report.cleaned += 1;
+        else report.failed += 1;
+      } catch (error) {
+        console.error("Error finalizing chat image cleanup:", error);
+        report.failed += 1;
+      }
+    }
+    return report;
+  };
+
   const deleteMessage = async ({ churchId, session, messageId }) => {
     const actor = actorFromSession(session);
     const canModerate = session?.role === "admin";
@@ -606,18 +784,23 @@ export const createChatService = ({
           throw createChatError("You can only remove your own messages.", 403);
         }
         removedAttachment = current.attachment;
+        const deletedAt = now();
         const next = {
           ...current,
           text: "",
-          deletedAt: now(),
+          deletedAt,
           reactions: [],
-          attachment: null,
+          ...(current.attachment
+            ? { attachmentCleanupPending: true, attachmentCleanupAt: deletedAt }
+            : {}),
         };
         transaction.update(ref, {
           text: "",
-          deletedAt: next.deletedAt,
+          deletedAt,
           reactions: [],
-          attachment: null,
+          ...(current.attachment
+            ? { attachmentCleanupPending: true, attachmentCleanupAt: deletedAt }
+            : {}),
         });
         return next;
       });
@@ -631,22 +814,32 @@ export const createChatService = ({
         throw createChatError("You can only remove your own messages.", 403);
       }
       removedAttachment = current.attachment;
+      const deletedAt = now();
       updated = {
         ...current,
         text: "",
-        deletedAt: now(),
+        deletedAt,
         reactions: [],
-        attachment: null,
+        ...(current.attachment
+          ? { attachmentCleanupPending: true, attachmentCleanupAt: deletedAt }
+          : {}),
       };
       memoryMessages.set(messageId, updated);
-      emitMemoryEvent(churchId, updated.dayKey, {
-        type: "message-updated",
-        message: serializeChatMessage(updated),
-      });
+      if (!removedAttachment) {
+        emitMemoryEvent(churchId, updated.dayKey, {
+          type: "message-updated",
+          message: serializeChatMessage(updated),
+        });
+      }
     }
     if (removedAttachment) {
       try {
-        await onAttachmentRemoved({ churchId, attachment: removedAttachment });
+        await cleanupAttachmentRecord({
+          churchId,
+          messageId,
+          attachment: removedAttachment,
+          ref: db?.collection(CHAT_MESSAGE_COLLECTION).doc(messageId),
+        });
       } catch (error) {
         console.error("Error removing chat image attachment:", error);
       }
@@ -674,6 +867,11 @@ export const createChatService = ({
     const attachment = normalizeImageAttachment(message.attachment);
     if (!attachment) {
       throw createChatError("That message does not include a photo.", 404);
+    }
+    if (isChatImageExpired(attachment, now().getTime())) {
+      const error = createChatError("Image expired.", 410);
+      error.code = "CHAT_IMAGE_EXPIRED";
+      throw error;
     }
     return attachment;
   };
@@ -955,6 +1153,7 @@ export const createChatService = ({
     createMessage,
     updateMessage,
     deleteMessage,
+    cleanupDueAttachments,
     getImageAttachment,
     toggleReaction,
     updateTyping,

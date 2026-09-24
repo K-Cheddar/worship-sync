@@ -172,6 +172,12 @@ export type ElectronMediaSurfaceDiagnostic = {
   error?: string;
 };
 
+export type VideoTransitionPath =
+  | "prepared-video"
+  | "poster-then-video"
+  | "video-fallback"
+  | "waiting-for-visual";
+
 export type ElectronMediaSurfacePoolDiagnostics = {
   outputId?: string;
   windowRole: string;
@@ -199,8 +205,8 @@ export type ElectronMediaSurfacePoolDiagnostics = {
   evictions: string[];
   candidateDetails?: ElectronMediaSurfaceCandidateDiagnostic[];
   surfaces: ElectronMediaSurfaceDiagnostic[];
-  renderPath?: "pool" | "fallback";
-  lastSendPath?: "pool" | "fallback";
+  renderPath?: VideoTransitionPath;
+  lastSendPath?: VideoTransitionPath;
   lastMediaKey?: string;
   posterShown?: boolean;
   rendererMetrics?: PreparedVideoMetrics;

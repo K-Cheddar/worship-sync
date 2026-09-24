@@ -5,6 +5,7 @@ import {
 } from "./churchResourceService.js";
 import { findChurchResourceServicePlanReferences } from "./churchResourceReferences.js";
 import { isR2NotFoundError } from "./storage/r2ObjectStorage.js";
+import { randomUUID } from "node:crypto";
 
 const MAX_NAME_LENGTH = 300;
 const MAX_DESCRIPTION_LENGTH = 2_000;
@@ -123,6 +124,12 @@ const errorResponse = (res, error, fallback) => {
     error: message,
     errorMessage: message,
   };
+  if (error?.code === "CHURCH_STORAGE_QUOTA_EXCEEDED") {
+    payload.code = error.code;
+    payload.quota = error.provider;
+  } else if (error?.code) {
+    payload.code = error.code;
+  }
   if (Number.isSafeInteger(error?.referenceCount)) {
     payload.references = { count: error.referenceCount };
   }
@@ -180,6 +187,7 @@ export const createChurchResourceHandlers = ({
       churchId,
       resourceId,
     }),
+  quota,
 }) => {
   const getStorage = () => storage || storageFactory();
 
@@ -277,6 +285,16 @@ export const createChurchResourceHandlers = ({
       }
     },
 
+    async storageQuota(req, res) {
+      try {
+        const churchId = requireChurchSession(req);
+        if (!quota) throw httpError(503, "Church storage usage is unavailable.");
+        return res.json({ success: true, quotas: await quota.getUsage(churchId) });
+      } catch (error) {
+        return errorResponse(res, error, "Could not load church storage usage.");
+      }
+    },
+
     async get(req, res) {
       try {
         const churchId = requireChurchSession(req);
@@ -294,6 +312,12 @@ export const createChurchResourceHandlers = ({
           churchId,
           upload: req.body,
         });
+        if (quota) await quota.reserve({
+          churchId,
+          provider: "r2Bytes",
+          amount: result.resourceUpload.sizeBytes,
+          operationId: `resource:${result.resourceUpload.id}`,
+        });
         return res.json(result);
       } catch (error) {
         return errorResponse(res, error, "Could not prepare this upload.");
@@ -310,19 +334,47 @@ export const createChurchResourceHandlers = ({
         }
         if (existing) {
           const resource = normalizeResourceRecord(existing);
-          if (resource) return res.json({ success: true, resource });
+          if (resource) {
+            await quota?.commitR2({
+              churchId,
+              reservationId: `resource:${resourceId}`,
+              assetId: `resource:${resourceId}`,
+              actualAmount: resource.storage.sizeBytes,
+            });
+            return res.json({ success: true, resource });
+          }
         }
         const upload = resourceInputFromBody(req.body);
         const resourceStorage = getStorage();
         const storageResult = await resourceStorage.completeUpload({
           churchId,
           upload: { ...upload, id: resourceId },
+          beforePromote: ({ sizeBytes }) => quota?.reserve({
+            churchId,
+            provider: "r2Bytes",
+            amount: sizeBytes,
+            operationId: `resource:${resourceId}`,
+          }),
         });
-        const resource = await persistUploadedResource({
-          req: { ...req, body: req.body?.metadata || req.body },
+        const reservationId = `resource:${resourceId}`;
+        let resource;
+        try {
+          resource = await persistUploadedResource({
+            req: { ...req, body: req.body?.metadata || req.body },
+            churchId,
+            storageResult,
+            resourceStorage,
+            cleanupOnPersistFailure: true,
+          });
+        } catch (error) {
+          await quota?.cancel({ churchId, reservationId });
+          throw error;
+        }
+        await quota?.commitR2({
           churchId,
-          storageResult,
-          resourceStorage,
+          reservationId,
+          assetId: `resource:${resourceId}`,
+          actualAmount: storageResult.sizeBytes,
         });
         return res.json({ success: true, resource });
       } catch (error) {
@@ -334,26 +386,52 @@ export const createChurchResourceHandlers = ({
       try {
         const churchId = requireChurchSession(req);
         const resourceStorage = getStorage();
-        const storageResult = await resourceStorage.uploadFromServer({
-          churchId,
-          upload: {
-            fileName: req.query.fileName,
-            contentType: req.get("content-type"),
-          },
-          body: req.body,
-        });
-        const resource = await persistUploadedResource({
-          req: {
-            ...req,
-            body: {
-              name: req.get("x-resource-name"),
-              description: req.get("x-resource-description"),
+        const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+        const resourceId = `churchResource_${randomUUID()}`;
+        const reservationId = `resource:${resourceId}`;
+        await quota?.reserve({ churchId, provider: "r2Bytes", amount: bytes.byteLength, operationId: reservationId });
+        let storageResult;
+        try {
+          storageResult = await resourceStorage.uploadFromServer({
+            churchId,
+            resourceId,
+            upload: {
+              fileName: req.query.fileName,
+              contentType: req.get("content-type"),
             },
-          },
+            body: bytes,
+          });
+        } catch (error) {
+          await quota?.cancel({ churchId, reservationId });
+          throw error;
+        }
+        let resource;
+        try {
+          resource = await persistUploadedResource({
+            req: {
+              ...req,
+              body: {
+                name: req.get("x-resource-name"),
+                description: req.get("x-resource-description"),
+              },
+            },
+            churchId,
+            storageResult,
+            resourceStorage,
+            cleanupOnPersistFailure: true,
+          });
+        } catch (error) {
+          if (storageResult) {
+            try { await resourceStorage.remove({ churchId, resource: storageResult }); } catch {}
+          }
+          await quota?.cancel({ churchId, reservationId });
+          throw error;
+        }
+        await quota?.commitR2({
           churchId,
-          storageResult,
-          resourceStorage,
-          cleanupOnPersistFailure: true,
+          reservationId,
+          assetId: `resource:${resourceId}`,
+          actualAmount: storageResult.sizeBytes,
         });
         return res.json({ success: true, resource });
       } catch (error) {
@@ -456,6 +534,13 @@ export const createChurchResourceHandlers = ({
             throw error;
           }
         }
+
+        await quota?.releaseR2({
+          churchId,
+          reservationId: `delete-resource:${resourceId}`,
+          assetId: `resource:${resourceId}`,
+          fallbackPreviousAmount: resource.storage.sizeBytes,
+        });
 
         resource = await persistDeletionState(resource, {
           deletionStorageDeletedAt: nowIso(),

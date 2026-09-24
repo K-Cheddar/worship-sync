@@ -130,6 +130,7 @@ describe("BrandingForm", () => {
         expect.anything(),
         "branding/old-square",
         "image",
+        "church-1",
       ),
     );
     expect(showToast).toHaveBeenCalledWith("Branding saved.", "success");
@@ -171,6 +172,7 @@ describe("BrandingForm", () => {
         expect.anything(),
         "branding/unsaved-square",
         "image",
+        "church-1",
       ),
     );
     expect(showToast).toHaveBeenCalledWith("Save failed", "error");

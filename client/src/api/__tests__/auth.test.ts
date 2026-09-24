@@ -266,6 +266,37 @@ describe("api/auth", () => {
     );
   });
 
+  it("retries an ambiguous packaged MP3 upload with the same operation ID", async () => {
+    packagedElectron.value = true;
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: "Upload completion failed" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ audio: { id: "audio-new" } }),
+      });
+
+    await uploadSongAudio({
+      churchId: "church-1",
+      songId: "song-1",
+      file: new File([new Uint8Array([1, 2, 3])], "replacement.mp3", {
+        type: "audio/mpeg",
+      }),
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const firstHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers;
+    const secondHeaders = (global.fetch as jest.Mock).mock.calls[1][1].headers;
+    expect(firstHeaders["x-song-audio-upload-id"]).toBeTruthy();
+    expect(secondHeaders["x-song-audio-upload-id"]).toBe(
+      firstHeaders["x-song-audio-upload-id"],
+    );
+  });
+
   it("silently recovers a 401 session and retries the request once", async () => {
     setAuthenticatedSessionExpected(true);
     const recoveryHandler = jest.fn(() => Promise.resolve(true));

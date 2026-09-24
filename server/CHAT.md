@@ -14,13 +14,18 @@ cannot leave someone shown as typing indefinitely. These heartbeats do not creat
 Firestore documents or Firestore reads. The server also rate limits typing requests
 and opportunistically removes expired Realtime Database entries.
 
-Photo attachments use the existing private R2 bucket. Firestore stores only
-validated attachment metadata; object keys stay server-side and authenticated
-clients receive short-lived read URLs. Browser clients upload directly through a
-short-lived signed PUT URL. Packaged Electron clients use the authenticated API
-proxy. The server decodes JPEG, PNG, and WebP inputs, rejects animated or
-oversized images, strips metadata, and writes bounded full and thumbnail WebP
-variants before creating the message.
+Photo attachments use the private Resources R2 bucket, isolated from both
+SongAudio and ordinary ChurchResource files by their own key prefixes. Firestore
+stores validated attachment metadata including exact sizes and a 30-day
+`expiresAt`; object keys stay server-side and authenticated clients receive
+short-lived read URLs. Browser clients upload directly through a short-lived
+signed PUT URL. Packaged Electron clients use the authenticated API proxy. The
+server decodes JPEG, PNG, and WebP inputs, rejects animated or oversized images,
+strips metadata, reserves R2 quota, and writes bounded full and thumbnail WebP
+variants before committing the message. Images remain available until their
+attachment expiration; the message itself keeps its existing 365-day retention.
+Expired and missing legacy images render an `Image expired` placeholder, and the
+server refuses to issue download URLs for them.
 
 ## Required deployment setup
 
@@ -37,23 +42,46 @@ retention boundary. The first authenticated chat client for a church sets that
 church's chat timezone in `chatSettings`; later clients use the stored value so
 everyone rolls over to the same weekly room.
 
-Photo sharing uses the same R2 variables as song audio:
+Photo sharing shares R2 credentials and endpoint with song audio, but uses the
+separate Resources bucket:
 
 - `R2_ACCOUNT_ID`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET`
+- `R2_RESOURCES_BUCKET` (required for chat photos)
 - optional `R2_ENDPOINT`
 
-Configure two R2 object lifecycle rules so unattached files and expired chat
-history are removed even if an application cleanup is interrupted:
+Keep `R2_BUCKET` assigned to the existing SongAudio bucket. Chat uploads and
+downloads use `R2_RESOURCES_BUCKET` and never fall back to the SongAudio bucket.
+Do not expose either bucket publicly.
+
+Configure these R2 object lifecycle rules on the Resources bucket:
 
 - delete objects under `pending/chat/` after 1 day
-- delete objects under `chat/` after 365 days
+- delete objects under `pending/churches/` after 1 day
+- delete objects under `chat/` after 30 days
 
-The R2 bucket also needs a browser CORS rule allowing the production app and
-local development origins to send `PUT` requests with the `Content-Type` header.
-This is the same direct-upload requirement used by browser song-audio uploads.
+The Resources bucket needs CORS allowing the production app and local
+development origins, `PUT` and `GET`, and the `Content-Type` request header.
+Browser chat uploads use direct signed PUTs; Electron uploads use the
+authenticated server proxy. Do not move the chat CORS rule to the SongAudio
+bucket.
+
+Schedule `npm run cleanup:chat-images` to run daily with Firebase Admin, CouchDB,
+and R2 credentials (including `R2_RESOURCES_BUCKET`). It retries attachment
+deletions after message removal or image expiration and reconciles each church's
+R2 usage from Resources, song-audio metadata, and active chat attachments. The
+cleanup does not depend on a user opening chat. Run
+`npm run cleanup:chat-images:dry-run` to check the number of due attachments
+before the first scheduled run. Keep a single scheduler job; the command is
+safe to retry.
+
+Legacy demo chat images predate attachment expiration and remain unavailable
+after switching the bucket. No objects are moved or deleted during deploy. If
+you want to reclaim those old objects, manually inspect the demo church's
+`chat/` and `pending/chat/` prefixes in the old SongAudio bucket and delete only
+the confirmed demo chat objects. Never delete the whole bucket or song-audio
+objects.
 
 Optional limits are `CHAT_IMAGE_MAX_BYTES` (10 MB by default),
 `CHAT_IMAGE_UPLOADS_PER_HOUR` (12 per actor), and

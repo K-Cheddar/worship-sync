@@ -12,7 +12,7 @@ let mockMediaReady = true;
 let mockLiveMediaReady = true;
 const mockReadinessByMedia = new Map<
   string,
-  { paintReady: boolean; livePaintReady: boolean }
+  { paintReady: boolean; livePaintReady: boolean; posterReady?: boolean }
 >();
 const playbackCuesByMedia = new Map<string, string[]>();
 const mockTimeline = {
@@ -41,11 +41,13 @@ jest.mock("../LaneFullFrameMedia", () => ({
   default: function MockLaneFullFrameMedia({
     onPaintReadyChange,
     onLivePaintReadyChange,
+    onPosterPaintReadyChange,
     media,
     playback,
   }: {
     onPaintReadyChange: (ready: boolean) => void;
     onLivePaintReadyChange?: (ready: boolean) => void;
+    onPosterPaintReadyChange?: (ready: boolean) => void;
     media: { kind: string; mediaKey?: string; input?: { sourceId: string } };
     playback?: { mediaKey?: string; generation?: number; positionSeconds?: number };
   }) {
@@ -60,12 +62,18 @@ jest.mock("../LaneFullFrameMedia", () => ({
       onLivePaintReadyChange?.(
         readiness?.livePaintReady ?? mockLiveMediaReady,
       );
+      onPosterPaintReadyChange?.(
+        readiness?.posterReady ??
+          Boolean(readiness?.paintReady && !readiness?.livePaintReady),
+      );
     }, [
       media.mediaKey,
       onLivePaintReadyChange,
+      onPosterPaintReadyChange,
       onPaintReadyChange,
       readiness?.livePaintReady,
       readiness?.paintReady,
+      readiness?.posterReady,
     ]);
     const id =
       media.kind === "fileVideo"
@@ -632,7 +640,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(screen.queryByTestId("electron-media-surface-remote:no-background-pool")).not.toBeInTheDocument();
   });
 
-  it("waits for live playback when replacing a moving file video", () => {
+  it("starts a full video transition on the ready poster before live playback", () => {
     const first: DisplayBoxTransitionSnapshot = {
       key: "fallback-a",
       boxes: [{ id: "box", words: "A", width: 100, height: 100 }],
@@ -679,8 +687,11 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
+    expect(screen.getByTestId("content-B")).toBeInTheDocument();
+    expect(screen.getByTestId("content-A")).toBeInTheDocument();
+    const slideFadeCount = mockTimeline.fromTo.mock.calls.length;
 
     mockReadinessByMedia.set("remote:fallback-b", {
       paintReady: true,
@@ -698,8 +709,45 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-phase",
       "animating",
     );
-    expect(mockTimeline.fromTo).toHaveBeenCalled();
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(slideFadeCount);
     expect(mockTimelineComplete).toBeDefined();
+  });
+
+  it("keeps the outgoing slide when neither a poster nor a video frame is ready", () => {
+    mockReadinessByMedia.set("remote:no-visual", {
+      paintReady: false,
+      livePaintReady: false,
+    });
+    const target: DisplayBoxTransitionSnapshot = {
+      key: "no-visual",
+      boxes: [{ id: "box", words: "Target", width: 100, height: 100 }],
+      backgroundMedia: {
+        ...sharedFileMedia,
+        mediaKey: "remote:no-visual",
+        fallbackSrc: undefined,
+      },
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={oldSnapshot}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={target}
+        shouldAnimate
+        renderLane={readyRenderLane()}
+      />,
+    );
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    expect(screen.getByTestId("content-Old")).toBeInTheDocument();
+    expect(screen.getByTestId("content-Target")).toBeInTheDocument();
+    expect(mockTimeline.fromTo).not.toHaveBeenCalled();
   });
 
   it("releases a failed prepared candidate to the live fallback", async () => {
@@ -1669,7 +1717,7 @@ describe("DisplayBoxTransitionStage", () => {
     expect(mockTimeline.kill).not.toHaveBeenCalled();
   });
 
-  it("crossfades complete slides once the incoming live frame is ready", () => {
+  it("crossfades the complete slide on its poster without restarting lyrics for video", () => {
     const mediaA = {
       ...sharedFileMedia,
       mediaKey: "remote:independent-a",
@@ -1716,11 +1764,12 @@ describe("DisplayBoxTransitionStage", () => {
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
-      "preparing",
+      "animating",
     );
     expect(screen.getByTestId("content-Old lyric")).toBeInTheDocument();
     expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
     expect(screen.getAllByTestId("lane-full-frame-media-mock")).toHaveLength(2);
+    const slideFadeCount = mockTimeline.fromTo.mock.calls.length;
     mockReadinessByMedia.set("remote:independent-b", {
       paintReady: true,
       livePaintReady: true,
@@ -1737,7 +1786,8 @@ describe("DisplayBoxTransitionStage", () => {
       "animating",
     );
     expect(mockTimelineCompletions).toHaveLength(1);
-    expect(mockTimeline.fromTo).toHaveBeenCalled();
+    expect(mockTimeline.fromTo).toHaveBeenCalledTimes(slideFadeCount);
+    expect(screen.getByTestId("content-New lyric")).toBeInTheDocument();
     act(() => mockTimelineCompletions[0]?.());
 
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(

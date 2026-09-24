@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Pause, Play, SkipBack, Square } from "lucide-react";
 import Button from "../Button/Button";
 import SegmentedControl from "../SegmentedControl/SegmentedControl";
@@ -48,10 +48,19 @@ const VideoBackgroundControls = ({
   className,
 }: VideoBackgroundControlsProps) => {
   const dispatch = useDispatch();
+  const subscribeToMedia = useCallback(
+    (listener: (next: ReturnType<typeof getVideoPreviewSnapshot>) => void) =>
+      subscribeVideoPreviewSnapshot(mediaKey, listener),
+    [mediaKey],
+  );
+  const getMediaSnapshot = useCallback(
+    () => getVideoPreviewSnapshot(mediaKey),
+    [mediaKey],
+  );
   const snapshot = useSyncExternalStore(
-    subscribeVideoPreviewSnapshot,
-    getVideoPreviewSnapshot,
-    getVideoPreviewSnapshot,
+    subscribeToMedia,
+    getMediaSnapshot,
+    getMediaSnapshot,
   );
   const syncedCue = useSelector((state: RootState) =>
     resolveSyncedVideoPlayback(state.presentation.outputs, mediaKey),
@@ -61,10 +70,17 @@ const VideoBackgroundControls = ({
   const [liveClockTick, setLiveClockTick] = useState(0);
 
   const syncLive = syncOutputIds.length > 0;
-  const duration = Math.max(
-    snapshot.duration || 0,
-    typeof media.duration === "number" ? media.duration : 0,
-  );
+  const measuredDuration =
+    Number.isFinite(snapshot.duration) && snapshot.duration > 0
+      ? snapshot.duration
+      : 0;
+  const metadataDuration =
+    typeof media.duration === "number" &&
+    Number.isFinite(media.duration) &&
+    media.duration > 0
+      ? media.duration
+      : 0;
+  const duration = measuredDuration || metadataDuration;
 
   // Live cues carry a timestamp rather than a ticking playhead, so the clock
   // has to advance itself. Off-air the preview element reports its own

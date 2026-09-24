@@ -17,6 +17,22 @@ type ReceivedDiagnostics = ElectronMediaSurfacePoolDiagnostics & {
   receivedAt: number;
 };
 
+const getTransitionVisualLabel = (entry: ReceivedDiagnostics): string => {
+  switch (entry.lastSendPath) {
+    case "prepared-video":
+      return "prepared video";
+    case "poster-then-video":
+      return "poster handoff";
+    case "video-fallback":
+      return "fallback video frame";
+    case "waiting-for-visual":
+      return "waiting for visual";
+    default:
+      if (entry.posterShown == null) return "not recorded";
+      return entry.posterShown ? "poster/fallback" : "fallback video frame";
+  }
+};
+
 const formatMetric = (
   value: PreparedVideoMetrics | undefined,
   key: "memory" | "cpu",
@@ -169,15 +185,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                 <Metric label="Last send path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
                 <Metric
                   label="Transition visual"
-                  value={
-                    entry.lastSendPath === "pool"
-                      ? "prepared frame"
-                      : entry.posterShown == null
-                        ? "not recorded"
-                        : entry.posterShown
-                          ? "poster/fallback"
-                          : "fallback video frame"
-                  }
+                  value={getTransitionVisualLabel(entry)}
                 />
                 <Metric label="Renderer memory" value={formatMetric(entry.rendererMetrics, "memory")} />
                 <Metric label="CPU" value={formatMetric(entry.rendererMetrics, "cpu")} />

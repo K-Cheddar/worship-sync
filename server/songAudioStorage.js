@@ -111,10 +111,12 @@ const resolveFinalSongAudioTarget = ({
     );
   }
 
-  // A song has one final R2 attachment slot. Replacements overwrite that
-  // validated key so a failed client-side cleanup cannot leave final objects
-  // accumulating under the song prefix.
-  return { id, key };
+  // Keep the old object intact until the caller persists this replacement's
+  // metadata. The client removes the previous key only after that save.
+  return {
+    id: newAudioId,
+    key: buildSongAudioObjectKey({ churchId, songId, audioId: newAudioId }),
+  };
 };
 
 export const getSongAudioStorageConfig = (env = process.env) => {
@@ -155,6 +157,7 @@ export const createSongAudioStorage = ({
   env = process.env,
   s3Client,
   signUrl,
+  quota,
 } = {}) => {
   const config = getSongAudioStorageConfig(env);
   const objectStorage = createR2ObjectStorage({
@@ -249,10 +252,45 @@ export const createSongAudioStorage = ({
       newAudioId: id,
       previousAudio,
     });
-    await objectStorage.copy({
-      sourceKey: pendingKey,
-      targetKey: target.key,
-      contentType,
+    let previousSizeBytes = 0;
+    if (previousAudio) {
+      const previousHead = await objectStorage.head({ key: previousAudio.key });
+      previousSizeBytes = Number(previousHead.ContentLength);
+      if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
+        throw new SongAudioInputError("The existing song MP3 could not be verified.");
+      }
+    }
+    const reservationId = `song-upload:${churchId}:${songId}:${id}`;
+    try {
+      await quota?.reserve({
+        churchId,
+        provider: "r2Bytes",
+        amount: sizeBytes,
+        replaceAmount: previousSizeBytes,
+        operationId: reservationId,
+        lockId: `song:${songId}`,
+      });
+    } catch (error) {
+      try { await objectStorage.delete({ key: pendingKey }); } catch {}
+      throw error;
+    }
+    try {
+      await objectStorage.copy({
+        sourceKey: pendingKey,
+        targetKey: target.key,
+        contentType,
+      });
+    } catch (error) {
+      await quota?.cancel({ churchId, reservationId });
+      throw error;
+    }
+    await quota?.commitR2({
+      churchId,
+      reservationId,
+      assetId: `song-audio:${target.id}`,
+      previousAssetId: previousAudio ? `song-audio:${previousAudio.id}` : undefined,
+      actualAmount: sizeBytes,
+      fallbackPreviousAmount: previousSizeBytes,
     });
     try {
       await objectStorage.delete({ key: pendingKey });
@@ -280,24 +318,62 @@ export const createSongAudioStorage = ({
     upload,
     body,
     previousAudio,
+    audioId,
   }) => {
     const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body || []);
     const { fileName, contentType, sizeBytes } = validateSongAudioUpload(
       { ...upload, sizeBytes: bytes.byteLength },
       env,
     );
-    const id = randomUUID();
+    const id = audioId ? requireNonEmptyString(audioId, "Upload ID") : randomUUID();
     const target = resolveFinalSongAudioTarget({
       churchId,
       songId,
       newAudioId: id,
       previousAudio,
     });
-    await objectStorage.put({
-      key: target.key,
-      contentType,
-      body: bytes,
+    let previousSizeBytes = 0;
+    if (previousAudio) {
+      const previousHead = await objectStorage.head({ key: previousAudio.key });
+      previousSizeBytes = Number(previousHead.ContentLength);
+      if (!Number.isSafeInteger(previousSizeBytes) || previousSizeBytes < 0) {
+        throw new SongAudioInputError("The existing song MP3 could not be verified.");
+      }
+    }
+    const reservationId = `song-upload:${churchId}:${songId}:${id}`;
+    await quota?.reserve({
+      churchId,
+      provider: "r2Bytes",
+      amount: sizeBytes,
+      replaceAmount: previousSizeBytes,
+      operationId: reservationId,
+      lockId: `song:${songId}`,
     });
+    try {
+      await objectStorage.put({
+        key: target.key,
+        contentType,
+        body: bytes,
+      });
+    } catch (error) {
+      await quota?.cancel({ churchId, reservationId });
+      throw error;
+    }
+    try {
+      await quota?.commitR2({
+        churchId,
+        reservationId,
+        assetId: `song-audio:${target.id}`,
+        previousAssetId: previousAudio ? `song-audio:${previousAudio.id}` : undefined,
+        actualAmount: sizeBytes,
+        fallbackPreviousAmount: previousSizeBytes,
+      });
+    } catch (error) {
+      // The Firestore transaction may have committed even if its response was
+      // lost. Keep both the durable object and reservation so a retry with the
+      // same upload ID can safely finish the operation.
+      throw error;
+    }
     return {
       id: target.id,
       key: target.key,
@@ -327,7 +403,7 @@ export const createSongAudioStorage = ({
     });
   };
 
-  const remove = async ({ churchId, songId, audio }) => {
+  const remove = async ({ churchId, songId, audio, storedSizeBytes, getStoredSize }) => {
     const id = requireNonEmptyString(audio?.id, "Audio ID");
     const key = requireNonEmptyString(audio?.key, "Storage key");
     if (!isSongAudioKeyForScope({ key, churchId, songId, audioId: id })) {
@@ -335,7 +411,22 @@ export const createSongAudioStorage = ({
         "That audio file does not belong to this song.",
       );
     }
+    let sizeBytes = 0;
+    try {
+      sizeBytes = Number((await objectStorage.head({ key })).ContentLength);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) sizeBytes = 0;
+    } catch (error) {
+      if (error?.name !== "NotFound" && error?.name !== "NoSuchKey") throw error;
+      sizeBytes = Number(await getStoredSize?.() ?? storedSizeBytes);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) sizeBytes = 0;
+    }
     await objectStorage.delete({ key });
+    await quota?.releaseR2({
+      churchId,
+      reservationId: `song-delete:${songId}:${id}`,
+      assetId: `song-audio:${id}`,
+      fallbackPreviousAmount: sizeBytes,
+    });
   };
 
   return {

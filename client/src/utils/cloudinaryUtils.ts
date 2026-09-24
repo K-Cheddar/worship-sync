@@ -1,38 +1,27 @@
 import { Cloudinary } from "@cloudinary/url-gen";
-import { getApiBasePath } from "./environment";
+import { apiFetch } from "../api/auth";
 
 export const deleteFromCloudinary = async (
   cloud: Cloudinary,
   publicId: string,
-  resourceType?: "image" | "video"
+  resourceType?: "image" | "video",
+  churchId?: string,
 ): Promise<boolean> => {
-  return deleteCloudinaryAsset(publicId, resourceType);
+  return deleteCloudinaryAsset(publicId, resourceType, churchId);
 };
 
 export const deleteCloudinaryAsset = async (
   publicId: string,
-  resourceType?: "image" | "video"
+  resourceType?: "image" | "video",
+  churchId?: string,
 ): Promise<boolean> => {
+  if (!churchId || resourceType === "video") return false;
   try {
-    const response = await fetch(
-      `${getApiBasePath()}api/cloudinary/delete`,
-      {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ publicId, resourceType }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error("Server error:", errorData);
-      return false;
-    }
-
-    const result = await response.json();
-    return result.success === true;
+    await apiFetch<{ success: boolean }>("api/cloudinary/delete", {
+      method: "DELETE",
+      body: JSON.stringify({ publicId, resourceType }),
+    });
+    return true;
   } catch (error) {
     console.error("Error deleting from Cloudinary:", error);
     return false;

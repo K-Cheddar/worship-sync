@@ -1,6 +1,7 @@
 import {
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -60,6 +61,11 @@ export type DisplayBoxTransitionSnapshot = {
 
 /** Which visual planes participate in the in-flight transition. */
 type TransitionMode = "full" | "content" | "media";
+type IncomingVideoPath =
+  | "prepared-video"
+  | "poster-then-video"
+  | "video-fallback"
+  | "waiting-for-visual";
 
 type TransitionState = {
   activeLaneId: LaneId;
@@ -98,6 +104,7 @@ export type LaneMediaPlaybackOptions = {
   volume?: number;
   playbackRole?: "preview" | "output";
   preloadRole?: "preview" | "output";
+  transportRole?: "editor" | "none";
   suspendPlayback?: boolean;
   /** Cue for the current live file-video lane. */
   activeFileVideoPlayback?: VideoBackgroundPlaybackCue;
@@ -266,6 +273,9 @@ const DisplayBoxTransitionStage = ({
   const mediaOwnersRef = useRef(
     new Map<string, { generation: number; sourceIdentity: string }>(),
   );
+  // The stage locks the incoming renderer at the transition boundary. A pool
+  // surface that finishes later cannot replace a fallback player mid-slide.
+  const incomingVideoPathsRef = useRef(new Map<string, IncomingVideoPath>());
   useLayoutEffect(() => () => {
     timelineRef.current?.kill();
     timelineRef.current = null;
@@ -276,8 +286,8 @@ const DisplayBoxTransitionStage = ({
   const [preparedMediaStatuses, setPreparedMediaStatuses] = useState<
     Record<string, MediaSurfaceStatus>
   >({});
-  const [lastSendPath, setLastSendPath] = useState<"pool" | "fallback">(
-    "fallback",
+  const [lastSendPath, setLastSendPath] = useState<IncomingVideoPath>(
+    "waiting-for-visual",
   );
   const [lastMediaKey, setLastMediaKey] = useState<string | undefined>();
   const [posterShown, setPosterShown] = useState<boolean | undefined>();
@@ -288,6 +298,9 @@ const DisplayBoxTransitionStage = ({
     { mediaKey: string; timestamp: number } | undefined
   >();
   const requestGenerationRef = useRef(0);
+  const requestSentAtRef = useRef<number | undefined>(undefined);
+  const videoRequestSentAtRef = useRef(new Map<string, number>());
+  const firstFrameLogTokensRef = useRef(new Set<string>());
   const mediaPlaybackRef = useRef(mediaPlayback);
   mediaPlaybackRef.current = mediaPlayback;
   const [state, setState] = useState<TransitionState>(() => ({
@@ -306,6 +319,9 @@ const DisplayBoxTransitionStage = ({
     Record<LaneId, { mediaKey: string; ready: boolean } | null>
   >({ a: null, b: null });
   const [mediaLivePaintReadiness, setMediaLivePaintReadiness] = useState<
+    Record<LaneId, { mediaKey: string; ready: boolean } | null>
+  >({ a: null, b: null });
+  const [mediaPosterPaintReadiness, setMediaPosterPaintReadiness] = useState<
     Record<LaneId, { mediaKey: string; ready: boolean } | null>
   >({ a: null, b: null });
   const laneSnapshotsRef = useRef<
@@ -388,6 +404,24 @@ const DisplayBoxTransitionStage = ({
     outlineName: mediaPlayback?.preparedMediaContext?.outlineName,
     contextSource: mediaPlayback?.preparedMediaContext?.contextSource,
   });
+  useEffect(() => {
+    // Electron poster rendering already resolves through the shared media
+    // cache path; a second raw-URL request here could duplicate that fetch.
+    if (window.electronAPI) return;
+    const probes = poolCandidateResult.posterUrls.map((url) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = url;
+      return image;
+    });
+    return () => {
+      probes.forEach((image) => {
+        image.onload = null;
+        image.onerror = null;
+        image.src = "";
+      });
+    };
+  }, [poolCandidateResult.posterUrls]);
   const remotePreparation = useRemoteMediaPreparationManifest({
     enabled: poolEnabled && sessionKind === "display",
     outputId: mediaPlayback?.outputId,
@@ -581,6 +615,37 @@ const DisplayBoxTransitionStage = ({
     const isNewRequest = snapshot.key !== state.requestedKey;
     if (isNewRequest) {
       requestGenerationRef.current += 1;
+      requestSentAtRef.current = performance.now();
+      const retainedMediaKeys = new Set(
+        [
+          ...Object.values(state.lanes).map((lane) =>
+            lane?.backgroundMedia.kind === "fileVideo"
+              ? lane.backgroundMedia.mediaKey
+              : undefined,
+          ),
+          snapshot.backgroundMedia.kind === "fileVideo"
+            ? snapshot.backgroundMedia.mediaKey
+            : undefined,
+        ].filter((key): key is string => Boolean(key)),
+      );
+      for (const key of videoRequestSentAtRef.current.keys()) {
+        if (!retainedMediaKeys.has(key)) videoRequestSentAtRef.current.delete(key);
+      }
+      const retainedSnapshotKeys = new Set([
+        ...Object.values(state.lanes)
+          .map((lane) => lane?.key)
+          .filter((key): key is string => Boolean(key)),
+        snapshot.key,
+      ]);
+      for (const key of incomingVideoPathsRef.current.keys()) {
+        if (!retainedSnapshotKeys.has(key)) incomingVideoPathsRef.current.delete(key);
+      }
+      if (snapshot.backgroundMedia.kind === "fileVideo") {
+        videoRequestSentAtRef.current.set(
+          snapshot.backgroundMedia.mediaKey,
+          requestSentAtRef.current,
+        );
+      }
       logVideoCue("transition.requested", {
         outputId: mediaPlayback?.outputId,
         windowRole: mediaPlayback?.windowRole,
@@ -588,6 +653,10 @@ const DisplayBoxTransitionStage = ({
         media: getLaneBackgroundMediaKey(snapshot.backgroundMedia),
         generation: requestGenerationRef.current,
         priorPhase: state.phase,
+        sendTimestamp: requestSentAtRef.current,
+        incomingPath: "waiting-for-visual",
+        posterReadyAtSelection: false,
+        preparedSurfaceReadyAtSelection: false,
       });
     }
 
@@ -860,9 +929,48 @@ const DisplayBoxTransitionStage = ({
     (laneId: LaneId, mediaKey: string, ready: boolean) => {
       const laneSnapshot = laneSnapshotsRef.current[laneId];
       if (!laneSnapshot || getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia) !== mediaKey) return;
+      if (ready && laneSnapshot.backgroundMedia.kind === "fileVideo") {
+        const sendTimestamp = videoRequestSentAtRef.current.get(
+          laneSnapshot.backgroundMedia.mediaKey,
+        );
+        const logToken = `${laneSnapshot.backgroundMedia.mediaKey}:${sendTimestamp ?? "initial"}`;
+        if (!firstFrameLogTokensRef.current.has(logToken)) {
+          firstFrameLogTokensRef.current.add(logToken);
+          while (firstFrameLogTokensRef.current.size > 8) {
+            const oldest = firstFrameLogTokensRef.current.values().next().value;
+            if (oldest === undefined) break;
+            firstFrameLogTokensRef.current.delete(oldest);
+          }
+          const presentedTimestamp = performance.now();
+          logVideoCue("transition.firstVideoFrame", {
+            mediaKey: laneSnapshot.backgroundMedia.mediaKey,
+            presentedTimestamp,
+            sendToFirstPresentedFrameMs:
+              sendTimestamp == null ? undefined : presentedTimestamp - sendTimestamp,
+          });
+        }
+      }
       setMediaLivePaintReadiness((current) => {
         const laneState = current[laneId];
         if (laneState?.mediaKey === mediaKey && laneState.ready === ready) return current;
+        return { ...current, [laneId]: { mediaKey, ready } };
+      });
+    },
+    [],
+  );
+
+  const reportMediaPosterPaintReady = useCallback(
+    (laneId: LaneId, mediaKey: string, ready: boolean) => {
+      const laneSnapshot = laneSnapshotsRef.current[laneId];
+      if (
+        !laneSnapshot ||
+        getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia) !== mediaKey
+      ) return;
+      setMediaPosterPaintReadiness((current) => {
+        const laneState = current[laneId];
+        if (laneState?.mediaKey === mediaKey && laneState.ready === ready) {
+          return current;
+        }
         return { ...current, [laneId]: { mediaKey, ready } };
       });
     },
@@ -901,10 +1009,15 @@ const DisplayBoxTransitionStage = ({
     (
       laneId: LaneId,
       mediaSnapshot?: DisplayBoxTransitionSnapshot["backgroundMedia"],
+      snapshotKey?: string,
     ): boolean => {
       const media = mediaSnapshot ?? state.lanes[laneId]?.backgroundMedia;
       const preparedKey = getLanePreparedMediaKey(media);
       if (!poolEnabled || preparedKey === "none") return false;
+      if (snapshotKey) {
+        const selectedPath = incomingVideoPathsRef.current.get(snapshotKey);
+        if (selectedPath && selectedPath !== "prepared-video") return false;
+      }
       const owner = mediaOwnersRef.current.get(preparedKey);
       const status = preparedStatusForKey(preparedKey);
       if (owner !== undefined) {
@@ -951,22 +1064,6 @@ const DisplayBoxTransitionStage = ({
     ],
   );
 
-  const laneHasActiveVideo = (
-    laneId: LaneId,
-    laneSnapshot: DisplayBoxTransitionSnapshot | null,
-  ) => {
-    if (laneSnapshot?.backgroundMedia.kind !== "fileVideo") return false;
-    const preparedStatus = preparedStatusForKey(
-      getLanePreparedMediaKey(laneSnapshot.backgroundMedia),
-    );
-    return (
-      isMediaSurfaceVisible(preparedStatus) ||
-      (mediaLivePaintReadiness[laneId]?.mediaKey ===
-        getLaneBackgroundMediaKey(laneSnapshot.backgroundMedia) &&
-        mediaLivePaintReadiness[laneId]?.ready === true)
-    );
-  };
-
   const isLanePaintReady = (
     laneId: LaneId,
     laneSnapshot: DisplayBoxTransitionSnapshot,
@@ -990,24 +1087,14 @@ const DisplayBoxTransitionStage = ({
     const usesPrepared = usesPreparedSurface(
       mediaLaneId,
       laneSnapshot.backgroundMedia,
+      laneSnapshot.key,
     );
-    const outgoingSnapshot = state.lanes[state.activeLaneId];
-    const requiresActiveIncomingVideo =
-      mode !== "content" &&
-      laneId !== state.activeLaneId &&
-      laneHasActiveVideo(state.activeLaneId, outgoingSnapshot) &&
-      laneSnapshot.backgroundMedia.kind === "fileVideo";
     const mediaReady =
       mode === "content" ||
       mediaKey === "none" ||
       (usesPrepared
-        ? hasPreparedFrame(preparedStatus) &&
-          (!requiresActiveIncomingVideo || isMediaSurfaceVisible(preparedStatus))
-        : mediaState?.mediaKey === mediaKey &&
-          mediaState.ready &&
-          (!requiresActiveIncomingVideo ||
-            (mediaLivePaintReadiness[laneId]?.mediaKey === mediaKey &&
-              mediaLivePaintReadiness[laneId]?.ready === true)));
+        ? hasPreparedFrame(preparedStatus)
+        : mediaState?.mediaKey === mediaKey && mediaState.ready);
     return boxesReady && mediaReady;
   };
 
@@ -1030,6 +1117,7 @@ const DisplayBoxTransitionStage = ({
       const incomingUsesPrepared = usesPreparedSurface(
         mediaLaneForContentLane(incomingLaneId),
         incomingMedia,
+        incomingSnapshot?.key,
       );
       if (incomingKey !== outgoingKey) mediaOwnersRef.current.delete(outgoingKey);
       if (incomingMedia?.kind === "fileVideo" && incomingUsesPrepared) {
@@ -1079,6 +1167,7 @@ const DisplayBoxTransitionStage = ({
     const incomingUsesPrepared = usesPreparedSurface(
       mediaLaneForContentLane(incomingLaneId),
       incomingMedia,
+      incomingSnapshot?.key,
     );
     const incomingFallbackLiveReady =
       incomingMedia?.kind === "fileVideo" &&
@@ -1086,18 +1175,37 @@ const DisplayBoxTransitionStage = ({
         getLaneBackgroundMediaKey(incomingMedia) &&
       mediaLivePaintReadiness[incomingLaneId]?.ready === true;
     if (incomingMedia?.kind === "fileVideo") {
-      setLastMediaKey(incomingMedia.mediaKey);
-      setLastSendPath(incomingUsesPrepared ? "pool" : "fallback");
-      setPosterShown(!incomingUsesPrepared && !incomingFallbackLiveReady);
-      if (incomingUsesPrepared) {
-        setTransitionStart({
-          mediaKey: incomingPreparedKey,
-          timestamp: performance.now(),
-        });
+      const path: IncomingVideoPath = incomingUsesPrepared
+        ? "prepared-video"
+        : mediaPosterPaintReadiness[incomingLaneId]?.mediaKey ===
+              getLaneBackgroundMediaKey(incomingMedia) &&
+            mediaPosterPaintReadiness[incomingLaneId]?.ready === true
+          ? "poster-then-video"
+          : incomingFallbackLiveReady
+            ? "video-fallback"
+            : "waiting-for-visual";
+      if (incomingSnapshot) {
+        incomingVideoPathsRef.current.set(incomingSnapshot.key, path);
       }
+      setLastMediaKey(incomingMedia.mediaKey);
+      setLastSendPath(path);
+      setPosterShown(path === "poster-then-video");
+      setTransitionStart({
+        mediaKey: incomingPreparedKey,
+        timestamp: performance.now(),
+      });
+      logVideoCue("transition.pathSelected", {
+        mediaKey: incomingPreparedKey,
+        path,
+        posterReadyAtSelection:
+          mediaPosterPaintReadiness[incomingLaneId]?.mediaKey ===
+            getLaneBackgroundMediaKey(incomingMedia) &&
+          mediaPosterPaintReadiness[incomingLaneId]?.ready === true,
+        preparedSurfaceReadyAtSelection: incomingUsesPrepared,
+      });
     } else {
       setLastMediaKey(undefined);
-      setLastSendPath("fallback");
+      setLastSendPath("waiting-for-visual");
       setPosterShown(false);
     }
 
@@ -1127,6 +1235,11 @@ const DisplayBoxTransitionStage = ({
         ),
         incomingMedia: getLaneBackgroundMediaKey(incoming?.backgroundMedia),
         mode: current.mode,
+        slideTransitionStartTimestamp: performance.now(),
+        sendToSlideTransitionStartMs:
+          requestSentAtRef.current == null
+            ? undefined
+            : performance.now() - requestSentAtRef.current,
       });
       return { ...current, phase: "animating" };
     });
@@ -1139,6 +1252,7 @@ const DisplayBoxTransitionStage = ({
     incomingLaneId,
     incomingSnapshot,
     mediaLivePaintReadiness,
+    mediaPosterPaintReadiness,
     mediaPaintReadiness,
     mediaPlayback?.outputId,
     mediaPlayback?.windowRole,
@@ -1210,6 +1324,10 @@ const DisplayBoxTransitionStage = ({
           outgoingKey,
           incomingKey,
           mode,
+          sendToSlideTransitionCompleteMs:
+            requestSentAtRef.current == null
+              ? undefined
+              : performance.now() - requestSentAtRef.current,
         });
         const completedMedia = incomingSnapshot.backgroundMedia;
         const outgoingMediaKey = getLanePreparedMediaKey(
@@ -1218,10 +1336,7 @@ const DisplayBoxTransitionStage = ({
         if (outgoingMediaKey !== getLanePreparedMediaKey(completedMedia)) {
           mediaOwnersRef.current.delete(outgoingMediaKey);
         }
-        if (
-          completedMedia.kind === "fileVideo" &&
-          mediaOwnersRef.current.has(getLanePreparedMediaKey(completedMedia))
-        ) {
+        if (completedMedia.kind === "fileVideo") {
           setTransitionComplete({
             mediaKey: getLanePreparedMediaKey(completedMedia),
             timestamp: performance.now(),
@@ -1518,6 +1633,7 @@ const DisplayBoxTransitionStage = ({
     const usesPrepared = usesPreparedSurface(
       laneId,
       mediaSnapshot?.backgroundMedia,
+      mediaSnapshot?.key,
     );
     const mediaState = mediaPaintReadiness[mediaContentLaneId];
     const fullFramePaintReady =
@@ -1735,10 +1851,14 @@ const DisplayBoxTransitionStage = ({
                   onLivePaintReadyChange={(ready) =>
                     reportMediaLivePaintReady(mediaContentLaneId, mediaKey, ready)
                   }
+                  onPosterPaintReadyChange={(ready) =>
+                    reportMediaPosterPaintReady(mediaContentLaneId, mediaKey, ready)
+                  }
                   fileVideoAudioEnabled={mediaAudioEnabled}
                   volume={mediaPlayback?.volume}
                   playbackRole={mediaPlayback?.playbackRole}
                   preloadRole={mediaPlayback?.preloadRole}
+                  transportRole={mediaPlayback?.transportRole}
                   suspendPlayback={mediaPlayback?.suspendPlayback}
                   playback={resolvePlaybackForLane(
                     laneId,
@@ -1747,6 +1867,13 @@ const DisplayBoxTransitionStage = ({
                   isEditor={mediaPlayback?.isEditor}
                   outputId={mediaPlayback?.outputId}
                   windowRole={mediaPlayback?.windowRole}
+                  transitionSendTimestamp={
+                    mediaSnapshot.backgroundMedia.kind === "fileVideo"
+                      ? videoRequestSentAtRef.current.get(
+                          mediaSnapshot.backgroundMedia.mediaKey,
+                        )
+                      : undefined
+                  }
                   localVideo={mediaPlayback?.localVideo}
                 />
                 {needsStillHold &&

@@ -67,6 +67,17 @@ The TTL fields apply to new records. Existing temporary documents without
 `ttlExpireAt` are not startup-scanned and may require a separate operational
 cleanup if their physical removal is needed.
 
+## Church storage quota reservations
+
+Pending quota reservations expire after their one-hour admission window and are
+cleaned up by the next reservation for that church. Committed reservation
+records are retained for 7 days so completion retries remain idempotent, then
+removed asynchronously by the Firestore TTL policy on `ttlExpireAt`.
+
+The TTL field applies to newly completed reservations. Existing committed
+reservations without `ttlExpireAt` are not startup-scanned; they may require a
+separate bounded operational cleanup if physical removal is needed.
+
 ## Deployment
 
 Deploy the Firestore TTL policies and indexes with the repository's existing

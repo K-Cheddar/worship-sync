@@ -22,6 +22,7 @@ import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
 type ElectronEditorPreparedMediaPreviewProps = {
   enabled: boolean;
   currentItemId?: string;
+  reportsEditorTransport?: boolean;
   currentMedia?: ElectronMediaSurfaceCandidate;
   preparedMediaContext?: Pick<
     ElectronMediaDiscovery,
@@ -41,6 +42,7 @@ type ElectronEditorPreparedMediaPreviewProps = {
 const ElectronEditorPreparedMediaPreview = ({
   enabled,
   currentItemId,
+  reportsEditorTransport = false,
   currentMedia,
   preparedMediaContext,
   videoBox,
@@ -143,11 +145,15 @@ const ElectronEditorPreparedMediaPreview = ({
         muted: true,
         volume,
         playback,
+        reportsEditorTransport:
+          reportsEditorTransport &&
+          isMediaSurfaceVisible(statusByKey[currentMedia.mediaKey]),
       },
     ];
   }, [
     currentMedia,
     playback,
+    reportsEditorTransport,
     statusByKey,
     videoBox,
     volume,

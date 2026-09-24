@@ -15,8 +15,9 @@ persists through content-only changes. The pool is bounded and optional; it
 never changes the synchronized presentation snapshot.
 
 Full transitions are coordinated: the outgoing foreground and media remain
-intact until the incoming boxes and required live media are ready, then one
-GSAP timeline crossfades both planes. Content-only and media-only transitions
+intact until the incoming boxes and an acceptable visual (prepared video,
+paint-ready poster, or paint-ready fallback video) are ready, then one GSAP
+timeline crossfades both planes. Content-only and media-only transitions
 retain their specialized shared-plane behavior. Interruption kills the one
 timeline and composes the latest coherent A-or-B baseline.
 

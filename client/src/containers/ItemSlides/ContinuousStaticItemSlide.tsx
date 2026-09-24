@@ -14,6 +14,7 @@ type ContinuousStaticItemSlideProps = {
   timerInfo?: TimerInfo;
   formattedSections?: FormattedSection[];
   isLive: boolean;
+  isStaged?: boolean;
   onSlideGridClick: (event: React.MouseEvent, index: number) => void;
   slideDomId: string;
   bibleInfo?: { title: string; text: string };
@@ -30,6 +31,7 @@ const ContinuousStaticItemSlide = ({
   timerInfo,
   formattedSections = [],
   isLive,
+  isStaged = false,
   onSlideGridClick,
   slideDomId,
   bibleInfo,
@@ -92,6 +94,10 @@ const ContinuousStaticItemSlide = ({
         {isLive ? (
           <span className="pointer-events-none rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow">
             Live
+          </span>
+        ) : isStaged ? (
+          <span className="pointer-events-none rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow">
+            Staged
           </span>
         ) : null}
       </h4>

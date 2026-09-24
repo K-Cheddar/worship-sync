@@ -23,7 +23,12 @@ let mockDndState: { active: unknown; over: unknown } = {
   over: null,
 };
 let mockState: any;
-const mockItemSlideProps: Array<{ onRenameSection?: unknown }> = [];
+const mockItemSlideProps: Array<{
+  slideId?: string;
+  isLive?: boolean;
+  isStaged?: boolean;
+  onRenameSection?: unknown;
+}> = [];
 const mockAcquireWarmLocalVideoCaptureWithBusyRetry = jest.fn();
 const mockReleaseWarmLocalVideoCapture = jest.fn().mockResolvedValue(undefined);
 
@@ -159,14 +164,23 @@ jest.mock("./ItemSlide", () => ({
     selectSlide,
     onRenameSection,
     thumbnailScaleFactor,
+    isLive,
+    isStaged,
   }: {
     index: number;
     slide: { id: string; name: string };
     selectSlide: (index: number) => void;
+    isLive?: boolean;
+    isStaged?: boolean;
     onRenameSection?: unknown;
     thumbnailScaleFactor?: number;
   }) => {
-    mockItemSlideProps.push({ onRenameSection });
+    mockItemSlideProps.push({
+      slideId: slide.id,
+      isLive,
+      isStaged,
+      onRenameSection,
+    });
     return (
       <>
         <button
@@ -1193,6 +1207,59 @@ describe("ItemSlides", () => {
         type: "preferences/setMonitorTimerId",
         payload: null,
       }),
+    );
+  });
+
+  it("marks the mirrored output's saved slide STAGED while retaining LIVE for an independent output", () => {
+    mockState.undoable.present.item.shouldSendTo = {
+      projector: true,
+      monitor: true,
+      stream: false,
+    };
+    mockState.presentation.outputs = {
+      projector: {
+        id: "projector",
+        type: "projector",
+        followingOutputId: "out_main",
+        info: {
+          type: "free",
+          name: "Custom Item",
+          slide: baseSlides[0],
+          itemId: "free-1",
+        },
+      },
+      out_main: {
+        id: "out_main",
+        type: "projector",
+        followingOutputId: "",
+        info: { type: "", name: "", slide: null },
+      },
+      monitor: {
+        id: "monitor",
+        type: "monitor",
+        followingOutputId: "",
+        info: {
+          type: "free",
+          name: "Custom Item",
+          slide: baseSlides[1],
+          itemId: "free-1",
+        },
+      },
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(mockItemSlideProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slideId: "slide-1", isStaged: true, isLive: false }),
+        expect.objectContaining({ slideId: "slide-2", isLive: true, isStaged: false }),
+      ]),
     );
   });
 

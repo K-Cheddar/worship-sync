@@ -22,6 +22,8 @@ jest.mock("../../../hooks/useServiceVideoCandidates", () => ({
   useServiceVideoCandidates: () => ({
     candidates: mockPoolCandidates,
     diagnostics: [],
+    discovery: { items: [], itemCount: 0, uniqueFiniteVideoCount: 0 },
+    posterUrls: [],
   }),
 }));
 

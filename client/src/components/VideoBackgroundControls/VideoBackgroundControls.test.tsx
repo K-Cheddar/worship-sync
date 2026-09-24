@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { MediaType } from "../../types";
 import {
@@ -121,10 +121,57 @@ describe("VideoBackgroundControls", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps the selected video timeline isolated from other mounted previews", () => {
+    // The element's measured duration wins over potentially stale metadata.
+    const selectedMedia = { ...media, duration: 12 };
+    reportVideoPreviewState({
+      mediaKey: "media:A",
+      currentTime: 3.5,
+      duration: 10,
+      paused: false,
+    });
+    const { rerender } = render(
+      <VideoBackgroundControls
+        media={selectedMedia}
+        mediaKey="media:A"
+        sendMode="continue"
+        onSendModeChange={mockSendModeChange}
+      />,
+    );
+
+    act(() => {
+      reportVideoPreviewState({
+        mediaKey: "media:B",
+        currentTime: 37,
+        duration: 59,
+        paused: true,
+      });
+    });
+
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveAttribute("aria-valuemax", "10");
+    expect(slider).toHaveAttribute("aria-valuenow", "3.5");
+    expect(screen.getByText("0:10")).toBeInTheDocument();
+    expect(screen.queryByText("0:59")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause video" })).toBeInTheDocument();
+
+    rerender(
+      <VideoBackgroundControls
+        media={{ ...media, duration: 59 }}
+        mediaKey="media:B"
+        sendMode="continue"
+        onSendModeChange={mockSendModeChange}
+      />,
+    );
+    expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "59");
+    expect(screen.getByText("0:37")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
+  });
+
   it("pauses the preview and syncs live outputs when configured", async () => {
     const user = userEvent.setup();
     const commands: string[] = [];
-    const unsubscribe = subscribeVideoPreviewCommands((command) => {
+    const unsubscribe = subscribeVideoPreviewCommands("remote:video-1", (command) => {
       commands.push(command.type);
     });
 
@@ -165,7 +212,7 @@ describe("VideoBackgroundControls", () => {
   it("restarts the preview from the beginning while keeping it playing", async () => {
     const user = userEvent.setup();
     const commands: { type: string; positionSeconds?: number }[] = [];
-    const unsubscribe = subscribeVideoPreviewCommands((command) => {
+    const unsubscribe = subscribeVideoPreviewCommands("remote:video-1", (command) => {
       commands.push(command as { type: string; positionSeconds?: number });
     });
 

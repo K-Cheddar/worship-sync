@@ -434,6 +434,19 @@ const ItemSlidesContent = () => {
    * built-ins, so an operator driving only a second projector still sees which
    * slide is live.
    */
+  const isResolvedMirror = useCallback(
+    (outputId: string) => {
+      const slot = outputSlots[outputId];
+      const source = slot?.followingOutputId
+        ? outputSlots[slot.followingOutputId]
+        : undefined;
+      return Boolean(
+        source && source.id !== slot?.id && source.type === slot?.type,
+      );
+    },
+    [outputSlots],
+  );
+
   const liveSlideIds = useMemo(() => {
     const ids = new Set<string>();
     const addLiveSlides = (
@@ -441,6 +454,7 @@ const ItemSlidesContent = () => {
       accept?: (info: PresentationType) => boolean,
     ) => {
       for (const outputId of outputIds) {
+        if (isResolvedMirror(outputId)) continue;
         const info = outputSlots[outputId]?.info;
         if (!info?.slide?.id) continue;
         if (accept && !accept(info)) continue;
@@ -462,10 +476,49 @@ const ItemSlidesContent = () => {
     return ids;
   }, [
     _id,
+    isResolvedMirror,
     outputSlots,
     sendTargets,
     sendsToProjector,
     sendsToMonitor,
+    sendsToStream,
+    type,
+  ]);
+
+  const stagedSlideIds = useMemo(() => {
+    const ids = new Set<string>();
+    const addStagedSlides = (
+      outputIds: string[],
+      accept?: (info: PresentationType) => boolean,
+    ) => {
+      for (const outputId of outputIds) {
+        const slot = outputSlots[outputId];
+        if (!slot || !isResolvedMirror(outputId)) continue;
+        const info = slot.info;
+        if (!info?.slide?.id) continue;
+        if (accept && !accept(info)) continue;
+        ids.add(info.slide.id);
+      }
+    };
+
+    if (sendsToProjector) addStagedSlides(sendTargets.projector);
+    if (sendsToMonitor) {
+      addStagedSlides(
+        sendTargets.monitor,
+        (info) => !info.itemId || info.itemId === _id,
+      );
+    }
+    if (sendsToStream && type !== "bible" && type !== "free") {
+      addStagedSlides(sendTargets.stream);
+    }
+    return ids;
+  }, [
+    _id,
+    isResolvedMirror,
+    outputSlots,
+    sendTargets,
+    sendsToMonitor,
+    sendsToProjector,
     sendsToStream,
     type,
   ]);
@@ -1980,6 +2033,7 @@ const ItemSlidesContent = () => {
             canEdit={canEdit}
             selectedSlide={selectedSlide}
             liveSlideIds={liveSlideIds}
+            stagedSlideIds={stagedSlideIds}
             backgroundTargetSlideIds={backgroundTargetSlideIds}
             draggedSection={draggedSection}
             onRenameSection={isPresentMode ? undefined : renameFreeSection}
@@ -2023,6 +2077,7 @@ const ItemSlidesContent = () => {
                   selectSlide={selectSlide}
                   isSelected={index === selectedSlide}
                   isLive={liveSlideIds.has(slide.id)}
+                  isStaged={stagedSlideIds.has(slide.id)}
                   size={size}
                   itemType={type}
                   isMobile={isMobile || false}
@@ -2098,6 +2153,7 @@ const ItemSlidesContent = () => {
               selectSlide={selectSlide}
               isSelected={false}
               isLive={liveSlideIds.has(activeSlide.id)}
+              isStaged={stagedSlideIds.has(activeSlide.id)}
               size={size}
               itemType={type}
               isMobile={isMobile || false}

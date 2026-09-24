@@ -32,6 +32,8 @@ import { upsertItemInAllDocs } from "../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../store/allItemsSlice";
 import { broadcastItemUpdate } from "../store/store";
 import { updateAllDocs } from "../utils/dbUtils";
+import { useChurchStorageQuota } from "../components/StorageUsage/useChurchStorageQuota";
+import { StorageUsageIndicators } from "../components/StorageUsage/StorageUsageIndicators";
 import {
   buildChurchResourceLibraryEntries,
   resourceEntryContentType,
@@ -299,6 +301,7 @@ const ResourcesPage = () => {
 
   const canBrowse = access === "full" || access === "music" || access === "view";
   const canEdit = access === "full";
+  const storageQuota = useChurchStorageQuota(churchId, canBrowse);
 
   useEffect(() => {
     if (!canBrowse) {
@@ -437,10 +440,12 @@ const ResourcesPage = () => {
     setDeleteCandidates(null);
     setDeletingKey("bulk");
     setError("");
+    let storageChanged = false;
     try {
       for (const entry of candidates) {
         if (entry.source === "church-resource") {
           await deleteChurchResource({ churchId, resourceId: entry.resource.id });
+          storageChanged = true;
           setResources((current) => current.filter((resource) => resource.id !== entry.resource.id));
         } else {
           if (!db) throw new Error("The song library is not available. Try again.");
@@ -460,6 +465,7 @@ const ResourcesPage = () => {
               return saved;
             },
           });
+          storageChanged = true;
         }
       }
       setSelectedResourceKeys(new Set());
@@ -473,6 +479,7 @@ const ResourcesPage = () => {
       ));
       setError(message);
     } finally {
+      if (storageChanged) void storageQuota.refresh();
       setDeletingKey(null);
     }
   };
@@ -484,12 +491,20 @@ const ResourcesPage = () => {
           <div className="m-4 rounded border border-amber-700/50 bg-amber-950/20 p-4 text-sm text-amber-100" role="alert">Resource browsing is not available for this session.</div>
         ) : (
           <>
+            <StorageUsageIndicators
+              status={storageQuota.status}
+              quotas={storageQuota.quotas}
+              providers={["r2"]}
+              onRetry={storageQuota.refresh}
+              className="mx-4 mt-3"
+            />
             <div className="flex flex-wrap items-end gap-3 border-b border-gray-700 p-4">
               <div className="min-w-[14rem] flex-1"><Input label="Search resources" hideLabel value={query} onChange={(value) => setQuery(String(value))} placeholder="Search..." /></div>
               {selectedEntries.length ? <Button type="button" variant="destructive" svg={Trash2} onClick={requestDeleteSelected}>Delete selected ({selectedEntries.length})</Button> : null}
               {canEdit && churchId ? <ResourceUploadDialog churchId={churchId} onResourcesUploaded={(uploadedResources) => {
                 setResources((current) => [...uploadedResources, ...current]);
                 setRecentlyUploadedKeys(new Set(uploadedResources.map((resource) => `resource:${resource.id}`)));
+                void storageQuota.refresh();
               }} /> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
@@ -499,7 +514,7 @@ const ResourcesPage = () => {
             </div>
             {loadErrors.map((loadError) => <div key={loadError} className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{loadError}</div>)}
             {error ? <div className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{error}</div> : null}
-            {loading ? <p className="p-4 text-sm text-gray-400" role="status">Loading resources...</p> : null}
+            {loading ? <ResourceTableSkeleton /> : null}
             {!loading && !loadErrors.length && !entries.length ? <div className="p-8 text-center text-sm text-gray-400"><FileText className="mx-auto mb-2 size-8 text-gray-600" aria-hidden />No resources match this view.</div> : null}
             {!loading && sortedEntries.length ? (
               <div className="min-h-0 flex-1 overflow-auto pb-4">
@@ -614,5 +629,43 @@ const ResourcesPage = () => {
     </AppWorkspaceShell>
   );
 };
+
+export const ResourceTableSkeleton = () => (
+  <div className="min-h-0 flex-1 overflow-auto pb-4" role="region" aria-label="Loading resources" aria-busy="true">
+    <span className="sr-only" role="status">Loading resources...</span>
+    <div className="rounded border border-gray-700">
+      <table className="w-full min-w-[48rem] table-fixed text-left text-sm" aria-label="Resource list loading">
+        <caption className="sr-only">Resources</caption>
+        <thead className="sticky top-0 z-10 bg-gray-950 text-xs uppercase tracking-wide text-gray-400 shadow-sm shadow-black/20">
+          <tr>
+            <th scope="col" className="w-12 px-4 py-3"><div className="size-5 animate-pulse rounded border border-gray-700 bg-gray-800" /></th>
+            <th scope="col" className="w-[34%] px-4 py-3">Name</th>
+            <th scope="col" className="w-[10%] px-4 py-3">Type</th>
+            <th scope="col" className="w-[12%] px-4 py-3">Size</th>
+            <th scope="col" className="w-[16%] px-4 py-3">Updated</th>
+            <th scope="col" className="w-[24%] px-4 py-3">Source</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-700">
+          {Array.from({ length: 5 }, (_, index) => (
+            <tr key={index} className="bg-gray-900/40">
+              <td className="px-4 py-3"><div className="size-5 animate-pulse rounded border border-gray-700 bg-gray-800" /></td>
+              <td className="max-w-0 px-4 py-3">
+                <div className="flex w-full min-w-0 items-center gap-2">
+                  <div className="size-4 shrink-0 animate-pulse rounded bg-gray-700" />
+                  <div className={`h-4 animate-pulse rounded bg-gray-700 ${index % 2 ? "w-2/3" : "w-4/5"}`} />
+                </div>
+              </td>
+              <td className="px-4 py-3"><div className="h-4 w-10 animate-pulse rounded bg-gray-800" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-12 animate-pulse rounded bg-gray-800" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-20 animate-pulse rounded bg-gray-800" /></td>
+              <td className="max-w-0 px-4 py-3"><div className="h-4 w-3/4 animate-pulse rounded bg-gray-800" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
 
 export default ResourcesPage;

@@ -18,6 +18,8 @@ export type ChatImageAttachment = {
   height: number;
   thumbnailWidth: number;
   thumbnailHeight: number;
+  /** Older chat messages may predate per-image retention metadata. */
+  expiresAt?: number;
 };
 
 export type ChatImageUpload = {
