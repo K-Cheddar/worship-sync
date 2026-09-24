@@ -68,7 +68,10 @@ export type ElectronMediaDiscovery = {
   outlineLoadError?: string;
   outlineRetryAttempt?: number;
   outlineRetryAt?: number;
-  contextSource?: "local runtime selection" | "persisted ItemLists fallback";
+  contextSource?:
+    | "local runtime selection"
+    | "persisted ItemLists fallback"
+    | "effective mirrored output source";
   currentItemId?: string;
   itemCount: number;
   uniqueFiniteVideoCount: number;

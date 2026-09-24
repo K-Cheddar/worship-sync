@@ -109,6 +109,25 @@ describe("ScheduleBoardView", () => {
     expect(getBoardColumnCount(300, 4)).toBe(1);
   });
 
+  it("fills cards in a single column", () => {
+    renderView(["o1"]);
+    expect(screen.getByTestId("schedule-board-card")).toHaveClass("w-full");
+  });
+
+  it("keeps masonry cards content-sized", () => {
+    const clientWidthSpy = jest
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(900);
+    try {
+      renderView(["o1", "o2", "o3"]);
+      screen
+        .getAllByTestId("schedule-board-card")
+        .forEach((card) => expect(card).toHaveClass("w-fit"));
+    } finally {
+      clientWidthSpy.mockRestore();
+    }
+  });
+
   it("renders one card per occurrence with the team name header", () => {
     renderView(["o1", "o2", "o3"]);
     expect(screen.getAllByText("Media Team")).toHaveLength(3);

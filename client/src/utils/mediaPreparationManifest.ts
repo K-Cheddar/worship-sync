@@ -35,16 +35,18 @@ export type MediaPreparationManifest = {
 };
 
 /**
- * A manifest may cross a workstation boundary only with a URL that the
- * receiving renderer can resolve itself. Renderer-local schemes and loopback
- * addresses are deliberately rejected at this boundary.
+ * This is a portability and serialization check, not the network security
+ * boundary. Electron's main-process safeHttpGet performs DNS, address, and
+ * redirect validation before fetching. Manifests only carry portable HTTP(S)
+ * URLs and reject renderer-local schemes, obvious local hosts, and credentials.
  */
 export const isTransportSafeMediaUrl = (value: string | undefined): value is string => {
   if (!value) return false;
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-    const hostname = url.hostname.toLowerCase();
+    if (url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     return !(
       hostname === "localhost" ||
       hostname === "ip6-localhost" ||
@@ -156,14 +158,20 @@ export const isMediaPreparationManifest = (
     if (!isRecord(item)) return false;
     if (
       typeof item.itemId !== "string" ||
-      !Number.isFinite(item.itemIndex) ||
+      item.itemId.length === 0 ||
+      !Number.isInteger(item.itemIndex) ||
+      item.itemIndex < 0 ||
       typeof item.itemName !== "string" ||
       !Array.isArray(item.media)
     ) {
       return false;
     }
     return item.media.every((media) => {
-      if (!isRecord(media) || typeof media.mediaKey !== "string") return false;
+      if (
+        !isRecord(media) ||
+        typeof media.mediaKey !== "string" ||
+        media.mediaKey.length === 0
+      ) return false;
       const source = media.source;
       return (
         isRecord(source) &&
@@ -177,11 +185,21 @@ export const isMediaPreparationManifest = (
     candidate.contract === "worshipsync.media-preparation" &&
     candidate.version === MEDIA_PREPARATION_MANIFEST_VERSION &&
     typeof candidate.revision === "number" &&
-    Number.isFinite(candidate.revision) &&
+    Number.isInteger(candidate.revision) &&
     candidate.revision >= 1 &&
     typeof candidate.publishedAt === "number" &&
     Number.isFinite(candidate.publishedAt) &&
     typeof candidate.outputId === "string" &&
+    candidate.outputId.length > 0 &&
+    (candidate.controllerProfileId === undefined ||
+      typeof candidate.controllerProfileId === "string") &&
+    (candidate.outlineScope === undefined ||
+      typeof candidate.outlineScope === "string") &&
+    (candidate.outlineId === undefined ||
+      candidate.outlineId === null ||
+      typeof candidate.outlineId === "string") &&
+    (candidate.outlineName === undefined ||
+      typeof candidate.outlineName === "string") &&
     validItems
   );
 };

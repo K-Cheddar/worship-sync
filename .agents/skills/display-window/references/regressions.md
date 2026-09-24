@@ -30,6 +30,17 @@ Focused coverage belongs in `DisplayBoxTransitionStage.test.tsx`.
   active prepared video; the improved source is used after ownership ends.
 - Controller outline changes update projector/editor preparation immediately,
   with presentation and auxiliary scopes isolated.
+- A controller publishes a selected outline manifest without a mounted local
+  projector window; selecting another outline changes the structural revision,
+  while playback-position and timer updates do not.
+- An older asynchronous outline load cannot overwrite a newer manifest.
+- A mirrored aux output prepares the effective source outline, and stopping the
+  mirror returns preparation to the aux output's independently staged outline.
+- An authenticated remote display consumes only its church/output manifest and
+  never receives another workstation's local cache URL.
+- A remote display can render current state with poster fallback before a
+  manifest arrives, retain its last valid visual during disconnect, and
+  reconcile state and preparation after reconnect without reload.
 - A failed media-document read does not call destructive cache cleanup, while a
   successful empty document still does.
 - Media cache redirects 301, 302, 303, 307, and 308 are followed with each

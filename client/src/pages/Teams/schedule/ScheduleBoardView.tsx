@@ -134,6 +134,7 @@ const ScheduleBoardView = ({
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
   const columnCount = getBoardColumnCount(boardWidth, occurrences.length);
+  const boardColumnWidthClassName = columnCount === 1 ? "w-full" : "w-fit";
 
   useLayoutEffect(() => {
     const board = boardRef.current;
@@ -171,11 +172,13 @@ const ScheduleBoardView = ({
     return (
       <section
         key={occurrence.occurrenceId}
+        data-testid="schedule-board-card"
         className={cn(
           // Always render the border so colouring the marker card never
-          // shifts layout. w-fit keeps cards content-sized instead of
-          // stretching with the masonry column; max-w-full prevents overflow.
-          "relative flex w-fit max-w-full break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          // shifts layout. Single-column boards fill the available width on
+          // narrow screens; multi-column masonry keeps cards content-sized.
+          "relative flex max-w-full break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          boardColumnWidthClassName,
           markerBorderClassName,
         )}
       >
@@ -309,7 +312,10 @@ const ScheduleBoardView = ({
         {cardColumns.map((cardColumn, columnIndex) => (
           <div
             key={columnIndex}
-            className="flex w-fit min-w-0 max-w-full flex-col gap-4"
+            className={cn(
+              "flex min-w-0 max-w-full flex-col gap-4",
+              boardColumnWidthClassName,
+            )}
           >
             {cardColumn.map(renderCard)}
           </div>

@@ -19,6 +19,11 @@ the concise supporting references before editing:
 - `references/regressions.md` for focused test contracts.
 - `references/remote-displays.md` for stream transparency and aux behavior.
 
+Preparation manifests are controller-owned lifecycle data. Read the remote
+display reference whenever changing manifest publication, output pairing,
+mirroring, or remote Electron warming; the transition stage consumes manifests
+but must not be their publication owner.
+
 ## Purpose
 
 Use this skill to protect WorshipSync's live display surfaces. Treat DisplayWindow changes as high-risk: projector, monitor, stream, previews, Electron windows, media playback, timers, overlays, and sync behavior can all be affected by small rendering changes.
