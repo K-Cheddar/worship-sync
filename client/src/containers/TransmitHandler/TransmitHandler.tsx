@@ -32,6 +32,7 @@ import StreamPresentationPreview from "./StreamPresentationPreview";
 import BoardMonitorPreview from "./BoardMonitorPreview";
 import { useResolvedBoardDisplayAlias } from "../../boards/useResolvedBoardDisplayAlias";
 import {
+  DisplayOutput,
   isPushOutputType,
   getBoardCapableOutputs,
 } from "../../utils/displayOutputs";
@@ -52,6 +53,13 @@ const DEFAULT_TRANSMIT_SCREENS: TransmitScreen[] = [
   "monitor",
   "stream",
 ];
+
+const NOOP_TOGGLE = () => undefined;
+
+type PreviewOutput = {
+  output: DisplayOutput;
+  isMirrorSource: boolean;
+};
 
 type TransmitHandlerProps = {
   visibleScreens?: TransmitScreen[];
@@ -99,6 +107,13 @@ const TransmitHandler = ({
   // what keeps an auxiliary controller from showing — or arming — a display
   // that belongs to someone else.
   const displayOutputs = useSelector(selectDisplayOutputs);
+  const followingOutputIdByOutputId = useSelector((state) => {
+    const map: Record<string, string> = {};
+    for (const slot of Object.values(selectOutputSlots(state))) {
+      map[slot.id] = slot.followingOutputId ?? "";
+    }
+    return map;
+  }, shallowEqual);
   const controllerProfile = useActiveControllerProfile();
   const ownedOutputs = useMemo(
     () => getControllerOutputs(controllerProfile, displayOutputs),
@@ -115,8 +130,9 @@ const TransmitHandler = ({
   );
 
   // Aux controllers join another room's screen for a shared moment (sermon,
-  // announcements) without sending there. Sources are every same-type display
-  // this controller does not own — owned screens stay independently driven.
+  // announcements) without sending there. Sources are enabled same-type
+  // displays this controller does not own, plus a currently followed source
+  // that became unavailable so its last preview and status remain visible.
   const mirrorSourceIdsByOutput = useMemo(() => {
     if (controllerProfile.type !== "aux-presentation") return {};
     const ownedIds = new Set(ownedOutputs.map((output) => output.id));
@@ -124,14 +140,62 @@ const TransmitHandler = ({
       acc[output.id] = displayOutputs
         .filter(
           (candidate) =>
-            candidate.enabled &&
+            (candidate.enabled ||
+              followingOutputIdByOutputId[output.id] === candidate.id) &&
             candidate.type === output.type &&
             !ownedIds.has(candidate.id),
         )
         .map((candidate) => candidate.id);
       return acc;
     }, {});
-  }, [controllerProfile.type, ownedOutputs, displayOutputs]);
+  }, [
+    controllerProfile.type,
+    ownedOutputs,
+    displayOutputs,
+    followingOutputIdByOutputId,
+  ]);
+
+  // Keep eligible source previews visible before a mirror is selected. This
+  // makes the source and the follower's mirror control a single visual pair;
+  // the source tile remains read-only and never becomes an owned output.
+  const previewOutputs = useMemo<PreviewOutput[]>(() => {
+    if (controllerProfile.type !== "aux-presentation") {
+      return visibleOutputs.map((output) => ({
+        output,
+        isMirrorSource: false,
+      }));
+    }
+
+    const ownedOutputIds = new Set(visibleOutputs.map((output) => output.id));
+    const addedSourceIds = new Set<string>();
+    const previews: PreviewOutput[] = [];
+
+    for (const output of visibleOutputs) {
+      for (const sourceId of mirrorSourceIdsByOutput[output.id] ?? []) {
+        const source = displayOutputs.find(
+          (candidate) => candidate.id === sourceId,
+        );
+        if (
+          source &&
+          isPushOutputType(source.type) &&
+          !ownedOutputIds.has(source.id) &&
+          !addedSourceIds.has(source.id)
+        ) {
+          previews.push({ output: source, isMirrorSource: true });
+          addedSourceIds.add(source.id);
+        }
+      }
+
+      previews.push({ output, isMirrorSource: false });
+    }
+
+    return previews;
+  }, [
+    controllerProfile.type,
+    displayOutputs,
+    mirrorSourceIdsByOutput,
+    visibleOutputs,
+  ]);
 
   // The overlay controller's focused header acts on the first stream output it
   // shows; per-stream control lives on each tile below it.
@@ -516,22 +580,52 @@ const TransmitHandler = ({
             {/* One ordered pass over every push output. Splitting streams into
                 a second pass pinned them last, so reordering a stream relative to
                 a projector changed the registry and nothing on screen. */}
-            {visibleOutputs.map((output) => {
+            {previewOutputs.map(({ output, isMirrorSource }) => {
               // The board sits directly under the display hosting it, so it
               // travels with that tile when the operator reorders displays.
               const board =
-                output.id === boardAnchorOutputId ? boardSection : null;
+                !isMirrorSource && output.id === boardAnchorOutputId
+                  ? boardSection
+                  : null;
               // Lives inside this display's card so Clear / Live / Mirror all
               // read as one control surface for the screen they affect.
               // Mirror controls stay on the follower only. The source does not
               // need a "mirrored by" badge — that status is irrelevant there.
               const displayFooter =
-                !readOnly && controllerProfile.type === "aux-presentation" ? (
-                  <MirrorDisplayTile
-                    outputId={output.id}
-                    sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
-                  />
-                ) : null;
+                isMirrorSource ? (
+                  <div className="w-full px-2 pb-2 text-center text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
+                    SOURCE
+                  </div>
+                ) : !readOnly &&
+                  controllerProfile.type === "aux-presentation" ? (
+                    <MirrorDisplayTile
+                      outputId={output.id}
+                      sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
+                      stagedPreview={
+                        output.type === "projector" ? (
+                          <ProjectorPresentationPreview
+                            outputId={output.id}
+                            name="Staged for TVs"
+                            readOnly
+                            resolveOwnOutput
+                            quickLinks={[]}
+                            toggleIsTransmitting={NOOP_TOGGLE}
+                            isMobile={isMobile}
+                            previewScale={previewScale}
+                            fillWidth={fillWidth}
+                            isVisible={isPreviewActive}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  ) : null;
+              const outputReadOnly = readOnly || isMirrorSource;
+              const toggleIsTransmitting = isMirrorSource
+                ? NOOP_TOGGLE
+                : toggleByOutputId[output.id];
+              const outputQuickLinks = isMirrorSource
+                ? []
+                : quickLinksByOutputId[output.id] ?? [];
 
               if (output.type === "projector") {
                 return (
@@ -539,12 +633,12 @@ const TransmitHandler = ({
                     <ProjectorPresentationPreview
                       outputId={output.id}
                       name={output.name}
-                      toggleIsTransmitting={toggleByOutputId[output.id]}
-                      quickLinks={quickLinksByOutputId[output.id] ?? []}
+                      toggleIsTransmitting={toggleIsTransmitting}
+                      quickLinks={outputQuickLinks}
                       isMobile={isMobile}
                       previewScale={previewScale}
                       fillWidth={fillWidth}
-                      readOnly={readOnly}
+                      readOnly={outputReadOnly}
                       isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
@@ -559,12 +653,12 @@ const TransmitHandler = ({
                     <MonitorPresentationPreview
                       outputId={output.id}
                       name={output.name}
-                      toggleIsTransmitting={toggleByOutputId[output.id]}
-                      quickLinks={quickLinksByOutputId[output.id] ?? []}
+                      toggleIsTransmitting={toggleIsTransmitting}
+                      quickLinks={outputQuickLinks}
                       isMobile={isMobile}
                       previewScale={previewScale}
                       fillWidth={fillWidth}
-                      readOnly={readOnly}
+                      readOnly={outputReadOnly}
                       isVisible={isPreviewActive}
                       footer={displayFooter}
                     />
@@ -578,20 +672,23 @@ const TransmitHandler = ({
                   <StreamPresentationPreview
                     outputId={output.id}
                     name={output.name}
-                    toggleIsTransmitting={toggleByOutputId[output.id]}
-                    quickLinks={quickLinksByOutputId[output.id] ?? []}
-                    variant={variant}
-                    showFocusedStreamControls={showFocusedStreamControls}
+                    toggleIsTransmitting={toggleIsTransmitting}
+                    quickLinks={outputQuickLinks}
+                    variant={isMirrorSource ? "default" : variant}
+                    showFocusedStreamControls={
+                      isMirrorSource ? false : showFocusedStreamControls
+                    }
                     isMobile={isMobile}
                     previewScale={previewScale}
                     fillWidth={fillWidth}
-                    readOnly={readOnly}
+                    readOnly={outputReadOnly}
                     isVisible={isPreviewActive}
                     footer={displayFooter}
                   />
                   {/* Belongs to the primary stream only — it would otherwise
                       repeat under every stream tile. */}
-                  {variant === "overlayStreamFocus" &&
+                  {!isMirrorSource &&
+                    variant === "overlayStreamFocus" &&
                     output.id === primaryStreamOutput?.id &&
                     overlayStreamQuickLinksBelowPreview.length > 0 && (
                       <ul className="grid w-full shrink-0 grid-cols-4 gap-2 border-t border-white/12 py-1 pt-2">

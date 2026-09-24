@@ -7,8 +7,13 @@ import {
   updateMediaItemFields,
 } from "../../store/mediaSlice";
 import type { RootState } from "../../store/store";
+import type { MediaType } from "../../types";
 import { createCloudinaryImageMediaItem } from "../../containers/Media/utils/cloudinaryMediaItem";
 import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
+import {
+  commitCloudinaryMediaAsset,
+  deleteCloudinaryMediaAsset,
+} from "../../api/providerStorage";
 import {
   claimLocalImageUploadJob,
   deleteLocalImageUploadJob,
@@ -118,9 +123,19 @@ const LocalImageUploadManager = () => {
         await deleteLocalImageUploadJob(job.assetId);
         return true;
       };
+      const cleanupCloudMedia = async (media?: MediaType) => {
+        if (!media?.publicId) return;
+        await deleteCloudinaryMediaAsset(churchId, media.publicId).catch(
+          (error) => console.error("Could not remove cancelled cloud image:", error),
+        );
+      };
       try {
         const stored = await getLocalImage(job.assetId);
-        if (await stopIfCancelled()) return;
+        let cloudMedia = job.cloudMedia;
+        if (await stopIfCancelled()) {
+          await cleanupCloudMedia(cloudMedia);
+          return;
+        }
         if (!stored?.blob) {
           await updateClaimedJob({
             status: "failed",
@@ -131,7 +146,6 @@ const LocalImageUploadManager = () => {
           return;
         }
 
-        let cloudMedia = job.cloudMedia;
         if (!cloudMedia) {
           const attemptCount = job.attemptCount + 1;
           if (
@@ -154,12 +168,16 @@ const LocalImageUploadManager = () => {
                 setXhr: (xhr) =>
                   registerLocalImageUploadRequest(job.assetId, xhr),
               },
+              { folder: `worship-sync/churches/${encodeURIComponent(churchId)}/media` },
             );
-            if (await stopIfCancelled()) return;
             cloudMedia = {
               ...createCloudinaryImageMediaItem(info),
               id: job.mediaId,
             };
+            if (await stopIfCancelled()) {
+              await cleanupCloudMedia(cloudMedia);
+              return;
+            }
             if (
               !(await updateClaimedJob({
                 status: "uploaded",
@@ -168,11 +186,19 @@ const LocalImageUploadManager = () => {
                 nextAttemptAt: 0,
                 lastError: undefined,
               }))
-            )
+            ) {
+              await cleanupCloudMedia(cloudMedia);
               return;
-            if (await stopIfCancelled()) return;
+            }
+            if (await stopIfCancelled()) {
+              await cleanupCloudMedia(cloudMedia);
+              return;
+            }
           } catch (error) {
-            if (await stopIfCancelled()) return;
+            if (await stopIfCancelled()) {
+              await cleanupCloudMedia(cloudMedia);
+              return;
+            }
             const canRetry =
               attemptCount < MAX_LOCAL_IMAGE_AUTO_UPLOAD_ATTEMPTS;
             const retryDelay = getLocalImageUploadRetryDelay(attemptCount);
@@ -183,7 +209,7 @@ const LocalImageUploadManager = () => {
               lastError:
                 error instanceof Error ? error.message : "Upload failed.",
             });
-            await stopIfCancelled();
+            if (await stopIfCancelled()) await cleanupCloudMedia(cloudMedia);
             return;
           } finally {
             clearLocalImageUploadRequest(job.assetId);
@@ -199,7 +225,46 @@ const LocalImageUploadManager = () => {
           await stopIfCancelled();
           return;
         }
-        if (await stopIfCancelled()) return;
+        if (!cloudMedia.providerStorage) {
+          try {
+            const committed = await commitCloudinaryMediaAsset(
+              churchId,
+              cloudMedia.publicId,
+            );
+            cloudMedia = { ...cloudMedia, providerStorage: committed.asset };
+            if (
+              !(await updateClaimedJob({
+                status: "uploaded",
+                cloudMedia,
+                nextAttemptAt: 0,
+                lastError: undefined,
+              }))
+            )
+              return;
+          } catch (error) {
+            const quotaDenied =
+              typeof error === "object" &&
+              error !== null &&
+              "status" in error &&
+              error.status === 413;
+            if (quotaDenied) {
+              cloudMedia = undefined;
+            }
+            await updateClaimedJob({
+              status: "failed",
+              cloudMedia,
+              nextAttemptAt: quotaDenied ? 0 : Date.now() + OUTLINE_RETRY_MS,
+              lastError:
+                error instanceof Error ? error.message : "Image storage failed.",
+            });
+            if (await stopIfCancelled()) await cleanupCloudMedia(cloudMedia);
+            return;
+          }
+        }
+        if (await stopIfCancelled()) {
+          await cleanupCloudMedia(cloudMedia);
+          return;
+        }
         const localMedia =
           mediaByIdRef.current.get(job.assetId) ??
           Array.from(mediaByIdRef.current.values()).find(
@@ -212,6 +277,7 @@ const LocalImageUploadManager = () => {
               patch: {
                 updatedAt: new Date().toISOString(),
                 publicId: cloudMedia.publicId,
+                providerStorage: cloudMedia.providerStorage,
                 cloudUploadRequest: null,
                 localImage: {
                   ...localMedia.localImage,
@@ -269,7 +335,7 @@ const LocalImageUploadManager = () => {
         );
       }
     },
-    [db, dispatch, isGuestSession],
+    [churchId, db, dispatch, isGuestSession],
   );
 
   const drainQueue = useCallback(async () => {

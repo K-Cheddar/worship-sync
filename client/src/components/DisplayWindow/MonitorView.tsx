@@ -60,6 +60,7 @@ type MonitorViewProps = {
   showNextSlide?: boolean;
   showBackground: boolean;
   shouldAnimate: boolean;
+  transitionDurationMs?: number;
   effectiveWidth: number;
   time?: number;
   timerInfo?: TimerInfo;
@@ -87,6 +88,7 @@ const MonitorView = ({
   showNextSlide = false,
   showBackground,
   shouldAnimate,
+  transitionDurationMs,
   effectiveWidth,
   time,
   timerInfo,
@@ -273,6 +275,7 @@ const MonitorView = ({
           <DisplayBoxTransitionStage
             snapshot={singleSlideSnapshot}
             shouldAnimate={shouldAnimate}
+            transitionDurationMs={transitionDurationMs}
             mediaPlayback={mediaPlayback}
             renderLane={(
               laneSnapshot,

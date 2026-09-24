@@ -23,31 +23,32 @@ describe("chooseControllerServicePlanKey", () => {
     plan("next@2026-08-16", "2026-08-16T10:00:00.000Z"),
   ];
 
-  it("prefers the plan linked to the selected outline", () => {
+  it("prefers the current occurrence over an older outline binding", () => {
     expect(
       chooseControllerServicePlanKey({
         plans,
-        boundPlanKey: "next@2026-08-16",
         currentOccurrencePlanKey: "current@2026-08-09",
+        hasCurrentOccurrence: true,
         nowMs: Date.parse("2026-08-08T12:00:00.000Z"),
       }),
-    ).toBe("next@2026-08-16");
+    ).toBe("current@2026-08-09");
   });
 
-  it("uses the current occurrence when the outline has no valid binding", () => {
+  it("returns no plan when the current occurrence has no saved plan", () => {
     expect(
       chooseControllerServicePlanKey({
         plans,
-        boundPlanKey: "deleted@2026-07-01",
-        currentOccurrencePlanKey: "current@2026-08-09",
+        currentOccurrencePlanKey: "deleted@2026-07-01",
+        hasCurrentOccurrence: true,
       }),
-    ).toBe("current@2026-08-09");
+    ).toBeNull();
   });
 
   it("falls back to the nearest upcoming saved plan", () => {
     expect(
       chooseControllerServicePlanKey({
         plans,
+        hasCurrentOccurrence: false,
         nowMs: Date.parse("2026-08-08T12:00:00.000Z"),
       }),
     ).toBe("current@2026-08-09");

@@ -272,6 +272,7 @@ const PresentationPreview = ({
     // Without this the preview resolves the built-in output's settings, so a
     // second projector would render the first one's clock, timer, and background.
     outputId,
+    currentItemId: info.itemId,
     displayType: info.displayType,
     participantOverlayInfo: info.participantOverlayInfo,
     prevParticipantOverlayInfo: prevInfo.participantOverlayInfo,

@@ -190,6 +190,44 @@ const publicScriptureLabels = (element) => {
     .filter(Boolean);
 };
 
+const isHttpUrl = (value) => {
+  try {
+    const url = new URL(String(value || "").trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+const publicResourceDetail = (resource) => {
+  if (resource?.type === "text") {
+    const text = resource.data?.text;
+    return typeof text === "string" && text.trim() ? text.trim() : undefined;
+  }
+  if (resource?.type === "generic") {
+    const notes = resource.data?.notes;
+    return typeof notes === "string" && notes.trim() ? notes.trim() : undefined;
+  }
+  return undefined;
+};
+
+/** Expose only the display fields needed by the public resource rows. */
+const publicResources = (element) =>
+  (Array.isArray(element?.resources) ? element.resources : [])
+    .filter((resource) => resource?.type !== "song" && resource?.type !== "scripture")
+    .map((resource) => {
+      const type = String(resource?.type || "generic").trim() || "generic";
+      const title = String(resource?.title || "Untitled resource").trim() || "Untitled resource";
+      const url = String(resource?.url || "").trim();
+      const detail = publicResourceDetail(resource);
+      return {
+        type,
+        title,
+        ...(isHttpUrl(url) ? { url } : {}),
+        ...(detail ? { detail } : {}),
+      };
+    });
+
 /** Church mic catalog keyed by id — built once per public snapshot. */
 const buildPublicMicrophonesById = (microphones) =>
   new Map(
@@ -628,39 +666,43 @@ export const buildPublicServicePlanSnapshot = ({
       sections: (plan.sections || []).map((section, sectionIndex) => ({
         id: String(section.id || `section-${sectionIndex + 1}`),
         title: String(section.name || "").trim(),
-        items: (section.elements || []).map((element, elementIndex) => ({
-          id: String(
-            element.id || `item-${sectionIndex + 1}-${elementIndex + 1}`,
-          ),
-          title: richTextToPlainText(element.title) || "Untitled item",
-          durationSeconds: getDurationSeconds(
-            element.durationSeconds,
-            element.durationMinutes,
-          ),
-          notes: isGeneralView
-            ? { blocks: [] }
-            : normalizeRichTextDocument(element.notes),
-          ...(publicSongLabels(element).length
-            ? { songs: publicSongLabels(element) }
-            : {}),
-          ...(publicScriptureLabels(element).length
-            ? { scriptureRefs: publicScriptureLabels(element) }
-            : {}),
-          teamNotes: isGeneralView
-            ? []
-            : serializePublicTeamNotes(element.teamNotes),
-          microphoneAssignments: isGeneralView
-            ? []
-            : serializePublicMicrophoneAssignments(
-                element,
-                microphonesById,
-                configuredAudiences,
-                hasConfiguredAudiences,
-              ),
-          ...(publicAssigneeCredit(element)
-            ? { creditName: publicAssigneeCredit(element) }
-            : {}),
-        })),
+        items: (section.elements || []).map((element, elementIndex) => {
+          const resources = isGeneralView ? [] : publicResources(element);
+          return {
+            id: String(
+              element.id || `item-${sectionIndex + 1}-${elementIndex + 1}`,
+            ),
+            title: richTextToPlainText(element.title) || "Untitled item",
+            durationSeconds: getDurationSeconds(
+              element.durationSeconds,
+              element.durationMinutes,
+            ),
+            notes: isGeneralView
+              ? { blocks: [] }
+              : normalizeRichTextDocument(element.notes),
+            ...(publicSongLabels(element).length
+              ? { songs: publicSongLabels(element) }
+              : {}),
+            ...(publicScriptureLabels(element).length
+              ? { scriptureRefs: publicScriptureLabels(element) }
+              : {}),
+            ...(resources.length ? { resources } : {}),
+            teamNotes: isGeneralView
+              ? []
+              : serializePublicTeamNotes(element.teamNotes),
+            microphoneAssignments: isGeneralView
+              ? []
+              : serializePublicMicrophoneAssignments(
+                  element,
+                  microphonesById,
+                  configuredAudiences,
+                  hasConfiguredAudiences,
+                ),
+            ...(publicAssigneeCredit(element)
+              ? { creditName: publicAssigneeCredit(element) }
+              : {}),
+          };
+        }),
       })),
       live,
     },

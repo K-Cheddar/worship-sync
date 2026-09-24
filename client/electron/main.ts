@@ -44,7 +44,10 @@ import {
   hasDisplayWindow,
   listDisplayWindowKeys,
 } from "./displayWindowStore";
-import { MediaCacheManager } from "./mediaCache";
+import {
+  MEDIA_CACHE_MAX_URLS_PER_REQUEST,
+  MediaCacheManager,
+} from "./mediaCache";
 import {
   buildLocalAssetProtocolUrl,
   LocalAssetStore,
@@ -65,8 +68,15 @@ import {
   isNewerVersion,
   shouldForwardUpdaterErrorToRenderer,
 } from "./updaterHelpers";
-import { isTrustedControllerIpcSender } from "./ipcSenderAuthorization";
+import {
+  isTrustedControllerIpcSender,
+  isTrustedWorshipSyncIpcSender,
+} from "./ipcSenderAuthorization";
 import { createLyricsImportService } from "../../lyricsImport.js";
+import {
+  createUnavailablePreparedVideoMetrics,
+  normalizePreparedVideoMetrics,
+} from "./preparedVideoMetrics";
 
 const { autoUpdater } = updaterPkg;
 
@@ -247,6 +257,19 @@ const assertControllerIpcSender = (sender: WebContents): void => {
     throw new Error(
       "This action is only available from the controller window.",
     );
+  }
+};
+
+const assertMediaCacheIpcSender = (sender: WebContents): void => {
+  const knownWindows = [
+    mainWindow,
+    localVideoCaptureHost,
+    ...listDisplayWindowKeys().map(
+      (windowKey) => getDisplayWindow(windowKey) as BrowserWindow | null,
+    ),
+  ];
+  if (!isTrustedWorshipSyncIpcSender(sender, knownWindows)) {
+    throw new Error("This action is only available from a WorshipSync renderer.");
   }
 };
 
@@ -1068,11 +1091,40 @@ ipcMain.handle("is-dev", () => {
   return isDev;
 });
 
-ipcMain.handle("open-external-url", async (_event, targetUrl: string) => {
-  assertAllowedOpenExternalUrl(targetUrl, { isDev });
-  await shell.openExternal(targetUrl);
-  return true;
+ipcMain.handle("get-prepared-video-metrics", (event) => {
+  if (!isDev) {
+    return createUnavailablePreparedVideoMetrics(
+      "metric_unsupported",
+      "prepared-video metrics are available only in development",
+    );
+  }
+
+  try {
+    const rendererPid = event.sender.getOSProcessId();
+    const metrics = app.getAppMetrics();
+    const result = normalizePreparedVideoMetrics({ rendererPid, metrics });
+    return result;
+  } catch (error) {
+    const reason = `Electron metrics unavailable: ${(error as Error).message}`;
+    return createUnavailablePreparedVideoMetrics("metric_unsupported", reason);
+  }
 });
+
+ipcMain.handle(
+  "open-external-url",
+  async (
+    _event,
+    targetUrl: string,
+    options?: { allowArbitraryHttps?: boolean },
+  ) => {
+    assertAllowedOpenExternalUrl(targetUrl, {
+      isDev,
+      allowArbitraryHttps: options?.allowArbitraryHttps,
+    });
+    await shell.openExternal(targetUrl);
+    return true;
+  },
+);
 
 ipcMain.handle("desktop-auth-listener-ready", () => {
   desktopAuthListenerReady = true;
@@ -1622,9 +1674,47 @@ ipcMain.handle("download-media", async (_event, url: string) => {
   }
 });
 
+ipcMain.handle("ensure-media-cached", async (event, videoUrls: string[]) => {
+  assertMediaCacheIpcSender(event.sender);
+  if (!Array.isArray(videoUrls)) {
+    throw new Error("Media cache URLs must be provided as an array");
+  }
+  if (videoUrls.length > MEDIA_CACHE_MAX_URLS_PER_REQUEST) {
+    throw new Error(
+      `Media cache requests are limited to ${MEDIA_CACHE_MAX_URLS_PER_REQUEST} URLs`,
+    );
+  }
+  if (!mediaCacheManager) {
+    return {
+      requested: 0,
+      cacheable: 0,
+      downloaded: 0,
+      failed: 0,
+      cacheMap: {},
+    };
+  }
+  try {
+    return await mediaCacheManager.ensureMediaCached(videoUrls);
+  } catch (error) {
+    console.error("Error ensuring media cache:", error);
+    return {
+      requested: videoUrls.length,
+      cacheable: 0,
+      downloaded: 0,
+      failed: videoUrls.length,
+      cacheMap: mediaCacheManager.getMediaCacheMap(),
+    };
+  }
+});
+
 ipcMain.handle("get-media-cache-map", () => {
   if (!mediaCacheManager) return {};
   return mediaCacheManager.getMediaCacheMap();
+});
+
+ipcMain.handle("get-prepared-video-sources", () => {
+  if (!isDev || !mediaCacheManager) return [];
+  return mediaCacheManager.getMediaCacheEntries();
 });
 
 ipcMain.handle("get-local-media-path", (_event, url: string) => {
@@ -1773,12 +1863,6 @@ ipcMain.handle(
       const tracks = await localLyricsImportService.searchGeniusTracks(params, {
         fetchLyrics: false,
       });
-      if (isDev) {
-        console.debug(
-          `[lyrics-import] local Genius search: ${(performance.now() - startedAt).toFixed(0)}ms`,
-          { resultCount: tracks.length },
-        );
-      }
       return tracks;
     } catch (error) {
       console.error("Local Genius search failed:", error);

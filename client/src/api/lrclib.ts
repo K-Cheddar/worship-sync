@@ -18,6 +18,11 @@ export type LrclibImportResolution = {
   candidates: NormalizedLrclibTrack[];
 };
 
+const geniusLyricsRequests = new Map<
+  string,
+  Promise<NormalizedLrclibTrack>
+>();
+
 const buildSearchParams = ({
   trackName,
   artistName,
@@ -111,6 +116,7 @@ const searchGeniusLyricsLocally = async (
 
 export const searchLrclibTracks = async (
   query: LrclibImportQuery,
+  { hydrateGeniusLyrics = true }: { hydrateGeniusLyrics?: boolean } = {},
 ): Promise<NormalizedLrclibTrack[]> => {
   const startedAt = performance.now();
   const useLocalGenius = hasLocalGeniusSearch();
@@ -161,32 +167,38 @@ export const searchLrclibTracks = async (
     ? sortLyricsImportTracksBySource([...geniusTracks, ...serverTracks])
     : serverTracks;
 
-  const hydrationStartedAt = performance.now();
-  const hydrationResults = await Promise.allSettled(
-    results.map(async (candidate) => {
-      if (
-        candidate.source !== "genius" ||
-        getImportableLyricsFromTrack(candidate)
-      ) {
-        return candidate;
-      }
+  if (hydrateGeniusLyrics) {
+    const hydrationStartedAt = performance.now();
+    const hydrationResults = await Promise.allSettled(
+      results.map(async (candidate) => {
+        if (
+          candidate.source !== "genius" ||
+          getImportableLyricsFromTrack(candidate)
+        ) {
+          return candidate;
+        }
 
-      return fetchGeniusLyricsLocally(candidate);
-    }),
-  );
-  const hydratedResults = hydrationResults.map((hydration, index) =>
-    hydration.status === "fulfilled" ? hydration.value : results[index],
-  );
-
-  debugLyricsImportTiming("local Genius page hydration", hydrationStartedAt, {
-    candidateCount: geniusTracks.length,
-  });
+        return fetchGeniusLyricsLocally(candidate);
+      }),
+    );
+    const hydratedResults = hydrationResults.map((hydration, index) =>
+      hydration.status === "fulfilled" ? hydration.value : results[index],
+    );
+    debugLyricsImportTiming("local Genius page hydration", hydrationStartedAt, {
+      candidateCount: geniusTracks.length,
+    });
+    debugLyricsImportTiming("total lyrics search", startedAt, {
+      resultCount: hydratedResults.length,
+      useLocalGenius,
+    });
+    return hydratedResults;
+  }
 
   debugLyricsImportTiming("total lyrics search", startedAt, {
-    resultCount: hydratedResults.length,
+    resultCount: results.length,
     useLocalGenius,
   });
-  return hydratedResults;
+  return results;
 };
 
 const stripGeniusLyricsPreamble = (lyrics: string, title: string): string => {
@@ -229,7 +241,6 @@ const extractGeniusLyricsFromHtml = (html: string, title: string): string => {
 export const fetchGeniusLyricsLocally = async (
   track: NormalizedLrclibTrack,
 ): Promise<NormalizedLrclibTrack> => {
-  const startedAt = performance.now();
   if (
     track.source !== "genius" ||
     !track.geniusUrl ||
@@ -237,30 +248,48 @@ export const fetchGeniusLyricsLocally = async (
   ) {
     return track;
   }
+  const geniusUrl = track.geniusUrl;
 
-  const response = await window.electronAPI.fetchGeniusLyrics(track.geniusUrl);
-  const plainLyrics = response.ok
-    ? stripGeniusLyricsPreamble(
-      response.lyrics ??
-        extractGeniusLyricsFromHtml(response.html ?? "", track.trackName),
-      track.trackName,
-    )
-    : "";
+  const cachedRequest = geniusLyricsRequests.get(geniusUrl);
+  if (cachedRequest) return cachedRequest;
 
-  if (!plainLyrics) {
-    throw new Error(`Genius returned no lyrics (HTTP ${response.status}).`);
-  }
+  const request = (async () => {
+    const startedAt = performance.now();
+    const response = await window.electronAPI!.fetchGeniusLyrics(track.geniusUrl!);
+    const plainLyrics = response.ok
+      ? stripGeniusLyricsPreamble(
+        response.lyrics ??
+          extractGeniusLyricsFromHtml(response.html ?? "", track.trackName),
+        track.trackName,
+      )
+      : "";
 
-  debugLyricsImportTiming("local Genius page hydration", startedAt, {
-    geniusId: track.geniusId,
+    if (!plainLyrics) {
+      throw new Error(`Genius returned no lyrics (HTTP ${response.status}).`);
+    }
+
+    debugLyricsImportTiming("local Genius page hydration", startedAt, {
+      geniusId: track.geniusId,
+    });
+    return { ...track, plainLyrics };
+  })();
+
+  geniusLyricsRequests.set(geniusUrl, request);
+  request.catch(() => {
+    if (geniusLyricsRequests.get(geniusUrl) === request) {
+      geniusLyricsRequests.delete(geniusUrl);
+    }
   });
-  return { ...track, plainLyrics };
+
+  return request;
 };
 
 export const resolveLrclibImport = async (
   query: LrclibImportQuery,
 ): Promise<LrclibImportResolution> => {
-  const candidates = await searchLrclibTracks(query);
+  const candidates = await searchLrclibTracks(query, {
+    hydrateGeniusLyrics: false,
+  });
   return {
     match: null,
     candidates,

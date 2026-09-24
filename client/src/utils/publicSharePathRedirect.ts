@@ -16,6 +16,9 @@ export const isPublicSharePathname = (pathname: string): boolean => {
   const path = normalizePathname(pathname);
 
   if (path === "/invite") return true;
+  if (path === "/sms-opt-in" || path === "/privacy" || path === "/terms") {
+    return true;
+  }
   if (/^\/services\/[^/]+$/.test(path)) return true;
   if (/^\/schedule-response\/[^/]+$/.test(path)) return true;
   if (/^\/teams\/schedule\/[^/]+$/.test(path)) return true;

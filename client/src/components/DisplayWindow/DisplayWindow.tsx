@@ -41,6 +41,9 @@ import {
   selectDisplayOutputs,
   selectDisplayOutputsLoaded,
 } from "../../store/displayOutputsSlice";
+import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
+import { getOwningControllerProfile } from "../../utils/controllerProfiles";
+import { resolveOutlineForScope } from "../../utils/outlineScope";
 import {
   isDisplayChromeReady,
   resolveDisplaySettings,
@@ -60,12 +63,18 @@ import DisplayBoxTransitionStage, {
   type LaneMediaPlaybackOptions,
   getDisplayBoxesLayerKey,
 } from "./DisplayBoxTransitionStage";
+import ElectronEditorPreparedMediaPreview from "./ElectronEditorPreparedMediaPreview";
 import {
   getLaneBackgroundMediaKey,
   resolveLaneBackgroundMedia,
 } from "./laneBackgroundMedia";
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
+import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
+import {
+  usePreparedMediaContext,
+  type PreparedMediaContext,
+} from "../../utils/preparedMediaContext";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -253,6 +262,12 @@ type DisplayWindowProps = {
   displayType?: DisplayType;
   /** Display output whose settings this surface renders with. */
   outputId?: string;
+  /** Current outline item used only as a local media-preparation priority hint. */
+  currentItemId?: string;
+  /** Only the selected SlideEditor may own local editor video transport. */
+  editorTransportOwner?: boolean;
+  /** Explicit controller-owned preparation context, used by editor surfaces. */
+  preparedMediaContext?: PreparedMediaContext;
   /**
    * Opt in to the high-quality local video path (direct capture and/or relay).
    * Live outputs and same-machine operator previews set this so the booth
@@ -336,6 +351,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       displayType,
 
       outputId,
+      currentItemId,
+      editorTransportOwner = false,
+      preparedMediaContext: preparedMediaContextOverride,
 
       canCaptureLocalVideo = false,
       directLocalVideoCapture = false,
@@ -480,6 +498,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
+    const [editorPreparedActive, setEditorPreparedActive] = useState(false);
+    const [editorPreparedActiveMediaKey, setEditorPreparedActiveMediaKey] =
+      useState<string>();
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
     const localVideoTransitionKey = `${localVideoInput?.sourceId ?? ""}::${prevLocalVideoInput?.sourceId ?? ""
@@ -533,13 +554,69 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // back to the built-in surface for their render profile.
     const fallbackOutputType =
       displayType === "monitor" ||
-        displayType === "stream" ||
-        displayType === "projector"
+      displayType === "stream" ||
+      displayType === "projector"
         ? displayType
         : "projector";
     const settingsOutputId = outputId ?? fallbackOutputType;
     const registryOutputs = useSelector(selectDisplayOutputs);
     const registryLoaded = useSelector(selectDisplayOutputsLoaded);
+    const controllerProfiles = useSelector(selectControllerProfiles);
+    const preparedMediaOutlines = useSelector(
+      (state) => state.undoable?.present?.itemLists?.currentLists ?? [],
+    );
+    const preparedMediaSelectedIds = useSelector(
+      (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
+    );
+    const preparedMediaContextFallback = useMemo<
+      Pick<
+        ElectronMediaDiscovery,
+        | "controllerProfileId"
+        | "controllerProfileName"
+        | "outlineScope"
+        | "outlineId"
+        | "outlineName"
+      >
+    >(() => {
+      const owner = outputId
+        ? getOwningControllerProfile(controllerProfiles, outputId)
+        : controllerProfiles.find((profile) => profile.type === "presentation");
+      const outline = owner
+        ? resolveOutlineForScope(
+            preparedMediaOutlines,
+            owner.outlineScope,
+            preparedMediaSelectedIds[owner.outlineScope],
+          )
+        : undefined;
+      return {
+        controllerProfileId: owner?.id,
+        controllerProfileName: owner?.name,
+        outlineScope: owner?.outlineScope,
+        outlineId: outline?._id ?? null,
+        outlineName: outline?.name,
+      };
+    }, [
+      controllerProfiles,
+      outputId,
+      preparedMediaOutlines,
+      preparedMediaSelectedIds,
+    ]);
+    const preparedMediaContextFallbackValue = useMemo<PreparedMediaContext>(
+      () => ({
+        controllerProfileId:
+          preparedMediaContextFallback.controllerProfileId ?? "presentation",
+        controllerProfileName: preparedMediaContextFallback.controllerProfileName,
+        outlineScope: preparedMediaContextFallback.outlineScope ?? "presentation",
+        outlineId: preparedMediaContextFallback.outlineId ?? null,
+        outlineName: preparedMediaContextFallback.outlineName,
+        contextSource: "persisted ItemLists fallback",
+      }),
+      [preparedMediaContextFallback],
+    );
+    const preparedMediaContext = usePreparedMediaContext(
+      preparedMediaContextOverride ?? preparedMediaContextFallbackValue,
+    );
+    const preparedMediaOutlineId = preparedMediaContext.outlineId;
     const pairedDeviceSettings =
       useContext(GlobalInfoContext)?.device?.settings;
     // The built-in monitor keeps honouring the church-wide monitorSettings until
@@ -1152,6 +1229,20 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       () => getVideoBackgroundMediaKey(videoBox?.mediaInfo),
       [videoBox?.mediaInfo],
     );
+    const editorPreparedPreviewEnabled = Boolean(
+      isEditor &&
+        showBackground &&
+        shouldPlayVideo &&
+        currentItemId &&
+        window.electronAPI,
+    );
+    const reportEditorPreparedActive = useCallback(
+      (active: boolean) => {
+        setEditorPreparedActive(active);
+        setEditorPreparedActiveMediaKey(active ? videoMediaKey : undefined);
+      },
+      [videoMediaKey],
+    );
     const activeVideoPlayback = useMemo(() => {
       const matched =
         videoPlayback?.mediaKey && videoMediaKey
@@ -1187,6 +1278,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     } else if (localVideoFile.isLocalVideoFile) {
       desiredVideoUrl = localVideoFile.url;
     }
+    const editorPreparedCurrentMedia = useMemo(
+      () =>
+        videoMediaKey && desiredVideoUrl
+          ? {
+              mediaKey: videoMediaKey,
+              source: desiredVideoUrl,
+              itemId: currentItemId,
+            }
+          : undefined,
+      [currentItemId, desiredVideoUrl, videoMediaKey],
+    );
+    const editorPreparedVideoActive =
+      editorPreparedPreviewEnabled &&
+      editorPreparedActive &&
+      editorPreparedActiveMediaKey === videoMediaKey;
 
     // Underlay surfaces (editor, stream, next-slide monitor) use a single
     // current player — animated displays host media inside the transition stage.
@@ -1273,38 +1379,53 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       ]);
 
     const laneMediaPlayback = useMemo<LaneMediaPlaybackOptions>(
-      () => ({
-        outputId,
-        windowRole: displayType ?? "unknown",
-        fileVideoAudioEnabled: localVideoFileAudioEnabled,
-        volume: localVideoVolume,
-        playbackRole: isEditor ? "preview" : "output",
-        preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
-        suspendPlayback: suspendVideoPlayback,
-        activeFileVideoPlayback: activeVideoPlayback,
-        isEditor,
-        localVideo: {
-          playAudio:
-            canCaptureLocalVideo &&
-            playLocalVideoAudio &&
-            resolvedDisplaySettings.localVideoAudioEnabled &&
-            localVideoInput?.audioEnabled !== false &&
-            localVideoContentVisible,
-          captureEnabled:
-            canCaptureLocalVideo &&
-            (displayType === "editor" || directLocalVideoCapture),
-          receiveHighQuality: canCaptureLocalVideo,
-          publishPreview: canCaptureLocalVideo && displayType === "editor",
-          showErrors: !canCaptureLocalVideo || displayType === "editor",
-          transparentBackground: displayType === "stream",
-          contentVisible: localVideoContentVisible,
-        },
-      }),
+      () => {
+        const playbackRole =
+          isEditor || videoPreloadRole === "preview" ? "preview" : "output";
+        return {
+          outputId,
+          windowRole: isEditor
+            ? "editor"
+            : videoPreloadRole === "preview"
+              ? `${displayType ?? "unknown"}-preview`
+              : displayType ?? "unknown",
+          currentItemId,
+          preparedMediaOutlineId,
+          preparedMediaScope: "service",
+          preparedMediaContext,
+          showBackground,
+          fileVideoAudioEnabled: localVideoFileAudioEnabled,
+          volume: localVideoVolume,
+          playbackRole,
+          preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
+          transportRole: isEditor && editorTransportOwner ? "editor" : "none",
+          suspendPlayback: suspendVideoPlayback,
+          activeFileVideoPlayback: activeVideoPlayback,
+          isEditor,
+          localVideo: {
+            playAudio:
+              canCaptureLocalVideo &&
+              playLocalVideoAudio &&
+              resolvedDisplaySettings.localVideoAudioEnabled &&
+              localVideoInput?.audioEnabled !== false &&
+              localVideoContentVisible,
+            captureEnabled:
+              canCaptureLocalVideo &&
+              (displayType === "editor" || directLocalVideoCapture),
+            receiveHighQuality: canCaptureLocalVideo,
+            publishPreview: canCaptureLocalVideo && displayType === "editor",
+            showErrors: !canCaptureLocalVideo || displayType === "editor",
+            transparentBackground: displayType === "stream",
+            contentVisible: localVideoContentVisible,
+          },
+        };
+      },
       [
         activeVideoPlayback,
         canCaptureLocalVideo,
         directLocalVideoCapture,
         displayType,
+        editorTransportOwner,
         isEditor,
         localVideoContentVisible,
         localVideoFileAudioEnabled,
@@ -1315,6 +1436,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         suspendVideoPlayback,
         videoPreloadRole,
         outputId,
+        currentItemId,
+        preparedMediaOutlineId,
+        preparedMediaContext,
+        showBackground,
       ],
     );
 
@@ -1359,6 +1484,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           publishPreview={canCaptureLocalVideo && displayType === "editor"}
           showErrors={!canCaptureLocalVideo || displayType === "editor"}
           transparentBackground={displayType === "stream"}
+          outputId={outputId}
+          windowRole={displayType ?? "unknown"}
           contentVisible={localVideoContentVisible}
         />
       ) : null;
@@ -1374,6 +1501,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           receiveHighQuality={canCaptureLocalVideo}
           showErrors={false}
           transparentBackground={displayType === "stream"}
+          outputId={outputId}
+          windowRole={displayType ?? "unknown"}
           contentVisible={localVideoContentVisible}
         />
       ) : null;
@@ -1391,7 +1520,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       shouldPlayVideo &&
       !localVideoInput &&
       Boolean(desiredVideoUrl) &&
-      !isAwaitingLocalVideoUrl;
+      !isAwaitingLocalVideoUrl &&
+      !editorPreparedVideoActive;
     const underlayIsLocalProtocol = Boolean(
       desiredVideoUrl?.startsWith("worshipsync-media://") ||
         desiredVideoUrl?.startsWith("blob:") ||
@@ -1428,6 +1558,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             preloadRole={
               videoPreloadRole ?? (isEditor ? "preview" : "output")
             }
+            transportRole={
+              isEditor && editorTransportOwner ? "editor" : "none"
+            }
             suspendPlayback={suspendVideoPlayback}
             mediaKey={isEditor ? videoMediaKey : undefined}
             playback={activeVideoPlayback}
@@ -1449,7 +1582,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ? stageBackgroundMedia.originalSrc
         : desiredVideoUrl;
     const isWindowVideoLoaded =
-      hostsBackgroundMediaInStage || underlayPaintReady;
+      hostsBackgroundMediaInStage || underlayPaintReady || editorPreparedVideoActive;
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
@@ -1475,6 +1608,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               showNextSlide={showNextSlide && (nextBoxes?.length ?? 0) > 0}
               showBackground={showBackground}
               shouldAnimate={shouldAnimate}
+              transitionDurationMs={resolvedDisplaySettings.transitionDurationMs}
               effectiveWidth={effectiveWidth}
               time={time}
               timerInfo={timerInfo}
@@ -1501,6 +1635,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             <DisplayBoxTransitionStage
               snapshot={displayBoxTransitionSnapshot}
               shouldAnimate={shouldAnimate}
+              transitionDurationMs={resolvedDisplaySettings.transitionDurationMs}
               mediaPlayback={laneMediaPlayback}
               renderLane={(
                 laneSnapshot,
@@ -1630,6 +1765,20 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       const innerContent = (
         <>
           {!hostsBackgroundMediaInStage && fileVideoMediaLayers}
+
+          {editorPreparedPreviewEnabled && (
+            <ElectronEditorPreparedMediaPreview
+              enabled
+              currentItemId={currentItemId}
+              reportsEditorTransport={editorTransportOwner}
+              currentMedia={editorPreparedCurrentMedia}
+              preparedMediaContext={preparedMediaContext}
+              videoBox={videoBox}
+              playback={activeVideoPlayback}
+              volume={localVideoVolume}
+              onCurrentFrameReady={reportEditorPreparedActive}
+            />
+          )}
 
           {!isStream && !hostsBackgroundMediaInStage && localVideoMediaLayers}
 

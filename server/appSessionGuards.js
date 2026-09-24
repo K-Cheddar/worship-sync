@@ -84,6 +84,54 @@ export const createAppSessionGuards = ({
     return true;
   };
 
+  const hasHumanChurchResourceReadAccess = (req) =>
+    req.appSession?.sessionKind === "human" &&
+    ["full", "music", "view"].includes(req.appSession?.access);
+
+  // Phase-one church resources use the existing app access tiers. Human
+  // full/music/view sessions may browse/read; only full app access may mutate.
+  // A paired workstation is intentionally not a library browser merely
+  // because it belongs to this church.
+  const requireChurchResourceBrowseAccess = (req, res, next) => {
+    if (!hasHumanChurchResourceReadAccess(req)) {
+      return res.status(403).json({
+        error: "Church resource access is not available for this session.",
+      });
+    }
+    next();
+  };
+
+  // Keep specific reads separate from browsing. A future trusted middleware
+  // may set this request-local marker after proving that a workstation is
+  // allowed to read this one referenced resource; clients cannot set it via
+  // bootstrap or request input. No workstation caller is granted it today.
+  const requireChurchResourceReferenceReadAccess = (req, res, next) => {
+    if (
+      !hasHumanChurchResourceReadAccess(req) &&
+      req.authorizedChurchResourceReference !== true
+    ) {
+      return res.status(403).json({
+        error: "Church resource access is not available for this session.",
+      });
+    }
+    next();
+  };
+
+  // Backward-compatible name for callers that used the phase-one view guard.
+  const requireChurchResourceViewAccess = requireChurchResourceBrowseAccess;
+
+  const requireChurchResourceEditAccess = (req, res, next) => {
+    if (
+      req.appSession?.sessionKind !== "human" ||
+      req.appSession?.access !== "full"
+    ) {
+      return res.status(403).json({
+        error: "Full access is required to manage church resources.",
+      });
+    }
+    next();
+  };
+
   return {
     requireAppSession,
     requireMutationCsrf,
@@ -91,5 +139,9 @@ export const createAppSessionGuards = ({
     requireChurchAdmin,
     requireSongAudioEditAccess,
     assertSongAudioChurchAccess,
+    requireChurchResourceBrowseAccess,
+    requireChurchResourceReferenceReadAccess,
+    requireChurchResourceViewAccess,
+    requireChurchResourceEditAccess,
   };
 };

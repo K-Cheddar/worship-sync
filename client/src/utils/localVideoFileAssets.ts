@@ -12,6 +12,7 @@ import {
   getVideoContentType,
   isSupportedVideoFile,
 } from "./mediaFileTypes";
+import { assignPlayableVideoSource } from "./mediaSource";
 
 const LOCAL_VIDEO_FILE_URL_PREFIX = "local-video-file://";
 const MAX_BROWSER_LOCAL_VIDEO_BYTES = 500 * 1024 * 1024;
@@ -109,7 +110,9 @@ export const readVideoMetadata = (file: File) =>
       video.onerror = () => {
         finish(new Error("The selected video could not be read."));
       };
-      video.src = url;
+      if (!assignPlayableVideoSource(video, url, { path: "local-video-metadata" })) {
+        finish(new Error("The selected video could not be read."));
+      }
     },
   );
 
@@ -197,7 +200,10 @@ const captureVideoThumbnailFromSource = async ({
     return await withTimeout(
       (async () => {
         const loaded = waitForVideoEvent(video, "loadeddata");
-        video.src = typeof source === "string" ? source : objectUrl;
+        const playbackSource = typeof source === "string" ? source : objectUrl;
+        if (!playbackSource || !assignPlayableVideoSource(video, playbackSource, { path: "local-video-thumbnail" })) {
+          throw new Error("The selected video could not be read.");
+        }
         if (video.error) {
           throw new Error("The selected video could not be read.");
         }

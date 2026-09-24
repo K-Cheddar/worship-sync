@@ -1,4 +1,7 @@
-import { isTrustedControllerIpcSender } from "./ipcSenderAuthorization";
+import {
+  isTrustedControllerIpcSender,
+  isTrustedWorshipSyncIpcSender,
+} from "./ipcSenderAuthorization";
 
 const windowLike = ({
   id = 1,
@@ -29,5 +32,26 @@ describe("isTrustedControllerIpcSender", () => {
       ),
     ).toBe(false);
     expect(isTrustedControllerIpcSender({ id: 1 }, null)).toBe(false);
+  });
+
+  it("allows only a live webContents from the known WorshipSync windows", () => {
+    expect(
+      isTrustedWorshipSyncIpcSender(
+        { id: 2 },
+        [windowLike({ id: 1 }), windowLike({ id: 2 })],
+      ),
+    ).toBe(true);
+    expect(
+      isTrustedWorshipSyncIpcSender(
+        { id: 3 },
+        [windowLike({ id: 1 }), windowLike({ id: 2 })],
+      ),
+    ).toBe(false);
+    expect(
+      isTrustedWorshipSyncIpcSender(
+        { id: 2 },
+        [windowLike({ id: 2, windowDestroyed: true })],
+      ),
+    ).toBe(false);
   });
 });

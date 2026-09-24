@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import AuxController from "./AuxController";
+import servicePlanningImportReducer, {
+  setServicePlanningFloatingWindowDismissed,
+} from "../../store/servicePlanningImportSlice";
+import { useServicePlanningSyncRunner } from "../Controller/useServicePlanningSyncRunner";
 import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import {
   controllerProfilesSlice,
@@ -28,7 +32,39 @@ jest.mock("../Controller/useControllerPageLifecycle", () => ({
 
 jest.mock("../../containers/ServiceItems/ServiceItems", () => ({
   __esModule: true,
-  default: () => <div data-testid="service-items" />,
+  default: function MockServiceItems() {
+    const { useDispatch } = jest.requireActual("react-redux") as typeof import("react-redux");
+    const dispatch = useDispatch();
+    return (
+      <div data-testid="service-items">
+        <button
+          type="button"
+          onClick={() => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+        >
+          Service plan
+        </button>
+      </div>
+    );
+  },
+}));
+jest.mock("../Controller/useServicePlanningSyncRunner", () => ({
+  useServicePlanningSyncRunner: jest.fn(),
+}));
+jest.mock("../Controller/ServicePlanningSyncFloatingWindow", () => ({
+  __esModule: true,
+  default: function MockServicePlanningSyncFloatingWindow({
+    allowOverlaySync,
+  }: { allowOverlaySync?: boolean }) {
+    const { useSelector } = jest.requireActual("react-redux") as typeof import("react-redux");
+    const dismissed = useSelector(
+      (state: {
+        servicePlanningImport?: { floatingWindowDismissed?: boolean };
+      }) => state.servicePlanningImport?.floatingWindowDismissed ?? true,
+    );
+    return dismissed ? null : (
+      <div data-testid="service-planning-window" data-allow-overlay-sync={allowOverlaySync} />
+    );
+  },
 }));
 jest.mock("../../containers/TransmitHandler/TransmitHandler", () => ({
   __esModule: true,
@@ -72,6 +108,7 @@ const renderRoute = (
   const store = configureStore({
     reducer: {
       controllerProfiles: controllerProfilesSlice.reducer,
+      servicePlanningImport: servicePlanningImportReducer,
       displayOutputs: () => ({ list: [], isLoaded: true }),
       presentation: () => ({ outputs: {} }),
       undoable: () => ({
@@ -109,6 +146,25 @@ describe("the auxiliary controller route", () => {
     renderRoute();
     expect(screen.getByTestId("controller-shell")).toBeInTheDocument();
     expect(screen.getByTestId("service-items")).toBeInTheDocument();
+  });
+
+  it("opens the outline-only Service Plan window from the aux controller", () => {
+    renderRoute([LOBBY]);
+
+    expect(screen.getByRole("button", { name: "Service plan" })).toBeInTheDocument();
+    expect(screen.queryByTestId("service-planning-window")).not.toBeInTheDocument();
+    expect(useServicePlanningSyncRunner).toHaveBeenCalledWith({
+      allowOverlaySync: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Service plan" }));
+
+    return waitFor(() =>
+      expect(screen.getByTestId("service-planning-window")).toHaveAttribute(
+        "data-allow-overlay-sync",
+        "false",
+      ),
+    );
   });
 
   it("says so, and sends nowhere, while its settings are still loading", () => {

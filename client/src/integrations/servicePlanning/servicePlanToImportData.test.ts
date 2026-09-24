@@ -31,12 +31,13 @@ describe("servicePlanToImportData", () => {
     expect(sections[0].rows[0]).toMatchObject({
       elementType: "Worship Set",
       title: "How Great Thou Art",
-      ledBy: "Dana R.",
+      ledBy: "Dana Robinson",
+      sourceLedByRaw: "Dana R.",
       assigneeNames: ["Dana Robinson"],
     });
   });
 
-  it("keeps source led-by data for matching while exposing all current assignees", () => {
+  it("round-trips current assignees while retaining source led-by data", () => {
     const { sections } = servicePlanToImportData(
       planWith([
         element({
@@ -51,8 +52,40 @@ describe("servicePlanToImportData", () => {
     );
 
     expect(sections[0].rows[0]).toMatchObject({
-      ledBy: "Dana R.",
+      ledBy: "Dana Robinson, Morgan Lee, Taylor Smith",
+      sourceLedByRaw: "Dana R.",
       assigneeNames: ["Dana Robinson", "Morgan Lee", "Taylor Smith"],
+    });
+  });
+
+  it("round-trips an Element label and attached song independently", () => {
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          title: plainTextToRichText("Special Music"),
+          sourceElementTypeRaw: "Special Music",
+          sourceContentTitleRaw: "Trust and Obey",
+          songRef: {
+            kind: "library",
+            songId: "song-1",
+            songName: "Trust and Obey",
+          },
+          assignees: [{ id: "a1", name: "Youth Choir" }],
+          startTime: "10:15",
+          durationSeconds: 120,
+        }),
+      ]),
+    );
+
+    expect(sections[0].rows[0]).toMatchObject({
+      elementType: "Special Music",
+      title: "Special Music",
+      contentTitle: "Trust and Obey",
+      songTitle: "Trust and Obey",
+      songId: "song-1",
+      ledBy: "Youth Choir",
+      startTime: "10:15",
+      durationMinutes: 2,
     });
   });
 

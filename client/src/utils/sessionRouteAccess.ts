@@ -58,6 +58,7 @@ export const isMemberAllowedPath = (pathname: string): boolean =>
 const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
+  "/resources",
   // Reachable by everyone, not only schedule-only members: an admin who is also
   // on a roster uses it, and omitting it made Electron route restore fall back
   // to /home.

@@ -63,6 +63,7 @@ const createConnectedService = async ({
     format: "png",
     width: 1920,
     height: 1080,
+    bytes: 321,
   }),
   muxClient = null,
   publicLinkResponseForUrl = () => null,
@@ -78,6 +79,9 @@ const createConnectedService = async ({
   exportConcurrency,
   muxProcessingConcurrency,
   muxProcessingDeadlineMs,
+  destroyCloudinaryAsset = async () => {},
+  uploadCloudinaryAsset,
+  storageQuota,
 } = {}) => {
   const calls = [];
   let exportRequestCount = 0;
@@ -163,6 +167,7 @@ const createConnectedService = async ({
     },
   };
   const uploaded = [];
+  const destroyedCloudinaryPublicIds = [];
   const service = createCanvaService({
     getFirestore: () => null,
     getRealtimeDatabase: () => null,
@@ -173,11 +178,19 @@ const createConnectedService = async ({
       uploader: {
         async upload(url, options) {
           uploaded.push({ url, options });
+          if (uploadCloudinaryAsset) {
+            return uploadCloudinaryAsset(url, options);
+          }
           return uploadResultForUrl(url);
+        },
+        async destroy(publicId, options) {
+          destroyedCloudinaryPublicIds.push({ publicId, options });
+          return destroyCloudinaryAsset(publicId, options);
         },
       },
     },
     getMuxClient: () => muxClient,
+    storageQuota,
     clientId: "client-id",
     clientSecret: "client-secret",
     tokenEncryptionKey: "a-test-encryption-secret-that-is-not-checked-in",
@@ -202,7 +215,14 @@ const createConnectedService = async ({
   });
   const state = new URL(pending.authorizeUrl).searchParams.get("state");
   await service.completeConnect({ state, code: "authorization-code" });
-  return { service, pending, calls, uploaded, httpClient };
+  return {
+    service,
+    pending,
+    calls,
+    uploaded,
+    destroyedCloudinaryPublicIds,
+    httpClient,
+  };
 };
 
 test("Canva connect uses PKCE and records a church-scoped connection", async () => {
@@ -353,6 +373,46 @@ test("Canva PNG cancellation stops uploads for remaining pages", async () => {
     /cancelled/i,
   );
   assert.deepEqual(uploaded, ["https://document-export.canva.com/page-1.png"]);
+});
+
+test("Canva removes earlier Cloudinary PNG uploads when a later upload fails", async () => {
+  const destroyed = [];
+  const { service, destroyedCloudinaryPublicIds } = await createConnectedService({
+    exportJobForRequest: ({ body }) => ({
+      id: "export-png-upload-failure",
+      status: "success",
+      urls: body.format.pages.map(
+        (pageNumber) => `https://document-export.canva.com/page-${pageNumber}.png`,
+      ),
+    }),
+    uploadCloudinaryAsset: async (url) => {
+      const pageNumber = url.match(/page-(\d+)/)?.[1];
+      if (pageNumber === "2") throw new Error("Cloudinary upload failed");
+      return {
+        asset_id: "asset-1",
+        public_id: "worship-sync/canva/church-1/page-1",
+        secure_url: "https://res.cloudinary.com/page-1.png",
+        resource_type: "image",
+      };
+    },
+    destroyCloudinaryAsset: async (publicId) => {
+      destroyed.push(publicId);
+    },
+  });
+
+  await assert.rejects(() =>
+    service.importDesign({
+      churchId: "church-1",
+      designId: "DAF_design_1",
+      pages: [1, 2],
+      format: "png",
+    }),
+  );
+  assert.deepEqual(destroyed, ["worship-sync/canva/church-1/page-1"]);
+  assert.deepEqual(
+    destroyedCloudinaryPublicIds.map(({ publicId }) => publicId),
+    destroyed,
+  );
 });
 
 test("Canva getDesign explains that public link access does not grant API access on 403", async () => {
@@ -1461,6 +1521,36 @@ test("Canva imports a page again after the design revision changes", async () =>
     result.assets[0].data.canvaImportKey,
     "canva:DAF_design_1:rev:101:png:1",
   );
+});
+
+test("Canva refresh charges the replacement through the shared provider quota ledger", async () => {
+  const records = [];
+  const { service } = await createConnectedService({
+    designUpdatedAt: 101,
+    storageQuota: {
+      recordProviderAsset: async (entry) => records.push(entry),
+    },
+  });
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1],
+    format: "png",
+    replacementAssets: [{
+      provider: "cloudinaryBytes",
+      assetId: "old-page-image",
+      revision: 100,
+      pageNumbers: [1],
+    }],
+  });
+  assert.equal(result.assets.length, 1);
+  assert.deepEqual(records, [{
+    churchId: "church-1",
+    provider: "cloudinaryBytes",
+    assetId: "worship-sync/canva/church-1/page-1",
+    amount: 321,
+    replaceAssetIds: ["old-page-image"],
+  }]);
 });
 
 test("Canva refuses connection setup when server credentials are missing", async () => {

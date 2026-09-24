@@ -10,12 +10,17 @@ import {
   keepBrowserDesktopShare,
   stopAllBrowserDesktopShares,
 } from "./desktopCapture";
+import {
+  __getLocalVideoDiagnosticsForTests,
+  __resetLocalVideoDiagnosticsForTests,
+} from "./localVideoDiagnostics";
 
 const videoStop = jest.fn();
 const audioStop = jest.fn();
 const videoTrack = {
   stop: videoStop,
   addEventListener: jest.fn(),
+  getSettings: jest.fn(() => ({ width: 1_280, height: 720, frameRate: 59.94 })),
 };
 const audioTrack = {
   stop: audioStop,
@@ -61,6 +66,8 @@ describe("localVideoCapturePool", () => {
   afterEach(async () => {
     await resetAllWarmLocalVideoCaptures();
     stopAllBrowserDesktopShares();
+    localStorage.removeItem("worshipsync_local_video_debug");
+    __resetLocalVideoDiagnosticsForTests();
   });
 
   it("reuses one persistent capture for repeated consumers", async () => {
@@ -86,6 +93,16 @@ describe("localVideoCapturePool", () => {
       },
     });
     expect(videoStream.addTrack).toHaveBeenCalledWith(audioTrack);
+  });
+
+  it("records the negotiated capture settings from the video track", async () => {
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+
+    await acquireWarmLocalVideoCapture("source-1", binding);
+
+    expect(
+      __getLocalVideoDiagnosticsForTests().get("source-1")?.capture?.settings,
+    ).toEqual({ width: 1_280, height: 720, frameRate: 59.94 });
   });
 
   it("deduplicates logical sources linked to the same physical input", async () => {

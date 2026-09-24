@@ -1,7 +1,10 @@
 import type {
   TeamRecord,
   TeamIntakeForm,
+  TeamIntakeRecipient,
   TeamIntakeSubmission,
+  SmsDeliveryAttempt,
+  SmsMemberEligibility,
   TeamPosition,
   TeamQualificationArea,
   TeamQualificationLevel,
@@ -30,11 +33,14 @@ export type TeamsData = {
   schedules: (TeamSchedule | TeamScheduleSummary)[];
   intakeForms: TeamIntakeForm[];
   intakeSubmissions: TeamIntakeSubmission[];
+  intakeRecipients: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
 };
 
 export type TeamsScheduleDrafts = Record<string, TeamSchedulePayload>;
 
-export type TeamsDataKey = Exclude<keyof TeamsData, "services">;
+export type TeamsDataKey = Exclude<keyof TeamsData, "services" | "smsEligibilityByMemberId">;
 
 export type TeamsTab =
   | "schedule"

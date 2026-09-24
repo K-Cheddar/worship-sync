@@ -347,6 +347,62 @@ test("public service plan snapshot exposes sanitized song and scripture labels",
   assert.equal(JSON.stringify(snapshot).includes("private lyrics"), false);
 });
 
+test("public service plan snapshot exposes sanitized non-song resources", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          resources: [
+            {
+              id: "private-url-resource",
+              type: "url",
+              title: "Rehearsal video",
+              url: "https://example.com/rehearsal",
+              data: { internal: "do not expose" },
+            },
+            {
+              id: "private-text-resource",
+              type: "text",
+              title: "Call notes",
+              data: { text: "Bring the spare cable.", internal: "do not expose" },
+            },
+            {
+              id: "private-generic-resource",
+              type: "generic",
+              title: "Other resource",
+              url: "ftp://example.com/private",
+              data: { notes: "Check the side entrance." },
+            },
+          ],
+        }],
+      }],
+    },
+  });
+
+  assert.deepEqual(snapshot.service.sections[0].items[0].resources, [
+    {
+      type: "url",
+      title: "Rehearsal video",
+      url: "https://example.com/rehearsal",
+    },
+    {
+      type: "text",
+      title: "Call notes",
+      detail: "Bring the spare cable.",
+    },
+    {
+      type: "generic",
+      title: "Other resource",
+      detail: "Check the side entrance.",
+    },
+  ]);
+  assert.equal(JSON.stringify(snapshot).includes("private-url-resource"), false);
+  assert.equal(JSON.stringify(snapshot).includes("do not expose"), false);
+});
+
 test("public snapshots preserve a server-anchored live timeline", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan: {
@@ -567,7 +623,17 @@ test("public snapshots can carry the church secondary brand color", () => {
 
 test("general snapshots contain credits but never operational notes", () => {
   const snapshot = buildPublicServicePlanSnapshot({
-    plan: { ...plan, publicGeneralLinkToken: "general-share-token" },
+    plan: {
+      ...plan,
+      publicGeneralLinkToken: "general-share-token",
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          resources: [{ id: "resource-1", type: "url", title: "Private link", url: "https://example.com/private" }],
+        }],
+      }],
+    },
     viewMode: "general",
     shareId: "general-share-token",
   });
@@ -577,6 +643,7 @@ test("general snapshots contain credits but never operational notes", () => {
   assert.deepEqual(item.notes, { blocks: [] });
   assert.deepEqual(item.teamNotes, []);
   assert.deepEqual(item.microphoneAssignments, []);
+  assert.equal(item.resources, undefined);
   assert.equal(item.creditName, "Jamie Rivera");
   assert.equal(item.assignedMemberId, undefined);
 });

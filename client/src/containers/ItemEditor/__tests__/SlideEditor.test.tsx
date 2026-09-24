@@ -48,7 +48,12 @@ jest.mock("../../../hooks", () => ({
 }));
 
 jest.mock("../../../context/activeController", () => ({
-  useActiveControllerProfile: () => ({ type: mockActiveControllerType }),
+  useActiveControllerProfile: () => ({
+    id: "presentation",
+    name: "Presentation",
+    type: mockActiveControllerType,
+    outlineScope: "presentation",
+  }),
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
@@ -300,6 +305,12 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
         preferences: {
           shouldShowItemEditor: true,
           toolbarSection: "settings",
+        },
+        itemLists: {
+          currentLists: [],
+          selectedIdByScope: {},
+          scope: "presentation",
+          selectedList: null,
         },
       },
     },

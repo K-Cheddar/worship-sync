@@ -8,6 +8,7 @@ import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImpor
 import { ensureElementInView } from "../../utils/generalUtils";
 import {
   advanceServicePlanningSyncStep,
+  cancelServicePlanningSync,
   completeServicePlanningSync,
   failServicePlanningSync,
   finishServicePlanningSyncCancellation,
@@ -25,9 +26,9 @@ import type { ExecutableOverlaySyncPlanItem } from "../../hooks/useServicePlanni
 import type { ServicePlanningOutlineSyncStep } from "../../utils/servicePlanningOutlineImport";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
+import { useActiveControllerId, useControllerBasePath } from "../../context/activeController";
 
 const STEP_DELAY_MS = 300;
-const OVERLAYS_ROUTE = "/controller/overlays";
 // Scroll containers the synced rows live in, so each change can be scrolled
 // into view before the runner advances to the next step.
 const OUTLINE_LIST_CONTAINER_ID = "service-items-list";
@@ -35,6 +36,7 @@ const OVERLAYS_LIST_CONTAINER_ID = "overlays-list";
 
 type PreparedSyncRun = {
   runId: number;
+  controllerId: string;
   outlineSteps: ServicePlanningOutlineSyncStep[];
   overlaySteps: ExecutableOverlaySyncPlanItem[];
   targetOutlineId?: string;
@@ -100,11 +102,17 @@ const buildSyncSummaryMessage = (sync: ServicePlanningSyncSummary): string => {
   return parts.length > 0 ? parts.join(", ") : "no changes were needed";
 };
 
-export const useServicePlanningSyncRunner = () => {
+export const useServicePlanningSyncRunner = ({
+  allowOverlaySync = true,
+}: {
+  allowOverlaySync?: boolean;
+} = {}) => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const navigate = useNavigate();
   const location = useLocation();
+  const activeControllerId = useActiveControllerId();
+  const controllerBasePath = useControllerBasePath();
   const { showToast, removeToast } = useToast();
   const { db } = useContext(ControllerInfoContext) || {};
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
@@ -131,14 +139,36 @@ export const useServicePlanningSyncRunner = () => {
   // Overlay ids touched/created this run; passed to the executor so an
   // already-existing overlay is reused instead of duplicated.
   const overlayClaimedIdsRef = useRef<Set<string>>(new Set());
+  const isMountedRef = useRef(false);
+  const activeControllerIdRef = useRef(activeControllerId);
+  activeControllerIdRef.current = activeControllerId;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      const currentSync = store.getState().servicePlanningImport.sync;
+      if (currentSync.status === "running") {
+        dispatch(cancelServicePlanningSync());
+      }
+    };
+  }, [dispatch, store]);
 
   const overlayRouteReady = useMemo(
-    () => location.pathname === OVERLAYS_ROUTE,
-    [location.pathname],
+    () => location.pathname === `${controllerBasePath}/overlays`,
+    [controllerBasePath, location.pathname],
   );
 
   useEffect(() => {
     if (sync.status !== "running") return;
+    if (!allowOverlaySync && sync.mode !== "outline") {
+      dispatch(
+        failServicePlanningSync(
+          "Overlay sync is only available on the presentation controller.",
+        ),
+      );
+      return;
+    }
     if (!preview) {
       dispatch(
         failServicePlanningSync("Load a Service Planning preview before syncing."),
@@ -182,6 +212,7 @@ export const useServicePlanningSyncRunner = () => {
 
     preparedRunRef.current = {
       runId: sync.runId,
+      controllerId: activeControllerId,
       outlineSteps,
       overlaySteps: overlayPlanning.steps,
       targetOutlineId,
@@ -207,6 +238,8 @@ export const useServicePlanningSyncRunner = () => {
     planSyncItemsInOrder,
     planOverlaySyncSteps,
     preview,
+    allowOverlaySync,
+    activeControllerId,
     sync.mode,
     sync.runId,
     sync.status,
@@ -228,7 +261,10 @@ export const useServicePlanningSyncRunner = () => {
       const current = store.getState().servicePlanningImport.sync;
       return current.runId === run.runId ? current.status : null;
     };
-    const isRunActive = () => getActiveRunStatus() === "running";
+    const isRunActive = () =>
+      isMountedRef.current &&
+      run.controllerId === activeControllerIdRef.current &&
+      getActiveRunStatus() === "running";
     const finishCancellationIfRequested = () => {
       if (getActiveRunStatus() !== "cancelling") return false;
       dispatch(finishServicePlanningSyncCancellation());
@@ -255,6 +291,7 @@ export const useServicePlanningSyncRunner = () => {
           run.targetOutlineId,
           binding,
         );
+        if (!isRunActive()) return;
         linkedOutlineRunIdRef.current = run.runId;
         dispatch(setServicePlanningOutlinePlanBinding(binding));
       } catch (error) {
@@ -287,7 +324,7 @@ export const useServicePlanningSyncRunner = () => {
             if (sync.mode === "both" && overlayStepCount > 0) {
               dispatch(setServicePlanningSyncPhase("overlays"));
               if (!overlayRouteReady) {
-                navigate(OVERLAYS_ROUTE);
+                navigate(`${controllerBasePath}/overlays`);
               }
             } else {
               dispatch(completeServicePlanningSync());
@@ -330,7 +367,7 @@ export const useServicePlanningSyncRunner = () => {
 
         if (sync.phase === "overlays") {
           if (!overlayRouteReady) {
-            navigate(OVERLAYS_ROUTE);
+            navigate(`${controllerBasePath}/overlays`);
             return;
           }
 
@@ -409,6 +446,7 @@ export const useServicePlanningSyncRunner = () => {
     executeOutlineSyncStep,
     executeOverlaySyncStep,
     navigate,
+    controllerBasePath,
     overlayRouteReady,
     store,
     sync.currentStep,

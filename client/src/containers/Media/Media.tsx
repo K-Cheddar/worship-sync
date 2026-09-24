@@ -98,6 +98,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     useState<LocalVideoInputMediaSource>();
   const [videoInputMode, setVideoInputMode] =
     useState<LocalVideoCaptureMode>("device");
+  const storageUsageRefreshRef = useRef<() => void>(() => undefined);
+  const notifyStorageUsageChanged = useCallback(
+    () => storageUsageRefreshRef.current(),
+    [],
+  );
+  const registerStorageUsageRefresh = useCallback((refresh: () => void) => {
+    storageUsageRefreshRef.current = refresh;
+  }, []);
   const openCanva = useCallback((sourceMedia?: MediaType) => {
     setCanvaSourceMedia(sourceMedia || null);
     setIsCanvaImportOpen(true);
@@ -122,6 +130,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     pageMode,
     onManageCanvaSource: canvaOauthConfigured ? openCanva : undefined,
     onRelinkVideoInput: relinkVideoInput,
+    onStorageUsageChanged: notifyStorageUsageChanged,
   });
   const { showAll, navigateToFolder } = c;
   const handleDroppedFiles = useCallback(
@@ -339,6 +348,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           showButton={false}
           uploadPreset="bpqu4ma5"
           onUploadActiveChange={c.handleUploadActiveChange}
+          onUploadComplete={notifyStorageUsageChanged}
           uploadDisabled={c.isMediaReadOnly}
         />
         {isVideoInputOpen ? (
@@ -585,6 +595,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
           mediaUploadDisabled={c.isMediaReadOnly}
           isGuestSession={c.isGuestSession}
+          onStorageUsageRefreshReady={registerStorageUsageRefresh}
+          onStorageUsageChanged={notifyStorageUsageChanged}
         />
         {canvaOauthConfigured ? (
           <CanvaImportSheet
@@ -593,10 +605,25 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               setIsCanvaImportOpen(open);
               if (!open) setCanvaSourceMedia(null);
             }}
-            onImageComplete={c.addNewBackground}
-            onVideoComplete={c.addMuxVideo}
-            onImageRefresh={c.refreshCanvaImage}
-            onVideoRefresh={c.refreshCanvaVideo}
+            onImageComplete={(info) => {
+              const media = c.addNewBackground(info);
+              if (media) notifyStorageUsageChanged();
+              return media;
+            }}
+            onVideoComplete={(info) => {
+              const media = c.addMuxVideo(info);
+              if (media) notifyStorageUsageChanged();
+              return media;
+            }}
+            onImageRefresh={async (...args) => {
+              await c.refreshCanvaImage(...args);
+              notifyStorageUsageChanged();
+            }}
+            onVideoRefresh={async (...args) => {
+              await c.refreshCanvaVideo(...args);
+              notifyStorageUsageChanged();
+            }}
+            onUnprocessedAssetCleanup={c.cleanupCanvaAsset}
             onCreateDeckItem={c.createCanvaDeckItemFromMedia}
             existingMedia={c.list}
             sourceMedia={canvaSourceMedia}

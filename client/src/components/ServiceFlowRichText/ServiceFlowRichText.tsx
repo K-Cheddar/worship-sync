@@ -48,7 +48,7 @@ const blockText = (block: ServiceFlowBlock, blockIndex: number) => {
   const sizeClass = SIZE_CLASS[block.size ?? "normal"];
   return (
     <p
-      className={`whitespace-pre-wrap ${sizeClass}`}
+      className={`break-words whitespace-pre-wrap ${sizeClass}`}
       style={style}
     >
       {block.spans.length ? spanContents(block.spans, blockIndex) : <br aria-hidden />}

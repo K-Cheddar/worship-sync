@@ -11,6 +11,11 @@ import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
+import {
+  formatUsPhoneInput,
+  formatUsPhoneNumber,
+} from "../../../utils/phoneNumber";
+import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -34,6 +39,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
 } from "../../../api/authTypes";
+import type { MenuItemType } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import {
@@ -127,6 +133,7 @@ const buildMemberDraft = (
   firstName: member?.firstName || "",
   lastName: member?.lastName || "",
   email: member?.email || "",
+  phoneNumber: formatUsPhoneNumber(member?.phoneNumber),
   birthDate: member?.birthDate || null,
   isMinor: Boolean(member?.isMinor),
   servingFrequency: member?.servingFrequency || DEFAULT_SERVING_FREQUENCY,
@@ -555,6 +562,23 @@ const MemberManager = ({
     }
   };
 
+  const copySmsOptInLink = async () => {
+    if (!navigator.clipboard?.writeText) {
+      showToast("Couldn't copy the SMS opt-in link.", "error");
+      return;
+    }
+
+    try {
+      const url = buildShareablePublicPathUrl(
+        `/sms-opt-in/${encodeURIComponent(churchId)}`,
+      );
+      await navigator.clipboard.writeText(url);
+      showToast("SMS opt-in link copied.");
+    } catch {
+      showToast("Couldn't copy the SMS opt-in link.", "error");
+    }
+  };
+
   /**
    * Claims or releases this member record for the signed-in account.
    *
@@ -683,6 +707,7 @@ const MemberManager = ({
         firstName: body.firstName.trim(),
         lastName: body.lastName.trim(),
         email: (body.email || "").trim().toLowerCase(),
+        phoneNumber: (body.phoneNumber || "").trim(),
         birthDate: body.birthDate || null,
         isMinor: Boolean(body.isMinor),
         servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
@@ -724,7 +749,7 @@ const MemberManager = ({
           ? previousProfileImagePublicId
           : "";
       if (profileImagePublicIdToDelete) {
-        void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image");
+        void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image", churchId);
       }
       if (!profileImageUploadFailed) {
         setPendingProfileImage(null);
@@ -772,7 +797,7 @@ const MemberManager = ({
       }
     } catch (error) {
       if (uploadedProfileImagePublicId) {
-        void deleteCloudinaryAsset(uploadedProfileImagePublicId, "image");
+        void deleteCloudinaryAsset(uploadedProfileImagePublicId, "image", churchId);
       }
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
@@ -1131,6 +1156,24 @@ const MemberManager = ({
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
+                  additionalItems={[
+                    {
+                      text: "Copy SMS opt-in link",
+                      onClick: () => void copySmsOptInLink(),
+                    },
+                    {
+                      text: "Open SMS opt-in page",
+                      onClick: () => {
+                        window.open(
+                          buildShareablePublicPathUrl(
+                            `/sms-opt-in/${encodeURIComponent(churchId)}`,
+                          ),
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      },
+                    },
+                  ] satisfies MenuItemType[]}
                   onArchive={
                     editing.archivedAt
                       ? undefined
@@ -1216,7 +1259,7 @@ const MemberManager = ({
               </span>
             </div>
           ) : (
-            <Input
+              <Input
               label="Email"
               type="email"
               value={draft.email || ""}
@@ -1226,6 +1269,19 @@ const MemberManager = ({
               }
             />
           )}
+          <Input
+            label="Mobile"
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            value={draft.phoneNumber || ""}
+            onChange={(phoneNumber) =>
+              setDraft((d) => ({
+                ...d,
+                phoneNumber: formatUsPhoneInput(String(phoneNumber)),
+              }))
+            }
+          />
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet

@@ -315,6 +315,7 @@ export const convertCloudinaryImageToLocalWebp = async (
   file: File,
   uploadPreset: string,
   callbacks: CloudinaryUploadCallbacks = {},
+  churchId?: string,
 ): Promise<File> => {
   let temporaryAsset: mediaInfoType | undefined;
   let operationFailed = false;
@@ -328,7 +329,7 @@ export const convertCloudinaryImageToLocalWebp = async (
         ...callbacks,
         onProgress: (progress) => callbacks.onProgress?.(progress * 0.5),
       },
-      { folder: "temporary-conversions" },
+      { folder: `temporary-conversions/${encodeURIComponent(churchId || "unscoped")}` },
     );
     callbacks.onStatusUpdate?.("Downloading converted image...");
     const baseName = file.name.replace(/\.[^/.]+$/, "") || "converted-image";
@@ -345,8 +346,9 @@ export const convertCloudinaryImageToLocalWebp = async (
       const deleted = await deleteCloudinaryAsset(
         temporaryAsset.public_id,
         "image",
+        churchId,
       );
-      if (!deleted && !operationFailed) {
+      if (churchId && !deleted && !operationFailed) {
         throw new Error("The temporary cloud image could not be removed.");
       }
       if (!deleted) {

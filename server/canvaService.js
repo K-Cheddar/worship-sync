@@ -1,4 +1,8 @@
 import crypto from "node:crypto";
+import {
+  getCloudinaryAssetBytes,
+  getMuxStoredMinutes,
+} from "./churchStorageQuota.js";
 
 const TOKEN_COLLECTION = "canvaTokens";
 const STATE_COLLECTION = "canvaOauthStates";
@@ -155,6 +159,7 @@ export const createCanvaService = ({
   httpClient,
   cloudinaryClient,
   getMuxClient,
+  storageQuota,
   clientId = process.env.CANVA_CLIENT_ID,
   clientSecret = process.env.CANVA_CLIENT_SECRET,
   tokenEncryptionKey = process.env.CANVA_TOKEN_ENCRYPTION_KEY,
@@ -863,6 +868,7 @@ export const createCanvaService = ({
     format,
     mp4ImportMode = "combined",
     existingImportKeys,
+    replacementAssets,
     onProgress,
     isCancelled,
   }) => {
@@ -964,10 +970,42 @@ export const createCanvaService = ({
       Number(design.thumbnail?.height || 0) >
       Number(design.thumbnail?.width || 0);
     const assets = [];
+    const createdCloudinaryPublicIds = new Set();
+    const committedCloudinaryPublicIds = new Set();
+    let cleanupCreatedCloudinaryAssets = null;
     let cleanupCreatedMuxAssets = null;
     const committedMuxAssetIds = new Set();
+    const accountedCloudinaryAssets = new Set();
+    const accountedMuxAssets = new Set();
     try {
       if (format === "png") {
+      const destroyCloudinaryAsset = cloudinaryClient?.uploader?.destroy;
+      cleanupCreatedCloudinaryAssets = async () => {
+        if (typeof destroyCloudinaryAsset !== "function") return;
+        for (const publicId of [...createdCloudinaryPublicIds].filter(
+          (id) => !committedCloudinaryPublicIds.has(id),
+        )) {
+          try {
+            await destroyCloudinaryAsset.call(cloudinaryClient.uploader, publicId, {
+              resource_type: "image",
+              invalidate: true,
+            });
+            if (accountedCloudinaryAssets.has(publicId)) {
+              await storageQuota?.removeProviderAsset({
+                churchId,
+                provider: "cloudinaryBytes",
+                assetId: publicId,
+              });
+              accountedCloudinaryAssets.delete(publicId);
+            }
+          } catch (error) {
+            console.warn("Could not remove failed Canva Cloudinary asset:", {
+              publicId,
+              error,
+            });
+          }
+        }
+      };
       for (const pageNumber of selectedPages) {
         await importPageProgress(pageNumber, "waiting");
         await importPageProgress(pageNumber, "exporting");
@@ -1072,6 +1110,9 @@ export const createCanvaService = ({
           });
           throw error;
         }
+        if (uploaded?.public_id) {
+          createdCloudinaryPublicIds.add(uploaded.public_id);
+        }
         assets.push({
           kind: "image",
           data: {
@@ -1116,6 +1157,14 @@ export const createCanvaService = ({
           async (assetId) => {
             try {
               await deleteAsset.call(mux.video.assets, assetId);
+              if (accountedMuxAssets.has(assetId)) {
+                await storageQuota?.removeProviderAsset({
+                  churchId,
+                  provider: "muxMinutes",
+                  assetId,
+                });
+                accountedMuxAssets.delete(assetId);
+              }
             } catch (error) {
               console.warn("Could not remove failed Canva Mux asset:", {
                 assetId,
@@ -1197,6 +1246,7 @@ export const createCanvaService = ({
           data: {
             playbackId,
             assetId: ready.id,
+            duration: ready.duration,
             playbackUrl: `https://stream.mux.com/${playbackId}.m3u8`,
             thumbnailUrl: `https://image.mux.com/${playbackId}/thumbnail.jpg`,
             name:
@@ -1366,7 +1416,51 @@ export const createCanvaService = ({
       }
       }
       await emitProgress({ type: "finalizing" });
+      for (const asset of assets) {
+        const replacement = (Array.isArray(replacementAssets) ? replacementAssets : [])
+          .filter((candidate) =>
+            candidate?.provider === (asset.kind === "image" ? "cloudinaryBytes" : "muxMinutes") &&
+            Number(candidate.revision) < revision &&
+            Array.isArray(candidate.pageNumbers) &&
+            [...candidate.pageNumbers].map(Number).sort((a, b) => a - b).join(",") ===
+              [...(asset.data.canvaSource?.pageNumbers || [])].map(Number).sort((a, b) => a - b).join(","),
+          )
+          .sort((left, right) =>
+            Number(Boolean(right.preferred)) - Number(Boolean(left.preferred)) ||
+            Number(right.revision) - Number(left.revision),
+          )[0];
+        if (asset.kind === "image" && asset.data.public_id) {
+          const bytes = getCloudinaryAssetBytes(asset.data);
+          if (bytes > 0) {
+            await storageQuota?.recordProviderAsset({
+              churchId,
+              provider: "cloudinaryBytes",
+              assetId: asset.data.public_id,
+              amount: bytes,
+              replaceAssetIds: replacement ? [replacement.assetId] : [],
+            });
+            accountedCloudinaryAssets.add(asset.data.public_id);
+          }
+        } else if (asset.kind === "video" && asset.data.assetId) {
+          const minutes = getMuxStoredMinutes(asset.data);
+          if (minutes > 0) {
+            await storageQuota?.recordProviderAsset({
+              churchId,
+              provider: "muxMinutes",
+              assetId: asset.data.assetId,
+              amount: minutes,
+              replaceAssetIds: replacement ? [replacement.assetId] : [],
+            });
+            accountedMuxAssets.add(asset.data.assetId);
+          }
+        }
+      }
       await updateStatus(churchId, { lastImportedAt: now(), lastError: "" });
+      for (const asset of assets) {
+        if (asset.kind === "image" && asset.data.public_id) {
+          committedCloudinaryPublicIds.add(asset.data.public_id);
+        }
+      }
       for (const asset of assets) {
         if (asset.kind === "video" && asset.data.assetId) {
           committedMuxAssetIds.add(asset.data.assetId);
@@ -1374,6 +1468,7 @@ export const createCanvaService = ({
       }
       return { assets, skippedCount, revision };
     } catch (error) {
+      await cleanupCreatedCloudinaryAssets?.();
       await cleanupCreatedMuxAssets?.();
       throw error;
     }

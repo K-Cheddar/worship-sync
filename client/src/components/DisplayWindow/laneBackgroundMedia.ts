@@ -140,6 +140,11 @@ export const resolveLaneBackgroundMedia = ({
   };
 };
 
+/** Identity shared with the Electron preparation pool and playback cues. */
+export const getLanePreparedMediaKey = (
+  media: LaneBackgroundMedia | undefined,
+): string => (media?.kind === "fileVideo" ? media.mediaKey : "none");
+
 const getVideoFallbackImage = (url: string): string | undefined => {
   if (!url) return undefined;
   if (

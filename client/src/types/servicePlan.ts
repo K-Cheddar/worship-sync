@@ -105,6 +105,14 @@ export type ServicePlanAssignee = {
   microphoneIds?: string[];
 };
 
+/** Structured source assignment retained when an importer can distinguish a
+ * person from a Planning Center team position. */
+export type ServicePlanSourceLedByAssignment = {
+  kind: "person" | "teamPosition";
+  id?: string;
+  name: string;
+};
+
 /**
  * Either a link to a real song already in the presentation-controller library,
  * or a not-yet-created song captured as raw lyrics text. The "pending" case
@@ -129,6 +137,40 @@ export type ServicePlanScriptureReference = {
   chapter: string;
   verseRange: string;
   version: string;
+};
+
+export type ServicePlanContentResourceType =
+  | "song"
+  | "scripture"
+  | "youtube"
+  | "audio"
+  | "document"
+  | "url"
+  | "text"
+  | "generic";
+
+export type ServicePlanContentResourceMetadata = {
+  subtitle?: string;
+  duration?: number;
+  thumbnailUrl?: string;
+  mimeType?: string;
+};
+
+/**
+ * Extensible content attached to a service-plan element. The `data` payload is
+ * intentionally open so a future provider can add a small reference without
+ * another service-plan element field. Legacy songs and scriptures are exposed
+ * as virtual resources by getServicePlanElementContentResources below.
+ */
+export type ServicePlanContentResource = {
+  id: string;
+  type: ServicePlanContentResourceType | (string & {});
+  title: string;
+  url?: string;
+  provider?: string;
+  mediaId?: string;
+  data?: Record<string, unknown>;
+  metadata?: ServicePlanContentResourceMetadata;
 };
 
 export type ServicePlanElement = {
@@ -168,6 +210,8 @@ export type ServicePlanElement = {
   scriptureRef?: ServicePlanScriptureReference;
   /** Scripture passages read during this element, in presentation order. */
   scriptureRefs?: ServicePlanScriptureReference[];
+  /** New extensible attachments. Legacy song/scripture fields remain readable. */
+  resources?: ServicePlanContentResource[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
   /**
@@ -183,6 +227,8 @@ export type ServicePlanElement = {
   scheduledPositionIds?: string[];
   /** Raw scraped "led by" text, kept for traceability and re-import diffing. */
   sourceLedByRaw?: string;
+  /** Structured source assignment data, when the importer supplied it. */
+  sourceLedByAssignments?: ServicePlanSourceLedByAssignment[];
   /**
    * Raw scraped element-type text (e.g. "Scripture Reading", "Worship Set").
    * The source column is free text, and `type` above is a lossy derived enum,
@@ -192,6 +238,8 @@ export type ServicePlanElement = {
    * operator-created elements and on plans imported before this was stored.
    */
   sourceElementTypeRaw?: string;
+  /** Raw attached content title retained independently of the element label. */
+  sourceContentTitleRaw?: string;
   /**
    * The source classified this row as a song, but an operator explicitly
    * removed its inferred attachment. Keep the raw source value for refreshes
@@ -241,6 +289,73 @@ export const getServicePlanElementScriptureRefs = (
     : element.scriptureRef
       ? [element.scriptureRef]
       : [];
+
+const resourceDataString = (
+  resource: ServicePlanContentResource,
+  key: string,
+): string | undefined => {
+  const value = resource.data?.[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+};
+
+/**
+ * Returns one ordered view of all attached content. Existing song/scripture
+ * fields are intentionally projected into this view instead of being
+ * destructively migrated, so older plans remain editable and presentable.
+ */
+export const getServicePlanElementContentResources = (
+  element: Pick<
+    ServicePlanElement,
+    | "resources"
+    | "songRef"
+    | "songRefs"
+    | "scriptureRef"
+    | "scriptureRefs"
+  >,
+): ServicePlanContentResource[] => {
+  const resources = [...(element.resources || [])];
+  const songResources = resources.filter((resource) => resource.type === "song");
+  const scriptureResources = resources.filter(
+    (resource) => resource.type === "scripture",
+  );
+  const hasSongReference = (songRef: ServicePlanSongReference) =>
+    songRef.kind === "library" &&
+    songResources.some(
+      (resource) => {
+        const storedSongRef = resource.data?.songRef;
+        const storedSongId =
+          storedSongRef && typeof storedSongRef === "object"
+            ? (storedSongRef as { songId?: unknown }).songId
+            : resourceDataString(resource, "songId");
+        return storedSongId === songRef.songId;
+      },
+    );
+  const hasScriptureReference = (scripture: ServicePlanScriptureReference) =>
+    scriptureResources.some(
+      (resource) => resourceDataString(resource, "label") === scripture.label,
+    );
+
+  const legacyResources: ServicePlanContentResource[] = [];
+  getServicePlanElementSongRefs(element).forEach((songRef, index) => {
+    if (hasSongReference(songRef)) return;
+    legacyResources.push({
+      id: `legacy-song-${index}-${songRef.kind}`,
+      type: "song",
+      title: songRef.kind === "pending" ? songRef.title : songRef.songName,
+      data: { songRef },
+    });
+  });
+  getServicePlanElementScriptureRefs(element).forEach((scripture, index) => {
+    if (hasScriptureReference(scripture)) return;
+    legacyResources.push({
+      id: `legacy-scripture-${index}`,
+      type: "scripture",
+      title: scripture.label,
+      data: { scripture },
+    });
+  });
+  return [...legacyResources, ...resources];
+};
 
 /**
  * Every assignee on an element, in operator order.

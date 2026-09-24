@@ -176,8 +176,8 @@ export type BuildServicePlanningPreviewInput = {
   servicePlanning: ServicePlanningConfig;
   /** Current overlays list, used to decide update vs clone vs create. */
   overlays: OverlayInfo[];
-  /** Full library, used to match planning titles to song docs. */
-  allItems: ServiceItem[];
+  /** Canonical merged song library, used to match planning titles to songs. */
+  songLibrary: ServiceItem[];
   /** The live outline, used to flag rows already present. */
   activeOutlineList: ServiceItem[];
   /**
@@ -192,7 +192,7 @@ export const buildServicePlanningPreview = ({
   importData,
   servicePlanning: sp,
   overlays,
-  allItems,
+  songLibrary,
   activeOutlineList,
   teamAssignments,
 }: BuildServicePlanningPreviewInput): ServicePlanningPreview => {
@@ -332,7 +332,7 @@ export const buildServicePlanningPreview = ({
     overlayReadyByRow.set(block.source, allCandidatesResolvable);
   }
 
-  const songs = allItems.filter((item) => item.type === "song");
+  const songs = songLibrary;
   const outlineCandidates: OutlineItemCandidate[] = [];
   const lineItems: ServicePlanningLineItem[] = [];
 
@@ -360,10 +360,11 @@ export const buildServicePlanningPreview = ({
         : elementRule?.outlineSync?.itemType ?? "none";
       let matchedLibraryItem: ServiceItem | null = null;
       let parsedRefs: ParsedBibleRef[] = [];
-      // A plan-sourced row names its song directly; a scraped one only has the
-      // row title, which can also carry the element type or a second line.
+      // A plan-sourced row names its song/content directly. Legacy scraped rows
+      // still use title as the content fallback, which can carry the element
+      // type or a second line.
       const cleanedTitle = cleanPlanningTitle(
-        row.songTitle || row.title || row.elementType,
+        row.songTitle || row.contentTitle || row.title || row.elementType,
       );
 
       if (outlineItemType === "song") {
@@ -376,7 +377,7 @@ export const buildServicePlanningPreview = ({
       } else if (outlineItemType === "bible") {
         const parsedTitleRef = attachedScriptureRefs.length
           ? null
-          : parseBibleReference(row.title);
+          : parseBibleReference(row.contentTitle || row.title);
         parsedRefs = attachedScriptureRefs.length
           ? attachedScriptureRefs.map(({ book, chapter, verseRange, version }) => ({
               book,
@@ -395,8 +396,12 @@ export const buildServicePlanningPreview = ({
         sourceRowIndex,
         elementType: row.elementType,
         title: row.title,
+        ...(row.contentTitle ? { contentTitle: row.contentTitle } : {}),
         cleanedTitle,
         ledBy: row.ledBy,
+        ...(row.ledByAssignments?.length
+          ? { ledByAssignments: row.ledByAssignments }
+          : {}),
         ...(row.assigneeNames?.length ? { assigneeNames: row.assigneeNames } : {}),
         ...(row.songRefs?.length
           ? {

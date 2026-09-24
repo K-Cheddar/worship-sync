@@ -34,14 +34,16 @@ import {
 } from "../../utils/localVideoMediaLibrary";
 import generateRandomId from "../../utils/generateRandomId";
 import {
-  deleteFromCloudinary,
   extractPublicId,
 } from "../../utils/cloudinaryUtils";
-import { getApiBasePath } from "../../utils/environment";
+import {
+  deleteCloudinaryMediaAsset,
+  deleteChurchMuxAsset,
+} from "../../api/providerStorage";
 import {
   setMediaItems,
   setMediaRouteFolder,
-  setFocusMediaId,
+  replaceMediaReferencesInPreferences,
 } from "../../store/preferencesSlice";
 import { getMediaRouteKey } from "../../utils/mediaRouteKey";
 import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
@@ -93,7 +95,11 @@ import {
   updateProjector,
   selectOutputSlot,
 } from "../../store/presentationSlice";
-import { setActiveItem, updateSlides } from "../../store/itemSlice";
+import {
+  replaceMediaReferencesInActiveItem,
+  setActiveItem,
+  updateSlides,
+} from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm } from "../../utils/itemUtil";
@@ -106,12 +112,25 @@ import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
-import { resolveShowInMediaFolderId } from "./resolveShowInMediaTarget";
 import { getCanvaMediaSource } from "./canvaMediaSource";
+import {
+  replaceMediaReferencesForReplacement,
+} from "../../utils/mediaReferenceSweep";
+import { commitCanvaMediaReplacement } from "../../utils/canvaMediaReplacement";
+import {
+  getCanvaProviderCleanupKey,
+  getCanvaProviderIdentity,
+} from "../../utils/canvaProviderCleanup";
+import {
+  mediaFromCanvaAsset,
+  type CanvaImportedAsset,
+} from "../../utils/canvaImportCleanup";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
 import { buildVideoPlaybackCueForSend } from "../../utils/videoBackgroundPlayback";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useMediaLibraryFocus } from "./useMediaLibraryFocus";
+import { replaceMediaReferencesInPresentation as replacePresentationMediaReferences } from "../../store/presentationSlice";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -121,6 +140,7 @@ export type UseMediaLibraryControllerArgs = {
   pageMode?: MediaLibraryPageMode;
   onManageCanvaSource?: (media: MediaType) => void;
   onRelinkVideoInput?: (media: MediaType) => void;
+  onStorageUsageChanged?: () => void;
 };
 
 export function useMediaLibraryController({
@@ -128,6 +148,7 @@ export function useMediaLibraryController({
   pageMode = "default",
   onManageCanvaSource,
   onRelinkVideoInput,
+  onStorageUsageChanged,
 }: UseMediaLibraryControllerArgs = {}) {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -177,7 +198,7 @@ export function useMediaLibraryController({
     updater,
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
-  const { access } = useContext(GlobalInfoContext) || {};
+  const { access, churchId = "" } = useContext(GlobalInfoContext) || {};
 
   const {
     list,
@@ -275,7 +296,7 @@ export function useMediaLibraryController({
   const [showOtherDeviceLocalMedia, setShowOtherDeviceLocalMedia] =
     useState(false);
   const { deviceId, getBarAction: getLocalMediaCloudShareBarAction } =
-    useLocalMediaCloudShare();
+    useLocalMediaCloudShare(onStorageUsageChanged);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
@@ -388,9 +409,6 @@ export function useMediaLibraryController({
     showOtherDeviceLocalMedia,
   ]);
 
-  // Tracks a pending "show in media" focus request across the folder-navigation render cycle.
-  const focusPendingIdRef = useRef<string | null>(null);
-
   // Use shared selection hook
   const {
     selectedMedia,
@@ -424,6 +442,27 @@ export function useMediaLibraryController({
     reconcileSelectionWithMediaList(list);
   }, [list, reconcileSelectionWithMediaList]);
 
+  useMediaLibraryFocus({
+    dispatch,
+    focusMediaId,
+    list,
+    filteredList,
+    isMediaLoading,
+    isMediaExpanded,
+    selectedLibraryFilter,
+    pendingDeletionIds,
+    deviceId,
+    routeKey,
+    mediaGridRef,
+    setSearchTerm,
+    setOriginFilter,
+    setTypeFilter,
+    setShowOtherDeviceLocalMedia,
+    setSelectedMedia,
+    setSelectedMediaIds,
+    setPreviewMedia,
+  });
+
   /** Keep ref in sync immediately — document click runs before useEffect after setState. */
   const setRenamePopoverOpen = useCallback((open: boolean) => {
     mediaRenameOpenRef.current = open;
@@ -434,61 +473,6 @@ export function useMediaLibraryController({
     moveToNewFolderOpenRef.current = open;
     setMoveToNewFolderOpen(open);
   }, []);
-
-  // "Show in Media" — navigate to folder, select item, and scroll to it.
-  useEffect(() => {
-    if (!focusMediaId) return;
-    const mediaItem = list.find((m) => m.id === focusMediaId);
-    if (!mediaItem) {
-      // Keep the request while the library is still loading so a late list
-      // can still resolve the item. Discard only when the library is settled.
-      if (!isMediaLoading) {
-        dispatch(setFocusMediaId(null));
-      }
-      return;
-    }
-
-    dispatch(setFocusMediaId(null));
-    focusPendingIdRef.current = focusMediaId;
-
-    // Clear filters that would hide the target after folder navigation.
-    setSearchTerm("");
-    setOriginFilter("all");
-    setTypeFilter("all");
-    if (!isLocalMediaVisibleByDefault(mediaItem, deviceId)) {
-      setShowOtherDeviceLocalMedia(true);
-    }
-
-    const targetFolder = resolveShowInMediaFolderId(mediaItem);
-    dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
-    setSelectedMedia(mediaItem);
-    setSelectedMediaIds(new Set([mediaItem.id]));
-    setPreviewMedia(mediaItem);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusMediaId, list, isMediaLoading]);
-
-  // After folder navigation re-filters the list, scroll the focused tile into view.
-  useEffect(() => {
-    const pendingId = focusPendingIdRef.current;
-    if (!pendingId) return;
-
-    const mediaItem = list.find((m) => m.id === pendingId);
-    if (!mediaItem) return;
-
-    // Wait until the route folder matches the item so we don't clear the
-    // pending scroll while still on Show all / another folder.
-    const expectedFolder = resolveShowInMediaFolderId(mediaItem);
-    if (selectedLibraryFilter !== expectedFolder) return;
-
-    const idx = filteredList.findIndex((m) => m.id === pendingId);
-    if (idx < 0) return;
-
-    focusPendingIdRef.current = null;
-    // Virtual grid may mount on the same commit as the folder change.
-    requestAnimationFrame(() => {
-      mediaGridRef.current?.scrollToMediaId(pendingId);
-    });
-  }, [filteredList, list, selectedLibraryFilter]);
 
   const handleRenamePopoverOpenChange = useCallback(
     (open: boolean) => {
@@ -1021,60 +1005,126 @@ export function useMediaLibraryController({
   const deleteFromProviders = useCallback(
     async (rows: MediaType[]): Promise<MediaType[]> => {
       const failed: MediaType[] = [];
+      let providerUsageChanged = false;
       for (const row of rows) {
-        if (row.source === "cloudinary") {
-          if (!cloud) {
-            failed.push(row);
-            continue;
-          }
-          let publicId = row.publicId;
-          if (!publicId) {
-            publicId = extractPublicId(row.background) || "";
-          }
-          if (!publicId) continue;
-          const ok = await deleteFromCloudinary(cloud, publicId, row.type);
-          if (!ok) failed.push(row);
-        } else if (row.source === "mux" && row.muxAssetId) {
-          try {
-            const res = await fetch(
-              `${getApiBasePath()}api/mux/asset/${row.muxAssetId}`,
-              { method: "DELETE" },
-            );
-            if (!res.ok) failed.push(row);
-          } catch (error) {
-            console.warn("Error deleting from Mux:", error);
-            failed.push(row);
-          }
-        } else if (row.source === "local") {
-          try {
-            if (row.localImage?.cloudUrl && row.publicId) {
-              if (!cloud) {
-                failed.push(row);
-                continue;
-              }
-              const removedCloudCopy = await deleteFromCloudinary(
-                cloud,
-                row.publicId,
-                "image",
-              );
-              if (!removedCloudCopy) {
-                failed.push(row);
-                continue;
-              }
+        const provider = row.providerStorage?.provider ||
+          (row.localImage?.cloudUrl ? "cloudinary" : "") ||
+          (row.localVideoFile?.cloudMediaId ? "mux" : "") ||
+          row.source;
+        const cloudinaryPublicId =
+          row.providerStorage?.publicId ||
+          (provider === "cloudinary" ? row.publicId : "") ||
+          (row.localImage?.cloudUrl ? row.publicId : "");
+        const muxAssetId =
+          (provider === "mux" ? row.providerStorage?.assetId : "") ||
+          row.muxAssetId ||
+          row.localVideoFile?.cloudMediaId;
+        try {
+          if (provider === "cloudinary") {
+            let publicId = cloudinaryPublicId || extractPublicId(row.background) || "";
+            if (publicId) {
+              if (!churchId) throw new Error("Church session is unavailable.");
+              await deleteCloudinaryMediaAsset(churchId, publicId);
+              providerUsageChanged = true;
             }
+          } else if (provider === "mux" && muxAssetId) {
+            if (!churchId) throw new Error("Church session is unavailable.");
+            await deleteChurchMuxAsset(churchId, muxAssetId);
+            providerUsageChanged = true;
+          }
+          if (row.source === "local") {
             if (row.localImage) await deleteLocalImage(row.localImage.id);
             if (row.localVideoFile) {
               await deleteLocalVideoFile(row.localVideoFile.id);
             }
-          } catch (error) {
-            console.warn("Error deleting local media:", error);
-            failed.push(row);
           }
+        } catch (error) {
+          if (provider === "mux") {
+            console.warn("Error deleting from Mux:", error);
+          } else if (row.source === "local") {
+            console.warn("Error deleting local media:", error);
+          }
+          failed.push(row);
         }
       }
+      if (providerUsageChanged) onStorageUsageChanged?.();
       return failed;
     },
-    [cloud],
+    [churchId, onStorageUsageChanged],
+  );
+
+  const deleteCanvaProvider = useCallback(
+    async (row: MediaType, protectedRow?: MediaType) => {
+      if (
+        protectedRow &&
+        row.source === protectedRow.source &&
+        getCanvaProviderIdentity(row) &&
+        getCanvaProviderIdentity(row) === getCanvaProviderIdentity(protectedRow)
+      ) {
+        return true;
+      }
+      const failed = await deleteFromProviders([row]);
+      return failed.length === 0;
+    },
+    [deleteFromProviders],
+  );
+
+  const showProviderCleanupRetry = useCallback((rows: MediaType[]) => {
+    if (rows.length === 0) return;
+    setProviderRetryRows((current) => {
+      const next = [...current];
+      for (const row of rows) {
+        const key = getCanvaProviderCleanupKey(row);
+        if (!next.some((existing) => getCanvaProviderCleanupKey(existing) === key)) {
+          next.push(row);
+        }
+      }
+      return next;
+    });
+    setShowProviderRetryModal(true);
+  }, []);
+
+  const cleanupCanvaAsset = useCallback(
+    async (asset: CanvaImportedAsset) =>
+      deleteCanvaProvider(mediaFromCanvaAsset(asset)),
+    [deleteCanvaProvider],
+  );
+
+  const commitCanvaReplacement = useCallback(
+    async (oldMedia: MediaType, newMedia: MediaType) => {
+      if (!db) throw new Error("Could not save Canva media replacement.");
+      const folders = currentMediaFoldersRef.current;
+      await commitCanvaMediaReplacement({
+        oldMedia,
+        newMedia,
+        currentList: currentMediaListRef.current,
+        folders,
+        replaceReferences: async (replacement) =>
+          replaceMediaReferencesForReplacement(db, replacement),
+        flushMedia: (nextList, nextFolders) =>
+          flushMediaLibraryDocToPouch(db, nextList, nextFolders),
+        deleteProvider: deleteCanvaProvider,
+        applyList: (nextList, nextFolders) => {
+          currentMediaListRef.current = nextList;
+          dispatch(setMediaListAndFolders({
+            list: nextList,
+            folders: nextFolders,
+          }));
+        },
+        applyLiveReferences: (replacement) => {
+          dispatch(replaceMediaReferencesInActiveItem(replacement));
+          dispatch(replacePresentationMediaReferences(replacement));
+          dispatch(replaceMediaReferencesInPreferences(replacement));
+        },
+        onCleanupFailure: showProviderCleanupRetry,
+      });
+    },
+    [
+      db,
+      deleteCanvaProvider,
+      dispatch,
+      showProviderCleanupRetry,
+    ],
   );
 
   const removeMediaRowsAfterSweep = useCallback(
@@ -1244,7 +1294,6 @@ export function useMediaLibraryController({
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "media") {
-            console.log("updating media list from remote");
             const update = _update as DBMedia;
             const normalized = normalizeMediaDoc(update);
             dispatch(syncMediaFromRemote(normalized));
@@ -1435,6 +1484,7 @@ export function useMediaLibraryController({
   };
 
   const addNewBackground = ({
+    asset_id,
     public_id,
     secure_url,
     playback_url,
@@ -1447,6 +1497,7 @@ export function useMediaLibraryController({
     frame_rate,
     duration,
     is_audio,
+    bytes,
     canvaImportKey,
     canvaSource,
   }: mediaInfoType): MediaType | undefined => {
@@ -1497,6 +1548,14 @@ export function useMediaLibraryController({
       duration,
       hasAudio: is_audio,
       source: "cloudinary",
+      providerStorage: {
+        provider: "cloudinary",
+        assetId: asset_id || public_id,
+        publicId: public_id,
+        churchId,
+        permanent: true,
+        bytes,
+      },
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
       ...(canvaSource ? { canvaSource } : {}),
@@ -1573,6 +1632,7 @@ export function useMediaLibraryController({
   const addMuxVideo = ({
     playbackId,
     assetId,
+    durationSeconds,
     playbackUrl,
     thumbnailUrl,
     name,
@@ -1612,6 +1672,13 @@ export function useMediaLibraryController({
       source: "mux",
       muxPlaybackId: playbackId,
       muxAssetId: assetId,
+      providerStorage: {
+        provider: "mux",
+        assetId,
+        churchId,
+        permanent: true,
+        durationSeconds,
+      },
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
       ...(canvaSource ? { canvaSource } : {}),
@@ -1622,63 +1689,76 @@ export function useMediaLibraryController({
   };
 
   const refreshCanvaImage = useCallback(
-    (info: mediaInfoType, mediaId: string) => {
-      const current = list.find((mediaItem) => mediaItem.id === mediaId);
+    async (info: mediaInfoType, mediaId: string) => {
+      const current = currentMediaListRef.current.find(
+        (mediaItem) => mediaItem.id === mediaId,
+      );
       if (!current || !info.canvaImportKey || !info.canvaSource) return;
       const thumbnail =
         cloud?.image(info.public_id).resize(fill().width(250)).toURL() ||
         info.thumbnail_url ||
         info.secure_url;
-      dispatch(
-        updateMediaItemFields({
-          id: mediaId,
-          patch: {
-            updatedAt: new Date().toISOString(),
-            format: info.format,
-            height: info.height,
-            width: info.width,
-            publicId: info.public_id,
-            type: "image",
-            background: info.secure_url,
-            thumbnail,
-            placeholderImage: "",
-            source: "cloudinary",
-            canvaImportKey: info.canvaImportKey,
-            canvaSource: info.canvaSource,
-          },
-        }),
-      );
+      const nextMedia: MediaType = {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        format: info.format || current.format,
+        height: info.height ?? current.height,
+        width: info.width ?? current.width,
+        publicId: info.public_id || current.publicId,
+        type: "image",
+        background: info.secure_url || current.background,
+        thumbnail: thumbnail || current.thumbnail,
+        placeholderImage: "",
+        source: "cloudinary",
+        providerStorage: {
+          provider: "cloudinary",
+          assetId: info.asset_id || info.public_id,
+          publicId: info.public_id,
+          churchId,
+          permanent: true,
+          bytes: info.bytes,
+        },
+        canvaImportKey: info.canvaImportKey,
+        canvaSource: info.canvaSource,
+      };
+      await commitCanvaReplacement(current, nextMedia);
     },
-    [cloud, dispatch, list],
+    [churchId, cloud, commitCanvaReplacement],
   );
 
   const refreshCanvaVideo = useCallback(
-    (info: MuxUploadResult, mediaId: string) => {
-      const current = list.find((mediaItem) => mediaItem.id === mediaId);
-      if (!current || !info.canvaImportKey || !info.canvaSource) return;
-      dispatch(
-        updateMediaItemFields({
-          id: mediaId,
-          patch: {
-            updatedAt: new Date().toISOString(),
-            format: "m3u8",
-            height: current.height || 1920,
-            width: current.width || 1080,
-            publicId: info.playbackId,
-            type: "video",
-            background: info.playbackUrl,
-            thumbnail: info.thumbnailUrl,
-            placeholderImage: info.thumbnailUrl,
-            source: "mux",
-            muxPlaybackId: info.playbackId,
-            muxAssetId: info.assetId,
-            canvaImportKey: info.canvaImportKey,
-            canvaSource: info.canvaSource,
-          },
-        }),
+    async (info: MuxUploadResult, mediaId: string) => {
+      const current = currentMediaListRef.current.find(
+        (mediaItem) => mediaItem.id === mediaId,
       );
+      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      const nextMedia: MediaType = {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        format: "m3u8",
+        height: current.height || 1920,
+        width: current.width || 1080,
+        publicId: info.playbackId,
+        type: "video",
+        background: info.playbackUrl,
+        thumbnail: info.thumbnailUrl,
+        placeholderImage: info.thumbnailUrl,
+        source: "mux",
+        muxPlaybackId: info.playbackId,
+        muxAssetId: info.assetId,
+        providerStorage: {
+          provider: "mux",
+          assetId: info.assetId,
+          churchId,
+          permanent: true,
+          durationSeconds: info.durationSeconds,
+        },
+        canvaImportKey: info.canvaImportKey,
+        canvaSource: info.canvaSource,
+      };
+      await commitCanvaReplacement(current, nextMedia);
     },
-    [dispatch, list],
+    [churchId, commitCanvaReplacement],
   );
 
   const requestMediaUpload = useCallback(() => {
@@ -1771,6 +1851,7 @@ export function useMediaLibraryController({
     addMuxVideo,
     refreshCanvaImage,
     refreshCanvaVideo,
+    cleanupCanvaAsset,
     handleUploadActiveChange,
     isMediaLoading,
     hasMediaLoadError,

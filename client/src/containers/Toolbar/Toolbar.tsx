@@ -49,6 +49,7 @@ import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIn
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
   | "configurations"
@@ -404,6 +405,9 @@ const Toolbar = ({
             Service Planning
           </ToolbarButton>
         )}
+        <MediaSurfaceDiagnostics
+          className={section !== "configurations" ? "hidden" : undefined}
+        />
         <SlideEditTools
           className={cn(section !== "slide-tools" && "hidden")}
         />
@@ -486,6 +490,7 @@ const Toolbar = ({
                 <Menu variant="overlay" />
               </div>
               {modeToggle}
+              <MediaSurfaceDiagnostics />
               {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
               <ToolbarOverlay
                 toolbarRow={mode === "edit" ? "primary" : "present"}

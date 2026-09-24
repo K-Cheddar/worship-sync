@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import CurrentServiceItemList from "./CurrentServiceItemList";
 import { keepElementInView } from "../../utils/generalUtils";
 import { useLiveOutlinePreview } from "./useLiveOutlinePreview";
@@ -42,5 +42,34 @@ describe("CurrentServiceItemList", () => {
     expect(mockedKeepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({ shouldScrollToCenter: true }),
     );
+  });
+
+  it("can highlight a projector item by name when it has no outline ids", () => {
+    render(<CurrentServiceItemList activeName="Current song" />);
+
+    expect(screen.getByText("Current song")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+  });
+
+  it("highlights the exact duplicate occurrence when a monitor list id is preserved", () => {
+    mockedUseLiveOutlinePreview.mockReturnValue({
+      items: [
+        { listId: "song-a-first", _id: "song-a", name: "Song A", type: "song" },
+        { listId: "song-a-second", _id: "song-a", name: "Song A", type: "song" },
+      ] as any,
+      isLoading: false,
+    });
+
+    render(
+      <CurrentServiceItemList
+        activeName="Song A"
+        activeListId="song-a-second"
+      />,
+    );
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).queryByText("Live")).not.toBeInTheDocument();
+    expect(within(rows[1]).getByText("Live")).toBeInTheDocument();
   });
 });

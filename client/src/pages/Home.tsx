@@ -23,6 +23,7 @@ import {
   ScrollText,
   ScreenShare,
   Users,
+  FolderOpen,
 } from "lucide-react";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
@@ -111,6 +112,13 @@ const secondaryControllers: CardLink[] = [
 
 const adminLinks: CardLink[] = [
   {
+    title: "Resources",
+    description:
+      "Keep reusable church files and audio in one private library for future services and teams.",
+    to: "/resources",
+    icon: FolderOpen,
+  },
+  {
     title: "Church administration",
     description:
       "Invite teammates, manage access, pair workstations and displays, recovery and trusted devices, and branding for this church.",
@@ -128,8 +136,9 @@ const adminLinks: CardLink[] = [
 
 /** Features shown to guests as locked previews (not navigable without sign-in). */
 const guestLockedFeatures: CardLink[] = [
-  adminLinks[1],
+  adminLinks[2],
   secondaryControllers[0],
+  adminLinks[1],
   adminLinks[0],
   {
     title: "Display outputs",

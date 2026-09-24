@@ -92,6 +92,7 @@ const localImage = (): MediaType => ({
 const renderUploadInput = (
   onLocalMediaAdded = jest.fn(),
   extra?: { isGuestSession?: boolean },
+  onUploadComplete?: () => void,
 ) =>
   render(
     <ControllerInfoContext.Provider
@@ -100,7 +101,10 @@ const renderUploadInput = (
       <GlobalInfoContext.Provider
         value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}
       >
-        <MediaUploadInput onLocalMediaAdded={onLocalMediaAdded} />
+        <MediaUploadInput
+          onLocalMediaAdded={onLocalMediaAdded}
+          onUploadComplete={onUploadComplete}
+        />
       </GlobalInfoContext.Provider>
     </ControllerInfoContext.Provider>,
   );
@@ -134,7 +138,8 @@ describe("MediaUploadInput", () => {
 
   it("uploads to the cloud by default", async () => {
     const onLocalMediaAdded = jest.fn();
-    renderUploadInput(onLocalMediaAdded);
+    const onUploadComplete = jest.fn();
+    renderUploadInput(onLocalMediaAdded, undefined, onUploadComplete);
 
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(
@@ -156,6 +161,7 @@ describe("MediaUploadInput", () => {
       });
     });
     expect(onLocalMediaAdded).toHaveBeenCalled();
+    await waitFor(() => expect(onUploadComplete).toHaveBeenCalledTimes(1));
   });
 
   it("remembers the upload preference per device when the toggle changes", () => {
@@ -320,6 +326,7 @@ describe("MediaUploadInput", () => {
     await waitFor(() => {
       expect(mockedConvertMuxVideo).toHaveBeenCalledWith(
         sourceFile,
+        "church-1",
         expect.objectContaining({
           isCancelled: expect.any(Function),
           onProgress: expect.any(Function),
@@ -381,6 +388,7 @@ describe("MediaUploadInput", () => {
           isCancelled: expect.any(Function),
           onProgress: expect.any(Function),
         }),
+        "church-1",
       );
     });
     await waitFor(() => {

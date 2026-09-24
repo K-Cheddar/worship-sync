@@ -62,4 +62,68 @@ describe("useSyncOnReconnect", () => {
 
     expect(pullFromRemote).toHaveBeenCalledTimes(1);
   });
+
+  it("reconciles bfcache/page resume signals once while a pull is in flight", async () => {
+    let resolvePull!: () => void;
+    const pullFromRemote = jest.fn(
+      () => new Promise<void>((resolve) => {
+        resolvePull = resolve;
+      }),
+    );
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+
+    renderHook(() => useSyncOnReconnect(pullFromRemote));
+
+    act(() => {
+      visibility = "hidden";
+      window.dispatchEvent(new Event("pagehide"));
+      jest.advanceTimersByTime(10_000);
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pageshow"));
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(pullFromRemote).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolvePull();
+    });
+  });
+
+  it("coalesces online with visibility, page, and focus resume signals", async () => {
+    let resolvePull!: () => void;
+    const pullFromRemote = jest.fn(
+      () => new Promise<void>((resolve) => {
+        resolvePull = resolve;
+      }),
+    );
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+
+    renderHook(() => useSyncOnReconnect(pullFromRemote));
+
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+      visibility = "hidden";
+      window.dispatchEvent(new Event("pagehide"));
+      jest.advanceTimersByTime(10_000);
+      visibility = "visible";
+      window.dispatchEvent(new Event("online"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pageshow"));
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(pullFromRemote).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolvePull();
+    });
+  });
 });

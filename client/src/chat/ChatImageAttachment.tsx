@@ -61,11 +61,46 @@ const ChatImageAttachment = ({
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isExpired, setIsExpired] = useState(
+    !attachment.expiresAt || attachment.expiresAt <= Date.now(),
+  );
   const [retrySequence, setRetrySequence] = useState(0);
   const triggerRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
   const closeRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
 
   useEffect(() => {
+    const expiresAt = attachment.expiresAt;
+    if (!expiresAt || expiresAt <= Date.now()) {
+      setIsExpired(true);
+      setIsOpen(false);
+      setThumbnailUrl("");
+      setFullUrl("");
+      return undefined;
+    }
+    setIsExpired(false);
+    let timeoutId: number | undefined;
+    const expireWhenDue = () => {
+      const remainingMs = expiresAt - Date.now();
+      if (remainingMs <= 0) {
+        setIsExpired(true);
+        setIsOpen(false);
+        setThumbnailUrl("");
+        setFullUrl("");
+        return;
+      }
+      // Browser timers clamp delays to a signed 32-bit millisecond value;
+      // 30 days is longer, so wake and recheck instead of expiring early.
+      timeoutId = window.setTimeout(
+        expireWhenDue,
+        Math.min(remainingMs, 2_147_000_000),
+      );
+    };
+    expireWhenDue();
+    return () => window.clearTimeout(timeoutId);
+  }, [attachment.expiresAt]);
+
+  useEffect(() => {
+    if (isExpired) return undefined;
     let active = true;
     setIsLoading(true);
     setError("");
@@ -74,7 +109,10 @@ const ChatImageAttachment = ({
         if (active) setThumbnailUrl(url);
       })
       .catch(() => {
-        if (active) setError("Photo unavailable. Try again.");
+        if (active) {
+          setError("Image expired.");
+          setIsExpired(true);
+        }
       })
       .finally(() => {
         if (active) setIsLoading(false);
@@ -82,7 +120,7 @@ const ChatImageAttachment = ({
     return () => {
       active = false;
     };
-  }, [churchId, messageId, retrySequence]);
+  }, [churchId, isExpired, messageId, retrySequence]);
 
   const close = useCallback(() => {
     setIsOpen(false);
@@ -108,8 +146,10 @@ const ChatImageAttachment = ({
     if (fullUrl) return;
     try {
       setFullUrl(await loadImageUrl(churchId, messageId, "full"));
-    } catch {
-      setError("Photo unavailable. Try again.");
+    } catch (loadError) {
+      const expired = loadError instanceof Error && loadError.message === "Image expired.";
+      setError(expired ? "Image expired." : "Photo unavailable. Try again.");
+      if (expired) setIsExpired(true);
       setIsOpen(false);
     }
   };
@@ -122,7 +162,11 @@ const ChatImageAttachment = ({
           aspectRatio: `${attachment.thumbnailWidth} / ${attachment.thumbnailHeight}`,
         }}
       >
-        {thumbnailUrl ? (
+        {isExpired || error === "Image expired." ? (
+          <span className="text-xs text-gray-300" role="status">
+            Image expired
+          </span>
+        ) : thumbnailUrl ? (
           <Button
             ref={triggerRef}
             variant="none"

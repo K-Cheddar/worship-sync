@@ -1,4 +1,9 @@
-import { getApiBasePath } from "../../../utils/environment";
+import {
+  createChurchMuxUpload,
+  deleteChurchMuxAsset,
+  getChurchMuxAsset,
+  getChurchMuxUpload,
+} from "../../../api/providerStorage";
 import { MuxUploadResult } from "../MediaUploadInput.types";
 
 type PollingCallbacks = {
@@ -11,6 +16,13 @@ type PollingCallbacks = {
 
 export type MuxUploadCallbacks = PollingCallbacks & {
   setXhr?: (xhr: XMLHttpRequest) => void;
+};
+
+export type MuxUploadOptions = {
+  churchId: string;
+  mediaId?: string;
+  title?: string;
+  temporary?: boolean;
 };
 
 const waitForPollingInterval = async (
@@ -33,6 +45,7 @@ const waitForPollingInterval = async (
 
 export const pollUploadStatus = async (
   uploadId: string,
+  churchId: string,
   callbacks: PollingCallbacks = {},
 ): Promise<string | null> => {
   const maxAttempts = 60; // 5 minutes max
@@ -44,10 +57,7 @@ export const pollUploadStatus = async (
     }
 
     try {
-      const response = await fetch(
-        `${getApiBasePath()}api/mux/upload/${uploadId}`
-      );
-      const data = await response.json();
+      const data = await getChurchMuxUpload(churchId, uploadId);
 
       if (data.status === "asset_created" && data.assetId) {
         return data.assetId;
@@ -71,11 +81,13 @@ export const pollUploadStatus = async (
 
 export const pollAssetStatus = async (
   assetId: string,
+  churchId: string,
   callbacks: PollingCallbacks = {},
 ): Promise<{
   playbackId: string;
   assetId: string;
   staticRenditionReady: boolean;
+  durationSeconds: number;
 }> => {
   const maxAttempts = 120; // 10 minutes max
   let attempts = 0;
@@ -86,10 +98,7 @@ export const pollAssetStatus = async (
     }
 
     try {
-      const response = await fetch(
-        `${getApiBasePath()}api/mux/asset/${assetId}`
-      );
-      const data = await response.json();
+      const data = await getChurchMuxAsset(churchId, assetId);
 
       const staticRenditionReady = data.staticRenditionReady === true;
       if (
@@ -97,7 +106,12 @@ export const pollAssetStatus = async (
         data.playbackId &&
         (!callbacks.requireStaticRendition || staticRenditionReady)
       ) {
-        return { playbackId: data.playbackId, assetId, staticRenditionReady };
+        return {
+          playbackId: data.playbackId,
+          assetId,
+          staticRenditionReady,
+          durationSeconds: Number(data.duration),
+        };
       } else if (data.status === "errored") {
         throw new Error("Asset processing failed");
       }
@@ -122,16 +136,11 @@ export const pollAssetStatus = async (
   throw new Error("Processing timeout");
 };
 
-export const deleteMuxAsset = async (assetId: string): Promise<void> => {
-  const response = await fetch(
-    `${getApiBasePath()}api/mux/asset/${encodeURIComponent(assetId)}`,
-    { method: "DELETE" },
-  );
-  if (!response.ok) {
-    throw new Error(
-      `Could not remove temporary cloud video (${response.status}).`,
-    );
-  }
+export const deleteMuxAsset = async (
+  assetId: string,
+  churchId: string,
+): Promise<void> => {
+  await deleteChurchMuxAsset(churchId, assetId);
 };
 
 export const downloadMuxMp4 = async (
@@ -197,12 +206,13 @@ export const downloadMuxMp4 = async (
 
 export const convertMuxVideoToLocalMp4 = async (
   file: File,
+  churchId: string,
   callbacks: MuxUploadCallbacks = {},
 ): Promise<File> => {
   let temporaryAssetId: string | undefined;
   let operationFailed = false;
   try {
-    const result = await uploadVideoToMux(file, {
+    const result = await uploadVideoToMux(file, { churchId, title: file.name, temporary: true }, {
       ...callbacks,
       requireStaticRendition: true,
     });
@@ -215,7 +225,7 @@ export const convertMuxVideoToLocalMp4 = async (
   } finally {
     if (temporaryAssetId) {
       try {
-        await deleteMuxAsset(temporaryAssetId);
+        await deleteMuxAsset(temporaryAssetId, churchId);
       } catch (cleanupError) {
         if (!operationFailed) throw cleanupError;
         console.error("Could not remove failed temporary Mux asset:", cleanupError);
@@ -226,24 +236,17 @@ export const convertMuxVideoToLocalMp4 = async (
 
 export const uploadVideoToMux = async (
   file: File,
+  options: MuxUploadOptions,
   callbacks: MuxUploadCallbacks = {},
 ): Promise<MuxUploadResult> => {
-  // Step 1: Get upload URL from our server
-  const uploadResponse = await fetch(`${getApiBasePath()}api/mux/upload`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const { uploadId, url: uploadUrl } = await createChurchMuxUpload(
+    options.churchId,
+    {
+      mediaId: options.mediaId || "",
+      title: options.title || file.name,
+      temporary: options.temporary,
     },
-    body: JSON.stringify({
-      corsOrigin: window.location.origin,
-    }),
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error("Failed to create upload");
-  }
-
-  const { uploadId, url: uploadUrl } = await uploadResponse.json();
+  );
 
   // Step 2: Upload file directly to Mux
   const xhr = new XMLHttpRequest();
@@ -297,7 +300,7 @@ export const uploadVideoToMux = async (
 
   // Step 3: Wait for asset to be created
   callbacks.onStatusUpdate?.("Processing upload...");
-  const assetId = await pollUploadStatus(uploadId, callbacks);
+  const assetId = await pollUploadStatus(uploadId, options.churchId, callbacks);
 
   if (!assetId) {
     throw new Error("Failed to get asset ID");
@@ -306,10 +309,8 @@ export const uploadVideoToMux = async (
   try {
     // Step 4: Wait for asset to be ready
     callbacks.onStatusUpdate?.("Processing video...");
-    const { playbackId, assetId: finalAssetId } = await pollAssetStatus(
-      assetId,
-      callbacks,
-    );
+    const { playbackId, assetId: finalAssetId, durationSeconds } =
+      await pollAssetStatus(assetId, options.churchId, callbacks);
 
     // Step 5: Generate URLs
     const playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
@@ -323,14 +324,13 @@ export const uploadVideoToMux = async (
       mp4Url: `https://stream.mux.com/${playbackId}/highest.mp4`,
       thumbnailUrl,
       name,
+      durationSeconds,
     };
   } catch (error) {
-    if (callbacks.requireStaticRendition) {
-      try {
-        await deleteMuxAsset(assetId);
-      } catch (cleanupError) {
-        console.error("Could not remove failed temporary Mux asset:", cleanupError);
-      }
+    try {
+      await deleteMuxAsset(assetId, options.churchId);
+    } catch (cleanupError) {
+      console.error("Could not remove failed Mux asset:", cleanupError);
     }
     throw error;
   }

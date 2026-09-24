@@ -35,6 +35,7 @@ import generateRandomId from "../utils/generateRandomId";
 import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
 import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
+import { selectSongLibrary } from "../store/songLibrarySelectors";
 import { getConfiguredDefaultFormatting } from "../utils/overlayUtils";
 import type {
   OutlineItemCandidate,
@@ -154,11 +155,12 @@ export const useServicePlanningImport = () => {
 
       const importData = await getServicePlanningImportDataFromUrl(url);
       const state = store.getState();
+      const songLibrary = selectSongLibrary(state).songs;
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
         overlays: state.undoable.present.overlays.list,
-        allItems,
+        songLibrary,
         activeOutlineList: state.undoable.present.itemList.list,
       });
 
@@ -183,7 +185,6 @@ export const useServicePlanningImport = () => {
       return serviceOutline;
     },
     [
-      allItems,
       churchIntegrations,
       churchIntegrationsStatus,
       db,
@@ -218,11 +219,12 @@ export const useServicePlanningImport = () => {
 
       const importData = servicePlanToImportData(plan);
       const state = store.getState();
+      const songLibrary = selectSongLibrary(state).songs;
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
         overlays: state.undoable.present.overlays.list,
-        allItems,
+        songLibrary,
         activeOutlineList: state.undoable.present.itemList.list,
         teamAssignments,
       });
@@ -236,7 +238,7 @@ export const useServicePlanningImport = () => {
         preview,
       };
     },
-    [allItems, churchIntegrations, churchIntegrationsStatus, store],
+    [churchIntegrations, churchIntegrationsStatus, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(

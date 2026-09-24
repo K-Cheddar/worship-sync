@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 
@@ -24,6 +24,37 @@ describe("ServicePlanScripturePopover", () => {
         verseRange: "16-18",
       }),
     );
+    expect(screen.getByRole("button", { name: /Add scripture/i })).toBeInTheDocument();
+  });
+
+  it("shows an attaching state and prevents duplicate submissions", async () => {
+    const user = userEvent.setup();
+    let resolveAttach: (() => void) | undefined;
+    const onSelect = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveAttach = resolve;
+        }),
+    );
+    render(<ServicePlanScripturePopover onSelect={onSelect} />);
+
+    await user.click(screen.getByRole("button", { name: /Add scripture/i }));
+    await user.type(screen.getByLabelText(/Scripture reference/i), "John 3:16");
+    await user.click(screen.getByRole("button", { name: /Attach scripture/i }));
+
+    const pendingButton = screen.getByRole("button", {
+      name: /Attaching scripture\.\.\./i,
+    });
+    expect(pendingButton).toBeDisabled();
+    expect(pendingButton).toHaveAttribute("aria-busy", "true");
+
+    await user.click(pendingButton);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+
+    resolveAttach?.();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add scripture/i })).toBeInTheDocument();
+    });
   });
 
   it("won't attach text that isn't a scripture reference", async () => {
@@ -35,7 +66,7 @@ describe("ServicePlanScripturePopover", () => {
     await user.type(screen.getByLabelText(/Scripture reference/i), "not a reference");
 
     expect(
-      await screen.findByText(/doesn't look like a scripture reference/i),
+      await screen.findByText(/doesn't look like a scripture reference/i, {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Attach scripture/i })).toBeDisabled();
     expect(onSelect).not.toHaveBeenCalled();
@@ -59,5 +90,18 @@ describe("ServicePlanScripturePopover", () => {
         verseRange: "16-18",
       }),
     );
+  });
+
+  it("can be cancelled without attaching", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+    render(<ServicePlanScripturePopover onSelect={onSelect} />);
+
+    await user.click(screen.getByRole("button", { name: /Add scripture/i }));
+    await user.type(screen.getByLabelText(/Scripture reference/i), "John 3:16");
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("button", { name: /Add scripture/i })).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

@@ -1,14 +1,8 @@
 export type BoardSyncDebugDetails = Record<string, unknown>;
 
-/** Development-only timing breadcrumbs for authenticated board replication. */
+/** Retained as a no-op hook for callers that may need local board tracing again. */
 export const debugBoardSync = (
-  event: string,
-  details: BoardSyncDebugDetails = {},
+  _event: string,
+  _details: BoardSyncDebugDetails = {},
 ): void => {
-  if (!import.meta.env.DEV) return;
-
-  console.debug(`[board-sync] ${event}`, {
-    timestamp: Date.now(),
-    ...details,
-  });
 };

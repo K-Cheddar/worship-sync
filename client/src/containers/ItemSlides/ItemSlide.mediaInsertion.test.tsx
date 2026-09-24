@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ItemSlideType, MediaType } from "../../types";
 import ItemSlide from "./ItemSlide";
 
 const mockUseDroppable = jest.fn((_options?: unknown) => ({
@@ -43,12 +44,12 @@ jest.mock("@dnd-kit/sortable", () => ({
   }),
 }));
 
-const slide = {
+const slide: ItemSlideType = {
   id: "slide-1",
   name: "Section 1",
   type: "Section",
   boxes: [],
-} as never;
+};
 
 describe("ItemSlide media insertion zones", () => {
   beforeEach(() => {
@@ -70,13 +71,23 @@ describe("ItemSlide media insertion zones", () => {
                   height: 100,
                   words: "",
                   mediaInfo: {
+                    path: "video.mp4",
+                    createdAt: "",
+                    updatedAt: "",
+                    format: "mp4",
+                    height: 1080,
+                    width: 1920,
+                    name: "video",
+                    publicId: "video",
                     type: "video",
+                    id: "video",
+                    thumbnail: "poster.jpg",
                     background: "video.mp4",
                     placeholderImage: "poster.jpg",
-                  },
+                  } satisfies MediaType,
                 },
               ],
-            } as never}
+            }}
             index={0}
             selectSlide={jest.fn()}
             isSelected

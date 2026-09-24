@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useMemo, useState } from "react";
+import { type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -17,18 +17,25 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
   applyTeamIntakeSubmission,
+  createTeamIntakeRecipients,
   createTeamIntakeForm,
+  getTeamIntakeSmsAttempts,
+  getTeamIntakeRecipientLink,
   getTeamIntakeFormLink,
+  revokeTeamIntakeRecipient,
+  sendTeamIntakeRecipientSms,
   updateTeamIntakeForm,
   type TeamIntakeFormPayload,
 } from "../../../api/auth";
 import type {
   TeamIntakeForm,
+  TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamPosition,
   TeamRecord,
   TeamRosterMember,
   TeamService,
+  SmsDeliveryAttempt,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -78,6 +85,15 @@ import {
 type IntakeManagerProps = {
   forms: TeamIntakeForm[];
   submissions: TeamIntakeSubmission[];
+  intakeRecipients: TeamIntakeRecipient[];
+  smsEligibilityByMemberId?: Record<
+    string,
+    {
+      status: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
+      eligible: boolean;
+    }
+  >;
+  smsDeliveryAttempts?: SmsDeliveryAttempt[];
   services: TeamService[];
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -87,6 +103,8 @@ type IntakeManagerProps = {
   onSubmissionSaved: (submission: TeamIntakeSubmission) => void;
   onMemberSaved: (member: TeamRosterMember) => void;
   onTeamSaved: (team: TeamRecord) => void;
+  onRecipientSaved: (recipient: TeamIntakeRecipient) => void;
+  onSmsDeliveryAttemptSaved?: (attempt: SmsDeliveryAttempt) => void;
 };
 
 const IntakeFormStatusBadge = ({ active }: { active: boolean }) => (
@@ -175,6 +193,9 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 const IntakeManager = ({
   forms,
   submissions,
+  intakeRecipients,
+  smsEligibilityByMemberId,
+  smsDeliveryAttempts: initialSmsDeliveryAttempts = [],
   services,
   members,
   positions,
@@ -184,6 +205,8 @@ const IntakeManager = ({
   onSubmissionSaved,
   onMemberSaved,
   onTeamSaved,
+  onRecipientSaved,
+  onSmsDeliveryAttemptSaved,
 }: IntakeManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -192,6 +215,9 @@ const IntakeManager = ({
   const [draft, setDraft] = useState<TeamIntakeFormPayload>(emptyDraft);
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
   const [selectedForm, setSelectedForm] = useState<TeamIntakeForm | null>(null);
+  const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
+    SmsDeliveryAttempt[]
+  >(initialSmsDeliveryAttempts);
   const [showCreate, setShowCreate] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -207,9 +233,19 @@ const IntakeManager = ({
   >(new Set());
   const [statusFilter, setStatusFilter] =
     useState<SubmissionStatusFilter>("needs_action");
+  const [recipientMemberIds, setRecipientMemberIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientBusy, setRecipientBusy] = useState(false);
+  const [recipientActionKey, setRecipientActionKey] = useState("");
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
+  const resetRecipientSelection = () => {
+    setRecipientMemberIds(new Set());
+    setRecipientSearch("");
+  };
   const hasPendingChanges = editing
     ? JSON.stringify(draft) !==
       JSON.stringify({
@@ -231,6 +267,7 @@ const IntakeManager = ({
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const closePanel = () => {
+    resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(false);
     setShowEditForm(false);
@@ -239,6 +276,7 @@ const IntakeManager = ({
   };
 
   const openCreate = () => {
+    resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);
     setShowEditForm(false);
@@ -247,6 +285,7 @@ const IntakeManager = ({
   };
 
   const openFormSubmissions = (form: TeamIntakeForm) => {
+    resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
     setShowEditForm(false);
@@ -255,6 +294,7 @@ const IntakeManager = ({
   };
 
   const openFormEditor = (form: TeamIntakeForm) => {
+    resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
     setShowEditForm(true);
@@ -462,6 +502,29 @@ const IntakeManager = ({
       forms.find((form) => form.formId === selectedForm.formId) ?? selectedForm
     );
   }, [forms, selectedForm]);
+  const activeSelectedFormId = activeSelectedForm?.formId || "";
+
+  useEffect(() => {
+    if (!churchId || !activeSelectedFormId) return;
+    let cancelled = false;
+    setSmsDeliveryAttempts([]);
+    void getTeamIntakeSmsAttempts(churchId, activeSelectedFormId)
+      .then((response) => {
+        if (!cancelled) setSmsDeliveryAttempts(response.attempts || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showApiErrorToast(
+            showToast,
+            error,
+            "Could not load SMS delivery history.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSelectedFormId, churchId, showToast]);
 
   const selectedFormSubmissions = useMemo(
     () =>
@@ -472,6 +535,163 @@ const IntakeManager = ({
         : [],
     [newestSubmissions, activeSelectedForm],
   );
+
+  const selectedFormRecipients = useMemo(
+    () =>
+      activeSelectedForm
+        ? (intakeRecipients || []).filter(
+            (recipient) => recipient.formId === activeSelectedForm.formId,
+          )
+        : [],
+    [activeSelectedForm, intakeRecipients],
+  );
+
+  const recipientByMemberId = useMemo(
+    () =>
+      new Map(
+        selectedFormRecipients.map((recipient) => [
+          recipient.memberId,
+          recipient,
+        ]),
+      ),
+    [selectedFormRecipients],
+  );
+
+  const latestSmsAttemptByRecipientId = useMemo(() => {
+    const latest = new Map<string, SmsDeliveryAttempt>();
+    smsDeliveryAttempts.forEach((attempt) => {
+      const current = latest.get(attempt.recipientId);
+      if (!current || attempt.createdAt > current.createdAt) {
+        latest.set(attempt.recipientId, attempt);
+      }
+    });
+    return latest;
+  }, [smsDeliveryAttempts]);
+
+  const applicableMembers = useMemo(() => {
+    if (!activeSelectedForm) return [];
+    const scope = new Set(activeSelectedForm.teamIds || []);
+    const positionTeamById = new Map(
+      positions.map((position) => [position.positionId, position.teamId]),
+    );
+    return activeMembers.filter((member) => {
+      if (scope.size === 0) return true;
+      const memberTeamIds = new Set([
+        ...Object.keys(member.teamMemberships || {}),
+        ...(member.positionIds || [])
+          .map((positionId) => positionTeamById.get(positionId))
+          .filter(Boolean),
+        ...teams
+          .filter((team) => (team.memberIds || []).includes(member.memberId))
+          .map((team) => team.teamId),
+      ]);
+      return [...scope].some((teamId) => memberTeamIds.has(teamId));
+    });
+  }, [activeMembers, activeSelectedForm, positions, teams]);
+
+  const filteredApplicableMembers = useMemo(() => {
+    const query = recipientSearch.trim().toLowerCase();
+    if (!query) return applicableMembers;
+    return applicableMembers.filter((member) =>
+      memberName(member).toLowerCase().includes(query),
+    );
+  }, [applicableMembers, recipientSearch]);
+
+  const createRecipientRequests = async () => {
+    if (!canEdit || !activeSelectedForm || recipientBusy) return;
+    const memberIds = applicableMembers
+      .filter((member) => recipientMemberIds.has(member.memberId))
+      .map((member) => member.memberId);
+    if (memberIds.length === 0) {
+      showToast("Choose at least one member.", "neutral");
+      return;
+    }
+    setRecipientBusy(true);
+    try {
+      const response = await createTeamIntakeRecipients(
+        churchId,
+        activeSelectedForm.formId,
+        memberIds,
+      );
+      response.recipients.forEach(onRecipientSaved);
+      setRecipientMemberIds(new Set());
+      showToast(
+        `${response.recipients.length} individual request${response.recipients.length === 1 ? "" : "s"} ready to share.`,
+        "success",
+      );
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not create individual requests.");
+    } finally {
+      setRecipientBusy(false);
+    }
+  };
+
+  const getRecipientLink = async (
+    recipient: TeamIntakeRecipient,
+    { copy = false } = {},
+  ) => {
+    if (recipientActionKey || !canEdit) return;
+    setRecipientActionKey(recipient.recipientId);
+    try {
+      const response = await getTeamIntakeRecipientLink(
+        churchId,
+        recipient.recipientId,
+        { markCopied: copy },
+      );
+      onRecipientSaved(response.recipient);
+      if (copy) {
+        await navigator.clipboard?.writeText(response.publicUrl);
+        showToast("Individual link copied.", "success");
+      } else {
+        window.open(response.publicUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not prepare this individual link.");
+    } finally {
+      setRecipientActionKey("");
+    }
+  };
+
+  const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
+    if (!canEdit || recipientActionKey || recipient.revokedAt) return;
+    setRecipientActionKey(`${recipient.recipientId}:sms`);
+    try {
+      const response = await sendTeamIntakeRecipientSms(
+        churchId,
+        recipient.recipientId,
+      );
+      onRecipientSaved(response.recipient);
+      setSmsDeliveryAttempts((current) => [
+        ...current.filter(
+          (attempt) => attempt.attemptId !== response.attempt.attemptId,
+        ),
+        response.attempt,
+      ]);
+      onSmsDeliveryAttemptSaved?.(response.attempt);
+      showToast("SMS sent.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this SMS.");
+    } finally {
+      setRecipientActionKey("");
+    }
+  };
+
+  const revokeRecipient = async (recipient: TeamIntakeRecipient) => {
+    if (!canEdit || recipientActionKey) return;
+    setRecipientActionKey(recipient.recipientId);
+    try {
+      const response = await revokeTeamIntakeRecipient(
+        churchId,
+        recipient.recipientId,
+      );
+      onRecipientSaved(response.recipient);
+      showToast("Individual request revoked.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not revoke this request.");
+    } finally {
+      setRecipientActionKey("");
+    }
+  };
 
   const filteredSubmissions = useMemo(
     () =>
@@ -1174,6 +1394,209 @@ const IntakeManager = ({
     );
   };
 
+  const renderRecipientSection = () => {
+    if (!activeSelectedForm) return null;
+    const allVisibleSelected =
+      filteredApplicableMembers.length > 0 &&
+      filteredApplicableMembers.every((member) =>
+        recipientMemberIds.has(member.memberId),
+      );
+    const toggleMember = (memberId: string, checked: boolean) => {
+      setRecipientMemberIds((current) => {
+        const next = new Set(current);
+        if (checked) next.add(memberId);
+        else next.delete(memberId);
+        return next;
+      });
+    };
+
+    return (
+      <section className="space-y-3 rounded-md border border-gray-700 bg-gray-950/60 p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-100">
+              Individual requests
+            </h3>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-400">
+              Create a private response link for members in this form&apos;s team
+              scope. Nothing is sent automatically.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            disabled={!canEdit || recipientBusy || recipientMemberIds.size === 0}
+            isLoading={recipientBusy}
+            onClick={() => void createRecipientRequests()}
+          >
+            Create {recipientMemberIds.size || ""} request
+            {recipientMemberIds.size === 1 ? "" : "s"}
+          </Button>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <Input
+            label="Search members"
+            value={recipientSearch}
+            onChange={(value) => setRecipientSearch(String(value))}
+          />
+          <Button
+            variant="textLink"
+            padding="px-0 py-2"
+            disabled={filteredApplicableMembers.length === 0}
+            onClick={() => {
+              setRecipientMemberIds((current) => {
+                const next = new Set(current);
+                filteredApplicableMembers.forEach((member) => {
+                  if (allVisibleSelected) next.delete(member.memberId);
+                  else next.add(member.memberId);
+                });
+                return next;
+              });
+            }}
+          >
+            {allVisibleSelected ? "Clear visible" : "Select visible"}
+          </Button>
+        </div>
+        {filteredApplicableMembers.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            No active roster members match this form&apos;s scope.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {filteredApplicableMembers.map((member) => {
+              const recipient = recipientByMemberId.get(member.memberId);
+              const smsEligibility = smsEligibilityByMemberId?.[member.memberId] || {
+                status: member.phoneNumber ? "consent_needed" : "no_mobile",
+                eligible: false,
+              };
+              const latestSmsAttempt = recipient
+                ? latestSmsAttemptByRecipientId.get(recipient.recipientId)
+                : undefined;
+              const smsStatus = recipient?.respondedAt
+                ? "Responded"
+                : smsEligibility.status === "no_mobile"
+                  ? "No mobile number"
+                  : smsEligibility.status === "consent_needed"
+                    ? "SMS consent needed"
+                    : smsEligibility.status === "opted_out"
+                      ? "SMS opted out"
+                      : latestSmsAttempt?.status === "delivered"
+                        ? "Delivered"
+                        : latestSmsAttempt?.status === "failed" ||
+                            latestSmsAttempt?.status === "undelivered"
+                          ? "Failed"
+                          : latestSmsAttempt?.status === "pending"
+                            ? "Sending"
+                            : latestSmsAttempt
+                              ? "Sent"
+                              : "Ready to send";
+              const status = recipient?.revokedAt
+                ? "Revoked"
+                : recipient?.respondedAt
+                  ? "Responded"
+                  : recipient
+                    ? "Waiting"
+                    : "Not requested";
+              return (
+                <div
+                  key={member.memberId}
+                  className="flex flex-col gap-2 rounded border border-gray-700/70 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <Checkbox
+                    label={memberName(member)}
+                    checked={recipientMemberIds.has(member.memberId)}
+                    onCheckedChange={(checked) =>
+                      toggleMember(member.memberId, checked)
+                    }
+                  />
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5",
+                        status === "Responded"
+                          ? "border-emerald-500/40 text-emerald-200"
+                          : status === "Revoked"
+                            ? "border-red-500/40 text-red-200"
+                            : "border-gray-600 text-gray-300",
+                      )}
+                    >
+                      {status}
+                    </span>
+                    {recipient?.linkCopiedAt ? (
+                      <span className="text-gray-500">Link requested</span>
+                    ) : null}
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5",
+                        smsStatus === "Delivered" || smsStatus === "Responded"
+                          ? "border-emerald-500/40 text-emerald-200"
+                          : smsStatus === "Failed" ||
+                              smsStatus === "SMS opted out"
+                            ? "border-red-500/40 text-red-200"
+                            : smsStatus === "Ready to send"
+                              ? "border-sky-500/40 text-sky-200"
+                              : "border-gray-600 text-gray-300",
+                      )}
+                    >
+                      {smsStatus}
+                    </span>
+                    {recipient && !recipient.revokedAt ? (
+                      <>
+                        <Button
+                          variant="textLink"
+                          padding="px-0 py-0"
+                          disabled={
+                            Boolean(recipientActionKey) ||
+                            !smsEligibility.eligible
+                          }
+                          isLoading={recipientActionKey === `${recipient.recipientId}:sms`}
+                          title={
+                            smsEligibility.eligible
+                              ? "Send this intake request by SMS"
+                              : smsStatus
+                          }
+                          onClick={() => void sendRecipientSms(recipient)}
+                        >
+                          Send SMS
+                        </Button>
+                        <Button
+                          variant="textLink"
+                          padding="px-0 py-0"
+                          disabled={Boolean(recipientActionKey)}
+                          isLoading={recipientActionKey === recipient.recipientId}
+                          onClick={() =>
+                            void getRecipientLink(recipient, { copy: true })
+                          }
+                        >
+                          Copy link
+                        </Button>
+                        <Button
+                          variant="textLink"
+                          padding="px-0 py-0"
+                          disabled={Boolean(recipientActionKey)}
+                          onClick={() => void getRecipientLink(recipient)}
+                        >
+                          Open
+                        </Button>
+                        <Button
+                          variant="textLink"
+                          padding="px-0 py-0"
+                          disabled={Boolean(recipientActionKey)}
+                          onClick={() => void revokeRecipient(recipient)}
+                        >
+                          Revoke
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  };
+
   const renderSubmissionsPanel = () => (
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -1243,6 +1666,7 @@ const IntakeManager = ({
           ) : null}
         </div>
       </div>
+      {renderRecipientSection()}
       {allSubmissionBlockouts.length > 0 || allSubmissionNotes.length > 0 ? (
         <div className="rounded-md border border-gray-700 bg-gray-950/60 px-3 pb-3">
           {allSubmissionBlockouts.length > 0 ? (

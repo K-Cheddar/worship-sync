@@ -465,7 +465,8 @@ export const useControllerPageLifecycle = () => {
     const syncMedia = async () => {
       try {
         const mediaUrls = await getMediaUrlsFromMediaDoc(db);
-        const urlArray = Array.from(mediaUrls);
+        if (mediaUrls.status === "unavailable") return;
+        const urlArray = Array.from(mediaUrls.urls);
         const electronAPI = window.electronAPI as unknown as {
           syncMediaCache: (urls: string[]) => Promise<{
             downloaded: number;
@@ -474,10 +475,7 @@ export const useControllerPageLifecycle = () => {
           getMediaCacheMap: () => Promise<Record<string, string>>;
         };
         if (urlArray.length > 0) {
-          const result = await electronAPI.syncMediaCache(urlArray);
-          console.log(
-            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
-          );
+          await electronAPI.syncMediaCache(urlArray);
         } else {
           await electronAPI.syncMediaCache([]);
         }

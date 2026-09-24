@@ -171,4 +171,17 @@ describe("ServiceFlowRichText", () => {
 
     expect(screen.getAllByRole("paragraph")).toHaveLength(3);
   });
+
+  it("wraps long unbroken links inside note paragraphs", () => {
+    const link = "https://www.dropbox.com/scl/fo/a-long-unbroken-link";
+    render(
+      <ServiceFlowRichText
+        document={{
+          blocks: [{ type: "paragraph", spans: [{ text: link }] }],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("paragraph")).toHaveClass("break-words");
+  });
 });

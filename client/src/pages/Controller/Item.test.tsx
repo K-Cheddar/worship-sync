@@ -1,7 +1,8 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { Provider } from "react-redux";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import Item from "./Item";
 import { itemSlice } from "../../store/itemSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -20,6 +21,20 @@ jest.mock("../../containers/ItemEditor/SlideEditor", () => () => (
 jest.mock("../../containers/ItemSlides/ItemSlides", () => () => (
   <div data-testid="item-slides" />
 ));
+
+const itemRoute = (itemId: string, listId: string) =>
+  `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
+    encodeURI(listId),
+  )}`;
+
+const RouteDriver = () => {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(itemRoute("item-c", "list-c"))}>
+      Go to C
+    </button>
+  );
+};
 
 const createTestStore = () => {
   const initialUndoableState = {
@@ -201,5 +216,85 @@ describe("Controller Item page", () => {
     expect(dbGet).not.toHaveBeenCalled();
     expect(store.getState().undoable.present.item.isLoading).toBe(false);
     expect(store.getState().undoable.present.item.name).toBe("Already loaded");
+  });
+
+  it("does not commit an older item load after navigation moves to a newer item", async () => {
+    let resolveB: ((item: DBItem) => void) | undefined;
+    let resolveC: ((item: DBItem) => void) | undefined;
+    const dbGet = jest.fn((id: string) => {
+      if (id === "item-b") {
+        return new Promise<DBItem>((resolve) => {
+          resolveB = resolve;
+        });
+      }
+      if (id === "item-c") {
+        return new Promise<DBItem>((resolve) => {
+          resolveC = resolve;
+        });
+      }
+      return Promise.reject(new Error(`unexpected item ${id}`));
+    });
+    const controllerContext = createMockControllerContext({
+      db: createMockPouchDB({ get: dbGet }),
+    });
+    const globalContext = createMockGlobalContext();
+    const store = createTestStore();
+    const itemB = {
+      _id: "item-b",
+      name: "Item B",
+      type: "song",
+      slides: [],
+      arrangements: [],
+      selectedArrangement: 0,
+    } as unknown as DBItem;
+    const itemC = {
+      _id: "item-c",
+      name: "Item C",
+      type: "song",
+      slides: [],
+      arrangements: [],
+      selectedArrangement: 0,
+    } as unknown as DBItem;
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={globalContext as any}>
+            <MemoryRouter initialEntries={[itemRoute("item-b", "list-b")]}>
+              <Routes>
+                <Route
+                  path="/controller/item/:itemId/:listId"
+                  element={
+                    <>
+                      <RouteDriver />
+                      <Item />
+                    </>
+                  }
+                />
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => expect(dbGet).toHaveBeenCalledWith("item-b"));
+    fireEvent.click(screen.getByRole("button", { name: "Go to C" }));
+    await waitFor(() => expect(dbGet).toHaveBeenCalledWith("item-c"));
+
+    await act(async () => {
+      resolveB?.(itemB);
+      await Promise.resolve();
+    });
+    expect(store.getState().undoable.present.item._id).not.toBe("item-b");
+
+    await act(async () => {
+      resolveC?.(itemC);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(store.getState().undoable.present.item._id).toBe("item-c"),
+    );
+    expect(store.getState().undoable.present.item.listId).toBe("list-c");
   });
 });

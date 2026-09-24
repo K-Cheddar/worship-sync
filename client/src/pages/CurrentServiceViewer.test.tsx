@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { Provider } from "react-redux";
@@ -21,6 +21,7 @@ import {
   getServicePlanViewer,
   listServicePlans,
 } from "../api/auth";
+import { useChat } from "../chat/ChatContext";
 
 jest.mock("../api/auth", () => ({
   getServicePlanViewer: jest.fn(),
@@ -33,6 +34,10 @@ jest.mock("./Teams/hooks/useTeamsLiveSync", () => ({
 }));
 
 jest.mock("../containers/Toolbar/ToolbarElements/UserSection", () => () => null);
+
+jest.mock("../chat/ChatContext", () => ({
+  useChat: jest.fn(),
+}));
 
 const plan: ServicePlan = {
   planId: "plan-1",
@@ -97,6 +102,8 @@ const service = (id: string, dateTimeISO: string): ServiceTime => ({
 const morningService = service("svc-1", "2026-09-13T13:00:00.000Z");
 const tomorrowService = service("svc-2", "2026-09-14T13:00:00.000Z");
 
+const mockedUseChat = jest.mocked(useChat);
+
 const summary = (serviceItem: ServiceTime): {
   planKey: string;
   serviceId: string;
@@ -133,6 +140,10 @@ const renderViewer = (services: ServiceTime[], canViewTeams = false) => {
 };
 
 describe("CurrentServiceViewer", () => {
+  beforeEach(() => {
+    mockedUseChat.mockReturnValue(null);
+  });
+
   afterEach(() => {
     cleanup();
     store.dispatch(initiateServices([]));
@@ -162,6 +173,49 @@ describe("CurrentServiceViewer", () => {
     expect(screen.queryByText("Avery Volunteer")).not.toBeInTheDocument();
   });
 
+  it("projects non-song resources into the viewer snapshot", () => {
+    const snapshot = buildServicePlanFlowSnapshot({
+      plan: {
+        ...plan,
+        sections: [{
+          ...plan.sections[0],
+          elements: [{
+            ...plan.sections[0].elements[0],
+            resources: [
+              {
+                id: "resource-link",
+                type: "url",
+                title: "Rehearsal video",
+                url: "https://example.com/rehearsal",
+              },
+              {
+                id: "resource-text",
+                type: "text",
+                title: "Call notes",
+                data: { text: "Bring the spare cable." },
+              },
+            ],
+          }],
+        }],
+      },
+      startsAt: "2026-09-13T13:00:00.000Z",
+      churchName: "Test Church",
+    });
+
+    expect(snapshot.service.sections[0].items[0].resources).toEqual([
+      {
+        type: "url",
+        title: "Rehearsal video",
+        url: "https://example.com/rehearsal",
+      },
+      {
+        type: "text",
+        title: "Call notes",
+        detail: "Bring the spare cable.",
+      },
+    ]);
+  });
+
   it("loads the automatically selected service and its saved plan", async () => {
     jest
       .spyOn(Date, "now")
@@ -180,6 +234,7 @@ describe("CurrentServiceViewer", () => {
 
     expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveClass("overflow-x-hidden");
     expect(getServicePlanViewer).toHaveBeenCalledWith(
       "church-1",
       "svc-1@2026-09-13",
@@ -203,7 +258,12 @@ describe("CurrentServiceViewer", () => {
     renderViewer([morningService]);
 
     expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Back to Home/i })).toBeInTheDocument();
+    const toolbar = screen.getByRole("toolbar", { name: "Current service toolbar" });
+    expect(within(toolbar).getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(within(toolbar).queryByText("Current service")).not.toBeInTheDocument();
+    expect(toolbar).toHaveClass("w-dvw", "-translate-x-1/2", "-mt-4", "sm:-mt-6");
+    expect(screen.getByRole("main")).toHaveClass("overflow-x-hidden");
+    expect(toolbar).not.toHaveClass("rounded-xl");
     expect(screen.getByRole("combobox", { name: /Choose a service/i })).toBeInTheDocument();
     expect(getServicePlanViewer).toHaveBeenCalledWith(
       "church-1",
@@ -384,5 +444,67 @@ describe("CurrentServiceViewer", () => {
     });
 
     expect(result.current?.automaticResolution.reason).toBe("in-progress");
+  });
+
+  it("shows authorized Team Chat with the shared unread count and opens shared chat", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [],
+    });
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan: null,
+      snapshot: null,
+    });
+    const openChat = jest.fn();
+    const closeChat = jest.fn();
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: false,
+      openChat,
+      closeChat,
+      unreadCount: 3,
+    } as unknown as NonNullable<ReturnType<typeof useChat>>);
+
+    renderViewer([morningService]);
+
+    expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
+    const teamChatButton = screen.getByRole("button", {
+      name: "Open Team Chat. 3 unread messages.",
+    });
+    expect(teamChatButton).toBeInTheDocument();
+    expect(
+      screen.getByRole("toolbar", { name: "Current service toolbar" }),
+    ).toHaveClass("w-dvw", "-translate-x-1/2");
+
+    await userEvent.setup().click(teamChatButton);
+
+    expect(openChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose Team Chat when the shared chat surface is unavailable", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(listServicePlans).mockResolvedValue({
+      success: true,
+      servicePlans: [],
+    });
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan: null,
+      snapshot: null,
+    });
+    mockedUseChat.mockReturnValue(null);
+
+    renderViewer([morningService]);
+
+    expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Open Team Chat/i }),
+    ).not.toBeInTheDocument();
   });
 });

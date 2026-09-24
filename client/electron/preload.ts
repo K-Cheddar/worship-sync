@@ -9,8 +9,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   isElectron: () => ipcRenderer.invoke("is-electron"),
   isDev: () => ipcRenderer.invoke("is-dev"),
-  openExternalUrl: (url: string) =>
-    ipcRenderer.invoke("open-external-url", url),
+  openExternalUrl: (url: string, options?: { allowArbitraryHttps?: boolean }) =>
+    ipcRenderer.invoke("open-external-url", url, options),
   fetchGeniusLyrics: (url: string) =>
     ipcRenderer.invoke("fetch-genius-lyrics", url),
   searchGeniusLyrics: (query: {
@@ -134,16 +134,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Media cache
   downloadMedia: (url: string) => ipcRenderer.invoke("download-media", url),
+  ensureMediaCached: (urls: string[]) =>
+    ipcRenderer.invoke("ensure-media-cached", urls),
   getMediaCacheMap: () =>
     ipcRenderer.invoke("get-media-cache-map") as Promise<
       Record<string, string>
     >,
+  getPreparedVideoSources: () => ipcRenderer.invoke("get-prepared-video-sources"),
   getLocalMediaPath: (url: string) =>
     ipcRenderer.invoke("get-local-media-path", url),
   cleanupUnusedMedia: (usedUrls: string[]) =>
     ipcRenderer.invoke("cleanup-unused-media", usedUrls),
   syncMediaCache: (mediaUrls: string[]) =>
     ipcRenderer.invoke("sync-media-cache", mediaUrls),
+  getPreparedVideoMetrics: () => ipcRenderer.invoke("get-prepared-video-metrics"),
 
   // App-managed local assets. Native paths stay inside the preload/main
   // boundary; renderers receive only metadata and a streamable protocol URL.

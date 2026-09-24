@@ -116,6 +116,53 @@ describe("localVideoCaptureQualityRelay", () => {
     stopPublisher();
   });
 
+  it("preserves CSS size and DPR alongside the rendered pixel demand", async () => {
+    const observer = new FakeBroadcastChannel(
+      "worshipsync-local-video-capture-quality-v1",
+    );
+    const messages: unknown[] = [];
+    observer.addEventListener("message", (event) => messages.push(event.data));
+    const stopPublisher = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [{ applyConstraints: jest.fn() }],
+    } as unknown as MediaStream);
+    const output = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      2_560,
+      1_440,
+      {
+        cssWidth: 1_280,
+        cssHeight: 720,
+        devicePixelRatio: 2,
+        outputId: "projector",
+        windowRole: "projector",
+        laneRole: "current",
+        diagnosticViewId: "view-1",
+      },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.runAllTicks();
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subscribe",
+          targetWidth: 2_560,
+          targetHeight: 1_440,
+          cssWidth: 1_280,
+          cssHeight: 720,
+          devicePixelRatio: 2,
+          outputId: "projector",
+          laneRole: "current",
+        }),
+      ]),
+    );
+
+    output.stop();
+    stopPublisher();
+    observer.close();
+  });
+
   it("cancels a pending downgrade when the high-resolution output returns", async () => {
     const videoTrack = {
       applyConstraints: jest.fn().mockResolvedValue(undefined),

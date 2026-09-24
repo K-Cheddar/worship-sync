@@ -52,18 +52,22 @@ import {
 } from "../../utils/presentationDnd";
 import MediaDragOverlay from "../../containers/Media/MediaDragOverlay";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { useServicePlanningSyncRunner } from "../Controller/useServicePlanningSyncRunner";
+import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 
 /**
  * Presentation controller for one auxiliary audience screen.
  *
  * Same outline, slides, tools, and display settings as the main controller,
- * scoped to this controller's outputs and route. Overlays and service planning
- * stay on the main / stream surfaces.
+ * scoped to this controller's outputs and route. Service Plans can populate
+ * this controller's own outline; stream-only overlay sync remains on the main
+ * controller surface.
  */
 const AuxControllerBody = () => {
   const dispatch = useDispatch();
   const location = useLocation();
   const { layoutRef } = useControllerPageLifecycle();
+  useServicePlanningSyncRunner({ allowOverlaySync: false });
   const { profile, profiles } = useControllerProfileRegistry();
   const controllerBasePath = useControllerBasePath();
   // False while the registry is still on its way; the profile is a stand-in
@@ -117,6 +121,7 @@ const AuxControllerBody = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ServicePlanningSyncFloatingWindow allowOverlaySync={false} />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className="z-10 mr-2 h-1/4 lg:hidden"

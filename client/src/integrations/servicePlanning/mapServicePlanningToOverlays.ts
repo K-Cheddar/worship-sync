@@ -264,7 +264,9 @@ export const mapServicePlanningRows = (
     );
     if (!rule || !ruleAppliesToOverlaySync(rule)) continue;
 
-    const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
+    const cleanedTitle = cleanPlanningTitle(
+      row.songTitle || row.contentTitle || row.title || row.elementType,
+    );
     const structuredAssigneeNames = (row.assigneeNames || [])
       .map((name) => name.trim())
       .filter(Boolean);

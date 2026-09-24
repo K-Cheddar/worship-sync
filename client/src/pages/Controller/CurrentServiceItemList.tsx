@@ -66,16 +66,18 @@ const CurrentItemRow = ({
 const CurrentServiceItemList = ({
   activeItemId,
   activeListId,
+  activeName,
 }: {
   activeItemId?: string | null;
   activeListId?: string | null;
+  activeName?: string | null;
 }) => {
   const { items: serviceItems, isLoading } = useLiveOutlinePreview();
 
-  // The monitor reports which outline row (listId) is live, so a song
-  // scheduled twice can be told apart. Fall back to matching by the
-  // underlying item's _id (picking the first occurrence) for presentations
-  // that don't carry a listId, e.g. Quick Links.
+  // The display source reports which outline row (listId) is live, so a song
+  // scheduled twice can be told apart. Fall back to the underlying item id,
+  // then the displayed name for projector presentations, which historically
+  // did not carry itemId/listId.
   const resolvedActiveListId = useMemo(() => {
     if (
       activeListId &&
@@ -83,11 +85,18 @@ const CurrentServiceItemList = ({
     ) {
       return activeListId;
     }
-    if (!activeItemId) return null;
     return (
-      serviceItems.find((item) => item._id === activeItemId)?.listId ?? null
+      (activeItemId
+        ? serviceItems.find((item) => item._id === activeItemId)?.listId
+        : null) ??
+      serviceItems.find(
+        (item) =>
+          activeName?.trim() &&
+          item.name.trim().toLocaleLowerCase() === activeName.trim().toLocaleLowerCase(),
+      )?.listId ??
+      null
     );
-  }, [serviceItems, activeItemId, activeListId]);
+  }, [serviceItems, activeItemId, activeListId, activeName]);
 
   if (isLoading) return <ServiceOutlineSkeleton />;
   if (serviceItems.length === 0) return null;

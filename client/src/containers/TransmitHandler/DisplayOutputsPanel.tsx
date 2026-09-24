@@ -662,6 +662,28 @@ const DisplayOutputsPanel = () => {
                                 />
                               </>
                             )}
+                          {applicable.includes("transitionDurationMs") && (
+                            <Input
+                              className="w-28"
+                              type="number"
+                              min={0}
+                              max={3000}
+                              label="Transition (ms)"
+                              aria-label={`Transition duration for ${output.name}`}
+                              value={resolved.transitionDurationMs}
+                              onChange={(value) =>
+                                applyAndPersistDebounced(
+                                  setDisplayOutputSettings({
+                                    id: output.id,
+                                    settings: {
+                                      transitionDurationMs: Number(value),
+                                    },
+                                  }),
+                                  SETTING_SAVE_ERROR,
+                                )
+                              }
+                            />
+                          )}
                           {applicable.includes("localVideoVolume") &&
                             resolved.localVideoAudioEnabled && (
                               <Input

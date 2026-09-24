@@ -183,14 +183,16 @@ describe("mediaCacheUtils", () => {
       const urls = await getMediaUrlsFromMediaDoc(db);
 
       expect(db.get).toHaveBeenCalledWith("media");
-      expect(Array.from(urls)).toEqual([
+      expect(urls.status).toBe("loaded");
+      if (urls.status !== "loaded") throw new Error("expected loaded media doc");
+      expect(Array.from(urls.urls)).toEqual([
         "https://video.example.com/a.mp4",
         "https://images.example.com/b.jpg",
         "https://stream.mux.com/abc123/highest.mp4",
       ]);
     });
 
-    it("returns empty set for missing media doc without warning", async () => {
+    it("returns a successful empty result for missing media doc without warning", async () => {
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
       const db = {
         get: jest.fn().mockRejectedValue({ status: 404 }),
@@ -198,11 +200,11 @@ describe("mediaCacheUtils", () => {
 
       const urls = await getMediaUrlsFromMediaDoc(db);
 
-      expect(urls.size).toBe(0);
+      expect(urls).toEqual({ status: "loaded", urls: new Set() });
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    it("warns and returns empty set for unexpected db errors", async () => {
+    it("warns and marks unexpected db errors unavailable", async () => {
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
       const db = {
         get: jest.fn().mockRejectedValue(new Error("boom")),
@@ -210,7 +212,8 @@ describe("mediaCacheUtils", () => {
 
       const urls = await getMediaUrlsFromMediaDoc(db);
 
-      expect(urls.size).toBe(0);
+      expect(urls.status).toBe("unavailable");
+      if (urls.status !== "unavailable") throw new Error("expected unavailable media doc");
       expect(warnSpy).toHaveBeenCalledWith(
         "Failed to load media doc for media cache:",
         expect.any(Error),

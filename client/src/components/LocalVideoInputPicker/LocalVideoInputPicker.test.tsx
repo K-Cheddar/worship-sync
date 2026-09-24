@@ -239,6 +239,28 @@ describe("LocalVideoInputPicker", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("refreshes hardware inputs when requested", async () => {
+    enumerateDevices
+      .mockResolvedValueOnce([
+        createDevice("videoinput", "camera-1", "First Camera"),
+      ])
+      .mockResolvedValueOnce([
+        createDevice("videoinput", "camera-2", "Replacement Camera"),
+      ]);
+
+    openPicker();
+    await waitFor(() => expect(enumerateDevices).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh video inputs" }),
+    );
+
+    await waitFor(() => expect(enumerateDevices).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole("combobox", { name: "Video input:" }),
+    ).toHaveTextContent("Replacement Camera");
+  });
+
   describe("screen and window shares", () => {
     const getDesktopCaptureSources = jest.fn();
     const getDisplayMedia = jest.fn();

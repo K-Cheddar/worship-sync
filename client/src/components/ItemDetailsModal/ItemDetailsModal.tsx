@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Search } from "lucide-react";
 import Modal from "../Modal/Modal";
 import Input from "../Input/Input";
 import Button from "../Button/Button";
@@ -16,6 +17,8 @@ import {
   parseYouTubeTimestamp,
 } from "../../utils/youtube";
 import SongAudioAttachment from "./SongAudioAttachment";
+import YouTubeVideoPicker from "../YouTubeVideoPicker/YouTubeVideoPicker";
+import type { YouTubeSearchResult } from "../../api/auth";
 import { cn } from "@/utils/cnHelper";
 
 const EMPTY_SONG_LINKS: SongLink[] = [];
@@ -44,6 +47,9 @@ const toEditableSongLinks = (links: SongLink[]): EditableSongLink[] =>
     id: link.id,
     label: link.label ?? "",
     url: link.url,
+    ...(link.durationSeconds === undefined
+      ? {}
+      : { durationSeconds: link.durationSeconds }),
     segments: (link.segments ?? []).map((segment) => ({
       id: segment.id,
       label: segment.label ?? "",
@@ -160,6 +166,7 @@ export function ItemDetailsEditorFields({
   const [linkError, setLinkError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isYouTubePickerOpen, setIsYouTubePickerOpen] = useState(false);
   const isSong = itemType === "song";
 
   useEffect(() => {
@@ -171,12 +178,17 @@ export function ItemDetailsEditorFields({
     setLocalSongLinks(toEditableSongLinks(songLinks));
     setLinkError("");
     setSaveError("");
+    setIsYouTubePickerOpen(false);
   }, [isOpen, itemName, songLinks, songMetadata]);
 
   const updateSongLink = (id: string, patch: Partial<EditableSongLink>) => {
     setLocalSongLinks((links) =>
       links.map((link) => (link.id === id ? { ...link, ...patch } : link)),
     );
+  };
+
+  const updateSongLinkAddress = (id: string, url: string) => {
+    updateSongLink(id, { url, durationSeconds: undefined });
   };
 
   const addSongLink = () => {
@@ -206,6 +218,26 @@ export function ItemDetailsEditorFields({
         };
       }),
     );
+  };
+
+  const linkSelectedYouTubeVideo = (result: YouTubeSearchResult) => {
+    setLocalSongLinks((links) => {
+      if (links.some((link) => getYouTubeVideoReference(link.url)?.videoId === result.videoId)) {
+        return links;
+      }
+      return [
+        ...links,
+        {
+          id: createEditorId("song-link"),
+          label: "YouTube",
+          url: result.watchUrl,
+          ...(result.durationSeconds === undefined
+            ? {}
+            : { durationSeconds: result.durationSeconds }),
+          segments: [],
+        },
+      ];
+    });
   };
 
   const updateSongLinkSegment = (
@@ -286,6 +318,9 @@ export function ItemDetailsEditorFields({
         id: editableLink.id,
         ...(label ? { label } : {}),
         url,
+        ...(editableLink.durationSeconds === undefined
+          ? {}
+          : { durationSeconds: editableLink.durationSeconds }),
         ...(segments.length ? { segments } : {}),
       });
     }
@@ -369,7 +404,8 @@ export function ItemDetailsEditorFields({
   };
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
+    <>
+      <div className={cn("flex flex-col gap-3", className)}>
       <Input
         label={isSong ? "Song name" : "Item name"}
         value={localName}
@@ -402,9 +438,20 @@ export function ItemDetailsEditorFields({
                 <p className="text-sm font-semibold text-white">Links</p>
                 <p className="text-xs text-gray-400">Charts, tutorials, or other references.</p>
               </div>
-              <Button variant="tertiary" className="text-sm" onClick={addSongLink}>
-                Add link
-              </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  svg={Search}
+                  className="text-sm"
+                  onClick={() => setIsYouTubePickerOpen(true)}
+                >
+                  Find YouTube Video
+                </Button>
+                <Button variant="tertiary" className="text-sm" onClick={addSongLink}>
+                  Add link
+                </Button>
+              </div>
             </div>
             {localSongLinks.map((link) => (
               <div key={link.id} className="mt-2 rounded bg-gray-800 p-2">
@@ -417,7 +464,7 @@ export function ItemDetailsEditorFields({
                   label="Link address"
                   type="url"
                   value={link.url}
-                  onChange={(value) => updateSongLink(link.id, { url: String(value) })}
+                  onChange={(value) => updateSongLinkAddress(link.id, String(value))}
                 />
                 {getYouTubeVideoReference(link.url) || link.segments.length ? (
                   <section className="mt-2 border-t border-gray-700 pt-2">
@@ -538,6 +585,17 @@ export function ItemDetailsEditorFields({
           {saveError}
         </p>
       ) : null}
-    </div>
+      </div>
+      {isSong ? (
+        <YouTubeVideoPicker
+          isOpen={isYouTubePickerOpen}
+          onClose={() => setIsYouTubePickerOpen(false)}
+          title={localName}
+          artist={artistName}
+          album={albumName}
+          onSelect={linkSelectedYouTubeVideo}
+        />
+      ) : null}
+    </>
   );
 }

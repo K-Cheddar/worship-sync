@@ -44,6 +44,20 @@ const mockPlanSource = {
   },
   selectedPlanKey: null as string | null,
   selectPlan: jest.fn(),
+  occurrences: [] as Array<{
+    occurrenceId: string;
+    name: string;
+    startsAt: string;
+  }>,
+  occurrence: null as {
+    occurrenceId: string;
+    name: string;
+    startsAt: string;
+  } | null,
+  selectedOccurrenceId: null as string | null,
+  selectOccurrence: jest.fn(),
+  returnToCurrentService: jest.fn(),
+  isManualSelection: false,
   isEnabled: true,
   isLoading: false,
   isLoadingPlans: false,
@@ -63,11 +77,14 @@ const mockedUseServicePlanningImport =
   >;
 const mockedUseToast = useToast as jest.MockedFunction<typeof useToast>;
 
-const renderWindow = (store: ReturnType<typeof configureStore>) =>
+const renderWindow = (
+  store: ReturnType<typeof configureStore>,
+  props: { allowOverlaySync?: boolean } = {},
+) =>
   render(
     <MemoryRouter>
       <Provider store={store}>
-        <ServicePlanningSyncFloatingWindow />
+        <ServicePlanningSyncFloatingWindow {...props} />
       </Provider>
     </MemoryRouter>,
   );
@@ -104,6 +121,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
+    mockPlanSource.occurrences = [];
+    mockPlanSource.occurrence = null;
+    mockPlanSource.selectedOccurrenceId = null;
+    mockPlanSource.isManualSelection = false;
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
@@ -220,6 +241,83 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
       "service-2@2026-08-06",
     );
+  });
+
+  it("shows the manual occurrence override and return action", async () => {
+    mockPlanSource.occurrences = [
+      {
+        occurrenceId: "occurrence-1",
+        name: "Sunday Service",
+        startsAt: "2026-08-02T10:00:00.000Z",
+      },
+      {
+        occurrenceId: "occurrence-2",
+        name: "Evening Service",
+        startsAt: "2026-08-02T18:00:00.000Z",
+      },
+    ];
+    mockPlanSource.occurrence = mockPlanSource.occurrences[1];
+    mockPlanSource.selectedOccurrenceId = "occurrence-2";
+    mockPlanSource.isManualSelection = true;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer },
+    });
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+
+    expect(screen.getByRole("combobox", { name: /Service occurrence/i })).toHaveTextContent(
+      "Evening Service",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Manually selected");
+
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Return to current service" }),
+    );
+    expect(mockPlanSource.returnToCurrentService).toHaveBeenCalled();
+  });
+
+  it("shows a manual plan without claiming an unrelated occurrence", async () => {
+    mockPlanSource.savedPlans = [
+      {
+        planKey: "service-3@2026-08-02",
+        serviceId: "service-3",
+        date: "2026-08-02",
+        name: "Outside Window Service",
+      },
+    ];
+    mockPlanSource.selectedPlan = mockPlanSource.savedPlans[0];
+    mockPlanSource.selectedPlanKey = "service-3@2026-08-02";
+    mockPlanSource.occurrences = [
+      {
+        occurrenceId: "occurrence-1",
+        name: "Sunday Service",
+        startsAt: "2026-08-02T10:00:00.000Z",
+      },
+    ];
+    mockPlanSource.isManualSelection = true;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer },
+    });
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+
+    expect(screen.getByRole("combobox", { name: /Service occurrence/i })).toHaveTextContent(
+      "Select",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Manually selected plan (no matching occurrence)",
+    );
+    expect(
+      screen.getByRole("button", { name: "Return to current service" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a loading status instead of the previous plan while selection changes", () => {
@@ -709,6 +807,39 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+  });
+
+  it("hides overlay sync actions when the controller is outline-only", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => ({
+          present: {
+            itemLists: {
+              selectedList: { _id: "aux-outline", name: "Lobby" },
+            },
+            itemList: { isLoading: false },
+          },
+        }),
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [{ action: "create", elementType: "Welcome" }],
+        outlineCandidates: [],
+        lineItems: [],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store, { allowOverlaySync: false });
+
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sync overlays" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sync All" })).not.toBeInTheDocument();
   });
 
   it("normalizes Sync All to overlays when no target outline is selected", () => {

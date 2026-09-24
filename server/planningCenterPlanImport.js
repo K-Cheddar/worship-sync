@@ -84,9 +84,11 @@ const personDisplayName = (person) => {
     .trim();
 };
 
-/** Item-level assignees become the shared Led by string used by import. */
+/** Item-level assignments become the shared Led by string and retain whether
+ * Planning Center assigned a person or a team position. */
 const ledByFromItemAssignments = (item, includedByKey) => {
   const names = [];
+  const assignments = [];
   const seen = new Set();
   for (const assignmentId of relatedIds(item, "item_assignments")) {
     const assignment = includedByKey.get(
@@ -108,8 +110,13 @@ const ledByFromItemAssignments = (item, includedByKey) => {
     if (seen.has(key)) continue;
     seen.add(key);
     names.push(name);
+    assignments.push({
+      kind: assignable.type === "Person" ? "person" : "teamPosition",
+      id: assignable.id,
+      name,
+    });
   }
-  return names.join(", ");
+  return { ledBy: names.join(", "), ledByAssignments: assignments };
 };
 
 /**
@@ -233,17 +240,22 @@ const rowFromItem = (item, includedByKey) => {
       ? lengthSeconds / 60
       : undefined;
   const note = noteTextForItem(item, includedByKey);
-  const ledBy = ledByFromItemAssignments(item, includedByKey);
+  const { ledBy, ledByAssignments } = ledByFromItemAssignments(
+    item,
+    includedByKey,
+  );
   const startTime = startTimeFromItemTimes(item, includedByKey);
 
   let elementType = "Item";
-  if (isSong) elementType = "Song";
+  if (isSong) elementType = itemTitle || "Song";
   else if (itemType === "media") elementType = "Media";
 
   return {
     elementType,
     title,
+    contentTitle: title,
     ledBy,
+    ...(ledByAssignments.length ? { ledByAssignments } : {}),
     ...(startTime ? { startTime } : {}),
     ...(durationMinutes != null ? { durationMinutes } : {}),
     ...(note ? { note } : {}),

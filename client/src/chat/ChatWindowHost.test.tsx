@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ChatWindowHost from "./ChatWindowHost";
 import { useChat } from "./ChatContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -66,6 +67,23 @@ describe("ChatWindowHost", () => {
 
     mockedUseMediaQuery.mockReturnValue(true);
     rerender(<ChatWindowHost />);
+    expect(screen.getByTestId("floating-window")).toBeInTheDocument();
+  });
+
+  it("uses the floating window on the Viewer route", () => {
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: true,
+      closeChat: jest.fn(),
+    } as unknown as ReturnType<typeof useChat>);
+    mockedUseMediaQuery.mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={["/current-service/view"]}>
+        <ChatWindowHost />
+      </MemoryRouter>,
+    );
+
     expect(screen.getByTestId("floating-window")).toBeInTheDocument();
   });
 });

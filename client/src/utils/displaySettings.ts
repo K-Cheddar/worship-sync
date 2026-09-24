@@ -30,6 +30,8 @@ export type DisplaySettings = {
   showNextSlide?: boolean;
   /** Render the slide's media background. Never applies to stream. */
   showBackground?: boolean;
+  /** Crossfade duration for this output, in milliseconds. */
+  transitionDurationMs?: number;
   /** Whether local video-input slides play their linked audio on this screen. */
   localVideoAudioEnabled?: boolean;
   /** Local video-input volume from 0 (silent) to 100 (full level). */
@@ -55,6 +57,7 @@ export const DISPLAY_SETTINGS_DEFAULTS: Required<
   showBackground: true,
   localVideoAudioEnabled: false,
   localVideoVolume: 100,
+  transitionDurationMs: 500,
   isHeadless: false,
 };
 
@@ -87,6 +90,21 @@ const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 200;
 const LOCAL_VIDEO_VOLUME_MIN = 0;
 const LOCAL_VIDEO_VOLUME_MAX = 100;
+export const DISPLAY_TRANSITION_DURATION_MIN_MS = 0;
+export const DISPLAY_TRANSITION_DURATION_MAX_MS = 3000;
+export const DISPLAY_TRANSITION_DURATION_DEFAULT_MS = 500;
+
+export const normalizeTransitionDurationMs = (
+  value: unknown,
+  fallback = DISPLAY_TRANSITION_DURATION_DEFAULT_MS,
+) => {
+  const duration = Number(value);
+  if (!Number.isFinite(duration)) return fallback;
+  return Math.min(
+    DISPLAY_TRANSITION_DURATION_MAX_MS,
+    Math.max(DISPLAY_TRANSITION_DURATION_MIN_MS, Math.round(duration)),
+  );
+};
 
 const clampFontSize = (value: unknown, fallback: number) => {
   const size = Number(value);
@@ -107,7 +125,11 @@ export const getApplicableSettingKeys = (
   if (type === "stream") {
     // Stream stays transparent and has no clock/timer band, but a local video
     // input can still route sound through an OBS/browser-source screen.
-    return ["localVideoAudioEnabled", "localVideoVolume"];
+    return [
+      "localVideoAudioEnabled",
+      "localVideoVolume",
+      "transitionDurationMs",
+    ];
   }
   if (type === "monitor") {
     return [
@@ -119,6 +141,7 @@ export const getApplicableSettingKeys = (
       "showBackground",
       "localVideoAudioEnabled",
       "localVideoVolume",
+      "transitionDurationMs",
     ];
   }
   if (type === "projector") {
@@ -130,6 +153,7 @@ export const getApplicableSettingKeys = (
       "showBackground",
       "localVideoAudioEnabled",
       "localVideoVolume",
+      "transitionDurationMs",
     ];
   }
   // Pull surfaces composite the same band over their own content.
@@ -194,6 +218,14 @@ export const normalizeDisplaySettings = (
       );
     }
   }
+  if (
+    allowed.has("transitionDurationMs") &&
+    candidate.transitionDurationMs != null
+  ) {
+    next.transitionDurationMs = normalizeTransitionDurationMs(
+      candidate.transitionDurationMs,
+    );
+  }
   if (allowed.has("clockFontSize") && candidate.clockFontSize != null) {
     next.clockFontSize = clampFontSize(
       candidate.clockFontSize,
@@ -229,7 +261,11 @@ export const resolveDisplaySettings = (
   const pick = <K extends keyof DisplaySettings>(
     key: K,
   ): NonNullable<DisplaySettings[K]> | ResolvedDisplaySettings[K] => {
-    const override = screenOverrides?.[key];
+    // Transition timing belongs to the output contract, not one physical
+    // screen. Ignore stale/forged screen-level values for this field so every
+    // screen rendering an output crosses the same total duration.
+    const override =
+      key === "transitionDurationMs" ? undefined : screenOverrides?.[key];
     if (override !== undefined) return override as never;
     const base = outputDefaults?.[key];
     if (base !== undefined) return base as never;
@@ -243,6 +279,9 @@ export const resolveDisplaySettings = (
     timerFontSize: pick("timerFontSize") as number,
     showNextSlide: pick("showNextSlide") as boolean,
     showBackground: pick("showBackground") as boolean,
+    transitionDurationMs: normalizeTransitionDurationMs(
+      pick("transitionDurationMs"),
+    ),
     localVideoAudioEnabled: pick("localVideoAudioEnabled") as boolean,
     localVideoVolume: pick("localVideoVolume") as number,
     isHeadless: (screenOverrides?.isHeadless ?? defaults.isHeadless) as boolean,

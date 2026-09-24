@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Send } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
@@ -59,8 +59,10 @@ const emptyPayload = (): TeamIntakeSubmissionPayload => ({
 
 const TeamIntakePublic = () => {
   const { token: routeToken = "" } = useParams();
+  const location = useLocation();
   const [params] = useSearchParams();
   const token = routeToken || params.get("token") || "";
+  const personalizedRoute = location.pathname.startsWith("/a/");
   const { showToast } = useToast();
   const [preview, setPreview] = useState<TeamIntakePreview | null>(null);
   const [payload, setPayload] = useState<TeamIntakeSubmissionPayload>(emptyPayload);
@@ -82,7 +84,7 @@ const TeamIntakePublic = () => {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getTeamIntakePreview(token)
+    getTeamIntakePreview(token, { personalized: personalizedRoute })
       .then((response) => {
         if (!cancelled) setPreview(response);
       })
@@ -97,40 +99,40 @@ const TeamIntakePublic = () => {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [personalizedRoute, token]);
 
   const submit = async () => {
     const nextFieldErrors: MemberDetailErrors = {};
-    if (enabledFields.includes("title") && !payload.title?.trim()) {
+    if (!isPersonalized && enabledFields.includes("title") && !payload.title?.trim()) {
       nextFieldErrors.title = "Enter your title.";
     }
-    if (enabledFields.includes("firstName") && !payload.firstName.trim()) {
+    if (!isPersonalized && enabledFields.includes("firstName") && !payload.firstName.trim()) {
       nextFieldErrors.firstName = "Enter your first name.";
     }
-    if (enabledFields.includes("lastName") && !payload.lastName.trim()) {
+    if (!isPersonalized && enabledFields.includes("lastName") && !payload.lastName.trim()) {
       nextFieldErrors.lastName = "Enter your last name.";
     }
-    if (enabledFields.includes("birthDate") && !payload.birthDate) {
+    if (!isPersonalized && enabledFields.includes("birthDate") && !payload.birthDate) {
       nextFieldErrors.birthDate = "Enter your birthday.";
     }
-    if (enabledFields.includes("email") && !payload.email?.trim()) {
+    if (!isPersonalized && enabledFields.includes("email") && !payload.email?.trim()) {
       nextFieldErrors.email = "Enter your email.";
     }
 
     const missingMemberDetailFields = [
-      enabledFields.includes("title") && !payload.title?.trim()
+      !isPersonalized && enabledFields.includes("title") && !payload.title?.trim()
         ? "title"
         : "",
-      enabledFields.includes("firstName") && !payload.firstName.trim()
+      !isPersonalized && enabledFields.includes("firstName") && !payload.firstName.trim()
         ? "first name"
         : "",
-      enabledFields.includes("lastName") && !payload.lastName.trim()
+      !isPersonalized && enabledFields.includes("lastName") && !payload.lastName.trim()
         ? "last name"
         : "",
-      enabledFields.includes("birthDate") && !payload.birthDate
+      !isPersonalized && enabledFields.includes("birthDate") && !payload.birthDate
         ? "birthday"
         : "",
-      enabledFields.includes("email") && !payload.email?.trim()
+      !isPersonalized && enabledFields.includes("email") && !payload.email?.trim()
         ? "email"
         : "",
     ].filter(Boolean);
@@ -154,7 +156,9 @@ const TeamIntakePublic = () => {
       showToast(message, "neutral");
       return;
     }
-    const birthdayError = getBirthDateValidationError(payload.birthDate);
+    const birthdayError = isPersonalized
+      ? ""
+      : getBirthDateValidationError(payload.birthDate);
     if (birthdayError) {
       setFieldErrors({ birthDate: birthdayError });
       showToast(birthdayError, "neutral");
@@ -163,7 +167,7 @@ const TeamIntakePublic = () => {
     setFieldErrors({});
     setSubmitting(true);
     try {
-      await submitTeamIntake(token, payload);
+      await submitTeamIntake(token, payload, { personalized: isPersonalized });
       setSubmitted(true);
     } catch (submitError) {
       showApiErrorToast(showToast, submitError, "Could not submit this form.");
@@ -175,6 +179,7 @@ const TeamIntakePublic = () => {
   const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
   /** The public form only renders fields selected by its owner. */
   const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
+  const isPersonalized = Boolean(preview?.recipient);
 
   // Group positions under their team so submitters can skip teams that aren't
   // theirs. The server already scopes which teams appear.
@@ -259,7 +264,9 @@ const TeamIntakePublic = () => {
                 <ChurchLogoImg src={churchLogoUrl} variant="board-attendee" />
               ) : null}
               <h1 className="min-w-0 flex-1 text-3xl font-semibold sm:text-4xl">
-                {payload.firstName ? `Thanks, ${payload.firstName}.` : "Thanks."}
+              {preview.recipient?.firstName || payload.firstName
+                ? `Thanks, ${preview.recipient?.firstName || payload.firstName}.`
+                : "Thanks."}
               </h1>
             </div>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-300 sm:text-base">
@@ -291,6 +298,10 @@ const TeamIntakePublic = () => {
             {formatPlainDateRangeLabel(preview.form.startDate, preview.form.endDate)}
           </p>
           <p className="mt-2 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-stone-400">
+            {isPersonalized
+              ? `Hi ${preview.recipient?.firstName || "there"}. Please submit your availability for this form.`
+              : null}
+            {isPersonalized ? "\n\n" : ""}
             {resolveIntakeCopy(
               preview.form.welcomeMessage,
               DEFAULT_INTAKE_FORM_COPY.welcome,
@@ -299,7 +310,7 @@ const TeamIntakePublic = () => {
         </header>
 
         <section className={cn(boardIntakeFormSectionClassName, "mt-4 space-y-6")}>
-          {[
+          {!isPersonalized && [
             "title",
             "firstName",
             "lastName",
@@ -456,10 +467,10 @@ const TeamIntakePublic = () => {
             />
           ) : null}
 
-          {enabledFields.includes("schedulingPreferences") ? (
+          {enabledFields.includes("schedulingFrequency") ? (
             <fieldset className="space-y-3 rounded-md border border-stone-700 bg-stone-950/30 p-4 pt-2">
               <legend className={cn(boardFieldLabelClassName, "px-1")}>
-                Scheduling preferences
+                Scheduling frequency
               </legend>
               <Select
                 label="Serving frequency"
@@ -475,6 +486,14 @@ const TeamIntakePublic = () => {
                   }))
                 }
               />
+            </fieldset>
+          ) : null}
+
+          {enabledFields.includes("recurringAvailability") ? (
+            <fieldset className="space-y-3 rounded-md border border-stone-700 bg-stone-950/30 p-4 pt-2">
+              <legend className={cn(boardFieldLabelClassName, "px-1")}>
+                Scheduling preferences
+              </legend>
               <fieldset className="space-y-2">
                 <legend className="text-sm font-semibold text-stone-100">
                   Weeks you can usually serve
@@ -572,7 +591,7 @@ const TeamIntakePublic = () => {
               className="w-full justify-center gap-2 py-2 sm:w-48"
               onClick={() => void submit()}
             >
-              Submit form
+              {isPersonalized ? "Submit availability" : "Submit form"}
             </Button>
           </div>
         </section>

@@ -435,31 +435,89 @@ const ServicePlanAssigneeList = ({
               {assigneeMicrophones.map((microphone) => {
                 const scheduledHolders =
                   scheduledMicrophoneHolders?.get(microphone.id) || [];
+                const replaceableMicrophones = microphones.filter(
+                  (candidate) =>
+                    candidate.id !== microphone.id
+                    && !taken.has(candidate.id)
+                    && !(assignee.microphoneIds || []).includes(candidate.id),
+                );
+                const microphoneChip = (
+                  <ServicePlanMicrophoneChip microphone={microphone} className="!pr-0.5">
+                    {allowEdit ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        iconSize="sm"
+                        padding="p-0"
+                        className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
+                        svg={X}
+                        aria-label={`Remove ${microphone.name} from ${label}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          updateAssignee(assignee.id, {
+                            microphoneIds: (assignee.microphoneIds || []).filter(
+                              (id) => id !== microphone.id,
+                            ),
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </ServicePlanMicrophoneChip>
+                );
                 return (
                   <span
                     key={microphone.id}
                     className="inline-flex min-w-0 max-w-full items-center gap-0.5"
                   >
-                    <ServicePlanMicrophoneChip microphone={microphone}>
-                      {allowEdit ? (
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          iconSize="xs"
-                          padding="p-0"
-                          className="h-6 w-6 max-md:min-h-[2rem] max-md:min-w-8"
-                          svg={X}
-                          aria-label={`Remove ${microphone.name} from ${label}`}
-                          onClick={() =>
-                            updateAssignee(assignee.id, {
-                              microphoneIds: (assignee.microphoneIds || []).filter(
-                                (id) => id !== microphone.id,
-                              ),
-                            })
-                          }
-                        />
-                      ) : null}
-                    </ServicePlanMicrophoneChip>
+                    {allowEdit && replaceableMicrophones.length > 0 ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <span
+                            className="inline-flex min-w-0 max-w-full cursor-pointer rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                            aria-label={`Change ${microphone.name} for ${label}`}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            {microphoneChip}
+                          </span>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
+                          <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+                            {replaceableMicrophones.map((candidate) => {
+                              const candidateHolders = scheduledMicrophoneHolders?.get(candidate.id) || [];
+                              return (
+                                <DropdownMenuItem
+                                  key={candidate.id}
+                                  onSelect={() =>
+                                    updateAssignee(assignee.id, {
+                                      microphoneIds: (assignee.microphoneIds || []).map((id) =>
+                                        id === microphone.id ? candidate.id : id,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  <ServicePlanMicrophoneIcon
+                                    microphone={candidate}
+                                    color={candidate.color}
+                                    className="size-4 shrink-0"
+                                  />
+                                  <span className="truncate">{candidate.name}</span>
+                                  {candidateHolders.length ? (
+                                    <span className="ml-auto shrink-0 text-[10px] text-amber-300">
+                                      Assigned: {candidateHolders.join(", ")}
+                                    </span>
+                                  ) : (
+                                    <span className="ml-auto shrink-0 text-xs text-gray-400">
+                                      {candidate.type}
+                                    </span>
+                                  )}
+                                </DropdownMenuItem>
+                              );
+                            })}
+                          </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : microphoneChip}
                     {scheduledHolders.length ? (
                       <Popover>
                         <PopoverTrigger asChild>
@@ -552,9 +610,9 @@ const ServicePlanAssigneeList = ({
                 <Button
                   type="button"
                   variant="tertiary"
-                  iconSize="xs"
+                  iconSize="sm"
                   padding="p-0.5"
-                  className="h-7 w-7 shrink-0 max-md:min-h-[2rem] max-md:min-w-8"
+                  className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
                   svg={Trash2}
                   aria-label={
                     isUnassigned

@@ -13,6 +13,7 @@ export const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const CHAT_IMAGE_MAX_PIXELS = 40_000_000;
 export const CHAT_IMAGE_FULL_MAX_WIDTH = 2048;
 export const CHAT_IMAGE_THUMBNAIL_MAX_WIDTH = 480;
+export const CHAT_IMAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 const SIGNED_URL_TTL_SECONDS = 15 * 60;
 const IMAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -28,6 +29,15 @@ export class ChatImageInputError extends Error {
 
 export class ChatImageStorageNotConfiguredError extends Error {
   statusCode = 503;
+}
+
+export class ChatImageExpiredError extends Error {
+  statusCode = 410;
+
+  constructor() {
+    super("Image expired.");
+    this.name = "ChatImageExpiredError";
+  }
 }
 
 const requireNonEmptyString = (value, label) => {
@@ -109,10 +119,10 @@ const getStorageConfig = (env) => {
   const accountId = env.R2_ACCOUNT_ID?.trim();
   const accessKeyId = env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim();
-  const bucket = env.R2_BUCKET?.trim();
+  const bucket = env.R2_RESOURCES_BUCKET?.trim();
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
     throw new ChatImageStorageNotConfiguredError(
-      "Photo sharing is not configured yet. Send a text message instead.",
+      "Photo sharing is not configured yet. Set R2_RESOURCES_BUCKET and try again.",
     );
   }
   return {
@@ -223,6 +233,8 @@ export const createChatImageStorage = ({
   s3Client,
   signUrl = getSignedUrl,
   randomId = crypto.randomUUID,
+  quota,
+  now = () => Date.now(),
 } = {}) => {
   const config = getStorageConfig(env);
   const client =
@@ -251,7 +263,9 @@ export const createChatImageStorage = ({
     const height = numberMetadata(metadata.height);
     const thumbnailWidth = numberMetadata(metadata.thumbnailwidth);
     const thumbnailHeight = numberMetadata(metadata.thumbnailheight);
+    const expiresAt = numberMetadata(metadata.expiresat);
     if (!width || !height || !thumbnailWidth || !thumbnailHeight) return null;
+    if (!expiresAt || expiresAt <= now()) return null;
     return {
       type: "image",
       id: imageId,
@@ -264,6 +278,7 @@ export const createChatImageStorage = ({
       contentType: "image/webp",
       sizeBytes: Number(fullHead.ContentLength) || 0,
       thumbnailSizeBytes: Number(thumbnailHead.ContentLength) || 0,
+      expiresAt,
       width,
       height,
       thumbnailWidth,
@@ -368,7 +383,15 @@ export const createChatImageStorage = ({
       imageId,
       messageKey,
     });
-    if (existing) return existing;
+    if (existing) {
+      await quota?.reserve({
+        churchId,
+        provider: "r2Bytes",
+        amount: existing.sizeBytes + existing.thumbnailSizeBytes,
+        operationId: `chat-image:${imageId}`,
+      });
+      return existing;
+    }
 
     const pendingKey = buildPendingChatImageKey({
       churchId,
@@ -414,32 +437,51 @@ export const createChatImageStorage = ({
       thumbnailwidth: String(processed.thumbnailWidth),
       thumbnailheight: String(processed.thumbnailHeight),
       messagekey: messageKey,
+      expiresat: String(now() + CHAT_IMAGE_RETENTION_MS),
     };
-    await Promise.all([
-      client.send(
-        new PutObjectCommand({
-          Bucket: config.bucket,
-          Key: fullKey,
-          Body: processed.full,
-          ContentType: "image/webp",
-          ContentLength: processed.full.byteLength,
-          ContentDisposition: 'inline; filename="chat-photo.webp"',
-          CacheControl: "private, max-age=604800",
-          Metadata: metadata,
-        }),
-      ),
-      client.send(
-        new PutObjectCommand({
-          Bucket: config.bucket,
-          Key: thumbnailKey,
-          Body: processed.thumbnail,
-          ContentType: "image/webp",
-          ContentLength: processed.thumbnail.byteLength,
-          ContentDisposition: 'inline; filename="chat-photo-thumbnail.webp"',
-          CacheControl: "private, max-age=604800",
-        }),
-      ),
-    ]);
+    const reservedBytes = processed.full.byteLength + processed.thumbnail.byteLength;
+    const reservationId = `chat-image:${imageId}`;
+    await quota?.reserve({
+      churchId,
+      provider: "r2Bytes",
+      amount: reservedBytes,
+      operationId: reservationId,
+    });
+    try {
+      await Promise.all([
+        client.send(
+          new PutObjectCommand({
+            Bucket: config.bucket,
+            Key: fullKey,
+            Body: processed.full,
+            ContentType: "image/webp",
+            ContentLength: processed.full.byteLength,
+            ContentDisposition: 'inline; filename="chat-photo.webp"',
+            CacheControl: "private, max-age=604800",
+            Metadata: metadata,
+          }),
+        ),
+        client.send(
+          new PutObjectCommand({
+            Bucket: config.bucket,
+            Key: thumbnailKey,
+            Body: processed.thumbnail,
+            ContentType: "image/webp",
+            ContentLength: processed.thumbnail.byteLength,
+            ContentDisposition: 'inline; filename="chat-photo-thumbnail.webp"',
+            CacheControl: "private, max-age=604800",
+            Metadata: metadata,
+          }),
+        ),
+      ]);
+    } catch (error) {
+      await Promise.all([
+        client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: fullKey })).catch(() => {}),
+        client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: thumbnailKey })).catch(() => {}),
+        quota?.cancel({ churchId, reservationId }).catch(() => {}),
+      ]);
+      throw error;
+    }
     await client
       .send(new DeleteObjectCommand({ Bucket: config.bucket, Key: pendingKey }))
       .catch((error) =>
@@ -453,6 +495,7 @@ export const createChatImageStorage = ({
       contentType: "image/webp",
       sizeBytes: processed.full.byteLength,
       thumbnailSizeBytes: processed.thumbnail.byteLength,
+      expiresAt: Number(metadata.expiresat),
       width: processed.width,
       height: processed.height,
       thumbnailWidth: processed.thumbnailWidth,
@@ -460,7 +503,54 @@ export const createChatImageStorage = ({
     };
   };
 
+  const commitAttachment = async ({ churchId, attachment }) => {
+    if (!quota) return;
+    const imageId = String(attachment?.id || "");
+    if (!IMAGE_ID_PATTERN.test(imageId)) return;
+    await quota.commitR2({
+      churchId,
+      reservationId: `chat-image:${imageId}`,
+      assetId: `chat-image:${imageId}`,
+      actualAmount: Number(attachment.sizeBytes) + Number(attachment.thumbnailSizeBytes),
+    });
+  };
+
+  const abortAttachment = async ({ churchId, attachment }) => {
+    const imageId = String(attachment?.id || "");
+    if (!IMAGE_ID_PATTERN.test(imageId)) return;
+    await deleteObjects({ churchId, attachment });
+    if (quota) {
+      await quota.releaseR2({
+        churchId,
+        reservationId: `chat-image-abort:${imageId}`,
+        assetId: `chat-image:${imageId}`,
+        fallbackPreviousAmount:
+          Number(attachment?.sizeBytes || 0) +
+          Number(attachment?.thumbnailSizeBytes || 0),
+      });
+    }
+  };
+
+  const deleteObjects = async ({ churchId, attachment }) => {
+    const imageId = String(attachment?.id || "");
+    if (!IMAGE_ID_PATTERN.test(imageId)) return;
+    const keys = [
+      buildChatImageKey({ churchId, imageId, variant: "full" }),
+      buildChatImageKey({ churchId, imageId, variant: "thumbnail" }),
+    ];
+    await Promise.all(
+      keys.map((key) =>
+        client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key })),
+      ),
+    );
+  };
+
   const getDownloadUrl = async ({ churchId, attachment, variant }) => {
+    const attachmentExpiresAt = Number(attachment?.expiresAt);
+    const currentTime = now();
+    if (!Number.isSafeInteger(attachmentExpiresAt) || attachmentExpiresAt <= currentTime) {
+      throw new ChatImageExpiredError();
+    }
     const imageId = String(attachment?.id || "");
     if (!IMAGE_ID_PATTERN.test(imageId)) {
       throw new ChatImageInputError("That chat image is not available.");
@@ -477,6 +567,16 @@ export const createChatImageStorage = ({
     ) {
       throw new ChatImageInputError("That chat image is not available.");
     }
+    try {
+      await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
+    } catch (error) {
+      if (isNotFoundError(error)) throw new ChatImageExpiredError();
+      throw error;
+    }
+    const expiresIn = Math.min(
+      SIGNED_URL_TTL_SECONDS,
+      Math.max(1, Math.ceil((attachmentExpiresAt - currentTime) / 1000)),
+    );
     const url = await signUrl(
       client,
       new GetObjectCommand({
@@ -485,39 +585,41 @@ export const createChatImageStorage = ({
         ResponseContentType: "image/webp",
         ResponseContentDisposition: 'inline; filename="chat-photo.webp"',
       }),
-      { expiresIn: SIGNED_URL_TTL_SECONDS },
+      { expiresIn },
     );
     return {
       url,
-      expiresAt: new Date(
-        Date.now() + SIGNED_URL_TTL_SECONDS * 1000,
-      ).toISOString(),
+      expiresAt: new Date(Math.min(attachmentExpiresAt, now() + expiresIn * 1000)).toISOString(),
     };
   };
 
   const deleteAttachment = async ({ churchId, attachment }) => {
     const imageId = String(attachment?.id || "");
     if (!IMAGE_ID_PATTERN.test(imageId)) return;
-    const keys = [
-      { key: attachment?.key, variant: "full" },
-      { key: attachment?.thumbnailKey, variant: "thumbnail" },
-    ].filter(({ key, variant }) =>
-      isChatImageKeyForScope({ key, churchId, imageId, variant }),
-    );
-    await Promise.all(
-      keys.map(({ key }) =>
-        client.send(
-          new DeleteObjectCommand({ Bucket: config.bucket, Key: key }),
-        ),
-      ),
-    );
+    await deleteObjects({ churchId, attachment });
+    if (quota) {
+      await quota.releaseR2({
+        churchId,
+        reservationId: `chat-image-remove:${imageId}`,
+        assetId: `chat-image:${imageId}`,
+        fallbackPreviousAmount: Number(attachment?.expiresAt) > 0
+          ? Number(attachment.sizeBytes || 0) + Number(attachment.thumbnailSizeBytes || 0)
+          : 0,
+      });
+    }
   };
+
+  const deleteExpiredAttachment = ({ churchId, attachment }) =>
+    deleteObjects({ churchId, attachment });
 
   return {
     createUpload,
     createUploadFromBuffer,
     completeUpload,
+    commitAttachment,
+    abortAttachment,
     getDownloadUrl,
     deleteAttachment,
+    deleteExpiredAttachment,
   };
 };

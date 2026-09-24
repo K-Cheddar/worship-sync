@@ -252,6 +252,60 @@ describe("refreshServicePlanFromImport", () => {
     expect(refreshed[0].elements[0].startTime).toBe("11:00");
   });
 
+  it("pairs a legacy content-title item with its new Element label", () => {
+    const current = [
+      section(
+        "section-1",
+        "Music",
+        [
+          element("legacy-1", "Trust and Obey", {
+            type: "song",
+            songRef: {
+              kind: "library",
+              songId: "song-1",
+              songName: "Trust and Obey",
+            },
+          }),
+        ],
+        false,
+      ),
+    ];
+    const imported = [
+      section("source-section", "Music", [
+        element("source-1", "Special Music", {
+          type: "song",
+          sourceElementTypeRaw: "Special Music",
+          sourceContentTitleRaw: "Trust and Obey",
+          songRef: {
+            kind: "pending",
+            title: "Trust and Obey",
+            lyricsText: "",
+          },
+        }),
+      ]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(
+      current,
+      imported,
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    expect(refreshed[0].elements).toHaveLength(1);
+    expect(refreshed[0].elements[0].id).toBe("legacy-1");
+    expect(richTextToPlainText(refreshed[0].elements[0].title)).toBe(
+      "Special Music",
+    );
+    expect(refreshed[0].elements[0].sourceContentTitleRaw).toBe(
+      "Trust and Obey",
+    );
+    expect(refreshed[0].elements[0].songRef).toEqual({
+      kind: "library",
+      songId: "song-1",
+      songName: "Trust and Obey",
+    });
+  });
+
   it("keeps local additions on a tracked plan even when told to treat unmarked items as source", () => {
     // The opt-in exists for legacy plans. On a plan that records provenance,
     // an unmarked item is the operator's and removal must not reach it.

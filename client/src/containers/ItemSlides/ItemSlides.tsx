@@ -148,6 +148,13 @@ import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
 
+const haveSameSlideOrder = (
+  firstSlides: ItemSlideType[],
+  secondSlides: ItemSlideType[],
+) =>
+  firstSlides.length === secondSlides.length &&
+  firstSlides.every((slide, index) => slide.id === secondSlides[index]?.id);
+
 /** Preserve the existing custom-item reorder unit: a named section moves as a block. */
 const reorderSlidesForDrag = (
   slides: ItemSlideType[],
@@ -157,61 +164,56 @@ const reorderSlidesForDrag = (
   const draggedSlide = slides.find((slide) => slide.id === activeId);
   if (!draggedSlide) return slides;
 
-  const sectionNum = getFreeSectionNumber(draggedSlide);
-  if (sectionNum == null) return slides;
-  const sectionSlides = slides.filter(
-    (slide) => getFreeSectionNumber(slide) === sectionNum,
-  );
   const targetSlide = slides.find((slide) => slide.id === overId);
   if (!targetSlide) return slides;
 
-  const targetIndex = slides.findIndex((slide) => slide.id === overId);
-  const targetSectionNum = getFreeSectionNumber(targetSlide);
-  if (targetSectionNum != null && targetSectionNum !== sectionNum) {
-    const targetSectionStart = slides.findIndex((slide) =>
-      getFreeSectionNumber(slide) === targetSectionNum,
-    );
-    const targetSectionEnd = slides.findIndex(
-      (slide, index) =>
-        index > targetSectionStart &&
-        getFreeSectionNumber(slide) !== targetSectionNum,
-    );
-    if (
-      targetIndex > targetSectionStart &&
-      targetIndex < targetSectionEnd
-    ) {
-      return slides;
-    }
-  }
+  const getReorderUnit = (slide: ItemSlideType) => {
+    const sectionNum = getFreeSectionNumber(slide);
+    return sectionNum == null
+      ? [slide]
+      : slides.filter(
+          (candidate) => getFreeSectionNumber(candidate) === sectionNum,
+        );
+  };
+  const draggedUnit = getReorderUnit(draggedSlide);
+  const targetUnit = getReorderUnit(targetSlide);
+  const draggedIds = new Set(draggedUnit.map((slide) => slide.id));
 
-  const firstSectionIndex = slides.findIndex(
-    (slide) => getFreeSectionNumber(slide) === sectionNum,
-  );
-  const updatedSlides = [...slides];
-  updatedSlides.splice(firstSectionIndex, sectionSlides.length);
-  const updatedTargetIndex = updatedSlides.findIndex(
-    (slide) => slide.id === overId,
-  );
-  if (updatedTargetIndex < 0) return slides;
-  let insertionIndex = updatedTargetIndex + 1;
-  if (targetSectionNum != null) {
-    const updatedTargetSectionStart = updatedSlides.findIndex(
-      (slide) => getFreeSectionNumber(slide) === targetSectionNum,
-    );
-    if (updatedTargetIndex === updatedTargetSectionStart) {
-      const updatedTargetSectionEnd = updatedSlides.findIndex(
-        (slide, index) =>
-          index > updatedTargetSectionStart &&
-          getFreeSectionNumber(slide) !== targetSectionNum,
-      );
-      insertionIndex =
-        updatedTargetSectionEnd < 0
-          ? updatedSlides.length
-          : updatedTargetSectionEnd;
+  // Hovering over another slide in the same reorder unit is a no-op.
+  if (targetUnit.some((slide) => draggedIds.has(slide.id))) return slides;
+
+  // The target boundary must be found after removal so movement in either
+  // direction uses the same hover semantics and never splits a section.
+  const remainingSlides = slides.filter((slide) => !draggedIds.has(slide.id));
+  const targetIds = new Set(targetUnit.map((slide) => slide.id));
+  let targetStartIndex = -1;
+  let targetEndIndex = -1;
+  remainingSlides.forEach((slide, index) => {
+    if (targetIds.has(slide.id)) {
+      if (targetStartIndex < 0) targetStartIndex = index;
+      targetEndIndex = index;
     }
-  }
-  updatedSlides.splice(insertionIndex, 0, ...sectionSlides);
-  return updatedSlides;
+  });
+  if (targetStartIndex < 0 || targetEndIndex < 0) return slides;
+
+  const draggedStartIndex = slides.findIndex(
+    (slide) => slide.id === draggedUnit[0]?.id,
+  );
+  const targetStartInOriginal = slides.findIndex(
+    (slide) => slide.id === targetUnit[0]?.id,
+  );
+  const insertionIndex =
+    draggedStartIndex < targetStartInOriginal
+      ? targetEndIndex + 1
+      : targetStartIndex;
+  const reorderedSlides = [
+    ...remainingSlides.slice(0, insertionIndex),
+    ...draggedUnit,
+    ...remainingSlides.slice(insertionIndex),
+  ];
+  return haveSameSlideOrder(slides, reorderedSlides)
+    ? slides
+    : reorderedSlides;
 };
 
 type SizeConfig = {
@@ -289,6 +291,7 @@ const ItemSlidesContent = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
+  const itemIdentity = `${_id}\u0000${listId ?? ""}`;
 
   const renameFreeSection = useCallback(
     (sectionNum: number, name: string) => {
@@ -431,6 +434,19 @@ const ItemSlidesContent = () => {
    * built-ins, so an operator driving only a second projector still sees which
    * slide is live.
    */
+  const isResolvedMirror = useCallback(
+    (outputId: string) => {
+      const slot = outputSlots[outputId];
+      const source = slot?.followingOutputId
+        ? outputSlots[slot.followingOutputId]
+        : undefined;
+      return Boolean(
+        source && source.id !== slot?.id && source.type === slot?.type,
+      );
+    },
+    [outputSlots],
+  );
+
   const liveSlideIds = useMemo(() => {
     const ids = new Set<string>();
     const addLiveSlides = (
@@ -438,6 +454,7 @@ const ItemSlidesContent = () => {
       accept?: (info: PresentationType) => boolean,
     ) => {
       for (const outputId of outputIds) {
+        if (isResolvedMirror(outputId)) continue;
         const info = outputSlots[outputId]?.info;
         if (!info?.slide?.id) continue;
         if (accept && !accept(info)) continue;
@@ -459,10 +476,49 @@ const ItemSlidesContent = () => {
     return ids;
   }, [
     _id,
+    isResolvedMirror,
     outputSlots,
     sendTargets,
     sendsToProjector,
     sendsToMonitor,
+    sendsToStream,
+    type,
+  ]);
+
+  const stagedSlideIds = useMemo(() => {
+    const ids = new Set<string>();
+    const addStagedSlides = (
+      outputIds: string[],
+      accept?: (info: PresentationType) => boolean,
+    ) => {
+      for (const outputId of outputIds) {
+        const slot = outputSlots[outputId];
+        if (!slot || !isResolvedMirror(outputId)) continue;
+        const info = slot.info;
+        if (!info?.slide?.id) continue;
+        if (accept && !accept(info)) continue;
+        ids.add(info.slide.id);
+      }
+    };
+
+    if (sendsToProjector) addStagedSlides(sendTargets.projector);
+    if (sendsToMonitor) {
+      addStagedSlides(
+        sendTargets.monitor,
+        (info) => !info.itemId || info.itemId === _id,
+      );
+    }
+    if (sendsToStream && type !== "bible" && type !== "free") {
+      addStagedSlides(sendTargets.stream);
+    }
+    return ids;
+  }, [
+    _id,
+    isResolvedMirror,
+    outputSlots,
+    sendTargets,
+    sendsToMonitor,
+    sendsToProjector,
     sendsToStream,
     type,
   ]);
@@ -638,12 +694,31 @@ const ItemSlidesContent = () => {
   const [dragPreviewSlides, setDragPreviewSlides] = useState<
     ItemSlideType[] | null
   >(null);
+  const debouncedSlidesItemIdentityRef = useRef(itemIdentity);
+  const dragPreviewItemIdentityRef = useRef(itemIdentity);
 
   const hasSlides = slides.length > 0;
+  const debouncedSlidesForCurrentItem =
+    debouncedSlidesItemIdentityRef.current === itemIdentity
+      ? debouncedSlides
+      : [];
   /** Avoid one paint with an empty list after load: debounced state clears while loading and syncs in an effect. */
   const slidesToRender =
-    hasSlides && debouncedSlides.length === 0 ? slides : debouncedSlides;
-  const renderedSlides = dragPreviewSlides ?? slidesToRender;
+    hasSlides && debouncedSlidesForCurrentItem.length === 0
+      ? slides
+      : debouncedSlidesForCurrentItem;
+  const renderedSlides =
+    (dragPreviewItemIdentityRef.current === itemIdentity
+      ? dragPreviewSlides
+      : null) ?? slidesToRender;
+
+  useEffect(() => {
+    if (debouncedSlidesItemIdentityRef.current === itemIdentity) return;
+    debouncedSlidesItemIdentityRef.current = itemIdentity;
+    dragPreviewItemIdentityRef.current = itemIdentity;
+    setDebouncedSlides(slides);
+    setDragPreviewSlides(null);
+  }, [itemIdentity, slides]);
 
   useEffect(() => {
     if (isCollapsedContinuous) {
@@ -765,16 +840,17 @@ const ItemSlidesContent = () => {
       if (!options?.presentationOnly) dispatch(setSelectedSlide(index));
       const slide = presentationSlides[index];
       if (slide?.mediaSource?.kind === "local-video-input") {
+        const mediaSource = slide.mediaSource;
         const localVideoInput = buildLocalVideoInputPresentation(
-          slide.mediaSource,
+          mediaSource,
           getOrCreateDeviceId(),
           getTrustedDeviceLabel(),
         );
         if (!localVideoInput) {
           showToast?.(
-            isDesktopCaptureKind(slide.mediaSource.captureKind)
-              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
-              : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            isDesktopCaptureKind(mediaSource.captureKind)
+              ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+              : `Relink ${mediaSource.label} on this computer, then try again.`,
             "warning",
           );
           return;
@@ -830,13 +906,13 @@ const ItemSlidesContent = () => {
             );
           }
         };
-        const localVideoSourceId = slide.mediaSource.sourceId;
+        const localVideoSourceId = mediaSource.sourceId;
         const binding = resolveLocalVideoInputBinding(localVideoSourceId);
         if (!binding) {
           showToast?.(
-            isDesktopCaptureKind(slide.mediaSource.captureKind)
-              ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
-              : `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            isDesktopCaptureKind(mediaSource.captureKind)
+              ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+              : `Relink ${mediaSource.label} on this computer, then try again.`,
             "warning",
           );
           return;
@@ -874,10 +950,10 @@ const ItemSlidesContent = () => {
             }
             showToast?.(
               isDesktopCaptureSourceMissingError(error)
-                ? `The ${slide.mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
+                ? `The ${mediaSource.label} share is unavailable. Use Edit in the slide details to choose it again.`
                 : getLocalVideoSourceErrorMessage(
                     error,
-                    slide.mediaSource?.captureKind,
+                    mediaSource.captureKind,
                   ),
               "warning",
             );
@@ -1824,6 +1900,7 @@ const ItemSlidesContent = () => {
     if (!dragPreviewSlides) return;
     const updatedSlides = dragPreviewSlides;
     setDragPreviewSlides(null);
+    if (haveSameSlideOrder(slides, updatedSlides)) return;
     setDebouncedSlides(updatedSlides);
     dispatch(updateSlides({ slides: updatedSlides }));
   };
@@ -1956,6 +2033,7 @@ const ItemSlidesContent = () => {
             canEdit={canEdit}
             selectedSlide={selectedSlide}
             liveSlideIds={liveSlideIds}
+            stagedSlideIds={stagedSlideIds}
             backgroundTargetSlideIds={backgroundTargetSlideIds}
             draggedSection={draggedSection}
             onRenameSection={isPresentMode ? undefined : renameFreeSection}
@@ -1999,6 +2077,7 @@ const ItemSlidesContent = () => {
                   selectSlide={selectSlide}
                   isSelected={index === selectedSlide}
                   isLive={liveSlideIds.has(slide.id)}
+                  isStaged={stagedSlideIds.has(slide.id)}
                   size={size}
                   itemType={type}
                   isMobile={isMobile || false}
@@ -2074,6 +2153,7 @@ const ItemSlidesContent = () => {
               selectSlide={selectSlide}
               isSelected={false}
               isLive={liveSlideIds.has(activeSlide.id)}
+              isStaged={stagedSlideIds.has(activeSlide.id)}
               size={size}
               itemType={type}
               isMobile={isMobile || false}

@@ -32,7 +32,7 @@ test("mapPlanningCenterPlanToImportData maps assignees, key, arrangement, and st
         id: "2",
         attributes: {
           item_type: "song",
-          title: "Opening",
+          title: "Special Music",
           length: 240,
           key_name: "G",
           service_position: "during",
@@ -163,13 +163,54 @@ test("mapPlanningCenterPlanToImportData maps assignees, key, arrangement, and st
 
   assert.equal(result.sections[0].sectionName, "Worship");
   const songRow = result.sections[0].rows[0];
+  assert.equal(songRow.elementType, "Special Music");
   assert.equal(songRow.songTitle, "Great Are You Lord");
+  assert.equal(songRow.contentTitle, songRow.title);
   assert.equal(songRow.title, "Great Are You Lord — Acoustic (G)");
   assert.equal(songRow.startTime, "10:15");
   assert.equal(songRow.ledBy, "Jane Doe, Jordan Lee");
+  assert.deepEqual(songRow.ledByAssignments, [
+    { kind: "person", id: "p1", name: "Jane Doe" },
+    { kind: "person", id: "p2", name: "Jordan Lee" },
+  ]);
   assert.equal(songRow.note, "Band in");
   assert.equal(result.sections[0].rows[1].ledBy, "Host");
+  assert.deepEqual(result.sections[0].rows[1].ledByAssignments, [
+    { kind: "teamPosition", id: "tp1", name: "Host" },
+  ]);
   assert.equal(result.sections[1].sectionName, "Message");
+});
+
+test("keeps a generic PCO song item label separate from decorated content", () => {
+  const result = mapPlanningCenterPlanToImportData({
+    plan: {
+      type: "Plan",
+      id: "10",
+      attributes: { short_dates: "Sep 21" },
+    },
+    items: [
+      {
+        type: "Item",
+        id: "1",
+        attributes: { item_type: "song", title: "Song" },
+        relationships: {
+          song: { data: { type: "Song", id: "s1" } },
+        },
+      },
+    ],
+    included: [
+      {
+        type: "Song",
+        id: "s1",
+        attributes: { title: "Trust and Obey" },
+      },
+    ],
+  });
+
+  const [row] = result.sections[0].rows;
+  assert.equal(row.elementType, "Song");
+  assert.equal(row.contentTitle, "Trust and Obey");
+  assert.equal(row.songTitle, "Trust and Obey");
 });
 
 test("mapPlanningCenterPlanToImportData puts pre and post items in their own sections", () => {

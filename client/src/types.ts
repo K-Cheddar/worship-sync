@@ -192,6 +192,8 @@ export type SongLink = {
   id: string;
   label?: string;
   url: string;
+  /** Optional YouTube duration captured when the link was selected from search. */
+  durationSeconds?: number;
   /** Optional replay ranges for a YouTube resource. Times are absolute seconds. */
   segments?: SongLinkSegment[];
 };
@@ -1078,6 +1080,15 @@ export type MediaType = {
   localVideoInput?: LocalVideoInputMediaSource;
   muxPlaybackId?: string;
   muxAssetId?: string;
+  providerStorage?: {
+    provider: "cloudinary" | "mux";
+    assetId: string;
+    churchId: string;
+    permanent: true;
+    publicId?: string;
+    bytes?: number;
+    durationSeconds?: number;
+  };
   /** Stable identity for an asset copied from Canva. */
   canvaImportKey?: string;
   /** Source metadata used to check and refresh Canva imports. */

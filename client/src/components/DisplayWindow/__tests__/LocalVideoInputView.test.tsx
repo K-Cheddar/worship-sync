@@ -21,6 +21,11 @@ import {
 import { subscribeLocalVideoCaptureQuality } from "../../../utils/localVideoCaptureQualityRelay";
 import { supportsDirectElectronDesktopCapture } from "../../../utils/desktopCapture";
 import { applyLocalVideoCaptureProfile } from "../../../utils/localVideoQuality";
+import {
+  __getLocalVideoDiagnosticsForTests,
+  __resetLocalVideoDiagnosticsForTests,
+  recordLocalVideoDecoder,
+} from "../../../utils/localVideoDiagnostics";
 
 jest.mock("../../../utils/authStorage", () => ({
   getOrCreateDeviceId: jest.fn(() => "local-device"),
@@ -143,6 +148,11 @@ describe("LocalVideoInputView", () => {
     });
   });
 
+  afterEach(() => {
+    __resetLocalVideoDiagnosticsForTests();
+    localStorage.removeItem("worshipsync_local_video_debug");
+  });
+
   it("attaches the warm capture and releases its view lease on unmount", async () => {
     const view = render(<LocalVideoInputView input={input} publishPreview />);
     const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
@@ -176,6 +186,25 @@ describe("LocalVideoInputView", () => {
 
     view.unmount();
     play.mockRestore();
+  });
+
+  it("uses hardware recovery copy when the video element reports an error", async () => {
+    render(<LocalVideoInputView input={input} />);
+    const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
+
+    await waitFor(() => expect(video.srcObject).toBe(stream));
+    fireEvent.error(video);
+
+    expect(
+      screen.getByText(
+        "Check the input connection and camera permission, then try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Choose the screen again on this computer, then try again.",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("shows no connecting chrome while the warm stream attaches", () => {
@@ -332,6 +361,7 @@ describe("LocalVideoInputView", () => {
       stream,
       expect.any(Number),
       expect.any(Number),
+      "source-1",
     );
     expect(video.muted).toBe(false);
     play.mockRestore();
@@ -492,6 +522,88 @@ describe("LocalVideoInputView", () => {
       screen.getByLabelText("USB Capture"),
       expect.objectContaining({ onError: expect.any(Function) }),
     );
+  });
+
+  it("keeps the last realtime frame visible until buffered playback starts", () => {
+    mockSupportsRealtime.mockReturnValue(true);
+    let onFallback: (() => void) | undefined;
+    let onRealtimeStarted: (() => void) | undefined;
+    let onBufferedStarted: (() => void) | undefined;
+    mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
+      onFallback = options?.onFallback;
+      onRealtimeStarted = options?.onStarted;
+      return {
+        stop: jest.fn(),
+        setVolume: jest.fn(),
+        setAudioEnabled: jest.fn(),
+      };
+    });
+    mockSubscribeMedia.mockImplementation((_sourceId, _video, options) => {
+      onBufferedStarted = options?.onStarted;
+      return jest.fn();
+    });
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled={false}
+        receiveHighQuality
+      />,
+    );
+    act(() => {
+      onRealtimeStarted?.();
+      onFallback?.();
+    });
+
+    expect(screen.getByLabelText("USB Capture realtime video")).toHaveClass("opacity-100");
+    expect(screen.getByLabelText("USB Capture")).toHaveClass("opacity-0");
+    act(() => onBufferedStarted?.());
+    expect(screen.getByLabelText("USB Capture realtime video")).toHaveClass("opacity-0");
+    expect(screen.getByLabelText("USB Capture")).toHaveClass("opacity-100");
+  });
+
+  it("preserves realtime diagnostics when switching to the buffered relay", () => {
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+    mockSupportsRealtime.mockReturnValue(true);
+    let onFallback: (() => void) | undefined;
+    mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
+      onFallback = options?.onFallback;
+      return {
+        stop: jest.fn(),
+        setVolume: jest.fn(),
+        setAudioEnabled: jest.fn(),
+      };
+    });
+
+    render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled={false}
+        receiveHighQuality
+      />,
+    );
+    const source = __getLocalVideoDiagnosticsForTests().get("source-1");
+    const viewId = [...(source?.views.keys() ?? [])][0];
+    const view = source?.views.get(viewId);
+    expect(viewId).toBeDefined();
+    recordLocalVideoDecoder("source-1", viewId ?? "", {
+      frames: 7,
+    });
+
+    act(() => onFallback?.());
+
+    const fallbackView = [
+      ...(__getLocalVideoDiagnosticsForTests().get("source-1")?.views.values() ?? []),
+    ][0];
+    expect(fallbackView).toBe(view);
+    expect(fallbackView).toEqual(
+      expect.objectContaining({
+        path: "BUFFERED_MSE",
+        fallbackFrom: "REALTIME_WEBCODECS",
+        fallbackReason: "REALTIME_UNHEALTHY",
+      }),
+    );
+    expect(fallbackView?.decoder.frames).toBe(7);
   });
 
   it("keeps audience errors off the projector surface", () => {

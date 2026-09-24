@@ -811,6 +811,13 @@ describe("BoardControllerContent", () => {
   it("resets both the discussion board and Restream when the operator starts fresh", async () => {
     const user = userEvent.setup();
     const reloadRestream = jest.fn(() => Promise.resolve());
+    let resolveResetRestream: ((value: unknown) => void) | undefined;
+    mockResetRestreamSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResetRestream = resolve;
+        }),
+    );
     mockUseRestreamSession.mockReturnValue({
       session: {
         churchId: "church-1",
@@ -850,9 +857,50 @@ describe("BoardControllerContent", () => {
       within(dialog).getByRole("button", { name: /^Start fresh$/i }),
     );
 
+    const pendingButton = within(dialog).getByRole("button", {
+      name: /Starting fresh\.\.\./i,
+    });
+    expect(pendingButton).toBeDisabled();
+    expect(pendingButton).toHaveAttribute("aria-busy", "true");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    await user.click(pendingButton);
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+
+    resolveResetRestream?.({ session: { sessionId: "restream-session-new" } });
     await waitFor(() => expect(reloadRestream).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("dialog", { name: /Start fresh for today/i }),
+    ).not.toBeInTheDocument();
     expect(mockResetRestreamSession).toHaveBeenCalledWith("church-1");
     expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday");
+  });
+
+  it("restores the Start Fresh confirmation after the operation fails", async () => {
+    const user = userEvent.setup();
+    mockResetRestreamSession.mockRejectedValueOnce(
+      new Error("Restream is unavailable"),
+    );
+
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Start fresh$/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        within(dialog).getByRole("button", { name: /^Start fresh$/i }),
+      ).not.toBeDisabled();
+    });
+    expect(screen.getByText("Restream is unavailable")).toBeInTheDocument();
+    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
   });
 
   it("hides Hide and Highlight on posts when viewing an earlier session", async () => {

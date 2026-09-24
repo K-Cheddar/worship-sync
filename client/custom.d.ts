@@ -70,6 +70,32 @@ interface ElectronLocalAsset {
   url: string;
 }
 
+interface PreparedVideoSourceInfo {
+  source: string;
+  sourceUrl: string;
+  contentType?: string;
+}
+
+interface PreparedVideoMetricValue {
+  status: "available" | "unsupported";
+  value?: number;
+  reason?: string;
+}
+
+interface PreparedVideoMetrics {
+  status:
+    | "available"
+    | "ipc_unavailable"
+    | "renderer_pid_not_matched"
+    | "metric_unsupported";
+  rendererPid?: number;
+  matchedPid?: number;
+  processType?: string;
+  memory: PreparedVideoMetricValue;
+  cpu: PreparedVideoMetricValue;
+  reason?: string;
+}
+
 interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
@@ -170,12 +196,22 @@ interface ElectronAPI {
 
   // Media cache
   downloadMedia: (url: string) => Promise<string | null>;
+  ensureMediaCached: (urls: string[]) => Promise<{
+    requested: number;
+    cacheable: number;
+    downloaded: number;
+    failed: number;
+    cacheMap: Record<string, string>;
+  }>;
   getMediaCacheMap: () => Promise<Record<string, string>>;
+  getPreparedVideoSources?: () => Promise<PreparedVideoSourceInfo[]>;
   getLocalMediaPath: (url: string) => Promise<string | null>;
   cleanupUnusedMedia: (usedUrls: string[]) => Promise<void>;
   syncMediaCache: (
     mediaUrls: string[],
   ) => Promise<{ downloaded: number; cleaned: number }>;
+  /** Development-only renderer process metrics for prepared-video experiments. */
+  getPreparedVideoMetrics?: () => Promise<PreparedVideoMetrics>;
 
   // App-managed local assets
   importLocalAsset: (

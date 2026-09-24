@@ -1,5 +1,18 @@
 import { reportLocalVideoIssue } from "./localVideoIssues";
 import { getLocalVideoRealtimeBitrate } from "./localVideoQuality";
+import {
+  markLocalVideoViewFrame,
+  recordLocalVideoDecoder,
+  recordLocalVideoDecoderLifecycle,
+  recordLocalVideoSourceCallback,
+  recordLocalVideoEncoder,
+  recordLocalVideoSourceFrame,
+  setLocalVideoDecoderInstance,
+  setLocalVideoSubscriberCount,
+  startLocalVideoView,
+  stopLocalVideoView,
+  type LocalVideoDecoderLifecycleReason,
+} from "./localVideoDiagnostics";
 
 const CHANNEL_NAME = "worshipsync-local-video-realtime-v1";
 const HEARTBEAT_MS = 2_000;
@@ -13,6 +26,17 @@ const KEY_FRAME_INTERVAL_MS = 1_000;
 const AUDIO_BUFFER_SIZE = 1_024;
 const AUDIO_START_LEAD_SECONDS = 0.025;
 const MAX_AUDIO_LEAD_SECONDS = 0.12;
+const DECODER_RECOVERY_COOLDOWN_MS = 1_000;
+
+const isHardDecoderResetReason = (
+  reason: LocalVideoDecoderLifecycleReason,
+) =>
+  reason === "SESSION_CHANGED" ||
+  reason === "CODEC_CONFIG_CHANGED" ||
+  reason === "DECODER_NOT_CONFIGURED" ||
+  reason === "DECODER_ERROR" ||
+  reason === "DECODE_ERROR" ||
+  reason === "CONFIGURE_FAILURE";
 
 type SerializedVideoChunk = {
   type: EncodedVideoChunkType;
@@ -52,6 +76,7 @@ type RealtimeSubscriberOptions = {
   onFallback?: () => void;
   onStarted?: () => void;
   onStopped?: () => void;
+  diagnosticViewId?: string;
 };
 
 export type LocalVideoRealtimeSubscription = {
@@ -134,6 +159,8 @@ export const publishLocalVideoRealtime = (
   let audioSource: MediaStreamAudioSourceNode | undefined;
   let audioProcessor: ScriptProcessorNode | undefined;
   let silentGain: GainNode | undefined;
+  let lastPresentedFrames: number | undefined;
+  let lastMediaTime: number | undefined;
   const videoTrack = stream.getVideoTracks()[0];
 
   const post = (message: RealtimeRelayMessage) => {
@@ -232,9 +259,20 @@ export const publishLocalVideoRealtime = (
       optimizeForLatency: true,
     };
     try {
+      recordLocalVideoEncoder(sourceId, {
+        reconfigures: 1,
+        width,
+        height,
+        frameRate,
+        bitrate: config.bitrate,
+      });
       encoder = new VideoEncoder({
         output: (chunk) => {
           if (!active || subscribers.size === 0) return;
+          recordLocalVideoEncoder(sourceId, {
+            chunks: 1,
+            keyframes: chunk.type === "key" ? 1 : 0,
+          });
           const data = new ArrayBuffer(chunk.byteLength);
           chunk.copyTo(data);
           post({
@@ -274,6 +312,28 @@ export const publishLocalVideoRealtime = (
   const processVideoFrame: VideoFrameRequestCallback = (now, metadata) => {
     if (!active) return;
     frameCallbackId = video.requestVideoFrameCallback(processVideoFrame);
+    const values = {
+      width: video.videoWidth,
+      height: video.videoHeight,
+      mediaTime: metadata.mediaTime,
+    };
+    recordLocalVideoSourceCallback(sourceId, values);
+    let presentedDelta = 1;
+    if (Number.isFinite(metadata.presentedFrames)) {
+      presentedDelta =
+        lastPresentedFrames === undefined
+          ? 1
+          : Math.max(0, metadata.presentedFrames - lastPresentedFrames);
+      lastPresentedFrames = metadata.presentedFrames;
+    } else if (Number.isFinite(metadata.mediaTime)) {
+      presentedDelta =
+        lastMediaTime === undefined || metadata.mediaTime > lastMediaTime
+          ? 1
+          : 0;
+      lastMediaTime = metadata.mediaTime;
+    }
+    recordLocalVideoSourceFrame(sourceId, presentedDelta, values);
+    if (presentedDelta === 0) return;
     if (
       subscribers.size === 0 ||
       video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
@@ -292,7 +352,11 @@ export const publishLocalVideoRealtime = (
       configureEncoder(video.videoWidth, video.videoHeight);
     }
     if (!encoder || encoder.state !== "configured") return;
-    if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) return;
+    recordLocalVideoEncoder(sourceId, { queueMax: encoder.encodeQueueSize });
+    if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) {
+      recordLocalVideoEncoder(sourceId, { dropped: 1 });
+      return;
+    }
 
     let frame: VideoFrame | undefined;
     try {
@@ -302,6 +366,7 @@ export const publishLocalVideoRealtime = (
       const keyFrame =
         forceKeyFrame || now - lastKeyFrameAt >= KEY_FRAME_INTERVAL_MS;
       encoder.encode(frame, { keyFrame });
+      recordLocalVideoEncoder(sourceId, { submitted: 1 });
       if (keyFrame) {
         forceKeyFrame = false;
         lastKeyFrameAt = now;
@@ -328,11 +393,13 @@ export const publishLocalVideoRealtime = (
         lastSeenAt: Date.now(),
         includeAudio: message.includeAudio === true,
       });
+      setLocalVideoSubscriberCount(sourceId, subscribers.size);
       if (message.includeAudio) startAudioPublisher();
       sendStart(message.subscriberId);
     }
     if (message.type === "unsubscribe") {
       subscribers.delete(message.subscriberId);
+      setLocalVideoSubscriberCount(sourceId, subscribers.size);
     }
     if (message.type === "request-key-frame") {
       forceKeyFrame = true;
@@ -346,6 +413,7 @@ export const publishLocalVideoRealtime = (
         subscribers.delete(subscriberId);
       }
     });
+    setLocalVideoSubscriberCount(sourceId, subscribers.size);
     post({ type: "publisher-ready", sourceId, sessionId });
   }, HEARTBEAT_MS);
   post({ type: "publisher-ready", sourceId, sessionId });
@@ -359,6 +427,7 @@ export const publishLocalVideoRealtime = (
     post({ type: "stream-stopped", sourceId, sessionId });
     active = false;
     subscribers.clear();
+    setLocalVideoSubscriberCount(sourceId, 0);
     audioProcessor?.disconnect();
     audioSource?.disconnect();
     silentGain?.disconnect();
@@ -389,6 +458,13 @@ export const subscribeLocalVideoRealtime = (
 
   const channel = new BroadcastChannel(CHANNEL_NAME);
   const subscriberId = createId("realtime-display");
+  const diagnosticViewId = options.diagnosticViewId ?? subscriberId;
+  const ownsDiagnosticView = options.diagnosticViewId === undefined;
+  if (ownsDiagnosticView) {
+    startLocalVideoView(sourceId, diagnosticViewId, {
+      path: "REALTIME_WEBCODECS",
+    });
+  }
   let active = true;
   let sessionId: string | undefined;
   let decoder: VideoDecoder | undefined;
@@ -400,6 +476,13 @@ export const subscribeLocalVideoRealtime = (
   let publisherLossReported = false;
   let firstFrameWaitingSince = 0;
   let fallbackRequested = false;
+  let decoderInstanceSequence = 0;
+  let activeDecoderInstanceId: string | undefined;
+  let waitingForFreshKeyFrame = false;
+  let freshKeyFrameRequested = false;
+  let recoveryKeyFrameDropped = false;
+  let lastHardDecoderRecoveryAt: number | undefined;
+  let keyFrameWaitStartedAt: number | undefined;
   let audioContext: AudioContext | undefined;
   let audioGain: GainNode | undefined;
   let scheduledAudioTime = 0;
@@ -441,18 +524,60 @@ export const subscribeLocalVideoRealtime = (
     } satisfies RealtimeRelayMessage);
   };
 
-  const resetDecoder = () => {
-    if (decoder?.state !== "closed") decoder?.close();
-    decoder = undefined;
-    waitingForKeyFrame = true;
+  const beginKeyFrameWait = () => {
+    keyFrameWaitStartedAt ??= Date.now();
   };
 
-  const configureDecoder = (config: VideoDecoderConfig) => {
-    resetDecoder();
+  const finishKeyFrameWait = () => {
+    if (keyFrameWaitStartedAt === undefined) return;
+    recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+      keyframeWaits: 1,
+      keyframeWaitMs: Math.max(0, Date.now() - keyFrameWaitStartedAt),
+    });
+    keyFrameWaitStartedAt = undefined;
+  };
+
+  const resetDecoder = (reason: LocalVideoDecoderLifecycleReason) => {
+    const previousInstanceId = activeDecoderInstanceId;
+    if (decoder?.state !== "closed") decoder?.close();
+    if (decoder) {
+      recordLocalVideoDecoder(sourceId, diagnosticViewId, { resets: 1 });
+      if (isHardDecoderResetReason(reason)) {
+        recordLocalVideoDecoder(sourceId, diagnosticViewId, { hardResets: 1 });
+      }
+      if (previousInstanceId) {
+        recordLocalVideoDecoderLifecycle(sourceId, diagnosticViewId, {
+          event: "destroy",
+          reason,
+          instanceId: previousInstanceId,
+        });
+      }
+    }
+    decoder = undefined;
+    activeDecoderInstanceId = undefined;
+    waitingForKeyFrame = true;
+    beginKeyFrameWait();
+    waitingForFreshKeyFrame = false;
+    freshKeyFrameRequested = false;
+    recoveryKeyFrameDropped = false;
+    return previousInstanceId;
+  };
+
+  const configureDecoder = (
+    config: VideoDecoderConfig,
+    reason: LocalVideoDecoderLifecycleReason,
+  ) => {
+    const previousInstanceId = resetDecoder(reason);
     decoderConfig = config;
     try {
+      const decoderInstanceId = `${diagnosticViewId}:decoder-${++decoderInstanceSequence}`;
+      activeDecoderInstanceId = decoderInstanceId;
       decoder = new VideoDecoder({
         output: (frame) => {
+          if (activeDecoderInstanceId !== decoderInstanceId) {
+            frame.close();
+            return;
+          }
           try {
             if (canvas.width !== frame.displayWidth) {
               canvas.width = frame.displayWidth;
@@ -461,32 +586,70 @@ export const subscribeLocalVideoRealtime = (
               canvas.height = frame.displayHeight;
             }
             context.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            recordLocalVideoDecoder(sourceId, diagnosticViewId, { frames: 1 });
+            if (diagnosticViewId) {
+              markLocalVideoViewFrame(
+                sourceId,
+                diagnosticViewId,
+                `${canvas.width}x${canvas.height}`,
+              );
+            }
             if (!hasRenderedFrame) {
               hasRenderedFrame = true;
               firstFrameWaitingSince = 0;
               options.onStarted?.();
+            }
+            if (
+              lastHardDecoderRecoveryAt !== undefined &&
+              Date.now() - lastHardDecoderRecoveryAt >=
+                DECODER_RECOVERY_COOLDOWN_MS
+            ) {
+              lastHardDecoderRecoveryAt = undefined;
             }
           } finally {
             frame.close();
           }
         },
         error: () => {
-          resetDecoder();
-          // Rebuild immediately. Waiting for the next two-second publisher
-          // heartbeat can otherwise leave the canvas black after a transient
-          // WebCodecs decoder failure.
-          queueMicrotask(() => {
-            if (!active || !decoderConfig) return;
-            configureDecoder(decoderConfig);
-          });
+          if (activeDecoderInstanceId !== decoderInstanceId) return;
+          recoverDecoder("DECODER_ERROR");
         },
       });
+      recordLocalVideoDecoderLifecycle(sourceId, diagnosticViewId, {
+        event: "create",
+        reason,
+        instanceId: decoderInstanceId,
+        previousInstanceId,
+      });
+      setLocalVideoDecoderInstance(sourceId, diagnosticViewId, decoderInstanceId);
       decoder.configure(config);
       requestKeyFrame();
     } catch {
-      resetDecoder();
+      resetDecoder("CONFIGURE_FAILURE");
       options.onFallback?.();
     }
+  };
+
+  const recoverDecoder = (reason: LocalVideoDecoderLifecycleReason) => {
+    if (!active || !decoderConfig) return;
+    const now = Date.now();
+    if (
+      lastHardDecoderRecoveryAt !== undefined &&
+      now - lastHardDecoderRecoveryAt < DECODER_RECOVERY_COOLDOWN_MS
+    ) {
+      resetDecoder(reason);
+      options.onFallback?.();
+      return;
+    }
+    lastHardDecoderRecoveryAt = now;
+    resetDecoder(reason);
+    // Rebuild immediately. Waiting for the next two-second publisher
+    // heartbeat can otherwise leave the canvas black after a transient
+    // WebCodecs decoder failure.
+    queueMicrotask(() => {
+      if (!active || !decoderConfig) return;
+      configureDecoder(decoderConfig, reason);
+    });
   };
 
   const playAudioFrame = (message: RealtimeRelayMessage) => {
@@ -559,6 +722,7 @@ export const subscribeLocalVideoRealtime = (
       message.videoConfig
     ) {
       markPublisherActivity();
+      const hadSession = sessionId !== undefined;
       const sameSession = sessionId === message.sessionId;
       const sameConfig =
         decoderConfig &&
@@ -574,7 +738,16 @@ export const subscribeLocalVideoRealtime = (
         !decoder ||
         decoder.state !== "configured"
       ) {
-        configureDecoder(message.videoConfig);
+        configureDecoder(
+          message.videoConfig,
+          !hadSession
+            ? "INITIAL_CREATE"
+            : !sameSession
+              ? "SESSION_CHANGED"
+              : !sameConfig
+                ? "CODEC_CONFIG_CHANGED"
+                : "DECODER_NOT_CONFIGURED",
+        );
       } else if (!hasRenderedFrame) {
         requestKeyFrame();
       }
@@ -587,17 +760,53 @@ export const subscribeLocalVideoRealtime = (
     ) {
       markPublisherActivity();
       const chunk = message.videoChunk;
-      if (
-        decoder?.decodeQueueSize &&
-        decoder.decodeQueueSize > MAX_DECODE_QUEUE
-      ) {
-        configureDecoder(decoderConfig);
+      recordLocalVideoDecoder(sourceId, diagnosticViewId, { chunks: 1 });
+      const queueSize = decoder?.decodeQueueSize ?? 0;
+      recordLocalVideoDecoder(sourceId, diagnosticViewId, { queueMax: queueSize });
+      if (queueSize > MAX_DECODE_QUEUE) {
+        recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+          droppedForLatency: 1,
+        });
+        waitingForKeyFrame = true;
+        beginKeyFrameWait();
+        waitingForFreshKeyFrame = true;
+        if (chunk.type === "key" && freshKeyFrameRequested) {
+          recoveryKeyFrameDropped = true;
+        }
+        if (!freshKeyFrameRequested) {
+          freshKeyFrameRequested = true;
+          requestKeyFrame();
+        }
         return;
       }
-      if (waitingForKeyFrame && chunk.type !== "key") return;
+      if (waitingForFreshKeyFrame && recoveryKeyFrameDropped) {
+        if (chunk.type !== "key") {
+          // The keyframe requested during pressure was shed too. Request one
+          // replacement as soon as the queue is usable, then wait for it
+          // before accepting delta frames from the pressured period.
+          freshKeyFrameRequested = true;
+          recoveryKeyFrameDropped = false;
+          requestKeyFrame();
+          recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+            droppedForLatency: 1,
+          });
+          return;
+        }
+      }
+      if (waitingForKeyFrame && chunk.type !== "key") {
+        if (waitingForFreshKeyFrame) {
+          recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+            droppedForLatency: 1,
+          });
+        } else {
+          recordLocalVideoDecoder(sourceId, diagnosticViewId, {
+            skippedKeyframe: 1,
+          });
+        }
+        return;
+      }
       if (!decoder || decoder.state !== "configured") return;
       try {
-        waitingForKeyFrame = false;
         decoder.decode(
           new EncodedVideoChunk({
             type: chunk.type,
@@ -608,8 +817,14 @@ export const subscribeLocalVideoRealtime = (
             data: chunk.data,
           }),
         );
+        waitingForKeyFrame = false;
+        waitingForFreshKeyFrame = false;
+        freshKeyFrameRequested = false;
+        recoveryKeyFrameDropped = false;
+        finishKeyFrameWait();
+        recordLocalVideoDecoder(sourceId, diagnosticViewId, { submitted: 1 });
       } catch {
-        configureDecoder(decoderConfig);
+        recoverDecoder("DECODE_ERROR");
       }
     }
     if (message.type === "audio-frame" && message.sessionId === sessionId) {
@@ -628,7 +843,7 @@ export const subscribeLocalVideoRealtime = (
       sessionId = undefined;
       hasRenderedFrame = false;
       firstFrameWaitingSince = 0;
-      resetDecoder();
+      resetDecoder("STREAM_STOPPED");
       options.onStopped?.();
       announce();
     }
@@ -664,7 +879,7 @@ export const subscribeLocalVideoRealtime = (
     sessionId = undefined;
     hasRenderedFrame = false;
     firstFrameWaitingSince = 0;
-    resetDecoder();
+    resetDecoder("PUBLISHER_LOSS");
     options.onStopped?.();
     reportError(
       "The local video publisher stopped. Check the input on this controller.",
@@ -693,11 +908,12 @@ export const subscribeLocalVideoRealtime = (
       sourceId,
       subscriberId,
     } satisfies RealtimeRelayMessage);
-    resetDecoder();
+    resetDecoder("SUBSCRIBER_STOP");
     stopScheduledAudio();
     audioGain?.disconnect();
     void audioContext?.close().catch(() => undefined);
     channel.close();
+    if (ownsDiagnosticView) stopLocalVideoView(sourceId, diagnosticViewId);
   };
 
   return {

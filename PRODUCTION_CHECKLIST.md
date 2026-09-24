@@ -86,6 +86,17 @@ Before enabling the new auth flow in production:
   plus a marker on the document. Correct on one dyno; the moment a second exists,
   both instances send the same digest, and nothing warns you.
 
+#### Individualized team intake links
+
+- Set `AUTH_TEAM_INTAKE_RECIPIENT_TOKEN_SECRET` as a Heroku config var in every
+  deployed environment. Generate a distinct value per environment with:
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+  ```
+  Production refuses to start without this domain-specific secret. Development
+  and tests derive one from `AUTH_SESSION_SECRET` for convenience. Rotating the
+  secret invalidates existing `/a/<token>` recipient links.
+
 **CORS note (production vs earlier behavior):** Previously, production still used `http://localhost:3000` as the default `frontEndHost` while `AUTH_APP_BASE_URL` was added separately to the allowlist. The server now uses the **origin of `AUTH_APP_BASE_URL`** as the default production `frontEndHost`, so the primary allowed origin matches your deployed app URL. Localhost remains the fallback when `AUTH_APP_BASE_URL` is unset (for local production-style testing).
 
 Validate these operator paths before cutover:
