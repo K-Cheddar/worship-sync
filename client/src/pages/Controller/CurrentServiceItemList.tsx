@@ -17,11 +17,9 @@ const DEFAULT_PRESENTATION_PROFILE = getDefaultControllerProfiles()[0];
 const CurrentItemRow = ({
   item,
   isActive,
-  isNext,
 }: {
   item: ServiceItemType;
   isActive: boolean;
-  isNext: boolean;
 }) => {
   const rowRef = useRef<HTMLLIElement | null>(null);
   const resolvedImage = useCachedMediaUrl(item.background);
@@ -41,9 +39,7 @@ const CurrentItemRow = ({
         "flex min-h-8 min-w-0 items-center gap-2 rounded-md border-l-2 px-2 py-1",
         isActive
           ? "border-l-emerald-400 bg-emerald-500/12"
-          : isNext
-            ? "border-l-cyan-400 bg-cyan-500/8"
-            : "border-l-transparent",
+          : "border-l-transparent",
       )}
     >
       <Icon
@@ -66,19 +62,13 @@ const CurrentItemRow = ({
           Live
         </span>
       )}
-      {isNext && (
-        <span className="shrink-0 rounded-full bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200">
-          Next
-        </span>
-      )}
     </li>
   );
 };
 
 /**
  * Read-only mirror of a controller's live outline for the Displays tab. The
- * selected controller's current item is highlighted and the following item is
- * marked as next so operators can scan what is coming up.
+ * selected controller's current item is highlighted.
  */
 const CurrentServiceItemList = ({
   activeItemId,
@@ -124,15 +114,6 @@ const CurrentServiceItemList = ({
       null
     );
   }, [serviceItems, activeItemId, activeListId, activeName]);
-  const nextListId = useMemo(() => {
-    const items = serviceItems.filter((item) => item.type !== "heading");
-    if (!resolvedActiveListId) return items[0]?.listId ?? null;
-    const activeIndex = items.findIndex(
-      (item) => item.listId === resolvedActiveListId,
-    );
-    return activeIndex >= 0 ? items[activeIndex + 1]?.listId ?? null : null;
-  }, [resolvedActiveListId, serviceItems]);
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       {controllers.length > 1 ? (
@@ -184,7 +165,6 @@ const CurrentServiceItemList = ({
                 key={item.listId}
                 item={item}
                 isActive={item.listId === resolvedActiveListId}
-                isNext={item.listId === nextListId}
               />
             ),
           )}

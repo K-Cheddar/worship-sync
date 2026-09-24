@@ -219,7 +219,7 @@ const AuxControllerBody = () => {
                 >
                   Close Panel
                 </Button>
-                <TransmitHandler maxQuickLinks={4} columns={2} />
+                <TransmitHandler maxQuickLinks={4} />
                 <Media variant="panel" />
               </div>
             </>

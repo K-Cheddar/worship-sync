@@ -57,11 +57,11 @@ describe("CurrentServiceItemList", () => {
     expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
-  it("highlights the selected aux controller's live row and the next item", () => {
+  it("highlights the selected aux controller's live row without predicting the next item", () => {
     mockedUseLiveOutlinePreview.mockReturnValue({
       items: [
         { listId: "aux-row-1", _id: "aux-item-1", name: "TV live item", type: "song" },
-        { listId: "aux-row-2", _id: "aux-item-2", name: "TV next item", type: "song" },
+        { listId: "aux-row-2", _id: "aux-item-2", name: "TV later item", type: "song" },
       ] as any,
       isLoading: false,
     });
@@ -81,9 +81,9 @@ describe("CurrentServiceItemList", () => {
     );
 
     expect(screen.getByText("TV live item")).toBeInTheDocument();
-    expect(screen.getByText("TV next item")).toBeInTheDocument();
+    expect(screen.getByText("TV later item")).toBeInTheDocument();
     expect(screen.getAllByText("Live")).toHaveLength(1);
-    expect(screen.getAllByText("Next")).toHaveLength(1);
+    expect(screen.queryByText("Next")).not.toBeInTheDocument();
     expect(mockedUseLiveOutlinePreview).toHaveBeenCalledWith("aux-a");
   });
 
