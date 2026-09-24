@@ -45,7 +45,7 @@ describe("CurrentServiceOutputPreviews", () => {
       />,
     );
 
-    expect(screen.getByRole("group", { name: "Selected output previews" })).toHaveClass("grid-cols-1");
+    expect(screen.getByRole("group", { name: "Selected output previews" })).toHaveClass("grid-cols-2");
     expect(screen.getAllByTestId("projector-tile")).toHaveLength(2);
     expect(screen.getByText("Sanctuary")).toBeInTheDocument();
     expect(screen.getByText("Foyer TV")).toBeInTheDocument();

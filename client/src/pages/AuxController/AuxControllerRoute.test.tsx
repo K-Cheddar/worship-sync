@@ -68,7 +68,9 @@ jest.mock("../Controller/ServicePlanningSyncFloatingWindow", () => ({
 }));
 jest.mock("../../containers/TransmitHandler/TransmitHandler", () => ({
   __esModule: true,
-  default: () => <div data-testid="transmit-handler" />,
+  default: ({ columns }: { columns?: number }) => (
+    <div data-testid="transmit-handler" data-columns={columns} />
+  ),
 }));
 jest.mock("../../containers/Media/Media", () => ({
   __esModule: true,
@@ -200,6 +202,10 @@ describe("the auxiliary controller route", () => {
     renderRoute([LOBBY]);
     expect(screen.getByTestId("controller-shell")).toBeInTheDocument();
     expect(screen.getByTestId("service-items")).toBeInTheDocument();
+    expect(screen.getByTestId("transmit-handler")).toHaveAttribute(
+      "data-columns",
+      "2",
+    );
   });
 
   it("mounts the lyrics editor like the main controller", () => {

@@ -327,7 +327,6 @@ const LiveSlideProgressChrome = ({
 };
 
 const DisplaysPreview = ({
-  progress = null,
   activeItemId = null,
   activeListId = null,
   activeName = null,
@@ -339,7 +338,6 @@ const DisplaysPreview = ({
   controllers,
   onControllerChange,
 }: {
-  progress?: LiveSlideProgress | null;
   activeItemId?: string | null;
   activeListId?: string | null;
   activeName?: string | null;
@@ -353,7 +351,6 @@ const DisplaysPreview = ({
   onControllerChange: (controllerId: string) => void;
 }) => (
   <div className="flex h-full min-h-0 flex-col gap-2">
-    <LiveSlideProgressChrome progress={progress} outputName={liveOutputName} />
     <div className="min-h-0 flex-1 overflow-y-auto">
       <CurrentServiceOutputPreviews
         outputs={outputs.filter(isPushOutput)}
@@ -471,7 +468,6 @@ const PreviewPanelContent = ({
         aria-hidden={value !== "displays"}
       >
         <DisplaysPreview
-          progress={progress}
           activeItemId={activeItemId}
           activeListId={activeListId}
           activeName={activeName}
@@ -1291,9 +1287,12 @@ const CurrentServiceWorkspace = () => {
                         value: "displays" as const,
                         label: "Displays",
                         content: (
-                          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                            <DisplaysPreview
+                          <section className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                            <LiveSlideProgressChrome
                               progress={liveSlideProgress}
+                              outputName={liveOutput?.name ?? null}
+                            />
+                            <DisplaysPreview
                               liveOutputName={liveOutput?.name ?? null}
                               activeItemId={liveItemSource.itemId ?? null}
                               activeListId={liveItemSource.listId ?? null}

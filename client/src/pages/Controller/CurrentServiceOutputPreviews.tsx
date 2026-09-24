@@ -102,7 +102,7 @@ const CurrentServiceOutputPreviews = ({
     <div
       role="group"
       aria-label="Selected output previews"
-      className="grid min-h-0 grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr))]"
+      className="grid min-h-0 grid-cols-2 gap-3"
     >
       {visibleOutputs.map((output) => (
         <section
