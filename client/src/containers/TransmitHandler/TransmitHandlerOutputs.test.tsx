@@ -334,7 +334,7 @@ describe("mirror controls on an auxiliary controller", () => {
     return store;
   };
 
-  it("shows the source preview and offers Mirror under the owned display", () => {
+  it("puts the TVs preview first and the projector preview directly below it", () => {
     const store = createAuxStore();
     render(
       <Provider store={store}>
@@ -349,10 +349,134 @@ describe("mirror controls on an auxiliary controller", () => {
         name: "Mirror Main",
       }),
     ).toBeInTheDocument();
-    const sourcePreview = screen.getByTestId("preview-Main");
+    expect(
+      screen
+        .getAllByTestId(/^preview-/)
+        .slice(0, 2)
+        .map((preview) => preview.getAttribute("data-testid")),
+    ).toEqual(["preview-Lobby", "preview-Projector"]);
+    const sourcePreview = screen.getByTestId("preview-Projector");
     expect(sourcePreview).toHaveAttribute("data-read-only", "true");
     expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByTestId("aux-projector-preview")).not.toHaveAttribute(
+      "hidden",
+    );
+    expect(screen.getByTestId("aux-staged-preview")).toHaveAttribute("hidden");
     expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
+  });
+
+  it("keeps alternate projectors inspectable and preserves additional owned outputs", async () => {
+    const user = userEvent.setup();
+    const store = createAuxStore();
+    store.dispatch(
+      setDisplayOutputsFromRemote({
+        ...REGISTRY,
+        projector_hall: {
+          id: "projector_hall",
+          type: "projector",
+          name: "Hall Projector",
+          order: 4,
+          enabled: true,
+        },
+        out_annex: {
+          id: "out_annex",
+          type: "projector",
+          name: "Annex TVs",
+          order: 5,
+          enabled: true,
+        },
+      }),
+    );
+    store.dispatch(
+      setControllerProfilesFromRemote([
+        {
+          id: "presentation",
+          type: "presentation",
+          name: "Presentation",
+          order: 0,
+          enabled: true,
+          outputIds: ["projector", "projector_hall", "monitor", "stream"],
+          outputsConfigured: true,
+          outlineScope: "presentation",
+        },
+        {
+          id: AUX_ID,
+          type: "aux-presentation",
+          name: "Lobby",
+          order: 2,
+          enabled: true,
+          outputIds: ["out_lobby", "out_annex"],
+          outputsConfigured: true,
+          outlineScope: AUX_ID,
+        },
+      ]),
+    );
+    store.dispatch(
+      syncOutputSlots([
+        { id: "projector", type: "projector" },
+        { id: "out_lobby", type: "projector" },
+        { id: "monitor", type: "monitor" },
+        { id: "stream", type: "stream" },
+        { id: "projector_hall", type: "projector" },
+        { id: "out_annex", type: "projector" },
+      ]),
+    );
+    store.dispatch(
+      setOutputTransmitting({ outputId: "projector_hall", value: true }),
+    );
+    store.dispatch(
+      updatePresentation({
+        type: "song",
+        name: "Hall source slide",
+        slide: {
+          id: "slide-hall-source",
+          type: "Verse",
+          name: "Hall source slide",
+          boxes: [{ words: "Hall feed", width: 100, height: 100 }],
+        },
+        outputIds: ["projector_hall"],
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    expect(
+      screen
+        .getAllByTestId(/^preview-/)
+        .slice(0, 2)
+        .map((preview) => preview.getAttribute("data-testid")),
+    ).toEqual(["preview-Lobby", "preview-Projector"]);
+    expect(screen.getByTestId("preview-Hall Projector")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-Hall Projector")).toHaveAttribute(
+      "data-info-name",
+      "Hall source slide",
+    );
+    expect(screen.getByTestId("preview-Annex TVs")).toBeInTheDocument();
+
+    await user.click(
+      within(screen.getByTestId("preview-Lobby")).getByRole("button", {
+        name: "Mirror Hall Projector",
+      }),
+    );
+
+    expect(
+      store.getState().presentation.outputs.out_lobby.followingOutputId,
+    ).toBe("projector_hall");
+    expect(screen.getByTestId("preview-Lobby")).toHaveAttribute(
+      "data-info-name",
+      "Hall source slide",
+    );
+    expect(screen.getByTestId("aux-staged-preview")).not.toHaveAttribute(
+      "hidden",
+    );
+    expect(screen.queryByTestId("preview-Hall Projector")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-Annex TVs")).toBeInTheDocument();
   });
 
   it("toggles mirroring from the same control", async () => {
@@ -378,18 +502,18 @@ describe("mirror controls on an auxiliary controller", () => {
       "Mirroring Main",
     );
     expect(stopButton).toHaveAttribute("aria-pressed", "true");
-    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
-      "projector",
-    );
+    expect(
+      store.getState().presentation.outputs.out_lobby.followingOutputId,
+    ).toBe("projector");
 
     await user.click(stopButton);
 
     expect(
       preview.getByRole("button", { name: "Mirror Main" }),
     ).toHaveAttribute("aria-pressed", "false");
-    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
-      "",
-    );
+    expect(
+      store.getState().presentation.outputs.out_lobby.followingOutputId,
+    ).toBe("");
   });
 
   it("shows a read-only source tile alongside the aux-owned follower tile", async () => {
@@ -468,27 +592,25 @@ describe("mirror controls on an auxiliary controller", () => {
 
     const auxPreview = screen.getByTestId("preview-Lobby");
     const preview = within(auxPreview);
-    const sourcePreview = screen.getByTestId("preview-Main");
-    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
     await user.click(preview.getByRole("button", { name: "Mirror Main" }));
 
-    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
-    expect(sourcePreview).toHaveAttribute("data-live", "true");
-    expect(sourcePreview).toHaveAttribute("data-info-name", "Slide A");
-    expect(sourcePreview).toHaveAttribute("data-slide-id", "slide-Slide A");
-    expect(sourcePreview).toHaveAttribute("data-video-position", "20");
-    expect(sourcePreview).toHaveAttribute("data-video-paused", "false");
-    expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-Lobby")).toBe(auxPreview);
     expect(auxPreview).toHaveAttribute("data-read-only", "false");
     expect(auxPreview).toHaveAttribute("data-info-name", "Slide A");
-    expect(screen.getByText("SOURCE")).toBeInTheDocument();
-    const stagedPreview = within(
-      screen.getByTestId("staged-preview-out_lobby"),
-    ).getByTestId("preview-Staged for TVs");
+    expect(auxPreview).toHaveAttribute("data-slide-id", "slide-Slide A");
+    expect(auxPreview).toHaveAttribute("data-video-position", "20");
+    expect(auxPreview).toHaveAttribute("data-video-paused", "false");
+    expect(screen.getByTestId("aux-projector-preview")).toHaveAttribute(
+      "hidden",
+    );
+    const stagedPreview = screen.getByTestId("preview-Staged for TVs");
+    expect(screen.getByTestId("aux-staged-preview")).not.toHaveAttribute(
+      "hidden",
+    );
     expect(stagedPreview).toHaveAttribute("data-info-name", "Lobby slide");
     expect(stagedPreview).toHaveAttribute("data-slide-id", "slide-lobby");
     expect(stagedPreview).toHaveAttribute("data-video-position", "7");
-    expect(screen.getByText("Staged for TVs")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^preview-/)[0]).toBe(auxPreview);
     expect(screen.getByText("Following Main")).toBeInTheDocument();
 
     act(() => {
@@ -503,17 +625,24 @@ describe("mirror controls on an auxiliary controller", () => {
     });
     expect(auxPreview).toHaveAttribute("data-info-name", "Slide B");
     expect(auxPreview).toHaveAttribute("data-video-position", "32");
-    expect(
-      within(screen.getByTestId("staged-preview-out_lobby")).getByTestId(
-        "preview-Staged for TVs",
-      ),
-    ).toHaveAttribute("data-info-name", "Lobby slide");
+    expect(stagedPreview).toHaveAttribute("data-info-name", "Lobby slide");
+    expect(stagedPreview).toHaveAttribute("data-video-position", "7");
 
     await user.click(preview.getByRole("button", { name: "Stop mirroring" }));
+    expect(screen.getByTestId("preview-Lobby")).toBe(auxPreview);
     expect(auxPreview).toHaveAttribute("data-info-name", "Lobby slide");
-    expect(screen.getByTestId("preview-Main")).toBeInTheDocument();
-    expect(screen.getByTestId("preview-Lobby")).toBeInTheDocument();
-    expect(screen.queryByTestId("staged-preview-out_lobby")).not.toBeInTheDocument();
+    const projectorPreview = screen.getByTestId("preview-Projector");
+    expect(projectorPreview).toHaveAttribute("data-info-name", "Slide B");
+    expect(screen.getByTestId("aux-staged-preview")).toHaveAttribute("hidden");
+    expect(screen.getByTestId("aux-projector-preview")).not.toHaveAttribute(
+      "hidden",
+    );
+    expect(
+      screen
+        .getAllByTestId(/^preview-/)
+        .slice(0, 2)
+        .map((preview) => preview.getAttribute("data-testid")),
+    ).toEqual(["preview-Lobby", "preview-Projector"]);
 
     await user.click(preview.getByRole("button", { name: "Toggle Lobby" }));
     expect(store.getState().presentation.outputs.out_lobby.isTransmitting).toBe(
@@ -554,17 +683,16 @@ describe("mirror controls on an auxiliary controller", () => {
     expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
       "Main",
     );
-    expect(screen.getByTestId("preview-Main")).toHaveAttribute(
-      "data-read-only",
-      "true",
+    expect(screen.getByTestId("aux-projector-preview")).toHaveAttribute(
+      "hidden",
     );
-    expect(preview.getByTestId("mirror-status-out_lobby")).not.toHaveTextContent(
-      "Synced",
-    );
+    expect(
+      preview.getByTestId("mirror-status-out_lobby"),
+    ).not.toHaveTextContent("Synced");
     await user.click(preview.getByRole("button", { name: "Stop mirroring" }));
-    expect(store.getState().presentation.outputs.out_lobby.followingOutputId).toBe(
-      "",
-    );
+    expect(
+      store.getState().presentation.outputs.out_lobby.followingOutputId,
+    ).toBe("");
   });
 
   it("does not offer Mirror on the presentation controller even when another projector exists", () => {

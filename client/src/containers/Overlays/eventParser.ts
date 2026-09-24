@@ -59,6 +59,8 @@ export interface EventData {
     verseRange: string;
     version: string;
   }>;
+  /** Stable references attached to a saved Service Plan row. */
+  customDocumentRefs?: Array<{ documentId: string; title: string }>;
 }
 
 export interface ServicePlanningSection {

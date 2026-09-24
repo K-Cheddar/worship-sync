@@ -144,7 +144,7 @@ const ScheduleEditForm = ({
       syncedBaselineRef.current = nextDraft;
       return;
     }
-    // Live polling/SSE replaces the selectedSchedule object whenever another
+    // Live SSE or bootstrap recovery replaces the selectedSchedule object whenever another
     // admin edits this schedule (including assignment-only changes). If the
     // operator has unsaved edits in this form — the draft has diverged from the
     // last synced baseline — don't overwrite their work with the remote version.

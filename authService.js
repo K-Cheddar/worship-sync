@@ -1011,6 +1011,17 @@ const requireFirebaseAdmin = () => {
 
 const requireFirestore = () => firestoreTestOverride || firebaseRuntime?.db || null;
 
+let authReadObserverForServerTests = null;
+
+export const setAuthReadObserverForServerTests = (observer) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setAuthReadObserverForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  authReadObserverForServerTests = typeof observer === "function" ? observer : null;
+};
+
 export const setServerFirestoreForTests = (db) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
@@ -1117,6 +1128,7 @@ const assertCsrf = async (req) => {
 };
 
 export const getDoc = async (collectionName, id) => {
+  authReadObserverForServerTests?.({ type: "getDoc", collectionName, id });
   const db = requireFirestore();
   if (db) {
     const snapshot = await db.collection(collectionName).doc(id).get();
@@ -1234,6 +1246,7 @@ export const queryDocs = async (
   filters = [],
   { limit = 100 } = {},
 ) => {
+  authReadObserverForServerTests?.({ type: "queryDocs", collectionName, filters });
   const db = requireFirestore();
   if (db) {
     let query = db.collection(collectionName);
@@ -2050,6 +2063,13 @@ const listTrustedHumanDevicesForUser = async (userId) => {
   }
 
   return Array.from(byFingerprint.values());
+};
+
+const getActiveTrustedHumanDevice = async ({ userId, deviceId }) => {
+  if (!deviceId) return null;
+  const device = await getDoc(COLLECTIONS.trustedHumanDevices, deviceId);
+  if (!device || device.userId !== userId || device.revokedAt) return null;
+  return { ...device, deviceId };
 };
 
 const listTrustedHumanDevicesForChurch = async (churchId) => {
@@ -2928,7 +2948,26 @@ const buildRealtimeAuthUid = ({ sessionKind, userId, deviceId }) => {
   throw httpError(401, "A valid authenticated session is required.");
 };
 
-export const resolveRequestBootstrap = async (req) => {
+const REQUEST_BOOTSTRAP_RESOLUTIONS = Symbol("requestBootstrapResolutions");
+
+const memoizeRequestResolution = (req, key, resolve) => {
+  let resolutions = req[REQUEST_BOOTSTRAP_RESOLUTIONS];
+  if (!resolutions) {
+    resolutions = new Map();
+    Object.defineProperty(req, REQUEST_BOOTSTRAP_RESOLUTIONS, {
+      configurable: false,
+      enumerable: false,
+      value: resolutions,
+      writable: false,
+    });
+  }
+  if (resolutions.has(key)) return resolutions.get(key);
+  const promise = Promise.resolve().then(resolve);
+  resolutions.set(key, promise);
+  return promise;
+};
+
+const resolveRequestBootstrapUncached = async (req) => {
   const humanBootstrap = await resolveHumanBootstrap(req);
   if (humanBootstrap) {
     return humanBootstrap;
@@ -2950,6 +2989,11 @@ export const resolveRequestBootstrap = async (req) => {
 
   return null;
 };
+
+export const resolveRequestBootstrap = (req) =>
+  memoizeRequestResolution(req, "request", () =>
+    resolveRequestBootstrapUncached(req),
+  );
 
 const getHumanContext = async ({ uid, churchId }) => {
   const user = await getUserByUid(uid);
@@ -4015,7 +4059,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
   }
 };
 
-const getHumanBootstrap = async (req) => {
+const resolveCookieHumanBootstrap = async (req) => {
   const authSession = req.session?.auth;
   if (!authSession || authSession.sessionKind !== SESSION_KIND_HUMAN) {
     return null;
@@ -4056,11 +4100,12 @@ const getHumanBootstrap = async (req) => {
     return null;
   }
   const { user, membership, church } = humanContext;
-  const devices = await listTrustedHumanDevicesForUser(user.uid);
-  const device =
-    devices.find(
-      (item) => item.deviceId === authSession.deviceId && !item.revokedAt,
-    ) || null;
+  const device = authSession.deviceId
+    ? await getActiveTrustedHumanDevice({
+        userId: user.uid,
+        deviceId: authSession.deviceId,
+      })
+    : null;
   if (authSession.deviceId && !device) {
     await revokeHumanApiCredentialSlot(
       authSession.userId,
@@ -4080,7 +4125,12 @@ const getHumanBootstrap = async (req) => {
   });
 };
 
-const getHumanBootstrapFromBearerToken = async (req) => {
+const getHumanBootstrap = (req) =>
+  memoizeRequestResolution(req, "cookieHuman", () =>
+    resolveCookieHumanBootstrap(req),
+  );
+
+const resolveBearerHumanBootstrap = async (req) => {
   const rawToken = parseAuthorizationBearerToken(req);
   if (!rawToken) return null;
   const [credential] = await queryDocs(
@@ -4100,16 +4150,14 @@ const getHumanBootstrapFromBearerToken = async (req) => {
     return null;
   }
   const { user, membership, church } = humanContext;
-  const devices = await listTrustedHumanDevicesForUser(user.uid);
-  let device = null;
-  if (credential.deviceId) {
-    device =
-      devices.find(
-        (item) => item.deviceId === credential.deviceId && !item.revokedAt,
-      ) || null;
-    if (!device) {
-      return null;
-    }
+  const device = credential.deviceId
+    ? await getActiveTrustedHumanDevice({
+        userId: user.uid,
+        deviceId: credential.deviceId,
+      })
+    : null;
+  if (credential.deviceId && !device) {
+    return null;
   }
   const profileDisplayName = await resolveHumanProfileDisplayName(user);
   return buildHumanBootstrap({
@@ -4123,11 +4171,21 @@ const getHumanBootstrapFromBearerToken = async (req) => {
   });
 };
 
-const resolveHumanBootstrap = async (req) => {
+const getHumanBootstrapFromBearerToken = (req) =>
+  memoizeRequestResolution(req, "bearerHuman", () =>
+    resolveBearerHumanBootstrap(req),
+  );
+
+const resolveHumanBootstrapUncached = async (req) => {
   const cookieHuman = await getHumanBootstrap(req);
   if (cookieHuman) return cookieHuman;
   return getHumanBootstrapFromBearerToken(req);
 };
+
+const resolveHumanBootstrap = (req) =>
+  memoizeRequestResolution(req, "human", () =>
+    resolveHumanBootstrapUncached(req),
+  );
 
 const resolveWorkstationFromSession = async (req) => {
   const authSession = req.session?.auth;
@@ -4418,6 +4476,7 @@ export const seedActiveHumanBearerForServerTests = async ({
   userId,
   email,
   churchId,
+  deviceId = null,
   churchName = "Human bearer test church",
   role = "admin",
   appAccess = "full",
@@ -4480,13 +4539,23 @@ export const seedActiveHumanBearerForServerTests = async ({
     },
     { merge: false },
   );
+  if (deviceId) {
+    await setDoc(COLLECTIONS.trustedHumanDevices, deviceId, {
+      userId,
+      deviceFingerprintHash: `fingerprint_${deviceId}`,
+      label: "Server test device",
+      createdAt: nowIso(),
+      lastSeenAt: nowIso(),
+      revokedAt: null,
+    });
+  }
   const humanApiToken = await issueHumanApiCredential({
     req,
     userId,
     churchId,
-    deviceId: null,
+    deviceId,
   });
-  return { humanApiToken, churchId, membershipId };
+  return { humanApiToken, churchId, membershipId, userId, deviceId };
 };
 
 /** Test-only RTDB stand-in for legacy schedule requirement fallback coverage. */
@@ -6844,13 +6913,24 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const sectionPatch = normalizeCurrentServiceWorkspacePatch(req.body);
+      const workspacePatch = normalizeCurrentServiceWorkspacePatch(req.body);
       const rtdb = requireRealtimeDatabase();
       const workspaceRef = rtdb.ref(
         getCurrentServiceWorkspacePath(req.params.churchId),
       );
 
-      await workspaceRef.child("sections").update(sectionPatch.sections);
+      if (Object.keys(workspacePatch.sections).length > 0) {
+        await workspaceRef.child("sections").update(workspacePatch.sections);
+      }
+      if (workspacePatch.outputPreviewIds !== undefined) {
+        await workspaceRef.update({
+          outputPreviewIds:
+            workspacePatch.outputPreviewIds.length > 0
+              ? workspacePatch.outputPreviewIds
+              : null,
+          outputPreviewsConfigured: true,
+        });
+      }
       const savedSnapshot = await workspaceRef.once("value");
       const currentServiceWorkspace =
         normalizeCurrentServiceWorkspaceForStorage(savedSnapshot.val());

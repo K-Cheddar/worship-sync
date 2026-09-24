@@ -157,7 +157,7 @@ describe("ServicePublicView microphone assignments", () => {
     expect(within(item).getByText("John 4:23–24")).toBeInTheDocument();
   });
 
-  it("shows attached resources with their type, details, and safe links", () => {
+  it("shows every resource type with wrapped titles, details, and safe links", async () => {
     render(
       <ServicePublicView
         snapshot={{
@@ -169,16 +169,23 @@ describe("ServicePublicView microphone assignments", () => {
               items: [{
                 ...detailedSnapshot.service.sections[0].items[0],
                 resources: [
+                  { type: "song", title: "Opening Song with a deliberately long title that should wrap on narrow screens" },
+                  { type: "scripture", title: "Psalm 100:1–5" },
                   {
                     type: "url",
                     title: "Rehearsal video",
                     url: "https://example.com/rehearsal",
                   },
+                  { type: "youtube", title: "Sermon video", url: "https://youtube.com/watch?v=abc123" },
+                  { type: "audio", title: "Reference audio" },
+                  { type: "document", title: "Private church document" },
+                  { type: "custom-document", title: "Presentation Notes" },
                   {
                     type: "text",
                     title: "Call notes",
                     detail: "Bring the spare cable.",
                   },
+                  { type: "unrecognized-type", title: "Future resource", detail: "Future details" },
                 ],
               }],
             }],
@@ -188,14 +195,20 @@ describe("ServicePublicView microphone assignments", () => {
     );
 
     const item = within(screen.getByRole("main")).getAllByRole("listitem")[0];
-    expect(within(item).getByRole("link", { name: /Rehearsal video/i })).toHaveAttribute(
-      "href",
-      "https://example.com/rehearsal",
-    );
-    expect(within(item).getByText("Web link")).toBeInTheDocument();
-    expect(within(item).getByText("Call notes")).toBeInTheDocument();
-    expect(within(item).getByText("Notes")).toBeInTheDocument();
-    expect(within(item).getByText("Bring the spare cable.")).toBeInTheDocument();
+    expect(within(item).getByRole("button", { name: "View Web link: Rehearsal video" })).toBeInTheDocument();
+    expect(within(item).getByRole("button", { name: "View YouTube: Sermon video" })).toBeInTheDocument();
+    expect(within(item).getByRole("button", { name: "View Notes: Call notes" })).toBeInTheDocument();
+    expect(within(item).getByText("Opening Song with a deliberately long title that should wrap on narrow screens")).toBeInTheDocument();
+    expect(within(item).getByText("Psalm 100:1–5")).toBeInTheDocument();
+    expect(within(item).getByText("Reference audio")).toBeInTheDocument();
+    expect(within(item).getByText("Private church document")).toBeInTheDocument();
+    expect(within(item).getByText("Presentation Notes")).toBeInTheDocument();
+    expect(within(item).getByRole("button", { name: "View Other: Future resource" })).toBeInTheDocument();
+    expect(within(item).queryByRole("button", { name: /Private church document/i })).not.toBeInTheDocument();
+    expect(within(item).getByText(/Opening Song with a deliberately long title/)).toHaveClass("break-words");
+
+    await userEvent.setup().click(within(item).getByRole("button", { name: "View Notes: Call notes" }));
+    expect(await screen.findByText("Bring the spare cable.")).toBeInTheDocument();
   });
 
   it("opens a serving member image in a viewport-constrained modal", async () => {

@@ -1,6 +1,7 @@
 import { getExternalResourceResolution } from "../../api/auth";
 import { getApiBasePath } from "../../utils/environment";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import type { RichTextDocument } from "../../types/richText";
 import type {
   ExternalResourceMediaType,
   ExternalResourcePreviewType,
@@ -75,6 +76,7 @@ export type ContentPreviewResource = {
   mimeType?: string;
   fileName?: string;
   textContent?: string;
+  richTextContent?: RichTextDocument;
   resolveSource?: () => Promise<ContentPreviewResolvedSource>;
 };
 

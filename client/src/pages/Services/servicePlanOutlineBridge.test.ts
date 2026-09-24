@@ -125,6 +125,101 @@ describe("buildServicePlanOutlineItems", () => {
     expect(result.updatedSections[0].elements[0].pushedOutlineListIds).toHaveLength(2);
   });
 
+  it("references multiple custom documents by stable ids and skips them on a repeated push", async () => {
+    const plan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          id: "el-documents",
+          type: "free",
+          title: plainTextToRichText("Presentation Notes"),
+          songRefs: [{ kind: "library", songId: "song-1", songName: "Great Are You Lord" }],
+          scriptureRefs: [{ label: "John 3:16 NIV", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+          resources: [
+            { id: "doc-ref-1", type: "custom-document", title: "Shared title", data: { customDocumentId: "document-1" } },
+            { id: "doc-ref-2", type: "custom-document", title: "Shared title", data: { customDocumentId: "document-2" } },
+          ],
+        }],
+      }],
+    };
+    const customDocuments = [
+      { _id: "document-1", name: "Shared title", type: "free" as const, listId: "library-1", slides: [{ words: ["Slide one"] }] },
+      { _id: "document-2", name: "Shared title", type: "free" as const, listId: "library-2", slides: [{ words: ["Slide two"] }] },
+    ];
+
+    const first = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+      customDocuments,
+    });
+    const documentItems = first.items.filter((item) => item.type === "free");
+
+    expect(first.items.map(({ type }) => type)).toEqual([
+      "heading",
+      "song",
+      "bible",
+      "free",
+      "free",
+    ]);
+    expect(documentItems.map(({ _id }) => _id)).toEqual(["document-1", "document-2"]);
+    expect(documentItems.every((item) => !("slides" in item))).toBe(true);
+    expect(documentItems.map(({ listId }) => listId)).toEqual([
+      "el-documents::custom-document:document-1",
+      "el-documents::custom-document:document-2",
+    ]);
+    expect(first.updatedSections[0].elements[0].pushedOutlineListIds).toEqual(
+      first.items.slice(1).map(({ listId }) => listId),
+    );
+    expect(mockCreateNewFreeForm).not.toHaveBeenCalled();
+
+    const second = await buildServicePlanOutlineItems({
+      plan: { ...plan, sections: first.updatedSections },
+      currentList: first.items,
+      db: undefined,
+      songs: [],
+      customDocuments,
+    });
+
+    expect(second.items).toEqual([]);
+    expect(second.insertedCount).toBe(0);
+  });
+
+  it("reports unavailable custom documents without creating blank placeholders", async () => {
+    const plan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          id: "el-missing-document",
+          type: "free",
+          title: plainTextToRichText("Missing presentation"),
+          resources: [{
+            id: "missing-ref",
+            type: "custom-document",
+            title: "Deleted presentation",
+            data: { customDocumentId: "deleted-document" },
+          }],
+        }],
+      }],
+    };
+
+    const result = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+      customDocuments: [],
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.skippedTitles).toEqual(["Missing presentation"]);
+    expect(mockCreateNewHeading).not.toHaveBeenCalled();
+    expect(mockCreateNewFreeForm).not.toHaveBeenCalled();
+  });
+
   it("skips a pending (not-yet-created) song and reports its title", async () => {
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,

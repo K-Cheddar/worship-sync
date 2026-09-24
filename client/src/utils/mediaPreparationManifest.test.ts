@@ -99,6 +99,25 @@ describe("media preparation manifest", () => {
     expect(JSON.stringify(manifest)).not.toContain("worshipsync-media://");
   });
 
+  it("omits unavailable optional metadata instead of serializing undefined values", () => {
+    const manifest = buildMediaPreparationManifest({
+      discovery: discovery({
+        controllerProfileId: undefined,
+        controllerProfileName: undefined,
+        outlineScope: undefined,
+        outlineName: undefined,
+      }),
+      outputId: "projector",
+      publishedAt: 100,
+    });
+
+    expect(manifest).not.toHaveProperty("controllerProfileId");
+    expect(manifest).not.toHaveProperty("controllerProfileName");
+    expect(manifest).not.toHaveProperty("outlineScope");
+    expect(manifest).not.toHaveProperty("outlineName");
+    expect(JSON.stringify(manifest)).not.toContain("undefined");
+  });
+
   it("increments revision only when the structural preparation changes", () => {
     const first = buildMediaPreparationManifest({
       discovery: discovery(),

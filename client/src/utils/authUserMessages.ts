@@ -25,8 +25,23 @@ export const PAIRING_CODE_INVALID_MESSAGE =
 export const PAIRING_CODE_EXPIRED_MESSAGE =
   "That code expired. Generate a new one.";
 
-const DEFAULT_SIGN_IN =
-  "Could not sign in. Check your email and password, then try again.";
+export type SignInMethod = "password" | "google" | "microsoft";
+
+const SIGN_IN_FALLBACKS: Record<SignInMethod, string> = {
+  password:
+    "Could not sign in with that email and password. Check your information and try again.",
+  google: "Could not sign in with Google. Please try again.",
+  microsoft: "Could not sign in with Microsoft. Please try again.",
+};
+
+const getProviderName = (method: SignInMethod): string =>
+  method === "google" ? "Google" : "Microsoft";
+
+const getProviderCancellationMessage = (method: SignInMethod): string =>
+  `${getProviderName(method)} sign-in didn't finish. Try again.`;
+
+const getProviderUnavailableMessage = (method: SignInMethod): string =>
+  `${getProviderName(method)} sign-in is not available right now. Try again or contact your church administrator.`;
 
 /** Server returned success without session or verification step */
 export const SIGN_IN_UNEXPECTED_RESPONSE =
@@ -40,11 +55,6 @@ const DEFAULT_FORGOT_PASSWORD =
   "Could not send the reset email. Try again in a moment.";
 
 const FIREBASE_AUTH_MESSAGES: Record<string, string> = {
-  "auth/invalid-email": INVALID_EMAIL_FORMAT_MESSAGE,
-  "auth/invalid-credential": DEFAULT_SIGN_IN,
-  "auth/wrong-password": DEFAULT_SIGN_IN,
-  "auth/user-not-found": DEFAULT_SIGN_IN,
-  "auth/invalid-login-credentials": DEFAULT_SIGN_IN,
   "auth/user-disabled":
     "This account is not available to sign in. Contact your church administrator.",
   "auth/too-many-requests":
@@ -53,8 +63,23 @@ const FIREBASE_AUTH_MESSAGES: Record<string, string> = {
     "Could not reach the sign-in service. Check your connection and try again.",
   "auth/internal-error":
     "Sign-in is temporarily unavailable. Try again in a moment.",
-  "auth/operation-not-allowed":
-    "Email sign-in is not enabled for this project. Contact support.",
+};
+
+const isFirebaseAuthMessage = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Firebase:") || /auth\/[\w-]+/.test(message);
+};
+
+const getFirebaseErrorCode = (error: unknown): string | undefined => {
+  if (isFirebaseAuthError(error)) {
+    return error.code;
+  }
+  if (isFirebaseAuthMessage(error)) {
+    return (error instanceof Error ? error.message : String(error)).match(
+      /auth\/[\w-]+/,
+    )?.[0];
+  }
+  return undefined;
 };
 
 const VERIFY_CODE_API_MESSAGES: Record<string, string> = {
@@ -136,15 +161,55 @@ export const isFirebaseAuthError = (
   typeof (error as { code: unknown }).code === "string" &&
   (error as { code: string }).code.startsWith("auth/");
 
-export const getFirebaseSignInMessage = (error: unknown): string => {
-  if (isFirebaseAuthError(error)) {
-    return FIREBASE_AUTH_MESSAGES[error.code] ?? DEFAULT_SIGN_IN;
+export const getFirebaseSignInMessage = (
+  error: unknown,
+  options: { method?: SignInMethod } = {},
+): string => {
+  const method = options.method ?? "password";
+  const fallback = SIGN_IN_FALLBACKS[method];
+  const code = getFirebaseErrorCode(error);
+
+  if (!code) {
+    return fallback;
   }
-  const msg = error instanceof Error ? error.message : String(error);
-  if (msg.includes("Firebase:") || /auth\/[\w-]+/.test(msg)) {
-    return DEFAULT_SIGN_IN;
+  if (FIREBASE_AUTH_MESSAGES[code]) {
+    return FIREBASE_AUTH_MESSAGES[code];
   }
-  return DEFAULT_SIGN_IN;
+
+  switch (code) {
+    case "auth/invalid-email":
+      return method === "password" ? INVALID_EMAIL_FORMAT_MESSAGE : fallback;
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return fallback;
+    case "auth/operation-not-allowed":
+      return method === "password"
+        ? "Email and password sign-in is not available right now. Contact your church administrator."
+        : getProviderUnavailableMessage(method);
+    case "auth/popup-blocked":
+      return method === "password"
+        ? fallback
+        : `Your browser blocked the ${getProviderName(method)} sign-in window. Allow pop-ups and try again.`;
+    case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
+    case "auth/redirect-cancelled-by-user":
+      return method === "password"
+        ? fallback
+        : getProviderCancellationMessage(method);
+    case "auth/account-exists-with-different-credential":
+      return method === "password"
+        ? fallback
+        : "This email is already linked to another sign-in method. Sign in with that method to link this provider.";
+    case "auth/unauthorized-domain":
+    case "auth/invalid-oauth-client-id":
+    case "auth/invalid-oauth-provider":
+    case "auth/operation-not-supported-in-this-environment":
+      return method === "password" ? fallback : getProviderUnavailableMessage(method);
+    default:
+      return fallback;
+  }
 };
 
 const normalizeApiMessage = (error: unknown): string => {
@@ -210,9 +275,12 @@ export const getForgotPasswordErrorMessage = (error: unknown): string => {
 };
 
 /** Used in sign-in catch when Firebase vs API failure must be distinguished */
-export const getSignInFlowErrorMessage = (error: unknown): string =>
-  isFirebaseAuthError(error)
-    ? getFirebaseSignInMessage(error)
+export const getSignInFlowErrorMessage = (
+  error: unknown,
+  options: { method?: SignInMethod } = {},
+): string =>
+  isFirebaseAuthError(error) || isFirebaseAuthMessage(error)
+    ? getFirebaseSignInMessage(error, options)
     : getSessionApiErrorMessage(error);
 
 /** Matches auth bootstrap `authServerStatus` from GlobalInfo */

@@ -11,6 +11,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ListChecks } from "lucide-react";
 import { onValue, ref } from "firebase/database";
+import { shallowEqual } from "react-redux";
 import Button from "../../components/Button/Button";
 import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 import { SectionTabs } from "../../components/SectionTabs/SectionTabs";
@@ -25,7 +26,6 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import CreditsPreview from "../../containers/Credits/Credits";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
-import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 import { useDispatch, useSelector, useSyncMonitorSettings } from "../../hooks";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { CreditsInfo, ServiceTime } from "../../types";
@@ -67,7 +67,23 @@ import {
 } from "../Teams/teamsReturnNavigation";
 import { toTeamService } from "../Teams/teamsUtils";
 import { initiateLiveCredits } from "../../store/creditsSlice";
-import { selectOutputSlot } from "../../store/presentationSlice";
+import {
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
+import {
+  getControllerOutputs,
+  PRESENTATION_CONTROLLER_ID,
+  type ControllerProfile,
+} from "../../utils/controllerProfiles";
+import {
+  isPushOutput,
+  isPushOutputType,
+  type DisplayOutput,
+  type PushOutputType,
+} from "../../utils/displayOutputs";
+import CurrentServiceOutputPreviews from "./CurrentServiceOutputPreviews";
 import { formatTime } from "../../components/DisplayWindow/TimerDisplay";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import {
@@ -80,13 +96,17 @@ import {
 import {
   formatOccurrenceLabel,
   getOccurrenceServices,
+  formatLiveSlideProgress,
+  resolvePrimaryLiveOutput,
   resolveLiveItemSource,
-  resolveLiveSlideProgress,
   type LiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
 import {
   resolveCurrentServiceWorkspaceSections,
   resolveCurrentServiceWorkspaceTab,
+  getCurrentServiceWorkspaceControllers,
+  getCurrentServiceWorkspaceOutputPreviewIds,
+  resolveCurrentServiceWorkspaceController,
   type CurrentServiceWorkspacePreviewSection,
   type CurrentServiceWorkspacePreviewTab,
 } from "../../utils/currentServiceWorkspace";
@@ -143,6 +163,26 @@ const ChatUnreadBadge = ({ count }: { count: number }) => {
       {count > 99 ? "99+" : count}
     </span>
   );
+};
+
+const getWorkspaceControllerPreferenceKey = (churchId?: string) =>
+  `worshipsyncCurrentServiceWorkspaceController:${churchId || "device"}`;
+
+const readWorkspaceControllerPreference = (churchId?: string) => {
+  try {
+    return localStorage.getItem(getWorkspaceControllerPreferenceKey(churchId));
+  } catch {
+    return null;
+  }
+};
+
+const saveWorkspaceControllerPreference = (churchId: string | undefined, id: string) => {
+  if (!churchId) return;
+  try {
+    localStorage.setItem(getWorkspaceControllerPreferenceKey(churchId), id);
+  } catch {
+    // The workspace remains usable when browser storage is unavailable.
+  }
 };
 
 type ServiceHeadingProps = {
@@ -264,8 +304,10 @@ const WorkspacePage = ({
 
 const LiveSlideProgressChrome = ({
   progress,
+  outputName,
 }: {
   progress: LiveSlideProgress | null;
+  outputName?: string | null;
 }) => {
   if (!progress) return null;
   return (
@@ -278,41 +320,52 @@ const LiveSlideProgressChrome = ({
       </p>
       <p className="mt-0.5 text-xs font-medium tabular-nums tracking-wide text-gray-300">
         Slide {progress.slideLabel}
+        {outputName ? ` · ${outputName}` : ""}
       </p>
     </div>
   );
 };
 
 const DisplaysPreview = ({
-  columns = 1,
-  progress = null,
   activeItemId = null,
   activeListId = null,
   activeName = null,
+  liveOutputName = null,
   isVisible = true,
+  outputs,
+  selectedOutputIds,
+  controller,
+  controllers,
+  onControllerChange,
 }: {
-  columns?: 1 | 2;
-  progress?: LiveSlideProgress | null;
   activeItemId?: string | null;
   activeListId?: string | null;
   activeName?: string | null;
+  liveOutputName?: string | null;
   /** When false, pause mounted preview video and animation work. */
   isVisible?: boolean;
+  outputs: ReturnType<typeof selectDisplayOutputs>;
+  selectedOutputIds: string[];
+  controller: ControllerProfile;
+  controllers: ControllerProfile[];
+  onControllerChange: (controllerId: string) => void;
 }) => (
   <div className="flex h-full min-h-0 flex-col gap-2">
-    <LiveSlideProgressChrome progress={progress} />
-    <div className="min-h-0">
-      <TransmitHandler
-        readOnly
-        columns={columns}
-        fillWidth
-        isPreviewActive={isVisible}
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <CurrentServiceOutputPreviews
+        outputs={outputs.filter(isPushOutput)}
+        selectedOutputIds={selectedOutputIds}
+        isVisible={isVisible}
       />
     </div>
     <CurrentServiceItemList
       activeItemId={activeItemId}
       activeListId={activeListId}
       activeName={activeName}
+      liveOutputName={liveOutputName}
+      controller={controller}
+      controllers={controllers}
+      onControllerChange={onControllerChange}
     />
   </div>
 );
@@ -356,6 +409,7 @@ type PreviewPanelProps = {
   activeItemId: string | null;
   activeListId: string | null;
   activeName: string | null;
+  liveOutputName: string | null;
   assignmentTeams: ReturnType<typeof groupAssignmentSummaryByTeam>;
   microphones: ServicePlanMicrophone[];
   assignmentsStatus: AssignmentsStatus;
@@ -363,6 +417,11 @@ type PreviewPanelProps = {
     scheduleId: string;
     slot?: { occurrenceId: string; columnKey: string };
   }) => void;
+  outputs: ReturnType<typeof selectDisplayOutputs>;
+  selectedOutputIds: string[];
+  controller: ControllerProfile;
+  controllers: ControllerProfile[];
+  onControllerChange: (controllerId: string) => void;
   churchId: string;
   youtubeConnected: boolean;
   youtubeAccountLabel: string;
@@ -379,10 +438,16 @@ const PreviewPanelContent = ({
   activeItemId,
   activeListId,
   activeName,
+  liveOutputName,
   assignmentTeams,
   microphones,
   assignmentsStatus,
   onOpenSchedule,
+  outputs,
+  selectedOutputIds,
+  controller,
+  controllers,
+  onControllerChange,
   churchId,
   youtubeConnected,
   youtubeAccountLabel,
@@ -403,10 +468,15 @@ const PreviewPanelContent = ({
         aria-hidden={value !== "displays"}
       >
         <DisplaysPreview
-          columns={2}
           activeItemId={activeItemId}
           activeListId={activeListId}
           activeName={activeName}
+          liveOutputName={liveOutputName}
+          outputs={outputs}
+          selectedOutputIds={selectedOutputIds}
+          controller={controller}
+          controllers={controllers}
+          onControllerChange={onControllerChange}
           isVisible={value === "displays"}
         />
       </div>
@@ -461,7 +531,7 @@ const PreviewPanel = ({
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
         {section.tab === "displays" ? (
           <div className="shrink-0 border-b border-gray-700 p-2">
-            <LiveSlideProgressChrome progress={props.progress} />
+          <LiveSlideProgressChrome progress={props.progress} outputName={props.liveOutputName} />
           </div>
         ) : null}
         <PreviewPanelContent {...props} sections={sections} value={section.tab} />
@@ -497,7 +567,7 @@ const PreviewPanel = ({
               ))}
             </TabsList>
             {value === "displays" ? (
-              <LiveSlideProgressChrome progress={props.progress} />
+              <LiveSlideProgressChrome progress={props.progress} outputName={props.liveOutputName} />
             ) : null}
           </div>
         </div>
@@ -533,11 +603,10 @@ const CurrentServiceWorkspace = () => {
   const liveCredits = useSelector(
     (state) => state.undoable.present.credits.liveCredits,
   );
-  const projectorInfo = useSelector(
-    (state) => selectOutputSlot(state, "projector", "projector").info,
-  );
-  const monitorInfo = useSelector(
-    (state) => selectOutputSlot(state, "monitor", "monitor").info,
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const controllerProfiles = useSelector(selectControllerProfiles);
+  const [selectedControllerId, setSelectedControllerId] = useState(
+    PRESENTATION_CONTROLLER_ID,
   );
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [tab, setTab] = useState<WorkspaceTab>("plan");
@@ -592,6 +661,69 @@ const CurrentServiceWorkspace = () => {
     tab,
     availableSections,
   );
+  const eligibleControllers = useMemo(
+    () => getCurrentServiceWorkspaceControllers(controllerProfiles),
+    [controllerProfiles],
+  );
+  const selectedController = useMemo(
+    () =>
+      resolveCurrentServiceWorkspaceController(
+        controllerProfiles,
+        selectedControllerId,
+      ) ?? controllerProfiles[0],
+    [controllerProfiles, selectedControllerId],
+  );
+  const selectedOutputIds = useMemo(
+    () => getCurrentServiceWorkspaceOutputPreviewIds(currentServiceWorkspace),
+    [currentServiceWorkspace],
+  );
+  const controllerOutputs = useMemo(
+    () =>
+      getControllerOutputs(selectedController, displayOutputs).filter(
+        (output): output is DisplayOutput & { type: PushOutputType } =>
+          isPushOutputType(output.type),
+      ),
+    [displayOutputs, selectedController],
+  );
+  const selectedOutputInfos = useSelector(
+    (state) =>
+      controllerOutputs.map((output) =>
+        selectResolvedOutputSlot(state, output.id, output.type).info,
+      ),
+    shallowEqual,
+  );
+  const primaryLiveOutput = resolvePrimaryLiveOutput(selectedOutputInfos);
+  const liveOutput = primaryLiveOutput
+    ? controllerOutputs[primaryLiveOutput.index]
+    : null;
+  const liveOutputInfo = primaryLiveOutput?.output ?? null;
+  const liveItemSource = useMemo(
+    () =>
+      liveOutputInfo
+        ? resolveLiveItemSource(liveOutputInfo, { name: "", itemId: "", listId: "" })
+        : { name: "", itemId: "", listId: "" },
+    [liveOutputInfo],
+  );
+  const liveSlideProgress = useMemo(
+    () => formatLiveSlideProgress(liveOutputInfo),
+    [liveOutputInfo],
+  );
+
+  useEffect(() => {
+    if (!churchId) return;
+    setSelectedControllerId(
+      readWorkspaceControllerPreference(churchId) ?? PRESENTATION_CONTROLLER_ID,
+    );
+  }, [churchId]);
+
+  const selectWorkspaceController = useCallback(
+    (id: string) => {
+      if (!eligibleControllers.some((profile) => profile.id === id)) return;
+      setSelectedControllerId(id);
+      saveWorkspaceControllerPreference(churchId, id);
+    },
+    [churchId, eligibleControllers],
+  );
 
   const canLoadRoleData = Boolean(
     churchId && teamAvailable && loginState !== "guest",
@@ -608,15 +740,6 @@ const CurrentServiceWorkspace = () => {
       roleDataInFlightChurchIdRef.current = undefined;
     };
   }, []);
-
-  const liveSlideProgress = useMemo(
-    () => resolveLiveSlideProgress(projectorInfo, monitorInfo),
-    [monitorInfo, projectorInfo],
-  );
-  const liveItemSource = useMemo(
-    () => resolveLiveItemSource(projectorInfo, monitorInfo),
-    [monitorInfo, projectorInfo],
-  );
 
   useSyncMonitorSettings(
     firebaseDb,
@@ -1164,13 +1287,21 @@ const CurrentServiceWorkspace = () => {
                         value: "displays" as const,
                         label: "Displays",
                         content: (
-                          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                            <DisplaysPreview
-                              columns={2}
+                          <section className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                            <LiveSlideProgressChrome
                               progress={liveSlideProgress}
+                              outputName={liveOutput?.name ?? null}
+                            />
+                            <DisplaysPreview
+                              liveOutputName={liveOutput?.name ?? null}
                               activeItemId={liveItemSource.itemId ?? null}
                               activeListId={liveItemSource.listId ?? null}
                               activeName={liveItemSource.name ?? null}
+                              outputs={displayOutputs}
+                              selectedOutputIds={selectedOutputIds}
+                              controller={selectedController}
+                              controllers={eligibleControllers}
+                              onControllerChange={selectWorkspaceController}
                               isVisible={resolvedTab === "displays"}
                             />
                           </section>
@@ -1275,6 +1406,7 @@ const CurrentServiceWorkspace = () => {
                 value={desktopPreviewTab}
                 onValueChange={setTab}
                 progress={liveSlideProgress}
+                liveOutputName={liveOutput?.name ?? null}
                 activeItemId={liveItemSource.itemId ?? null}
                 activeListId={liveItemSource.listId ?? null}
                 activeName={liveItemSource.name ?? null}
@@ -1282,6 +1414,11 @@ const CurrentServiceWorkspace = () => {
                 microphones={microphones}
                 assignmentsStatus={assignmentsStatus}
                 onOpenSchedule={openSchedule}
+                outputs={displayOutputs}
+                selectedOutputIds={selectedOutputIds}
+                controller={selectedController}
+                controllers={eligibleControllers}
+                onControllerChange={selectWorkspaceController}
                 churchId={churchId || ""}
                 youtubeConnected={Boolean(
                   loginState === "success" &&

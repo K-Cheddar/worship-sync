@@ -8,7 +8,10 @@ export type OutlineItemCandidate = {
   sourceRowIndex: number;
   elementType: string;
   title: string;
-  outlineItemType: "song" | "bible" | "none";
+  outlineItemType: "song" | "bible" | "custom-document" | "none";
+  /** Parent row title when the candidate is named for an attached document. */
+  sourceLineItemTitle?: string;
+  customDocumentId?: string;
   cleanedTitle: string;
   matchedLibraryItem: ServiceItem | null;
   parsedRef: ParsedBibleRef | null;
@@ -33,6 +36,11 @@ export type ServicePlanningLineItem = {
   /** Current Service Plan assignees; imported rows use `ledBy` as a fallback. */
   assigneeNames?: string[];
   attachedSongs?: Array<{ title: string; songId?: string; inLibrary: boolean }>;
+  attachedCustomDocuments?: Array<{
+    documentId: string;
+    title: string;
+    inLibrary: boolean;
+  }>;
   selectedForOutline: boolean;
   outlineItemType: "song" | "bible" | "none";
   overlayReady: boolean;

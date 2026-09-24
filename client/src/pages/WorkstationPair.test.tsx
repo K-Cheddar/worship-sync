@@ -54,6 +54,14 @@ describe("WorkstationPair", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not|network|try again/i);
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Generate new QR" }).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("device-pairing-qr-surface")).toHaveStyle({
+      backgroundColor: "rgb(255, 255, 255)",
+      colorScheme: "light",
+      forcedColorAdjust: "none",
+    });
+    const qrCode = screen.getByTestId("device-pairing-qr-code");
+    expect(qrCode).toContainHTML('fill="#FFFFFF"');
+    expect(qrCode).toContainHTML('fill="#000000"');
     expect(authApi.exchangeDevicePairingRequest).toHaveBeenCalledWith({
       requestId: "request-1",
       requestSecret: "secret-1",

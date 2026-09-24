@@ -13,6 +13,8 @@ import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
 import type { YouTubePlaylistEntry } from "../YouTubePlaylistPlayer/youtubePlaylist";
+import ServiceFlowRichText from "../ServiceFlowRichText/ServiceFlowRichText";
+import { isRichTextEmpty } from "../../types/richText";
 import { openExternalUrl } from "../../utils/openExternalUrl";
 import {
   getContentPreviewMediaLabel,
@@ -272,10 +274,20 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     if (!resource || resolving || waitingForSource) return <LoadingState label="Preparing preview…" />;
     if (showFallback) return <PreviewFallback kind={kind} message={fallbackMessage} providerLabel={metadataLabel} />;
     if (kind === "text") {
+      if (resource.richTextContent && !isRichTextEmpty(resource.richTextContent)) {
+        return (
+          <div className="max-h-[min(65vh,42rem)] overflow-auto p-4">
+            <ServiceFlowRichText
+              document={resource.richTextContent}
+              className="text-left text-neutral-100"
+            />
+          </div>
+        );
+      }
       return (
-        <pre className="max-h-[min(65vh,42rem)] overflow-auto whitespace-pre-wrap p-4 text-left text-sm text-gray-200">
+        <div className="max-h-[min(65vh,42rem)] overflow-auto whitespace-pre-wrap p-4 text-left text-sm text-neutral-100">
           {resource.textContent || ""}
-        </pre>
+        </div>
       );
     }
     if (kind === "youtube" && youtubeQueue.length) {

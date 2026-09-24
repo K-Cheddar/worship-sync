@@ -118,6 +118,22 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByTitle("Guide")).toHaveAttribute("src", expect.stringContaining("/api/resources/proxy"));
   });
 
+  it("renders saved rich text formatting in text previews", () => {
+    renderPreview({
+      id: "rich-text-1",
+      title: "Notes",
+      textContent: "Important note",
+      richTextContent: {
+        blocks: [{
+          type: "paragraph",
+          spans: [{ text: "Important note", bold: true, italic: true }],
+        }],
+      },
+    });
+
+    expect(screen.getByText("Important note")).toHaveClass("font-bold", "italic");
+  });
+
   it("shows a blocked-page fallback while keeping external actions available", async () => {
     const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
     jest.useFakeTimers();

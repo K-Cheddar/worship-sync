@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RichTextEditor from "./RichTextEditor";
@@ -84,6 +85,28 @@ describe("RichTextEditor", () => {
       expect(handleChange).toHaveBeenLastCalledWith({
         blocks: [{ type: "paragraph", spans: [{ text: "Great Are You Lord" }] }],
       } satisfies RichTextDocument),
+    );
+  });
+
+  it("continues emitting edits after StrictMode replays effects", async () => {
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    render(
+      <StrictMode>
+        <RichTextEditor
+          label="Notes"
+          value={{ blocks: [] }}
+          onChange={handleChange}
+        />
+      </StrictMode>,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "Notes" }), "Keep this note");
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "Keep this note" }] }],
+      }),
     );
   });
 

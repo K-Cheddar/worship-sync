@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getApiBasePath } from "../../../utils/environment";
 import type { TeamSchedule } from "../../../api/authTypes";
 import type {
@@ -30,6 +30,12 @@ export type ServicePlanTemplateRemovedEvent = {
   type: "service-plan-template-removed";
   templateId: string;
 };
+
+export type TeamsLiveConnectionState =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "unavailable";
 
 /**
  * The union ends in an open `{ type: string; [key: string]: unknown }` member
@@ -74,24 +80,55 @@ export const useTeamsLiveSync = (
   onMessage: (event: TeamsStreamEvent) => void,
 ) => {
   const onMessageRef = useRef(onMessage);
+  const [connectionState, setConnectionState] =
+    useState<TeamsLiveConnectionState>("connecting");
+  const [reconnectVersion, setReconnectVersion] = useState(0);
 
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
 
   useEffect(() => {
-    if (!churchId) return;
-    // EventSource is absent in some runtimes (jsdom/tests, older webviews). The
-    // hook provides no polling fallback; consumers that need recovery must
-    // provide their own REST refresh path.
-    if (typeof EventSource === "undefined") return;
+    let hasOpened = false;
+    let interrupted = false;
+    let disposed = false;
+    setConnectionState("connecting");
+    setReconnectVersion(0);
+
+    if (!churchId) {
+      setConnectionState("unavailable");
+      return undefined;
+    }
+    // Some runtimes (including older webviews) do not provide EventSource.
+    // Consumers can then use a bounded REST fallback when their snapshot ages.
+    if (typeof EventSource === "undefined") {
+      setConnectionState("unavailable");
+      return undefined;
+    }
 
     const source = new EventSource(
       `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/teams/stream`,
       { withCredentials: true },
     );
 
+    source.onopen = () => {
+      if (disposed) return;
+      if (hasOpened && interrupted) {
+        interrupted = false;
+        setReconnectVersion((version) => version + 1);
+      }
+      hasOpened = true;
+      setConnectionState("connected");
+    };
+
+    source.onerror = () => {
+      if (disposed || !hasOpened || interrupted) return;
+      interrupted = true;
+      setConnectionState("disconnected");
+    };
+
     source.onmessage = (event) => {
+      if (disposed) return;
       try {
         const data = JSON.parse(event.data) as TeamsStreamEvent;
         onMessageRef.current(data);
@@ -101,7 +138,10 @@ export const useTeamsLiveSync = (
     };
 
     return () => {
+      disposed = true;
       source.close();
     };
   }, [churchId]);
+
+  return { connectionState, reconnectVersion };
 };

@@ -1,6 +1,7 @@
 import React from "react";
 import { getCanvaStatus } from "../../../api/canva";
 import { fromLegacyPresentationShape } from "../../../store/presentationSlice";
+import { upsertItemInAllItemsList } from "../../../store/allItemsSlice";
 import {
   fireEvent,
   render,
@@ -11,8 +12,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import Media, { getMediaPanelClassName } from "../Media";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { createNewFreeForm } from "../../../utils/itemUtil";
 
 const mockDispatch = jest.fn();
+const mockCreateNewFreeForm = jest.fn();
 const mockUseLocation = jest.fn();
 const mockOpenModal = jest.fn();
 const mockSelectionHandleClick = jest.fn();
@@ -219,6 +222,11 @@ jest.mock("../../../utils/mediaReferenceSweep", () => ({
 jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
   flushMediaLibraryDocToPouch: (...args: unknown[]) =>
     mockFlushMediaLibraryDocToPouch(...args),
+}));
+
+jest.mock("../../../utils/itemUtil", () => ({
+  ...jest.requireActual("../../../utils/itemUtil"),
+  createNewFreeForm: (...args: unknown[]) => mockCreateNewFreeForm(...args),
 }));
 
 jest.mock("../../../api/canva", () => ({
@@ -472,6 +480,10 @@ describe("Media", () => {
   it("renders media from store and sets media items per row", async () => {
     await renderMedia({ isMobile: false });
 
+    expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Collapse Sources" }),
+    ).toHaveAttribute("title", "Collapse Sources");
     await waitFor(() => {
       expect(mockSetMediaItems).toHaveBeenCalledWith(4);
     });
@@ -511,6 +523,39 @@ describe("Media", () => {
     expect(
       screen.queryByRole("switch", { name: /Other devices/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("registers a media-created presentation in the Custom library", async () => {
+    const mediaItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set([mediaItem.id]);
+    mockSelectedMedia = { ...mediaItem, source: "cloudinary" as const };
+    mockCreateNewFreeForm.mockResolvedValue({
+      _id: "media-presentation",
+      name: "Sunrise Image",
+      type: "free",
+      background: "https://example.com/bg.jpg",
+      slides: [],
+      arrangements: [],
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as Awaited<ReturnType<typeof createNewFreeForm>>);
+    await renderMedia();
+
+    await clickMediaLibraryRouteAction(/Create custom item/i);
+
+    await waitFor(() => {
+      expect(mockDispatch).toHaveBeenCalledWith(
+        upsertItemInAllItemsList({
+          _id: "media-presentation",
+          name: "Sunrise Image",
+          type: "free",
+          background: "https://example.com/bg.jpg",
+          listId: "",
+        }),
+      );
+    });
   });
 
   it("hides other-device local files until Other devices is turned on", async () => {

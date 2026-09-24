@@ -10,6 +10,7 @@ import { useCallback, useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
+import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItems,
   type ServicePlanOutlinePushResult,
@@ -21,6 +22,7 @@ export const useServicePlanOutlinePush = () => {
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const dispatch = useDispatch();
   const { songs } = useServicePlanSongLibrary();
+  const customDocuments = useSelector((state) => state.allDocs.allFreeFormDocs);
   const currentList = useSelector(
     (state) => state.undoable.present.itemList.list,
   );
@@ -39,13 +41,26 @@ export const useServicePlanOutlinePush = () => {
         db,
         bibleDb,
         songs,
+        customDocuments,
       });
+      const existingCustomDocumentIds = new Set(
+        customDocuments.map((document) => document._id),
+      );
       if (result.items.length > 0) {
         dispatch(updateItemList([...currentList, ...result.items]));
+        for (const item of result.items) {
+          if (
+            db &&
+            (item.type === "bible" ||
+              (item.type === "free" && !existingCustomDocumentIds.has(item._id)))
+          ) {
+            dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
+          }
+        }
       }
       return result;
     },
-    [currentList, db, bibleDb, dispatch, selectedList, songs],
+    [currentList, db, bibleDb, customDocuments, dispatch, selectedList, songs],
   );
 
   return { pushPlanToOutline, selectedListName: selectedList?.name };

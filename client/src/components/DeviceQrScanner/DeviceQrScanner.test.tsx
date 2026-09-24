@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DeviceQrScanner } from "./DeviceQrScanner";
 
-const createGeneratedQrPixels = (value: string, options: { scale?: number; padding?: number } = {}) => {
+const createGeneratedQrPixels = (value: string, options: { scale?: number; padding?: number; inverted?: boolean } = {}) => {
   // qr.js is the encoder used by react-qr-code; this keeps the invalid-payload
   // regression test on the same QR format as the pairing screen.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -25,20 +25,25 @@ const createGeneratedQrPixels = (value: string, options: { scale?: number; paddi
       const moduleY = Math.floor(qrY / scale) - quietZone;
       const dark = qrCode.modules[moduleY]?.[moduleX] === true;
       const index = (y * size + x) * 4;
-      data[index] = dark ? 0 : 255;
-      data[index + 1] = dark ? 0 : 255;
-      data[index + 2] = dark ? 0 : 255;
+      const luminance = dark !== (options.inverted ?? false) ? 0 : 255;
+      data[index] = luminance;
+      data[index + 1] = luminance;
+      data[index + 2] = luminance;
       data[index + 3] = 255;
     }
   }
   return { data, size };
 };
 
-const createCameraFramePixels = (value: string) => {
-  const qr = createGeneratedQrPixels(value, { scale: 4 });
+const createCameraFramePixels = (value: string, options: { inverted?: boolean } = {}) => {
+  const qr = createGeneratedQrPixels(value, { scale: 4, inverted: options.inverted });
   const width = 320;
   const height = 240;
-  const data = new Uint8ClampedArray(width * height * 4).fill(255);
+  const background = options.inverted ? 0 : 255;
+  const data = new Uint8ClampedArray(width * height * 4).fill(background);
+  if (options.inverted) {
+    for (let index = 3; index < data.length; index += 4) data[index] = 255;
+  }
   const offsetX = Math.floor((width - qr.size) / 2);
   const offsetY = Math.floor((height - qr.size) / 2);
   for (let y = 0; y < qr.size; y += 1) {
@@ -106,7 +111,7 @@ describe("DeviceQrScanner", () => {
     const onClose = jest.fn();
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: jest.fn().mockResolvedValue({ getTracks: () => [track] }) },
+      value: { getUserMedia: jest.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) },
     });
     jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     render(<DeviceQrScanner onAccepted={jest.fn()} onClose={onClose} />);
@@ -173,10 +178,10 @@ describe("DeviceQrScanner", () => {
     const { frameCallbacks } = await setupActiveScanner(getImageData);
     const base = performance.now();
     await act(async () => frameCallbacks.shift()?.(base + 200));
-    await act(async () => frameCallbacks.shift()?.(base + 400));
+    await act(async () => frameCallbacks.shift()?.(base + 700));
 
     expect(screen.queryByText("Having trouble reading the camera image.")).not.toBeInTheDocument();
-    expect(getImageData).toHaveBeenCalledTimes(2);
+    expect(getImageData).toHaveBeenCalledTimes(4);
   });
 
   it("surfaces repeated frame errors without stopping the scanner", async () => {
@@ -184,10 +189,10 @@ describe("DeviceQrScanner", () => {
     const { frameCallbacks } = await setupActiveScanner(getImageData);
     const base = performance.now();
     await act(async () => frameCallbacks.shift()?.(base + 200));
-    await act(async () => frameCallbacks.shift()?.(base + 400));
-    await act(async () => frameCallbacks.shift()?.(base + 600));
+    await act(async () => frameCallbacks.shift()?.(base + 700));
+    await act(async () => frameCallbacks.shift()?.(base + 1_200));
 
-    expect(screen.getByText("Having trouble reading the camera image.")).toBeInTheDocument();
+    expect(await screen.findByText("Having trouble reading the camera image.")).toBeInTheDocument();
     expect(screen.getByText("Try moving closer or restart the camera.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restart camera" })).toBeInTheDocument();
     expect(frameCallbacks.length).toBeGreaterThan(0);
@@ -303,19 +308,29 @@ describe("DeviceQrScanner", () => {
     jest.useFakeTimers();
     try {
       let resolveDetection: ((results: { rawValue: string }[]) => void) | undefined;
+      let detectCount = 0;
       const detector = {
-        detect: jest.fn(() => new Promise<{ rawValue: string }[]>((resolve) => { resolveDetection = resolve; })),
+        detect: jest.fn(() => {
+          detectCount += 1;
+          return detectCount === 1
+            ? new Promise<{ rawValue: string }[]>((resolve) => { resolveDetection = resolve; })
+            : Promise.resolve([]);
+        }),
       };
       installBarcodeDetector(detector);
       const emptyFrame = { data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240 };
       const pixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
-      const getImageData = jest.fn().mockReturnValueOnce(emptyFrame).mockReturnValue(pixels);
+      const getImageData = jest.fn()
+        .mockReturnValueOnce(emptyFrame)
+        .mockReturnValueOnce(emptyFrame)
+        .mockReturnValueOnce(emptyFrame)
+        .mockReturnValue(pixels);
       const onAccepted = jest.fn();
       const { frameCallbacks } = await setupActiveScanner(getImageData, onAccepted);
 
       await act(async () => frameCallbacks.shift()?.(200));
       await act(async () => jest.advanceTimersByTime(1_500));
-      expect(getImageData).toHaveBeenCalledTimes(1);
+      expect(getImageData).toHaveBeenCalledTimes(3);
       expect(onAccepted).not.toHaveBeenCalled();
 
       await act(async () => {
@@ -325,7 +340,14 @@ describe("DeviceQrScanner", () => {
       });
       expect(onAccepted).not.toHaveBeenCalled();
 
-      await act(async () => frameCallbacks.shift()?.(1_800));
+      for (const time of [1_800, 2_000, 2_200]) {
+        await act(async () => {
+          frameCallbacks.shift()?.(time);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      }
+      expect(detector.detect).toHaveBeenCalledTimes(4);
       expect(onAccepted).toHaveBeenCalledTimes(1);
       expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
     } finally {
@@ -350,8 +372,166 @@ describe("DeviceQrScanner", () => {
       });
     }
 
-    expect(detector.detect).toHaveBeenCalledTimes(8);
+    expect(detector.detect).toHaveBeenCalledTimes(3);
     expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
+  it("keeps native detection running after more than eight empty results", async () => {
+    const detector = { detect: jest.fn().mockResolvedValue([]) };
+    installBarcodeDetector(detector);
+    const { frameCallbacks } = await setupActiveScanner(() => ({
+      data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240,
+    }));
+
+    for (let index = 1; index <= 11; index += 1) {
+      await act(async () => {
+        frameCallbacks.shift()?.(index * 200);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(detector.detect).toHaveBeenCalledTimes(11);
+  });
+
+  it("continues accepting a native result after many empty results", async () => {
+    const url = "https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123";
+    let detectCount = 0;
+    const detector = { detect: jest.fn(() => { detectCount += 1; return detectCount <= 10 ? Promise.resolve([]) : Promise.resolve([{ rawValue: url }]); }) };
+    installBarcodeDetector(detector);
+    const onAccepted = jest.fn();
+    const { frameCallbacks } = await setupActiveScanner(() => ({
+      data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240,
+    }), onAccepted);
+
+    for (let index = 1; index <= 11; index += 1) {
+      await act(async () => {
+        frameCallbacks.shift()?.(index * 200);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(detector.detect).toHaveBeenCalledTimes(11);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
+  it("disables native decoding after repeated exceptions and keeps scanning with jsQR", async () => {
+    let showQr = false;
+    const detector = { detect: jest.fn().mockRejectedValue(new Error("detector failed")) };
+    installBarcodeDetector(detector);
+    const qr = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const getImageData = jest.fn(() => showQr ? qr : { data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240 });
+    const onAccepted = jest.fn();
+    const { frameCallbacks } = await setupActiveScanner(getImageData, onAccepted);
+
+    for (let index = 1; index <= 3; index += 1) {
+      await act(async () => {
+        frameCallbacks.shift()?.(index * 200);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+    expect(detector.detect).toHaveBeenCalledTimes(3);
+    showQr = true;
+    await act(async () => frameCallbacks.shift()?.(1_000));
+
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+    expect(detector.detect).toHaveBeenCalledTimes(3);
+  });
+
+  it("runs jsQR periodically while native detection is healthy but missing", async () => {
+    const detector = { detect: jest.fn().mockResolvedValue([]) };
+    installBarcodeDetector(detector);
+    const qr = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const onAccepted = jest.fn();
+    const { frameCallbacks } = await setupActiveScanner(() => qr, onAccepted);
+
+    for (let index = 1; index <= 3; index += 1) {
+      await act(async () => {
+        frameCallbacks.shift()?.(index * 200);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(detector.detect).toHaveBeenCalledTimes(3);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
+  it("requests an environment camera with ideal HD resolution and tolerates unsupported focus constraints", async () => {
+    const track = {
+      stop: jest.fn(),
+      getCapabilities: jest.fn(() => ({})),
+      getSettings: jest.fn(() => ({ width: 1280, height: 720 })),
+      applyConstraints: jest.fn(),
+    };
+    const getUserMedia = jest.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(<DeviceQrScanner onAccepted={jest.fn()} onClose={jest.fn()} />);
+
+    expect(await screen.findByText(/Scanning for a WorshipSync QR code/)).toBeInTheDocument();
+    expect(getUserMedia).toHaveBeenCalledWith({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+    expect(track.applyConstraints).not.toHaveBeenCalled();
+  });
+
+  it("requests continuous focus once when supported and ignores an optional constraint failure", async () => {
+    const track = {
+      stop: jest.fn(),
+      getCapabilities: jest.fn(() => ({ focusMode: ["manual", "continuous"] })),
+      getSettings: jest.fn(() => ({ width: 1280, height: 720, focusMode: "continuous" })),
+      applyConstraints: jest.fn().mockRejectedValue(new Error("fixed focus mode")),
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: jest.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) },
+    });
+    jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(<DeviceQrScanner onAccepted={jest.fn()} onClose={jest.fn()} />);
+
+    expect(await screen.findByText(/Scanning for a WorshipSync QR code/)).toBeInTheDocument();
+    expect(track.applyConstraints).toHaveBeenCalledTimes(1);
+    expect(track.applyConstraints).toHaveBeenCalledWith({ advanced: [{ focusMode: "continuous" }] });
+  });
+
+  it("uses a centered crop when the jsQR full-frame attempt misses", async () => {
+    const qr = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const fullFrameContext = {
+      drawImage: jest.fn(),
+      getImageData: jest.fn(() => ({ data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240 })),
+    };
+    const cropContext = { drawImage: jest.fn(), getImageData: jest.fn(() => qr) };
+    const onAccepted = jest.fn();
+    const { frameCallbacks } = await setupActiveScanner(() => ({
+      data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240,
+    }), onAccepted);
+    jest.spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockImplementationOnce(() => fullFrameContext as unknown as CanvasRenderingContext2D)
+      .mockImplementationOnce(() => cropContext as unknown as CanvasRenderingContext2D);
+
+    await act(async () => frameCallbacks.shift()?.(200));
+
+    expect(fullFrameContext.getImageData).toHaveBeenCalledTimes(1);
+    expect(cropContext.drawImage).toHaveBeenCalled();
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
+  it("decodes a light-on-dark QR using jsQR inversion attempts", async () => {
+    const inverted = createCameraFramePixels(
+      "https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123",
+      { inverted: true },
+    );
+    const { frameCallbacks, onAccepted } = await setupActiveScanner(() => inverted);
+
+    await act(async () => frameCallbacks.shift()?.(200));
+
     expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
   });
 
@@ -408,9 +588,9 @@ describe("DeviceQrScanner", () => {
     await act(async () => frameCallbacks.shift()?.(200));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(frameCallbacks.length).toBeGreaterThan(0);
-    await act(async () => frameCallbacks.shift()?.(400));
+    await act(async () => frameCallbacks.shift()?.(700));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    await act(async () => frameCallbacks.shift()?.(600));
+    await act(async () => frameCallbacks.shift()?.(1_200));
     expect(screen.getByRole("alert")).toHaveTextContent("That isn");
     expect(frameCallbacks.length).toBeGreaterThan(0);
     const diagnostics = JSON.stringify(diagnosticSpy.mock.calls);
@@ -425,14 +605,14 @@ describe("DeviceQrScanner", () => {
       "https://www.worshipsync.net/#/not-a-device-link-one",
       "https://www.worshipsync.net/#/not-a-device-link-two",
       "https://www.worshipsync.net/#/not-a-device-link-three",
-    ].map(createCameraFramePixels);
+    ].map((value) => createCameraFramePixels(value));
     const getImageData = jest.fn()
       .mockReturnValueOnce(payloads[0])
       .mockReturnValueOnce(payloads[1])
       .mockReturnValueOnce(payloads[2]);
     const { frameCallbacks } = await setupActiveScanner(getImageData);
 
-    for (const time of [200, 400, 600]) {
+    for (const time of [200, 700, 1_200]) {
       await act(async () => frameCallbacks.shift()?.(time));
     }
 
@@ -452,11 +632,11 @@ describe("DeviceQrScanner", () => {
       .mockReturnValueOnce(imageData(validPixels));
     const { frameCallbacks } = await setupActiveScanner(getImageData, onAccepted);
 
-    for (const time of [200, 400, 600]) {
+    for (const time of [200, 700, 1_200]) {
       await act(async () => frameCallbacks.shift()?.(time));
     }
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    await act(async () => frameCallbacks.shift()?.(800));
+    await act(async () => frameCallbacks.shift()?.(1_700));
 
     expect(onAccepted).toHaveBeenCalledTimes(1);
     expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
@@ -468,7 +648,7 @@ describe("DeviceQrScanner", () => {
     try {
       const pixels = createCameraFramePixels("https://www.worshipsync.net/#/not-a-device-link");
       const { frameCallbacks } = await setupActiveScanner(() => pixels);
-      for (const time of [200, 400, 600]) {
+      for (const time of [200, 700, 1_200]) {
         await act(async () => frameCallbacks.shift()?.(time));
       }
       expect(screen.getByRole("alert")).toBeInTheDocument();

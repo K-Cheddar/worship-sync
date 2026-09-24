@@ -40,6 +40,7 @@ import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
+import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,7 +76,7 @@ import MediaOriginFilter from "./MediaOriginFilter";
 import type { MediaOriginFilterValue } from "./mediaLibraryOrigin";
 import { calculateMediaLibraryGridColumns } from "./mediaLibraryGridColumns";
 import { Slider } from "../../components/ui/Slider";
-import { VirtualMediaGrid } from "./VirtualMediaGrid";
+import { VirtualMediaGrid, type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import { getCanvaMediaSource } from "./canvaMediaSource";
 import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import { useNativeFileDrop } from "./useNativeFileDrop";
@@ -341,7 +342,9 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={() => onAddMediaClick()}
             >
-              <HardDrive /> Add files
+              <HardDrive
+                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
+              /> Add files
             </DropdownMenuItem>
           ) : null}
           {onAddVideoInput ? (
@@ -349,7 +352,11 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={onAddVideoInput}
             >
-              <Video /> Add video input
+              <Video
+                className={
+                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                }
+              /> Add video input
             </DropdownMenuItem>
           ) : null}
           {onAddScreenShare ? (
@@ -357,7 +364,11 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={onAddScreenShare}
             >
-              <MonitorUp /> Add screen or window
+              <MonitorUp
+                className={
+                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                }
+              /> Add screen or window
             </DropdownMenuItem>
           ) : null}
           {onImportFromCanva ? (
@@ -365,7 +376,9 @@ const MediaModal = ({
               disabled={mediaUploadDisabled || isGuestSession}
               onSelect={() => onImportFromCanva()}
             >
-              <ImageUp /> Import from Canva
+              <ImageUp
+                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon}
+              /> Import from Canva
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>
@@ -411,6 +424,8 @@ const MediaModal = ({
       : calculateMediaLibraryGridColumns(window.innerWidth),
   );
   const modalGridRef = useRef<HTMLElement>(null);
+  const modalVirtualGridRef = useRef<VirtualMediaGridHandle>(null);
+  const modalSelectionScrollRef = useRef<AbortController | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculatedGridCols = useMemo(() => {
@@ -873,8 +888,36 @@ const MediaModal = ({
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
+
+      const selectedId = selectedMedia.id;
+      if (selectedId && filteredList.some((item) => item.id === selectedId)) {
+        const controller = new AbortController();
+        modalSelectionScrollRef.current?.abort();
+        modalSelectionScrollRef.current = controller;
+
+        const scrollToSelection = () => {
+          if (controller.signal.aborted) return;
+          const grid = modalVirtualGridRef.current;
+          if (!grid) {
+            requestAnimationFrame(scrollToSelection);
+            return;
+          }
+
+          void grid.scrollToMediaId(selectedId, { signal: controller.signal }).then(
+            (result) => {
+              if (!controller.signal.aborted && result.status === "not-ready") {
+                requestAnimationFrame(scrollToSelection);
+              }
+            },
+          );
+        };
+
+        requestAnimationFrame(scrollToSelection);
+      }
     }
     if (!isOpen && wasModalOpenRef.current) {
+      modalSelectionScrollRef.current?.abort();
+      modalSelectionScrollRef.current = null;
       clearModalSelection();
       setIsExpanded(false);
     }
@@ -884,11 +927,17 @@ const MediaModal = ({
     selectedMedia,
     selectedMediaIds,
     previewMedia,
+    filteredList,
     setModalSelectedMedia,
     setModalSelectedMediaIds,
     setModalPreviewMedia,
     clearModalSelection,
   ]);
+
+  useEffect(
+    () => () => modalSelectionScrollRef.current?.abort(),
+    [],
+  );
 
   // Modal keeps its own selection; after deletes the list updates but parent clearSelection does not reach here.
   useEffect(() => {
@@ -1305,6 +1354,7 @@ const MediaModal = ({
               className="scrollbar-variable overflow-y-auto min-h-0 flex-1 bg-black/30"
             >
               <VirtualMediaGrid
+                ref={modalVirtualGridRef}
                 scrollRef={modalGridRef}
                 mediaItems={filteredList}
                 cols={calculatedGridCols}

@@ -2,6 +2,10 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { formatItemList } from "../../utils/formatItemList";
+import {
+  DEFAULT_OUTLINE_SCOPE,
+  resolveOutlineForScope,
+} from "../../utils/outlineScope";
 import type {
   DBItemListDetails,
   ItemLists,
@@ -14,7 +18,7 @@ import type {
  * sync lifecycle while it itself is on screen, so surfaces like the current
  * service workspace need their own lightweight subscription to see it.
  */
-export const useLiveOutlinePreview = (): {
+export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   items: ServiceItemType[];
   isLoading: boolean;
 } => {
@@ -22,59 +26,122 @@ export const useLiveOutlinePreview = (): {
   const [items, setItems] = useState<ServiceItemType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const activeListIdRef = useRef<string | undefined>(undefined);
+  const activeListScopeRef = useRef<string | undefined>(undefined);
+  const requestIdRef = useRef(0);
+  const scopeRef = useRef(outlineScope);
+  scopeRef.current = outlineScope;
 
   const loadOutlineItems = useCallback(
-    async (listId: string | undefined) => {
+    async (
+      listId: string | undefined,
+      requestId: number,
+      requestScope: string,
+    ) => {
       if (!db || !cloud || !listId) {
-        setItems([]);
-        setIsLoading(false);
+        if (
+          requestIdRef.current === requestId &&
+          scopeRef.current === requestScope
+        ) {
+          setItems([]);
+          setIsLoading(false);
+        }
         return;
       }
-      setIsLoading(true);
       try {
         const response: DBItemListDetails | undefined = await db.get(listId);
+        if (
+          requestIdRef.current !== requestId ||
+          scopeRef.current !== requestScope
+        ) {
+          return;
+        }
         setItems(formatItemList(response?.items || [], cloud));
       } catch {
-        setItems([]);
+        if (
+          requestIdRef.current === requestId &&
+          scopeRef.current === requestScope
+        ) {
+          setItems([]);
+        }
       } finally {
-        setIsLoading(false);
+        if (requestIdRef.current === requestId && scopeRef.current === requestScope) {
+          setIsLoading(false);
+        }
       }
     },
     [db, cloud],
   );
 
   const loadActiveList = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const requestScope = outlineScope;
     if (!db || !cloud) {
+      setItems([]);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
       const response: ItemLists | undefined = await db.get("ItemLists");
-      const activeId = response?.activeList?._id;
+      if (
+        requestIdRef.current !== requestId ||
+        scopeRef.current !== requestScope
+      ) {
+        return;
+      }
+      const activeId = resolveOutlineForScope(
+        response?.itemLists ?? [],
+        requestScope,
+        response?.selectedIdByScope?.[requestScope] ??
+          (requestScope === DEFAULT_OUTLINE_SCOPE
+            ? response?.activeList?._id
+            : undefined),
+      )?._id;
+      if (activeListIdRef.current !== activeId) setItems([]);
       activeListIdRef.current = activeId;
-      await loadOutlineItems(activeId);
+      activeListScopeRef.current = requestScope;
+      await loadOutlineItems(activeId, requestId, requestScope);
     } catch {
-      activeListIdRef.current = undefined;
-      setItems([]);
-      setIsLoading(false);
+      if (
+        requestIdRef.current === requestId &&
+        scopeRef.current === requestScope
+      ) {
+        activeListIdRef.current = undefined;
+        activeListScopeRef.current = undefined;
+        setItems([]);
+        setIsLoading(false);
+      }
     }
-  }, [cloud, db, loadOutlineItems]);
+  }, [cloud, db, loadOutlineItems, outlineScope]);
 
   useEffect(() => {
     void loadActiveList();
+    return () => {
+      requestIdRef.current += 1;
+    };
   }, [loadActiveList]);
 
   const handleExternalUpdate = useCallback(
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      for (const update of updates) {
-        if (update._id === "ItemLists") {
-          void loadActiveList();
-        } else if (update._id === activeListIdRef.current) {
-          void loadOutlineItems(activeListIdRef.current);
-        }
+      // When an active-list change and a detail update arrive in one PouchDB
+      // batch, the new ItemLists selection owns this refresh. Fetching the old
+      // detail in the same batch must not invalidate the newer selection read.
+      if (updates.some((update) => update._id === "ItemLists")) {
+        void loadActiveList();
+        return;
+      }
+      if (
+        activeListScopeRef.current === scopeRef.current &&
+        updates.some((update) => update._id === activeListIdRef.current)
+      ) {
+        const requestId = ++requestIdRef.current;
+        void loadOutlineItems(
+          activeListIdRef.current,
+          requestId,
+          scopeRef.current,
+        );
       }
     },
     [loadActiveList, loadOutlineItems],

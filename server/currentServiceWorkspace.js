@@ -37,6 +37,18 @@ export const normalizeCurrentServiceWorkspaceForStorage = (input) => {
     : {};
   const defaults = createDefaultCurrentServiceWorkspace().sections;
 
+  const outputPreviewIds = Array.isArray(source?.outputPreviewIds)
+    ? Array.from(
+        new Set(
+          source.outputPreviewIds
+            .filter((id) => typeof id === "string")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      )
+    : source?.outputPreviewsConfigured === true
+      ? []
+      : undefined;
   return {
     sections: Object.fromEntries(
       CURRENT_SERVICE_WORKSPACE_SECTION_KEYS.map((key) => [
@@ -44,6 +56,7 @@ export const normalizeCurrentServiceWorkspaceForStorage = (input) => {
         typeof sections[key] === "boolean" ? sections[key] : defaults[key],
       ]),
     ),
+    ...(outputPreviewIds ? { outputPreviewIds } : {}),
   };
 };
 
@@ -53,21 +66,34 @@ export const normalizeCurrentServiceWorkspacePatch = (input) => {
     isRecord(input) && isRecord(input.currentServiceWorkspace)
       ? input.currentServiceWorkspace
       : input;
-  if (!isRecord(source) || !isRecord(source.sections)) {
+  if (!isRecord(source) || (source.sections !== undefined && !isRecord(source.sections))) {
     throw createWorkspaceConfigError("Workspace settings are invalid.");
   }
 
   const sections = {};
   for (const key of CURRENT_SERVICE_WORKSPACE_SECTION_KEYS) {
-    if (source.sections[key] === undefined) continue;
+    if (source.sections?.[key] === undefined) continue;
     if (typeof source.sections[key] !== "boolean") {
       throw createWorkspaceConfigError(`${key} workspace setting must be a boolean.`);
     }
     sections[key] = source.sections[key];
   }
 
-  if (Object.keys(sections).length === 0) {
+  const patch = { sections };
+  if (source.outputPreviewIds !== undefined) {
+    if (
+      !Array.isArray(source.outputPreviewIds) ||
+      source.outputPreviewIds.length > 500 ||
+      source.outputPreviewIds.some(
+        (id) => typeof id !== "string" || !id.trim() || id.length > 160,
+      )
+    ) {
+      throw createWorkspaceConfigError("Output preview settings are invalid.");
+    }
+    patch.outputPreviewIds = Array.from(new Set(source.outputPreviewIds));
+  }
+  if (Object.keys(sections).length === 0 && patch.outputPreviewIds === undefined) {
     throw createWorkspaceConfigError("At least one workspace setting is required.");
   }
-  return { sections };
+  return patch;
 };

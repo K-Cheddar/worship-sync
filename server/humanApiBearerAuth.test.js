@@ -14,6 +14,8 @@ const {
   resolveRequestBootstrap,
   seedActiveHumanBearerForServerTests,
   canSeedHumanBearerAuthForServerTests,
+  setAuthReadObserverForServerTests,
+  setDoc,
 } = await import("../authService.js");
 
 const createReq = ({ headers = {}, session = null, body = {} } = {}) => {
@@ -103,6 +105,251 @@ test("resolveRequestBootstrap returns human bootstrap for valid Bearer credentia
   assert.equal(bootstrap.sessionKind, "human");
   assert.equal(bootstrap.churchId, churchId);
   assert.equal(bootstrap.database, `rtdb_${churchId}`);
+});
+
+test("request bootstrap shares concurrent work and resolves fresh work per request", async (t) => {
+  if (skipUnlessHumanBearerSeedInMemory(t)) return;
+  const seedReq = createReq();
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req: seedReq,
+    userId: "test_human_request_cache_uid",
+    email: "human-request-cache@example.com",
+    churchId: "test_human_request_cache_church",
+  });
+  const reads = [];
+  setAuthReadObserverForServerTests((read) => reads.push(read));
+  try {
+    const firstReq = createReq({
+      headers: { authorization: `Bearer ${humanApiToken}` },
+    });
+    const [first, second, third] = await Promise.all([
+      resolveRequestBootstrap(firstReq),
+      resolveRequestBootstrap(firstReq),
+      resolveRequestBootstrap(firstReq),
+    ]);
+    assert.equal(first.sessionKind, "human");
+    assert.equal(second, first);
+    assert.equal(third, first);
+    assert.equal(
+      reads.filter((read) => read.collectionName === "humanApiCredentials").length,
+      1,
+    );
+
+    await resolveRequestBootstrap(
+      createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }),
+    );
+    assert.equal(
+      reads.filter((read) => read.collectionName === "humanApiCredentials").length,
+      2,
+    );
+
+    const beforeNullResolutions = reads.filter(
+      (read) => read.collectionName === "humanApiCredentials",
+    ).length;
+    const unknownReq = createReq({
+      headers: { authorization: "Bearer wsh_unknown_cached_token" },
+    });
+    const [unknownFirst, unknownSecond] = await Promise.all([
+      resolveRequestBootstrap(unknownReq),
+      resolveRequestBootstrap(unknownReq),
+    ]);
+    assert.equal(unknownFirst, null);
+    assert.equal(unknownSecond, null);
+    assert.equal(
+      reads.filter((read) => read.collectionName === "humanApiCredentials")
+        .length - beforeNullResolutions,
+      1,
+    );
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+});
+
+test("bearer human authentication validates its exact trusted device document", async (t) => {
+  if (skipUnlessHumanBearerSeedInMemory(t)) return;
+  const seedReq = createReq();
+  const { humanApiToken, userId, deviceId } =
+    await seedActiveHumanBearerForServerTests({
+      req: seedReq,
+      userId: "test_human_bearer_device_uid",
+      email: "human-bearer-device@example.com",
+      churchId: "test_human_bearer_device_church",
+      deviceId: "test_human_bearer_device_doc",
+    });
+  const reads = [];
+  setAuthReadObserverForServerTests((read) => reads.push(read));
+  try {
+    const bootstrap = await resolveRequestBootstrap(
+      createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }),
+    );
+    assert.equal(bootstrap.sessionKind, "human");
+    assert.equal(bootstrap.device.deviceId, deviceId);
+    assert.equal(
+      reads.filter(
+        (read) =>
+          read.type === "getDoc" &&
+          read.collectionName === "trustedHumanDevices" &&
+          read.id === deviceId,
+      ).length,
+      1,
+    );
+    assert.equal(
+      reads.filter(
+        (read) =>
+          read.type === "queryDocs" &&
+          read.collectionName === "trustedHumanDevices",
+      ).length,
+      0,
+    );
+
+    await setDoc(
+      "trustedHumanDevices",
+      deviceId,
+      { userId: "another-user", revokedAt: null },
+      { merge: true },
+    );
+    const mismatched = await resolveRequestBootstrap(
+      createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }),
+    );
+    assert.equal(mismatched, null);
+
+    await setDoc(
+      "trustedHumanDevices",
+      deviceId,
+      { userId, revokedAt: new Date().toISOString() },
+      { merge: true },
+    );
+    const revoked = await resolveRequestBootstrap(
+      createReq({ headers: { authorization: `Bearer ${humanApiToken}` } }),
+    );
+    assert.equal(revoked, null);
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+});
+
+test("cookie human authentication destroys sessions with missing, revoked, or foreign devices", async (t) => {
+  if (skipUnlessHumanBearerSeedInMemory(t)) return;
+  const seedReq = createReq();
+  const { userId, churchId, deviceId } =
+    await seedActiveHumanBearerForServerTests({
+      req: seedReq,
+      userId: "test_human_cookie_device_uid",
+      email: "human-cookie-device@example.com",
+      churchId: "test_human_cookie_device_church",
+      deviceId: "test_human_cookie_device_doc",
+    });
+  const createHumanSessionReq = (sessionDeviceId = deviceId) => {
+    let destroyed = false;
+    const req = createReq({
+      session: {
+        auth: {
+          sessionKind: "human",
+          issuedAt: Date.now(),
+          userId,
+          churchId,
+          deviceId: sessionDeviceId,
+        },
+        destroy(callback) {
+          destroyed = true;
+          callback?.();
+        },
+      },
+    });
+    return { req, wasDestroyed: () => destroyed };
+  };
+
+  const valid = createHumanSessionReq();
+  const validBootstrap = await resolveRequestBootstrap(valid.req);
+  assert.equal(validBootstrap.sessionKind, "human");
+  assert.equal(valid.wasDestroyed(), false);
+
+  const missing = createHumanSessionReq("missing-device-id");
+  assert.equal(await resolveRequestBootstrap(missing.req), null);
+  assert.equal(missing.wasDestroyed(), true);
+
+  await setDoc(
+    "trustedHumanDevices",
+    deviceId,
+    { userId, revokedAt: new Date().toISOString() },
+    { merge: true },
+  );
+  const revoked = createHumanSessionReq();
+  assert.equal(await resolveRequestBootstrap(revoked.req), null);
+  assert.equal(revoked.wasDestroyed(), true);
+
+  await setDoc(
+    "trustedHumanDevices",
+    deviceId,
+    { userId: "another-user", revokedAt: null },
+    { merge: true },
+  );
+  const foreign = createHumanSessionReq();
+  assert.equal(await resolveRequestBootstrap(foreign.req), null);
+  assert.equal(foreign.wasDestroyed(), true);
+});
+
+test("trusted-device listing keeps list queries and fingerprint deduplication", async (t) => {
+  if (skipUnlessHumanBearerSeedInMemory(t)) return;
+  const seedReq = createReq();
+  const { userId, churchId, deviceId } =
+    await seedActiveHumanBearerForServerTests({
+      req: seedReq,
+      userId: "test_human_device_listing_uid",
+      email: "human-device-listing@example.com",
+      churchId: "test_human_device_listing_church",
+      deviceId: "test_human_device_listing_active",
+    });
+  await setDoc(
+    "trustedHumanDevices",
+    deviceId,
+    {
+      deviceFingerprintHash: "shared-device-fingerprint",
+      lastSeenAt: "2026-01-01T00:00:00.000Z",
+    },
+    { merge: true },
+  );
+  await setDoc("trustedHumanDevices", "test_human_device_listing_revoked", {
+    userId,
+    deviceFingerprintHash: "shared-device-fingerprint",
+    label: "Older revoked record",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    lastSeenAt: "2026-02-01T00:00:00.000Z",
+    revokedAt: "2026-02-02T00:00:00.000Z",
+  });
+  const req = createReq({
+    session: {
+      auth: {
+        sessionKind: "human",
+        issuedAt: Date.now(),
+        userId,
+        churchId,
+        deviceId,
+      },
+      destroy(callback) {
+        callback?.();
+      },
+    },
+  });
+  const reads = [];
+  setAuthReadObserverForServerTests((read) => reads.push(read));
+  try {
+    const res = createRes();
+    await authHandlers.listTrustedHumanDevices(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.devices.length, 1);
+    assert.equal(res.payload.devices[0].deviceId, deviceId);
+    assert.equal(res.payload.devices[0].revokedAt, null);
+    assert.ok(
+      reads.some(
+        (read) =>
+          read.type === "queryDocs" &&
+          read.collectionName === "trustedHumanDevices",
+      ),
+    );
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
 });
 
 test("getAuthMe returns authenticated human session for valid Bearer credential", async (t) => {

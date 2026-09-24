@@ -1,14 +1,21 @@
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import {
   getServicePlanElementContentResources,
-  getServicePlanElementScriptureRefs,
-  getServicePlanElementSongRefs,
   type ServicePlan,
 } from "../types/servicePlan";
-import { normalizeRichTextDocument, richTextToPlainText } from "../types/richText";
+import {
+  normalizeRichTextDocument,
+  richTextToFormattedPlainText,
+  richTextToPlainText,
+} from "../types/richText";
 import { getServicePlanDurationSeconds } from "./Services/servicePlanDuration";
 import { resolvePlanTimelineStartMs } from "./Services/servicePlanTimingUtils";
-import { getServicePlanResourceDataString, isHttpUrl } from "./Services/servicePlanResources";
+import {
+  getPublicServicePlanResourceTitle,
+  getSafePublicServicePlanResourceUrl,
+  getServicePlanResourceDataString,
+  getServicePlanResourceText,
+} from "./Services/servicePlanResources";
 
 export type ServicePlanFlowSnapshotOptions = {
   plan: ServicePlan;
@@ -17,12 +24,9 @@ export type ServicePlanFlowSnapshotOptions = {
   serverNowMs?: number;
 };
 
-const getSongLabel = (song: ReturnType<typeof getServicePlanElementSongRefs>[number]) =>
-  song.kind === "library" ? song.songName : song.title;
-
 const getPublicResourceDetail = (resource: ReturnType<typeof getServicePlanElementContentResources>[number]) => {
   const detail = resource.type === "text"
-    ? getServicePlanResourceDataString(resource, "text")
+    ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
     : resource.type === "generic"
       ? getServicePlanResourceDataString(resource, "notes")
       : "";
@@ -31,13 +35,13 @@ const getPublicResourceDetail = (resource: ReturnType<typeof getServicePlanEleme
 
 const getPublicResources = (element: Parameters<typeof getServicePlanElementContentResources>[0]) =>
   getServicePlanElementContentResources(element)
-    .filter((resource) => resource.type !== "song" && resource.type !== "scripture")
     .map((resource) => {
       const detail = getPublicResourceDetail(resource);
+      const url = getSafePublicServicePlanResourceUrl(resource);
       return {
         type: resource.type,
-        title: resource.title.trim() || "Untitled resource",
-        ...(resource.url && isHttpUrl(resource.url) ? { url: resource.url.trim() } : {}),
+        title: getPublicServicePlanResourceTitle(resource),
+        ...(url ? { url } : {}),
         ...(detail ? { detail } : {}),
       };
     });
@@ -94,10 +98,6 @@ export const buildServicePlanFlowSnapshot = ({
         id: section.id || `section-${sectionIndex + 1}`,
         title: section.name || "",
         items: section.elements.map((element, elementIndex) => {
-          const songs = getServicePlanElementSongRefs(element).map(getSongLabel);
-          const scriptureRefs = getServicePlanElementScriptureRefs(element).map(
-            (reference) => reference.label,
-          );
           const resources = getPublicResources(element);
           return {
             id: element.id || `item-${sectionIndex + 1}-${elementIndex + 1}`,
@@ -123,8 +123,6 @@ export const buildServicePlanFlowSnapshot = ({
                   })),
                 }
               : {}),
-            ...(songs.length ? { songs } : {}),
-            ...(scriptureRefs.length ? { scriptureRefs } : {}),
             ...(resources.length ? { resources } : {}),
           };
         }),

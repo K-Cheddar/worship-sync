@@ -5,7 +5,8 @@ import type { TeamsScheduleDrafts } from "./types";
 // schedule-form drafts. These used to ride the Pouch cache (which replicated to
 // CouchDB and caused inbound-sync races); localStorage is the equivalent local
 // store with no network replication. Server data is never cached here — it is
-// always loaded fresh from the REST bootstrap and kept live via SSE + polling.
+// always loaded fresh from the REST bootstrap, with schedule and plan updates
+// arriving over SSE and non-SSE data recovered on reconnect or stale focus.
 
 const selectedScheduleKey = (churchId: string) =>
   `teams:selected-schedule:${churchId}`;

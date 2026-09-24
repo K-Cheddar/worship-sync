@@ -58,6 +58,15 @@ export type ServicePlanningOutlineSyncStep =
   | {
       kind: "insertBibleAtEnd";
       candidate: OutlineItemCandidate;
+    }
+  | {
+      kind: "insertCustomDocument";
+      headingName: string;
+      candidate: OutlineItemCandidate;
+    }
+  | {
+      kind: "insertCustomDocumentAtEnd";
+      candidate: OutlineItemCandidate;
     };
 
 type ExecuteServicePlanningOutlineStepArgs = Omit<
@@ -74,8 +83,7 @@ type HeadingGroup = {
 
 type GroupedOutlineCandidates = {
   headingGroups: HeadingGroup[];
-  tailSongs: OutlineItemCandidate[];
-  tailBibles: OutlineItemCandidate[];
+  tailCandidates: OutlineItemCandidate[];
 };
 
 const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
@@ -85,27 +93,34 @@ const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
 const isInsertableBibleCandidate = (candidate: OutlineItemCandidate) =>
   candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef);
 
+const getCustomDocumentId = (candidate: OutlineItemCandidate): string =>
+  candidate.customDocumentId?.trim() ||
+  (candidate.matchedLibraryItem?.type === "free"
+    ? candidate.matchedLibraryItem._id.trim()
+    : "");
+
+const isInsertableCustomDocumentCandidate = (candidate: OutlineItemCandidate) =>
+  candidate.outlineItemType === "custom-document" &&
+  candidate.matchedLibraryItem?.type === "free" &&
+  getCustomDocumentId(candidate) === candidate.matchedLibraryItem._id;
+
 const buildHeadingGroups = (
   outlineCandidates: OutlineItemCandidate[],
 ): GroupedOutlineCandidates => {
   const groups: HeadingGroup[] = [];
   const seenHeadings = new Set<string>();
-  const tailSongs: OutlineItemCandidate[] = [];
-  const tailBibles: OutlineItemCandidate[] = [];
+  const tailCandidates: OutlineItemCandidate[] = [];
 
   for (const candidate of outlineCandidates) {
     if (
       !isInsertableSongCandidate(candidate) &&
-      !isInsertableBibleCandidate(candidate)
+      !isInsertableBibleCandidate(candidate) &&
+      !isInsertableCustomDocumentCandidate(candidate)
     ) {
       continue;
     }
     if (!candidate.headingName) {
-      if (candidate.outlineItemType === "song") {
-        tailSongs.push(candidate);
-      } else if (candidate.outlineItemType === "bible") {
-        tailBibles.push(candidate);
-      }
+      tailCandidates.push(candidate);
       continue;
     }
 
@@ -119,7 +134,7 @@ const buildHeadingGroups = (
       .candidates.push(candidate);
   }
 
-  return { headingGroups: groups, tailSongs, tailBibles };
+  return { headingGroups: groups, tailCandidates };
 };
 
 const normalizeOutlineItemName = (name: string): string =>
@@ -158,6 +173,9 @@ const getOutlineCandidateItemName = (
       )
     );
   }
+  if (isInsertableCustomDocumentCandidate(candidate)) {
+    return candidate.matchedLibraryItem?.name?.trim() || null;
+  }
   return null;
 };
 
@@ -172,6 +190,16 @@ export const isOutlineCandidatePresentInList = (
   const candidateName = getOutlineCandidateItemName(candidate);
   if (!candidateName) return false;
 
+  if (isInsertableCustomDocumentCandidate(candidate)) {
+    return list
+      .slice(headingIndex + 1, getSectionEndIndex(list, headingIndex))
+      .some(
+        (item) =>
+          item.type === "free" &&
+          item._id === getCustomDocumentId(candidate),
+      );
+  }
+
   const candidateNameLower = normalizeOutlineItemName(candidateName);
   const sectionEndIndex = getSectionEndIndex(list, headingIndex);
 
@@ -184,7 +212,7 @@ export const planServicePlanningOutlineSyncSteps = (
   outlineCandidates: OutlineItemCandidate[],
   currentList: ServiceItem[] = [],
 ): ServicePlanningOutlineSyncStep[] => {
-  const { headingGroups, tailSongs, tailBibles } = buildHeadingGroups(outlineCandidates);
+  const { headingGroups, tailCandidates } = buildHeadingGroups(outlineCandidates);
   const steps: ServicePlanningOutlineSyncStep[] = [];
   let plannedList = [...currentList];
 
@@ -211,20 +239,30 @@ export const planServicePlanningOutlineSyncSteps = (
       }
       const candidateName = getOutlineCandidateItemName(candidate);
       if (!candidateName) continue;
+      const customDocumentId = isInsertableCustomDocumentCandidate(candidate)
+        ? getCustomDocumentId(candidate)
+        : "";
 
       itemSteps.push({
-        kind:
-          candidate.outlineItemType === "bible" ? "insertBible" : "insertSong",
+        kind: candidate.outlineItemType === "bible"
+          ? "insertBible"
+          : candidate.outlineItemType === "custom-document"
+            ? "insertCustomDocument"
+            : "insertSong",
         headingName: group.headingName,
         candidate,
       });
       groupList = [
         ...groupList,
         {
-          _id: `planned-item-${group.headingName}-${candidateName}`,
+          _id: customDocumentId || `planned-item-${group.headingName}-${candidateName}`,
           name: candidateName,
-          type: candidate.outlineItemType,
-          listId: `planned-item-${group.headingName}-${candidateName}`,
+          type: candidate.outlineItemType === "custom-document"
+            ? "free"
+            : candidate.outlineItemType,
+          listId: customDocumentId
+            ? `planned-item-${group.headingName}-${customDocumentId}`
+            : `planned-item-${group.headingName}-${candidateName}`,
         },
       ];
     }
@@ -243,40 +281,28 @@ export const planServicePlanningOutlineSyncSteps = (
     plannedList = groupList;
   }
 
-  for (const candidate of tailSongs) {
+  for (const candidate of tailCandidates) {
     const candidateName = getOutlineCandidateItemName(candidate);
     if (!candidateName) continue;
 
-    steps.push({
-      kind: "insertSongAtEnd",
-      candidate,
-    });
+    const customDocumentId = isInsertableCustomDocumentCandidate(candidate)
+      ? getCustomDocumentId(candidate)
+      : "";
+    const stepKind = candidate.outlineItemType === "bible"
+      ? "insertBibleAtEnd"
+      : customDocumentId
+        ? "insertCustomDocumentAtEnd"
+        : "insertSongAtEnd";
+    steps.push({ kind: stepKind, candidate });
     plannedList = [
       ...plannedList,
       {
-        _id: `planned-tail-song-${candidateName}`,
+        _id: customDocumentId || `planned-tail-${candidate.outlineItemType}-${candidateName}`,
         name: candidateName,
-        type: candidate.outlineItemType,
-        listId: `planned-tail-song-${candidateName}`,
-      },
-    ];
-  }
-
-  for (const candidate of tailBibles) {
-    const candidateName = getOutlineCandidateItemName(candidate);
-    if (!candidateName) continue;
-
-    steps.push({
-      kind: "insertBibleAtEnd",
-      candidate,
-    });
-    plannedList = [
-      ...plannedList,
-      {
-        _id: `planned-tail-bible-${candidateName}`,
-        name: candidateName,
-        type: candidate.outlineItemType,
-        listId: `planned-tail-bible-${candidateName}`,
+        type: customDocumentId ? "free" : candidate.outlineItemType,
+        listId: customDocumentId
+          ? `planned-tail-custom-document-${customDocumentId}`
+          : `planned-tail-${candidate.outlineItemType}-${candidateName}`,
       },
     ];
   }
@@ -336,7 +362,9 @@ export const executeServicePlanningOutlineSyncStep = async ({
   defaultBibleFontMode,
 }: ExecuteServicePlanningOutlineStepArgs): Promise<ExecuteServicePlanningOutlineStepResult> => {
   const ensured =
-    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+    step.kind === "insertSongAtEnd" ||
+    step.kind === "insertBibleAtEnd" ||
+    step.kind === "insertCustomDocumentAtEnd"
       ? {
           newList: currentList,
           headingIndex: -1,
@@ -366,6 +394,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
   if (
     step.kind !== "insertSongAtEnd" &&
     step.kind !== "insertBibleAtEnd" &&
+    step.kind !== "insertCustomDocumentAtEnd" &&
     isOutlineCandidatePresentInList(
       ensured.newList,
       step.headingName,
@@ -408,6 +437,20 @@ export const executeServicePlanningOutlineSyncStep = async ({
       listId: generateRandomId(),
     };
     createdAllItems.push(sourceItem);
+  } else if (
+    (step.kind === "insertCustomDocument" ||
+      step.kind === "insertCustomDocumentAtEnd") &&
+    isInsertableCustomDocumentCandidate(step.candidate)
+  ) {
+    const document = step.candidate.matchedLibraryItem;
+    if (document?.type === "free") {
+      sourceItem = {
+        _id: document._id,
+        name: document.name,
+        type: "free",
+        listId: document.listId,
+      };
+    }
   }
 
   if (!sourceItem) {
@@ -431,7 +474,9 @@ export const executeServicePlanningOutlineSyncStep = async ({
     listId: generateRandomId(),
   };
   const newList =
-    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+    step.kind === "insertSongAtEnd" ||
+    step.kind === "insertBibleAtEnd" ||
+    step.kind === "insertCustomDocumentAtEnd"
       ? [...ensured.newList, outlineItem]
       : [
           ...ensured.newList.slice(0, insertAfter + 1),

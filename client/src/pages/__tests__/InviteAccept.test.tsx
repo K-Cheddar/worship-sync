@@ -209,7 +209,7 @@ describe("InviteAccept", () => {
 
     expect(
       await screen.findByText(
-        /Microsoft sign-in is not available right now\. Try again, or use email and password\./i,
+        /Could not sign in with Microsoft\. Please try again\./i,
       ),
     ).toBeInTheDocument();
   });

@@ -62,6 +62,7 @@ import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import { useNativeFileDrop } from "./useNativeFileDrop";
+import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -267,11 +268,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             "rounded-t-md mt-2",
           )}
         >
-          <h2 className="font-semibold">Media</h2>
+          <h2 className="font-semibold">Sources</h2>
           <div className="flex-1 flex items-center justify-center">
             <Button
               variant="tertiary"
               svg={c.isMediaExpanded ? ChevronDown : ChevronUp}
+              title={c.isMediaExpanded ? "Collapse Sources" : "Expand Sources"}
+              aria-label={
+                c.isMediaExpanded ? "Collapse Sources" : "Expand Sources"
+              }
               onClick={() => {
                 dispatch(setIsMediaExpanded(!c.isMediaExpanded));
                 if (c.isMediaExpanded) {
@@ -305,18 +310,28 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
-                    <HardDrive /> Add files
+                    <HardDrive
+                      className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
+                    /> Add files
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => openVideoInputPicker("device")}
                   >
-                    <Video /> Add video input
+                    <Video
+                      className={
+                        MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                      }
+                    /> Add video input
                   </DropdownMenuItem>
                   {supportsDesktopCapture() ? (
                     <DropdownMenuItem
                       onSelect={() => openVideoInputPicker("desktop")}
                     >
-                      <MonitorUp /> Add screen or window
+                      <MonitorUp
+                        className={
+                          MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                        }
+                      /> Add screen or window
                     </DropdownMenuItem>
                   ) : null}
                   {canvaOauthConfigured ? (
@@ -324,7 +339,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                       disabled={c.isGuestSession || c.isMediaReadOnly}
                       onSelect={() => openCanva()}
                     >
-                      <ImageUp /> Import from Canva
+                      <ImageUp
+                        className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon}
+                      /> Import from Canva
                     </DropdownMenuItem>
                   ) : null}
                 </DropdownMenuContent>

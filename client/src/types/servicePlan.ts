@@ -145,6 +145,7 @@ export type ServicePlanContentResourceType =
   | "youtube"
   | "audio"
   | "document"
+  | "custom-document"
   | "url"
   | "text"
   | "generic";
@@ -171,6 +172,14 @@ export type ServicePlanContentResource = {
   mediaId?: string;
   data?: Record<string, unknown>;
   metadata?: ServicePlanContentResourceMetadata;
+};
+
+export const getServicePlanCustomDocumentId = (
+  resource: ServicePlanContentResource,
+): string => {
+  if (resource.type !== "custom-document") return "";
+  const value = resource.data?.customDocumentId;
+  return typeof value === "string" ? value.trim() : "";
 };
 
 export type ServicePlanElement = {
@@ -311,33 +320,11 @@ export const getServicePlanElementContentResources = (
     | "songRefs"
     | "scriptureRef"
     | "scriptureRefs"
-  >,
+>,
 ): ServicePlanContentResource[] => {
   const resources = [...(element.resources || [])];
-  const songResources = resources.filter((resource) => resource.type === "song");
-  const scriptureResources = resources.filter(
-    (resource) => resource.type === "scripture",
-  );
-  const hasSongReference = (songRef: ServicePlanSongReference) =>
-    songRef.kind === "library" &&
-    songResources.some(
-      (resource) => {
-        const storedSongRef = resource.data?.songRef;
-        const storedSongId =
-          storedSongRef && typeof storedSongRef === "object"
-            ? (storedSongRef as { songId?: unknown }).songId
-            : resourceDataString(resource, "songId");
-        return storedSongId === songRef.songId;
-      },
-    );
-  const hasScriptureReference = (scripture: ServicePlanScriptureReference) =>
-    scriptureResources.some(
-      (resource) => resourceDataString(resource, "label") === scripture.label,
-    );
-
   const legacyResources: ServicePlanContentResource[] = [];
   getServicePlanElementSongRefs(element).forEach((songRef, index) => {
-    if (hasSongReference(songRef)) return;
     legacyResources.push({
       id: `legacy-song-${index}-${songRef.kind}`,
       type: "song",
@@ -346,7 +333,6 @@ export const getServicePlanElementContentResources = (
     });
   });
   getServicePlanElementScriptureRefs(element).forEach((scripture, index) => {
-    if (hasScriptureReference(scripture)) return;
     legacyResources.push({
       id: `legacy-scripture-${index}`,
       type: "scripture",
@@ -354,7 +340,27 @@ export const getServicePlanElementContentResources = (
       data: { scripture },
     });
   });
-  return [...legacyResources, ...resources];
+  const resourcesWithoutLegacyDuplicates = resources.filter((resource) => {
+    if (resource.type === "song") {
+      const storedSongRef = resource.data?.songRef;
+      const storedSongId =
+        storedSongRef && typeof storedSongRef === "object"
+          ? (storedSongRef as { songId?: unknown }).songId
+          : resourceDataString(resource, "songId");
+      return !getServicePlanElementSongRefs(element).some(
+        (songRef) =>
+          songRef.kind === "library" && storedSongId === songRef.songId,
+      );
+    }
+    if (resource.type === "scripture") {
+      return !getServicePlanElementScriptureRefs(element).some(
+        (scripture) =>
+          resourceDataString(resource, "label") === scripture.label,
+      );
+    }
+    return true;
+  });
+  return [...legacyResources, ...resourcesWithoutLegacyDuplicates];
 };
 
 /**
