@@ -311,13 +311,6 @@ const restorePendingLinkCredential = (
   });
 };
 
-const PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES = new Set([
-  "auth/invalid-credential",
-  "auth/invalid-login-credentials",
-  "auth/wrong-password",
-  "auth/user-not-found",
-]);
-
 const POPUP_REDIRECT_FALLBACK_ERROR_CODES = new Set([
   "auth/popup-blocked",
   "auth/operation-not-supported-in-this-environment",
@@ -2458,7 +2451,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       if (authResult.status === "redirect-not-completed") {
         setPendingProviderRedirectState(null);
-        setAuthError("Provider sign-in did not complete. Try again.");
+        setAuthError(
+          getSignInFlowErrorMessage(
+            { code: "auth/redirect-cancelled-by-user" },
+            { method },
+          ),
+        );
         setLoginState("error");
         return {};
       }
@@ -2515,31 +2513,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setLoginState("idle");
         return {};
       }
-      const errorCode =
-        typeof e === "object" &&
-          e &&
-          "code" in e &&
-          typeof (e as { code?: unknown }).code === "string"
-          ? ((e as { code: string }).code || "")
-          : "";
-      if (
-        method !== "password" &&
-        (errorCode === "auth/popup-blocked" ||
-          errorCode === "auth/popup-closed-by-user")
-      ) {
-        setAuthError(
-          "Provider sign-in did not complete. Try again, or use email and password."
-        );
-      } else if (
-        method === "password" &&
-        PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES.has(errorCode)
-      ) {
-        setAuthError(
-          "Could not sign in with email and password. If this account uses Google or Microsoft, continue with that method instead."
-        );
-      } else {
-        setAuthError(getSignInFlowErrorMessage(e));
-      }
+      setAuthError(getSignInFlowErrorMessage(e, { method }));
       setLoginState("error");
       return {};
     }

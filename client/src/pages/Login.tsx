@@ -51,6 +51,7 @@ import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import {
   AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
   AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
+  getSignInFlowErrorMessage,
 } from "../utils/authUserMessages";
 import {
   getDesktopSsoCompleteReplaceHref,
@@ -725,22 +726,14 @@ const Login = () => {
       setDesktopSsoCompleteFlash(desktopBrowserProvider);
       window.location.replace(getDesktopSsoCompleteReplaceHref());
     } catch (error) {
-      const errorCode =
-        typeof error === "object" &&
-          error &&
-          "code" in error &&
-          typeof (error as { code?: unknown }).code === "string"
-          ? String((error as { code: string }).code)
-          : "";
       setDesktopBrowserFlowStatus("idle");
       setInfoBanner("");
       setLocalAuthError(
-        errorCode === "auth/popup-blocked" ||
-          errorCode === "auth/popup-closed-by-user"
-          ? "Provider sign-in did not complete. Use the button below to try again."
-          : error instanceof Error
-            ? error.message
-            : "Could not finish browser sign-in. Try again.",
+        desktopBrowserProvider
+          ? getSignInFlowErrorMessage(error, {
+              method: desktopBrowserProvider,
+            })
+          : "Could not finish browser sign-in. Try again.",
       );
     }
   }, [context, desktopBrowserAuthId, desktopBrowserProvider]);

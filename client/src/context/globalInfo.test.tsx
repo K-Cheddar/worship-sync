@@ -374,6 +374,16 @@ const AuthActionsProbe = () => {
         type="button"
         onClick={() =>
           void context.login({
+            method: "microsoft",
+          })
+        }
+      >
+        Microsoft sign in
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void context.login({
             method: "google",
             interaction: "redirect",
             redirectOnly: true,
@@ -1586,7 +1596,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     expect(getPendingLinkCredentialState()).toBeNull();
   });
 
-  it("shows an SSO guidance message when password auth fails", async () => {
+  it("shows password-appropriate guidance when password auth fails", async () => {
     signInWithEmailAndPasswordMock.mockRejectedValueOnce(
       Object.assign(new Error("invalid"), {
         code: "auth/invalid-credential",
@@ -1603,11 +1613,48 @@ describe("GlobalInfoProvider auth regression coverage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
-        "Could not sign in with email and password. If this account uses Google or Microsoft, continue with that method instead.",
+        "Could not sign in with that email and password. Check your information and try again.",
       );
     });
     expect(authApi.createHumanSession).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["google", "Google sign in", "Could not sign in with Google. Please try again."],
+    ["microsoft", "Microsoft sign in", "Could not sign in with Microsoft. Please try again."],
+  ] as const)(
+    "passes the %s method into the Firebase sign-in mapper",
+    async (method, button, expectedMessage) => {
+      signInWithPopupMock.mockRejectedValueOnce(
+        Object.assign(new Error("unrecognized provider failure"), {
+          code: "auth/unknown-oauth-error",
+        }),
+      );
+
+      renderProvider(<AuthActionsProbe />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+      });
+      fireEvent.click(screen.getByRole("button", { name: button }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
+          expectedMessage,
+        );
+      });
+      expect(screen.getByTestId("probe-auth-error")).not.toHaveTextContent(
+        /email|password/i,
+      );
+      expect(authApi.createHumanSession).not.toHaveBeenCalled();
+      expect(signInWithPopupMock).toHaveBeenCalledWith(
+        mockHumanAuth,
+        expect.objectContaining({
+          providerId: method === "google" ? "google.com" : "microsoft.com",
+        }),
+      );
+    },
+  );
 
   it("falls back to redirect when the provider popup is blocked", async () => {
     signInWithPopupMock.mockRejectedValueOnce(
@@ -1632,6 +1679,23 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       returnPath: "/home",
     });
     expect(screen.getByTestId("probe-auth-error")).toHaveTextContent("none");
+  });
+
+  it("uses provider-aware copy when a redirect sign-in does not complete", async () => {
+    renderProvider(<AuthActionsProbe />, ["/login"]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Complete redirect sign in" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
+        "Google sign-in didn't finish. Try again.",
+      );
+    });
   });
 
   it("completes a pending redirect and preserves its return path", async () => {
