@@ -38,6 +38,7 @@ import { useSelector } from "../../hooks";
 import { getChurchResource, getChurchResourceUrl, listChurchResources, getSongAudioUrl } from "../../api/auth";
 import { openExternalUrl } from "../../utils/openExternalUrl";
 import {
+  getServicePlanElementContentResources,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
   getServicePlanCustomDocumentId,
@@ -182,7 +183,15 @@ const ServicePlanContentPanel = ({
 
   const songs = getServicePlanElementSongRefs(element);
   const scriptures = getServicePlanElementScriptureRefs(element);
-  const resources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const persistedResources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const normalizedContentResourceIds = useMemo(
+    () => new Set(getServicePlanElementContentResources(element).map((resource) => resource.id)),
+    [element],
+  );
+  const resources = useMemo(
+    () => persistedResources.filter((resource) => normalizedContentResourceIds.has(resource.id)),
+    [persistedResources, normalizedContentResourceIds],
+  );
   const customDocumentResources = resources.filter(
     (resource) => resource.type === "custom-document",
   );

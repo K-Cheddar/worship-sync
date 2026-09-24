@@ -188,6 +188,41 @@ export const isHttpUrl = (value: string): boolean => {
   }
 };
 
+/** Public snapshots may link to public web resources, never church files or signed storage URLs. */
+export const getSafePublicServicePlanResourceUrl = (
+  resource: ServicePlanContentResource,
+): string | undefined => {
+  if (["document", "church-resource", "custom-document", "audio"].includes(resource.type)) {
+    return undefined;
+  }
+  const rawUrl = resource.url?.trim();
+  if (!rawUrl || !isHttpUrl(rawUrl)) return undefined;
+  try {
+    const url = new URL(rawUrl);
+    if (url.username || url.password) return undefined;
+    const sensitiveParameter = /^(?:x-amz-|x-goog-|awsaccesskeyid$|googleaccessid$|key-pair-id$|credential$|signature$|sig$|token$|access_token$|auth$|key$|expires$|policy$|code$)/i;
+    if ([...url.searchParams.keys()].some((key) => sensitiveParameter.test(key))) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+};
+
+export const getPublicServicePlanResourceTitle = (
+  resource: ServicePlanContentResource,
+): string => {
+  const title = resource.title?.trim() || "";
+  const safeUrl = getSafePublicServicePlanResourceUrl(resource);
+  const isPlaceholder = ["untitled resource", "church resource"].includes(title.toLowerCase());
+  return title && title !== resource.url?.trim() && !isPlaceholder
+    ? title
+    : safeUrl
+      ? new URL(safeUrl).hostname.replace(/^www\./i, "")
+      : "Untitled resource";
+};
+
 export const createServicePlanLinkResource = ({
   title,
   url,

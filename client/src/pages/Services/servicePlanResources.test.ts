@@ -115,4 +115,28 @@ describe("service-plan content resources", () => {
     });
     expect(resources.map((resource) => resource.type)).toEqual(["song", "scripture"]);
   });
+
+  it("prefers legacy song and scripture fields once when matching resources also exist", () => {
+    const resources = getServicePlanElementContentResources({
+      songRef: { kind: "library", songId: "song-1", songName: "Welcome Song" },
+      scriptureRef: {
+        label: "John 3:16 (NIV)",
+        book: "John",
+        chapter: "3",
+        verseRange: "16",
+        version: "NIV",
+      },
+      resources: [
+        { id: "song-1", type: "song", title: "Welcome Song", data: { songId: "song-1" } },
+        { id: "scripture-1", type: "scripture", title: "John 3:16", data: { label: "John 3:16 (NIV)" } },
+        { id: "youtube-1", type: "youtube", title: "Sermon video" },
+      ],
+    });
+
+    expect(resources.map(({ type, title }) => [type, title])).toEqual([
+      ["song", "Welcome Song"],
+      ["scripture", "John 3:16 (NIV)"],
+      ["youtube", "Sermon video"],
+    ]);
+  });
 });

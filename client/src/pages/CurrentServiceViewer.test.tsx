@@ -158,7 +158,7 @@ describe("CurrentServiceViewer", () => {
     expect(screen.queryByText("Avery Volunteer")).not.toBeInTheDocument();
   });
 
-  it("projects non-song resources into the viewer snapshot", () => {
+  it("projects every normalized content type once into the viewer snapshot", () => {
     const snapshot = buildServicePlanFlowSnapshot({
       plan: {
         ...plan,
@@ -166,7 +166,15 @@ describe("CurrentServiceViewer", () => {
           ...plan.sections[0],
           elements: [{
             ...plan.sections[0].elements[0],
+            songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+            scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
             resources: [
+              { id: "resource-song", type: "song", title: "Opening Song", data: { songId: "song-1" } },
+              { id: "resource-scripture", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
+              { id: "resource-youtube", type: "youtube", title: "Worship set", url: "https://youtube.com/watch?v=abc123" },
+              { id: "resource-audio", type: "audio", title: "Reference audio" },
+              { id: "resource-document", type: "document", title: "Set list", url: "https://storage.example/file?X-Amz-Signature=private-signature", data: { resourceId: "private-document-id" } },
+              { id: "resource-custom-document", type: "custom-document", title: "Presentation Notes", data: { customDocumentId: "private-custom-document-id" } },
               {
                 id: "resource-link",
                 type: "url",
@@ -188,6 +196,12 @@ describe("CurrentServiceViewer", () => {
     });
 
     expect(snapshot.service.sections[0].items[0].resources).toEqual([
+      { type: "song", title: "Opening Song" },
+      { type: "scripture", title: "Psalm 100" },
+      { type: "youtube", title: "Worship set", url: "https://youtube.com/watch?v=abc123" },
+      { type: "audio", title: "Reference audio" },
+      { type: "document", title: "Set list" },
+      { type: "custom-document", title: "Presentation Notes" },
       {
         type: "url",
         title: "Rehearsal video",
@@ -199,6 +213,9 @@ describe("CurrentServiceViewer", () => {
         detail: "Bring the spare cable.",
       },
     ]);
+    expect(JSON.stringify(snapshot)).not.toContain("private-document-id");
+    expect(JSON.stringify(snapshot)).not.toContain("private-custom-document-id");
+    expect(JSON.stringify(snapshot)).not.toContain("private-signature");
   });
 
   it("loads only the automatically selected occurrence plan", async () => {

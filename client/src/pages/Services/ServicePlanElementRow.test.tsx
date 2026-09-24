@@ -460,7 +460,7 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: "Edit scripture Psalm 100 (NIV)" }));
+    await user.click(screen.getByRole("button", { name: "View 1 attached resource for Pastoral Greetings" }));
 
     expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
     expect(screen.queryByLabelText(/Scripture reference/i)).not.toBeInTheDocument();
@@ -839,6 +839,34 @@ describe("ServicePlanElementRow", () => {
     });
 
     expect(screen.getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
+  });
+
+  it("opens the existing content panel from a compact normalized mixed-resource summary", async () => {
+    const user = userEvent.setup();
+    const onOpenContent = jest.fn();
+    renderRow({
+      onOpenContent,
+      element: {
+        ...baseElement,
+        songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+        scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+        resources: [
+          { id: "song-resource", type: "song", title: "Opening Song", data: { songId: "song-1" } },
+          { id: "scripture-resource", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
+          { id: "youtube", type: "youtube", title: "Sermon video" },
+          { id: "audio", type: "audio", title: "Reference audio" },
+          { id: "document", type: "document", title: "Service notes", data: { resourceId: "private-document-id" } },
+          { id: "link", type: "url", title: "Reading", url: "https://example.com/reading" },
+        ],
+      },
+    });
+
+    const summary = screen.getByRole("button", { name: "View 6 attached resources for Pastoral Greetings" });
+    expect(summary).toHaveTextContent("Opening Song");
+    expect(summary).toHaveTextContent("+5");
+    summary.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
   });
 
   it("previews titled and untitled linked resources in view mode without selecting the row", async () => {
