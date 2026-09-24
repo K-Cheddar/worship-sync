@@ -1058,15 +1058,20 @@ export const approveDevicePairingRequest = async (
 
 export const updateCurrentServiceWorkspace = async (
   churchId: string,
-  sections: CurrentServiceWorkspaceSectionPatch,
-) =>
-  apiFetch<{
+  settings: CurrentServiceWorkspaceSectionPatch,
+) => {
+  const { outputPreviewIds, ...sections } = settings;
+  return apiFetch<{
     success: boolean;
     currentServiceWorkspace: CurrentServiceWorkspaceConfig;
   }>(`api/churches/${churchId}/current-service-workspace`, {
     method: "POST",
-    body: JSON.stringify({ sections }),
+    body: JSON.stringify({
+      sections,
+      ...(outputPreviewIds !== undefined ? { outputPreviewIds } : {}),
+    }),
   });
+};
 
 export type TeamRosterMemberPayload = {
   title?: string;

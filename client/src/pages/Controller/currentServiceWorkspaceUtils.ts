@@ -19,6 +19,21 @@ export type LiveSlideProgress = {
 
 export type LiveItemSource = Pick<Presentation, "name" | "itemId" | "listId">;
 
+/** First active configured output wins, in registry order, for a stable list highlight. */
+export const resolvePrimaryLiveOutput = <
+  T extends { name?: string; itemId?: string; listId?: string },
+>(
+  outputs: T[],
+): { output: T; index: number } | null => {
+  const index = outputs.findIndex(
+    (output) =>
+      Boolean(output.name?.trim()) ||
+      Boolean(output.itemId?.trim()) ||
+      Boolean(output.listId?.trim()),
+  );
+  return index < 0 ? null : { output: outputs[index], index };
+};
+
 /**
  * Compact producer chrome for the live item.
  * Returns null when there is nothing useful to show (cleared / incomplete).

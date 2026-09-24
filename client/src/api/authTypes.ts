@@ -90,11 +90,13 @@ export type CurrentServiceWorkspaceSections = Record<
 
 export type CurrentServiceWorkspaceConfig = {
   sections: CurrentServiceWorkspaceSections;
+  /** Output IDs selected for the Displays preview. Missing on legacy configs. */
+  outputPreviewIds?: string[];
 };
 
-export type CurrentServiceWorkspaceSectionPatch = Partial<
-  CurrentServiceWorkspaceSections
->;
+export type CurrentServiceWorkspaceSectionPatch = Partial<CurrentServiceWorkspaceSections> & {
+  outputPreviewIds?: string[];
+};
 
 /** "default" resolves per category at send time; the server stores the tri-state. */
 export type NotificationPreference = "on" | "off" | "default";

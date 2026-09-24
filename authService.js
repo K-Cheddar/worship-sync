@@ -6913,13 +6913,24 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const sectionPatch = normalizeCurrentServiceWorkspacePatch(req.body);
+      const workspacePatch = normalizeCurrentServiceWorkspacePatch(req.body);
       const rtdb = requireRealtimeDatabase();
       const workspaceRef = rtdb.ref(
         getCurrentServiceWorkspacePath(req.params.churchId),
       );
 
-      await workspaceRef.child("sections").update(sectionPatch.sections);
+      if (Object.keys(workspacePatch.sections).length > 0) {
+        await workspaceRef.child("sections").update(workspacePatch.sections);
+      }
+      if (workspacePatch.outputPreviewIds !== undefined) {
+        await workspaceRef.update({
+          outputPreviewIds:
+            workspacePatch.outputPreviewIds.length > 0
+              ? workspacePatch.outputPreviewIds
+              : null,
+          outputPreviewsConfigured: true,
+        });
+      }
       const savedSnapshot = await workspaceRef.once("value");
       const currentServiceWorkspace =
         normalizeCurrentServiceWorkspaceForStorage(savedSnapshot.val());

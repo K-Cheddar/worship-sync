@@ -10,7 +10,13 @@ import type {
   CurrentServiceWorkspaceSections,
 } from "../../api/authTypes";
 import { useToast } from "../../context/toastContext";
-import { normalizeCurrentServiceWorkspace } from "../../utils/currentServiceWorkspace";
+import { useSelector } from "../../hooks";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { isPushOutputType } from "../../utils/displayOutputs";
+import {
+  getCurrentServiceWorkspaceOutputPreviewIds,
+  normalizeCurrentServiceWorkspace,
+} from "../../utils/currentServiceWorkspace";
 import { formatAccountError } from "../Account/accountUtils";
 
 type CurrentServiceWorkspaceSettingsPanelProps = {
@@ -35,8 +41,14 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
   configurationStatus,
 }: CurrentServiceWorkspaceSettingsPanelProps) => {
   const { showToast } = useToast();
+  const outputs = useSelector(selectDisplayOutputs).filter(
+    (output) => output.enabled && isPushOutputType(output.type),
+  );
   const initialConfiguration = normalizeCurrentServiceWorkspace(configuration);
-  const [draft, setDraft] = useState(initialConfiguration);
+  const [draft, setDraft] = useState({
+    ...initialConfiguration,
+    outputPreviewIds: getCurrentServiceWorkspaceOutputPreviewIds(configuration),
+  });
   const draftRef = useRef(draft);
   const configurationRef = useRef(initialConfiguration);
   const [isDirty, setIsDirty] = useState(false);
@@ -61,13 +73,25 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
             },
             {} as CurrentServiceWorkspaceSections,
           ),
+          outputPreviewIds:
+            currentDraft.outputPreviewIds.join("\0") ===
+            getCurrentServiceWorkspaceOutputPreviewIds(previousConfiguration).join("\0")
+              ? getCurrentServiceWorkspaceOutputPreviewIds(nextConfiguration)
+              : currentDraft.outputPreviewIds,
         }
-      : nextConfiguration;
-    const nextIsDirty = workspaceSectionOptions.some(
-      (option) =>
-        nextDraft.sections[option.key] !==
-        nextConfiguration.sections[option.key],
-    );
+      : {
+          ...nextConfiguration,
+          outputPreviewIds:
+            getCurrentServiceWorkspaceOutputPreviewIds(nextConfiguration),
+        };
+    const nextIsDirty =
+      workspaceSectionOptions.some(
+        (option) =>
+          nextDraft.sections[option.key] !==
+          nextConfiguration.sections[option.key],
+      ) ||
+      nextDraft.outputPreviewIds.join("\0") !==
+        getCurrentServiceWorkspaceOutputPreviewIds(nextConfiguration).join("\0");
     configurationRef.current = nextConfiguration;
     draftRef.current = nextDraft;
     setDraft(nextDraft);
@@ -79,13 +103,17 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
   const updateSection = useCallback(
     (key: CurrentServiceWorkspaceSectionKey, checked: boolean) => {
       const nextDraft = {
+        ...draftRef.current,
         sections: { ...draftRef.current.sections, [key]: checked },
       };
-      const nextIsDirty = workspaceSectionOptions.some(
-        (option) =>
-          nextDraft.sections[option.key] !==
-          configurationRef.current.sections[option.key],
-      );
+      const nextIsDirty =
+        workspaceSectionOptions.some(
+          (option) =>
+            nextDraft.sections[option.key] !==
+            configurationRef.current.sections[option.key],
+        ) ||
+        nextDraft.outputPreviewIds.join("\0") !==
+          getCurrentServiceWorkspaceOutputPreviewIds(configurationRef.current).join("\0");
       draftRef.current = nextDraft;
       setDraft(nextDraft);
       isDirtyRef.current = nextIsDirty;
@@ -95,8 +123,39 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
     [],
   );
 
+  const updateOutputPreview = useCallback(
+    (outputId: string, checked: boolean) => {
+      const selected = new Set(draftRef.current.outputPreviewIds);
+      if (checked) selected.add(outputId);
+      else selected.delete(outputId);
+      const nextDraft = {
+        ...draftRef.current,
+        outputPreviewIds: outputs
+          .map((output) => output.id)
+          .filter((id) => selected.has(id)),
+      };
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+      const nextIsDirty =
+        workspaceSectionOptions.some(
+          (option) =>
+            nextDraft.sections[option.key] !==
+            configurationRef.current.sections[option.key],
+        ) ||
+        nextDraft.outputPreviewIds.join("\0") !==
+          getCurrentServiceWorkspaceOutputPreviewIds(configurationRef.current).join("\0");
+      isDirtyRef.current = nextIsDirty;
+      setIsDirty(nextIsDirty);
+      setError(null);
+    },
+    [outputs],
+  );
+
   const resetDraft = useCallback(() => {
-    const nextDraft = configurationRef.current;
+    const nextDraft = {
+      ...configurationRef.current,
+      outputPreviewIds: getCurrentServiceWorkspaceOutputPreviewIds(configurationRef.current),
+    };
     draftRef.current = nextDraft;
     setDraft(nextDraft);
     isDirtyRef.current = false;
@@ -117,6 +176,12 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
         changedSections[option.key] = currentDraft.sections[option.key];
       }
     }
+    if (
+      currentDraft.outputPreviewIds.join("\0") !==
+      getCurrentServiceWorkspaceOutputPreviewIds(currentConfiguration).join("\0")
+    ) {
+      changedSections.outputPreviewIds = currentDraft.outputPreviewIds;
+    }
     if (Object.keys(changedSections).length === 0) {
       isDirtyRef.current = false;
       setIsDirty(false);
@@ -133,9 +198,13 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
       const savedDraft = normalizeCurrentServiceWorkspace(
         response.currentServiceWorkspace,
       );
-      draftRef.current = savedDraft;
-      configurationRef.current = savedDraft;
-      setDraft(savedDraft);
+      const completeSavedDraft = {
+        ...savedDraft,
+        outputPreviewIds: getCurrentServiceWorkspaceOutputPreviewIds(savedDraft),
+      };
+      draftRef.current = completeSavedDraft;
+      configurationRef.current = completeSavedDraft;
+      setDraft(completeSavedDraft);
       isDirtyRef.current = false;
       setIsDirty(false);
       showToast("Workspace settings saved.", "success");
@@ -206,11 +275,34 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
             id={`current-service-workspace-${option.key}`}
             label={option.label}
             checked={draft.sections[option.key]}
+            disabled={isSaving}
             onCheckedChange={(checked) => updateSection(option.key, checked)}
             className="rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2"
           />
         ))}
       </div>
+
+      <fieldset className="mt-5 border-t border-gray-700 pt-4">
+        <legend className="text-sm font-semibold text-gray-100">
+          Output previews
+        </legend>
+        <p className="mt-1 text-sm text-gray-400">
+          Choose the displays shown in the workspace. These previews are read-only.
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {outputs.map((output) => (
+            <Checkbox
+              key={output.id}
+              id={`current-service-workspace-output-${output.id}`}
+              label={output.name}
+              checked={draft.outputPreviewIds.includes(output.id)}
+              disabled={isSaving}
+              onCheckedChange={(checked) => updateOutputPreview(output.id, checked)}
+              className="rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2"
+            />
+          ))}
+        </div>
+      </fieldset>
 
       {error ? (
         <p className="mt-4 text-sm text-red-300" role="alert">

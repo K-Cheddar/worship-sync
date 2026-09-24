@@ -3,6 +3,7 @@ import type {
   CurrentServiceWorkspaceSectionKey,
   CurrentServiceWorkspaceSections,
 } from "../api/authTypes";
+import type { ControllerProfile } from "./controllerProfiles";
 
 export const CURRENT_SERVICE_WORKSPACE_DEFAULT_SECTIONS: CurrentServiceWorkspaceSections = {
   displays: true,
@@ -21,6 +22,18 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const readSectionEnabled = (value: unknown, fallback: boolean): boolean =>
   typeof value === "boolean" ? value : fallback;
 
+const normalizeOutputPreviewIds = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  return Array.from(
+    new Set(
+      value
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  );
+};
+
 /** Normalizes shared RTDB data without requiring a migration for old churches. */
 export const normalizeCurrentServiceWorkspace = (
   value: unknown,
@@ -32,6 +45,9 @@ export const normalizeCurrentServiceWorkspace = (
   const sections = isRecord(source) && isRecord(source.sections)
     ? source.sections
     : {};
+  const outputPreviewIds = normalizeOutputPreviewIds(
+    isRecord(source) ? source.outputPreviewIds : undefined,
+  );
 
   return {
     sections: {
@@ -52,7 +68,39 @@ export const normalizeCurrentServiceWorkspace = (
         CURRENT_SERVICE_WORKSPACE_DEFAULT_SECTIONS.chat,
       ),
     },
+    ...(outputPreviewIds !== undefined ? { outputPreviewIds } : {}),
   };
+};
+
+/** Previous workspace versions always showed the built-in room outputs. */
+export const getCurrentServiceWorkspaceOutputPreviewIds = (
+  configuration: unknown,
+): string[] =>
+  normalizeCurrentServiceWorkspace(configuration).outputPreviewIds ?? [
+    "projector",
+    "monitor",
+    "stream",
+  ];
+
+export const getCurrentServiceWorkspaceControllers = (
+  profiles: ControllerProfile[],
+): ControllerProfile[] =>
+  profiles.filter(
+    (profile) =>
+      profile.enabled &&
+      (profile.type === "presentation" || profile.type === "aux-presentation"),
+  );
+
+export const resolveCurrentServiceWorkspaceController = (
+  profiles: ControllerProfile[],
+  selectedId: string | null | undefined,
+): ControllerProfile | undefined => {
+  const eligible = getCurrentServiceWorkspaceControllers(profiles);
+  return (
+    eligible.find((profile) => profile.id === selectedId) ??
+    eligible.find((profile) => profile.type === "presentation") ??
+    eligible[0]
+  );
 };
 
 export type CurrentServiceWorkspacePreviewTab =

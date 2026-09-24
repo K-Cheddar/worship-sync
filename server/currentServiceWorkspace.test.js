@@ -57,6 +57,34 @@ test("normalizes field-level patches and rejects invalid patches", () => {
   );
 });
 
+test("stores output preview IDs separately from section visibility", () => {
+  assert.deepEqual(
+    normalizeCurrentServiceWorkspaceForStorage({
+      sections: { displays: false },
+      outputPreviewIds: ["tv-a", "tv-a", "stream"],
+    }),
+    {
+      sections: { displays: false, credits: true, team: true, chat: true },
+      outputPreviewIds: ["tv-a", "stream"],
+    },
+  );
+  assert.deepEqual(
+    normalizeCurrentServiceWorkspacePatch({ outputPreviewIds: ["tv-a"] }),
+    { sections: {}, outputPreviewIds: ["tv-a"] },
+  );
+  assert.throws(
+    () => normalizeCurrentServiceWorkspacePatch({ outputPreviewIds: [" "] }),
+    /Output preview settings are invalid/,
+  );
+  assert.deepEqual(
+    normalizeCurrentServiceWorkspaceForStorage({
+      outputPreviewIds: null,
+      outputPreviewsConfigured: true,
+    }).outputPreviewIds,
+    [],
+  );
+});
+
 test("returns the shared current service workspace RTDB path", () => {
   assert.equal(
     getCurrentServiceWorkspacePath("church-42"),
