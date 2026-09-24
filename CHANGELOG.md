@@ -1,3 +1,30 @@
+# [2.37.0](https://github.com/K-Cheddar/worship-sync/compare/v2.36.1...v2.37.0) (2026-09-24)
+
+
+### Bug Fixes
+
+* expose pending operator actions ([fbd9f13](https://github.com/K-Cheddar/worship-sync/commit/fbd9f1368389252164817e11796cddcc305bdadb))
+* harden local video decoder recovery ([d22c2e1](https://github.com/K-Cheddar/worship-sync/commit/d22c2e17978d87f735f05964a5ea35cbaa43102e))
+* make device QR pairing recovery clearer ([7deb69e](https://github.com/K-Cheddar/worship-sync/commit/7deb69e7db25f6df223a0e5a2b21b4a6062ffdd7))
+* Minor fixes and improvements ([fb3ba5c](https://github.com/K-Cheddar/worship-sync/commit/fb3ba5cbd8e0ae0c2f8d545de54b1120d50080e0))
+
+
+### Features
+
+* add church resource library storage ([f6655c3](https://github.com/K-Cheddar/worship-sync/commit/f6655c3ab0777ee809bc0f6a9393fb7b390974c3))
+* add individual team intake workflows ([8dc2a5c](https://github.com/K-Cheddar/worship-sync/commit/8dc2a5c49fea66e932506fc9f16e2e842ef7f4f2))
+* add service plan resources and media workflows ([5184c01](https://github.com/K-Cheddar/worship-sync/commit/5184c01ade9c3d78dd6c890d7ad3a3477e60ee4f))
+* add SMS consent and legal disclosures ([ba73606](https://github.com/K-Cheddar/worship-sync/commit/ba736068f2eb73001d7bf38968bedd4eb950ecd8))
+* add team chat access to service viewer ([7df609b](https://github.com/K-Cheddar/worship-sync/commit/7df609b349d67d7280c230d8851d67f5e8f56f75))
+* Add variability to display transition duration ([ec648f9](https://github.com/K-Cheddar/worship-sync/commit/ec648f936ab27b9138ead7b220ff9e0253ad52dd))
+* Adding resources page ([28cf7a3](https://github.com/K-Cheddar/worship-sync/commit/28cf7a34bca3011fe4a26f1c56e3e1c99ffb1471))
+* Adding storage quotas ([3fe1ad0](https://github.com/K-Cheddar/worship-sync/commit/3fe1ad073a98960411a2f825cd084475cc9eae7c))
+* harden SMS foundation ([3bf6ffb](https://github.com/K-Cheddar/worship-sync/commit/3bf6ffb9fa301519c8f1943d010e949c2b4d3a01))
+* improve prepared display media surfaces ([76b1f3a](https://github.com/K-Cheddar/worship-sync/commit/76b1f3a90e1719d46e87dcaef73c4edc8bbf9f3b))
+* **sms:** add individualized intake delivery ([834b0b3](https://github.com/K-Cheddar/worship-sync/commit/834b0b335034ab99c6c866c5d49b52bd6adc0042))
+* strengthen service planning synchronization ([bc4515f](https://github.com/K-Cheddar/worship-sync/commit/bc4515f5c6922db39dc318b77bfde8b02ebf360d))
+* wire resource, intake, and consent flows ([817a4dc](https://github.com/K-Cheddar/worship-sync/commit/817a4dcb4e557ed939a057af0d359c3c8f473f87))
+
 ## [2.36.1](https://github.com/K-Cheddar/worship-sync/compare/v2.36.0...v2.36.1) (2026-09-18)
 
 
