@@ -130,7 +130,9 @@ describe("storage usage formatting and indicators", () => {
     rerender(<QuotaHarness churchId="church-2" />);
     expect(screen.queryByText("3.5 MB / 500 MB")).not.toBeInTheDocument();
     resolveFirst({ success: true, quotas });
-    expect(await screen.findByRole("region", { name: "File storage" })).toHaveTextContent("9 MB / 100 MB");
+    expect(await screen.findByText("File storage: 9 MB / 100 MB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
+    expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("9 MB / 100 MB");
     expect(screen.queryByText("3.5 MB")).not.toBeInTheDocument();
     expect(mockGetQuota).toHaveBeenLastCalledWith("church-2");
   });

@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { configureStore } from "@reduxjs/toolkit";
+import { Provider } from "react-redux";
 import ServicePlanSectionList from "./ServicePlanSectionList";
+import allDocsReducer from "../../store/allDocsSlice";
 import type {
   ServicePlanElement,
   ServicePlanMicrophone,
@@ -229,7 +232,11 @@ const renderList = ({
     );
   };
 
-  return render(<Harness />);
+  return render(
+    <Provider store={configureStore({ reducer: { allDocs: allDocsReducer } })}>
+      <Harness />
+    </Provider>,
+  );
 };
 
 const panel = (label: string) => {
