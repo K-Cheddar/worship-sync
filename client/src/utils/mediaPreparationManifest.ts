@@ -35,16 +35,18 @@ export type MediaPreparationManifest = {
 };
 
 /**
- * A manifest may cross a workstation boundary only with a URL that the
- * receiving renderer can resolve itself. Renderer-local schemes and loopback
- * addresses are deliberately rejected at this boundary.
+ * This is a portability and serialization check, not the network security
+ * boundary. Electron's main-process safeHttpGet performs DNS, address, and
+ * redirect validation before fetching. Manifests only carry portable HTTP(S)
+ * URLs and reject renderer-local schemes, obvious local hosts, and credentials.
  */
 export const isTransportSafeMediaUrl = (value: string | undefined): value is string => {
   if (!value) return false;
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-    const hostname = url.hostname.toLowerCase();
+    if (url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     return !(
       hostname === "localhost" ||
       hostname === "ip6-localhost" ||

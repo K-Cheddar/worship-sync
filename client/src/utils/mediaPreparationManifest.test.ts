@@ -55,10 +55,13 @@ const discovery = (overrides: Partial<ElectronMediaDiscovery> = {}) =>
   }) as ElectronMediaDiscovery;
 
 describe("media preparation manifest", () => {
-  it("rejects renderer-local and loopback URLs", () => {
+  it("accepts portable HTTP URLs without treating renderer checks as SSRF validation", () => {
     expect(isTransportSafeMediaUrl("media-cache://one.mp4")).toBe(false);
     expect(isTransportSafeMediaUrl("worshipsync-media://one.mp4")).toBe(false);
     expect(isTransportSafeMediaUrl("http://127.0.0.1:3000/one.mp4")).toBe(false);
+    expect(isTransportSafeMediaUrl("http://localhost/one.mp4")).toBe(false);
+    expect(isTransportSafeMediaUrl("http://[::1]/one.mp4")).toBe(false);
+    expect(isTransportSafeMediaUrl("http://user:secret@cdn.example.com/one.mp4")).toBe(false);
     expect(isTransportSafeMediaUrl("https://cdn.example.com/one.mp4")).toBe(true);
   });
 

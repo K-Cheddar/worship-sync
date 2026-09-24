@@ -73,20 +73,24 @@ export const useRemoteMediaPreparationManifest = ({
         if (!active) return;
         const value = snapshot.val();
         if (!isMediaPreparationManifest(value) || value.outputId !== outputId) {
+          setManifest(undefined);
+          setCacheMap({});
+          try {
+            localStorage.removeItem(getStorageKey(churchId, outputId));
+          } catch {
+            // The authoritative empty value still clears in-memory state.
+          }
           return;
         }
-        setManifest((current) => {
-          if (current && value.revision < current.revision) return current;
-          try {
-            localStorage.setItem(
-              getStorageKey(churchId, outputId),
-              JSON.stringify(value),
-            );
-          } catch {
-            // The live value remains usable if local storage is unavailable.
-          }
-          return value;
-        });
+        setManifest(value);
+        try {
+          localStorage.setItem(
+            getStorageKey(churchId, outputId),
+            JSON.stringify(value),
+          );
+        } catch {
+          // The live value remains usable if local storage is unavailable.
+        }
       },
       { label: `presentation:mediaPreparation:${outputId}` },
     );
@@ -155,22 +159,10 @@ export const usePublishMediaPreparationManifest = ({
     // the replacement discovery is complete.
     if (!discovery || discovery.outlineLoadState !== "loaded") return;
 
-    const previous =
-      manifestDrafts.get(key) ?? readCachedManifest(churchId, outputId);
-    const next = buildMediaPreparationManifest({
-      discovery,
-      outputId,
-      previous,
-    });
-    if (
-      previous &&
-      getMediaPreparationManifestStructure(previous) ===
-        getMediaPreparationManifestStructure(next)
-    ) {
-      return;
-    }
-
     const path = getManifestPath(churchId, outputId);
+    const revisionBaseline =
+      manifestDrafts.get(key) ?? readCachedManifest(churchId, outputId);
+    const publishedAt = Date.now();
     let active = true;
     const previousWrite = manifestWriteQueues.get(key) ?? Promise.resolve();
     const write = previousWrite
@@ -192,12 +184,12 @@ export const usePublishMediaPreparationManifest = ({
                 : undefined;
             const baseline =
               serverPrevious ??
-              manifestDrafts.get(key) ??
-              readCachedManifest(churchId, outputId);
+              revisionBaseline;
             const candidate = buildMediaPreparationManifest({
               discovery,
               outputId,
               previous: baseline,
+              publishedAt,
             });
             if (
               serverPrevious &&
@@ -206,7 +198,6 @@ export const usePublishMediaPreparationManifest = ({
             ) {
               return serverPrevious;
             }
-            manifestDrafts.set(key, candidate);
             return candidate;
           },
         );
@@ -215,7 +206,7 @@ export const usePublishMediaPreparationManifest = ({
           return;
         }
         manifestDrafts.set(key, committed);
-        if (!active) return;
+        if (manifestPublicationGenerations.get(key) !== generation) return;
         try {
           localStorage.setItem(
             key,

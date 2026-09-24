@@ -111,7 +111,7 @@ const WorkstationPair = ({ lockedPairType }: { lockedPairType: "workstation" | "
     <h1 className="text-2xl font-semibold">Link this {deviceName}</h1>
     {tokenFromQuery ? <p className="mt-3 text-sm text-cyan-300">Device link detected. We&apos;ll try to connect this device automatically.</p> : <>
       <p className="mt-2 text-sm text-gray-200">Scan this QR code with a phone signed in to WorshipSync as an administrator.</p>
-      <div className="mt-5 flex justify-center rounded-xl bg-white p-6">{request ? <QRCode value={request.approvalUrl} size={280} /> : <span className="text-sm text-gray-700">Preparing QR code…</span>}</div>
+      {(request || !qrError) ? <div className="mt-5 flex justify-center rounded-xl bg-white p-6">{request ? <QRCode value={request.approvalUrl} size={280} /> : <span className="text-sm text-gray-700">Preparing QR code…</span>}</div> : null}
       {request && !qrError ? <p className="mt-4 text-center text-sm text-cyan-300" role="status">Waiting for approval…</p> : null}
       {qrError ? <div className="mt-4 text-center"><p className="text-sm text-red-400" role="alert">{qrError}</p><Button className="mt-3" onClick={() => void startRequest()}>Generate new QR</Button></div> : null}
       {request && qrExchangeFailedRequestIdRef.current === request.requestId ? <div className="mt-3 flex justify-center gap-2"><Button onClick={() => { qrExchangeFailedRequestIdRef.current = ""; void exchangeQrRequest(request); }}>Retry</Button><Button variant="secondary" onClick={() => void startRequest()}>Generate new QR</Button></div> : null}

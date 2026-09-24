@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DeviceQrScanner } from "./DeviceQrScanner";
 
-const createGeneratedQrPixels = (value: string) => {
+const createGeneratedQrPixels = (value: string, options: { scale?: number; padding?: number } = {}) => {
   // qr.js is the encoder used by react-qr-code; this keeps the invalid-payload
   // regression test on the same QR format as the pairing screen.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -12,13 +12,17 @@ const createGeneratedQrPixels = (value: string) => {
   qrCode.addData(value);
   qrCode.make();
   const quietZone = 4;
-  const scale = 4;
-  const size = (qrCode.getModuleCount() + quietZone * 2) * scale;
+  const scale = options.scale ?? 4;
+  const padding = options.padding ?? 0;
+  const qrSize = (qrCode.getModuleCount() + quietZone * 2) * scale;
+  const size = qrSize + padding * 2;
   const data = new Uint8ClampedArray(size * size * 4);
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      const moduleX = Math.floor(x / scale) - quietZone;
-      const moduleY = Math.floor(y / scale) - quietZone;
+      const qrX = x - padding;
+      const qrY = y - padding;
+      const moduleX = Math.floor(qrX / scale) - quietZone;
+      const moduleY = Math.floor(qrY / scale) - quietZone;
       const dark = qrCode.modules[moduleY]?.[moduleX] === true;
       const index = (y * size + x) * 4;
       data[index] = dark ? 0 : 255;
@@ -30,7 +34,36 @@ const createGeneratedQrPixels = (value: string) => {
   return { data, size };
 };
 
-const setupActiveScanner = async (getImageData: () => ImageData | { data: Uint8ClampedArray; width: number; height: number }) => {
+const createCameraFramePixels = (value: string) => {
+  const qr = createGeneratedQrPixels(value, { scale: 4 });
+  const width = 320;
+  const height = 240;
+  const data = new Uint8ClampedArray(width * height * 4).fill(255);
+  const offsetX = Math.floor((width - qr.size) / 2);
+  const offsetY = Math.floor((height - qr.size) / 2);
+  for (let y = 0; y < qr.size; y += 1) {
+    for (let x = 0; x < qr.size; x += 1) {
+      const sourceIndex = (y * qr.size + x) * 4;
+      const targetIndex = ((y + offsetY) * width + x + offsetX) * 4;
+      data.set(qr.data.subarray(sourceIndex, sourceIndex + 4), targetIndex);
+    }
+  }
+  return { data, width, height };
+};
+
+const installBarcodeDetector = (detector: { detect: jest.Mock }) => {
+  const constructor = Object.assign(jest.fn(() => detector), {
+    getSupportedFormats: jest.fn().mockResolvedValue(["qr_code"]),
+  });
+  Object.defineProperty(globalThis, "BarcodeDetector", { configurable: true, value: constructor });
+  return constructor;
+};
+
+const setupActiveScanner = async (
+  getImageData: () => ImageData | { data: Uint8ClampedArray; width: number; height: number },
+  onAccepted = jest.fn(),
+  onClose = jest.fn(),
+) => {
   const track = { stop: jest.fn(), getSettings: jest.fn(() => ({ width: 320, height: 240, facingMode: "environment", frameRate: 30 })) };
   const frameCallbacks: FrameRequestCallback[] = [];
   const drawImage = jest.fn();
@@ -51,9 +84,9 @@ const setupActiveScanner = async (getImageData: () => ImageData | { data: Uint8C
   Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, value: 320 });
   Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { configurable: true, value: 240 });
 
-  render(<DeviceQrScanner onAccepted={jest.fn()} onClose={jest.fn()} />);
+  render(<DeviceQrScanner onAccepted={onAccepted} onClose={onClose} />);
   expect(await screen.findByText(/Scanning for a WorshipSync QR code/)).toBeInTheDocument();
-  return { frameCallbacks, drawImage };
+  return { frameCallbacks, drawImage, onAccepted, onClose, track };
 };
 
 describe("DeviceQrScanner", () => {
@@ -62,6 +95,7 @@ describe("DeviceQrScanner", () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(globalThis, "BarcodeDetector");
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
@@ -172,11 +206,11 @@ describe("DeviceQrScanner", () => {
     expect(status).toHaveTextContent("Scanning for a WorshipSync QR code");
   });
 
-  it("decodes a valid device-pairing QR and accepts its request ID", async () => {
+  it("falls back to jsQR when BarcodeDetector is unavailable and accepts a scaled, padded valid QR", async () => {
     const track = { stop: jest.fn(), getSettings: jest.fn(() => ({ width: 656, height: 656, facingMode: "environment", frameRate: 30 })) };
     const onAccepted = jest.fn();
     const frameCallbacks: FrameRequestCallback[] = [];
-    const pixels = createGeneratedQrPixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const pixels = createGeneratedQrPixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123", { scale: 3, padding: 24 });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: { getUserMedia: jest.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) },
@@ -198,13 +232,80 @@ describe("DeviceQrScanner", () => {
     expect(await screen.findByText(/Scanning for a WorshipSync QR code/)).toBeInTheDocument();
     await act(async () => frameCallbacks.shift()?.(200));
 
+    expect(onAccepted).toHaveBeenCalledTimes(1);
     expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
   });
 
-  it("shows the invalid-code state when a decoded QR is not a device link", async () => {
+  it("accepts a native BarcodeDetector result without needing jsQR", async () => {
+    const onAccepted = jest.fn();
+    const detector = { detect: jest.fn().mockResolvedValue([{ rawValue: "https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123" }]) };
+    const constructor = installBarcodeDetector(detector);
+    const { frameCallbacks, drawImage } = await setupActiveScanner(() => ({
+      data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240,
+    }), onAccepted);
+    expect(constructor).toHaveBeenCalledWith({ formats: ["qr_code"] });
+    await act(async () => {
+      frameCallbacks.shift()?.(200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(detector.detect).toHaveBeenCalledTimes(1);
+    expect(drawImage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
+  it("falls back to jsQR when BarcodeDetector throws", async () => {
+    const onAccepted = jest.fn();
+    const detector = { detect: jest.fn().mockRejectedValue(new Error("detector failed")) };
+    installBarcodeDetector(detector);
+    const pixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const { frameCallbacks } = await setupActiveScanner(() => pixels, onAccepted);
+
+    await act(async () => {
+      frameCallbacks.shift()?.(200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(detector.detect).toHaveBeenCalledTimes(1));
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+    expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
+  });
+
+  it("ignores a native detector result that arrives after scanning stops", async () => {
+    let resolveDetection: ((results: { rawValue: string }[]) => void) | undefined;
+    const detector = {
+      detect: jest.fn(() => new Promise<{ rawValue: string }[]>((resolve) => { resolveDetection = resolve; })),
+    };
+    installBarcodeDetector(detector);
+    const onAccepted = jest.fn();
+    const onClose = jest.fn();
+    const { frameCallbacks, track } = await setupActiveScanner(() => ({
+      data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240,
+    }), onAccepted, onClose);
+
+    await act(async () => frameCallbacks.shift()?.(200));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(async () => {
+      resolveDetection?.([{ rawValue: "https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123" }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps scanning after one invalid decode and warns after repeated matching decodes", async () => {
     const track = { stop: jest.fn(), getVideoTracks: jest.fn(), getSettings: jest.fn(() => ({})) };
     const frameCallbacks: FrameRequestCallback[] = [];
-    const pixels = createGeneratedQrPixels("https://www.worshipsync.net/#/not-a-device-link");
+    const invalidPayload = "https://www.worshipsync.net/#/not-a-device-link?requestSecret=test_secret";
+    const pixels = createGeneratedQrPixels(invalidPayload);
+    const diagnosticSpy = jest.spyOn(console, "debug").mockImplementation(() => undefined);
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: { getUserMedia: jest.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) },
@@ -225,8 +326,80 @@ describe("DeviceQrScanner", () => {
     render(<DeviceQrScanner onAccepted={jest.fn()} onClose={jest.fn()} />);
     expect(await screen.findByText(/Scanning for a WorshipSync QR code/)).toBeInTheDocument();
     await act(async () => frameCallbacks.shift()?.(200));
-
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(frameCallbacks.length).toBeGreaterThan(0);
+    await act(async () => frameCallbacks.shift()?.(400));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await act(async () => frameCallbacks.shift()?.(600));
     expect(screen.getByRole("alert")).toHaveTextContent("That isn");
+    expect(frameCallbacks.length).toBeGreaterThan(0);
+    const diagnostics = JSON.stringify(diagnosticSpy.mock.calls);
+    expect(diagnostics).toContain("invalid_path");
+    expect(diagnostics).toContain('"invalidConfirmationCount":3');
+    expect(diagnostics).not.toContain(invalidPayload);
+    expect(diagnostics).not.toContain("test_secret");
+  });
+
+  it("does not combine different invalid payloads into one warning", async () => {
+    const payloads = [
+      "https://www.worshipsync.net/#/not-a-device-link-one",
+      "https://www.worshipsync.net/#/not-a-device-link-two",
+      "https://www.worshipsync.net/#/not-a-device-link-three",
+    ].map(createCameraFramePixels);
+    const getImageData = jest.fn()
+      .mockReturnValueOnce(payloads[0])
+      .mockReturnValueOnce(payloads[1])
+      .mockReturnValueOnce(payloads[2]);
+    const { frameCallbacks } = await setupActiveScanner(getImageData);
+
+    for (const time of [200, 400, 600]) {
+      await act(async () => frameCallbacks.shift()?.(time));
+    }
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(frameCallbacks.length).toBeGreaterThan(0);
+  });
+
+  it("accepts a valid QR immediately after repeated invalid decodes and clears the warning", async () => {
+    const onAccepted = jest.fn();
+    const invalidPixels = createCameraFramePixels("https://www.worshipsync.net/#/not-a-device-link");
+    const validPixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const imageData = (pixels: typeof invalidPixels) => pixels;
+    const getImageData = jest.fn()
+      .mockReturnValueOnce(imageData(invalidPixels))
+      .mockReturnValueOnce(imageData(invalidPixels))
+      .mockReturnValueOnce(imageData(invalidPixels))
+      .mockReturnValueOnce(imageData(validPixels));
+    const { frameCallbacks } = await setupActiveScanner(getImageData, onAccepted);
+
+    for (const time of [200, 400, 600]) {
+      await act(async () => frameCallbacks.shift()?.(time));
+    }
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await act(async () => frameCallbacks.shift()?.(800));
+
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("clears a confirmed invalid warning when that payload stops appearing", async () => {
+    jest.useFakeTimers();
+    try {
+      const pixels = createCameraFramePixels("https://www.worshipsync.net/#/not-a-device-link");
+      const { frameCallbacks } = await setupActiveScanner(() => pixels);
+      for (const time of [200, 400, 600]) {
+        await act(async () => frameCallbacks.shift()?.(time));
+      }
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+
+      await act(async () => jest.advanceTimersByTime(1_800));
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(frameCallbacks.length).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("mounts the video element before the camera becomes ready", () => {

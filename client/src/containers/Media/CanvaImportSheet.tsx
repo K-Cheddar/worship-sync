@@ -49,6 +49,7 @@ import {
   cleanupUnprocessedCanvaAssets,
   type CanvaImportedAsset,
 } from "../../utils/canvaImportCleanup";
+import { formatCanvaImportError } from "../../utils/canvaImportError";
 
 const pageStatusLabel = (status: CanvaPageImportStatus) => {
   switch (status) {
@@ -148,10 +149,10 @@ const CanvaImportSheet = ({
   const [importPhase, setImportPhase] = useState("");
   const [error, setError] = useState("");
   const importControllerRef = useRef<AbortController | null>(null);
-  const importCancelledRef = useRef(false);
+  const importAttemptRef = useRef(0);
   useEffect(
     () => () => {
-      importCancelledRef.current = true;
+      importAttemptRef.current += 1;
       importControllerRef.current?.abort();
     },
     [],
@@ -511,7 +512,7 @@ const CanvaImportSheet = ({
       }];
     });
     setIsImporting(true);
-    importCancelledRef.current = false;
+    const attemptId = ++importAttemptRef.current;
     const importController = new AbortController();
     importControllerRef.current = importController;
     setError("");
@@ -531,7 +532,7 @@ const CanvaImportSheet = ({
         replacementAssets,
       };
       const handleProgress = (event: CanvaImportProgressEvent) => {
-        if (importCancelledRef.current) return;
+        if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
         if (event.type === "started") {
           setPageProgress(
             new Map(
@@ -568,7 +569,7 @@ const CanvaImportSheet = ({
           : await importCanvaDesign(churchId, importRequest, undefined, {
               signal: importController.signal,
             });
-      if (importCancelledRef.current) return;
+      if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
       returnedAssets = result.assets;
       const recordDeckPages = (
         deckPageByNumber: Map<number, MediaType>,
@@ -581,6 +582,7 @@ const CanvaImportSheet = ({
       };
 
       if (result.assets.length === 0) {
+        setPageProgress(new Map());
         const existingDeckPages =
           createDeckItem && onCreateDeckItem
             ? buildOrderedDeckPages(new Map(), result.revision)
@@ -672,8 +674,25 @@ const CanvaImportSheet = ({
         await onCreateDeckItem(orderedDeckPages, selectedDesign.title);
       }
     } catch (importError) {
-      if (importCancelledRef.current) return;
+      if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
+      console.error("Canva import failed:", importError);
       setImportPhase("");
+      setPageProgress((current) => {
+        const next = new Map(current);
+        for (const [page, progress] of next) {
+          if (["waiting", "exporting", "processing", "saving"].includes(progress.status)) {
+            next.set(page, { ...progress, status: "error" });
+          }
+        }
+        return next;
+      });
+      setError(formatCanvaImportError(importError, format));
+      const failedAttemptGeneration = ++importAttemptRef.current;
+      importController.abort();
+      if (importControllerRef.current === importController) {
+        importControllerRef.current = null;
+      }
+      setIsImporting(false);
       const unprocessedAssets = returnedAssets.slice(processedAssetCount + 1);
       const cleanupFailures = onUnprocessedAssetCleanup
         ? await cleanupUnprocessedCanvaAssets(
@@ -681,26 +700,25 @@ const CanvaImportSheet = ({
             onUnprocessedAssetCleanup,
           )
         : [];
-      const importMessage =
-        importError instanceof Error
-          ? importError.message
-          : "Could not import that Canva design. Try again.";
-      setError(
+      if (
+        failedAttemptGeneration === importAttemptRef.current &&
         cleanupFailures.length > 0
-          ? `${importMessage} Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.`
-          : importMessage,
-      );
+      ) {
+        setError((current) =>
+          `${current} Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.`,
+        );
+      }
     } finally {
       if (importControllerRef.current === importController) {
         importControllerRef.current = null;
+        setIsImporting(false);
       }
-      setIsImporting(false);
     }
   };
 
   const cancelImport = () => {
     if (!isImporting) return;
-    importCancelledRef.current = true;
+    importAttemptRef.current += 1;
     importControllerRef.current?.abort();
     importControllerRef.current = null;
     setIsImporting(false);
@@ -788,7 +806,7 @@ const CanvaImportSheet = ({
             Media instead.
           </SheetDescription>
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="scrollbar-portal min-h-0 flex-1 overflow-y-auto p-5">
           {connected === null ? (
             <div className="flex justify-center py-12" aria-label="Checking Canva connection">
               <Spinner />
@@ -1154,24 +1172,28 @@ const CanvaImportSheet = ({
             >
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-gray-200">{progressSummary}</span>
-                <span className="shrink-0 text-gray-400">{overallProgress}%</span>
+                {isImporting || (readyPageCount > 0 && failedPageCount === 0) ? (
+                  <span className="shrink-0 text-gray-400">{overallProgress}%</span>
+                ) : null}
               </div>
               {importPhase ? (
                 <p className="mt-1 text-xs text-gray-400">{importPhase}</p>
               ) : null}
-              <div
-                className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-700"
-                role="progressbar"
-                aria-label="Canva import progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={overallProgress}
-              >
+              {isImporting || (readyPageCount > 0 && failedPageCount === 0) ? (
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ${failedPageCount ? "bg-amber-500" : "bg-cyan-500"}`}
-                  style={{ width: `${overallProgress}%` }}
-                />
-              </div>
+                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-700"
+                  role="progressbar"
+                  aria-label="Canva import progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={overallProgress}
+                >
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${failedPageCount ? "bg-amber-500" : "bg-cyan-500"}`}
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
           {error ? (

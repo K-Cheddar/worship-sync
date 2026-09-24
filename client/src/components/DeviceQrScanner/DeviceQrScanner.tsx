@@ -3,6 +3,7 @@ import jsQR from "jsqr";
 import { RefreshCw, ScanLine, X } from "lucide-react";
 import Button from "../Button/Button";
 import {
+  getDevicePairingApprovalUrlParseError,
   parseDevicePairingApprovalUrl,
 } from "../../utils/devicePairingQr";
 
@@ -12,7 +13,6 @@ type ScannerStatus =
   | "scanning-long"
   | "recovered-error"
   | "stalled"
-  | "decoded-invalid"
   | "unavailable"
   | "denied";
 
@@ -22,6 +22,46 @@ const LONG_SCAN_THRESHOLD_MS = 4_000;
 const STALL_THRESHOLD_MS = 3_000;
 const HEALTH_CHECK_INTERVAL_MS = 500;
 const REPEATED_ERROR_THRESHOLD = 3;
+const INVALID_CONFIRMATION_THRESHOLD = 3;
+const INVALID_CONFIRMATION_WINDOW_MS = 1_500;
+const INVALID_WARNING_TIMEOUT_MS = 1_800;
+const BARCODE_DETECTOR_EMPTY_FALLBACK_THRESHOLD = 8;
+
+type BarcodeDetectorResult = { rawValue?: string };
+type BarcodeDetectorLike = {
+  detect: (source: HTMLVideoElement) => Promise<BarcodeDetectorResult[]>;
+};
+type BarcodeDetectorConstructor = {
+  new (options: { formats: string[] }): BarcodeDetectorLike;
+  getSupportedFormats?: () => Promise<string[]>;
+};
+
+const getBarcodeDetector = async (): Promise<BarcodeDetectorLike | null> => {
+  try {
+    const BarcodeDetector = (globalThis as typeof globalThis & {
+      BarcodeDetector?: BarcodeDetectorConstructor;
+    }).BarcodeDetector;
+    if (!BarcodeDetector || typeof BarcodeDetector.getSupportedFormats !== "function") return null;
+    const formats = await BarcodeDetector.getSupportedFormats();
+    if (!formats.includes("qr_code")) return null;
+    return new BarcodeDetector({ formats: ["qr_code"] });
+  } catch {
+    return null;
+  }
+};
+
+type DecoderName = "barcode-detector" | "jsqr";
+type ParseResult = "valid" | "invalid_url" | "invalid_origin" | "invalid_path" | "invalid_request_id";
+
+const logScanDiagnostic = (diagnostic: {
+  decoder: DecoderName;
+  decoded: boolean;
+  parseResult: ParseResult | null;
+  decodedLength: number | null;
+  invalidConfirmationCount: number;
+}) => {
+  if (import.meta.env.DEV) console.debug("[DeviceQrScanner]", diagnostic);
+};
 
 type DeviceQrScannerProps = {
   onAccepted: (requestId: string) => void;
@@ -34,8 +74,11 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
   const streamRef = useRef<MediaStream | null>(null);
   const frameRef = useRef<number | null>(null);
   const healthTimerRef = useRef<number | null>(null);
+  const invalidWarningTimerRef = useRef<number | null>(null);
   const startVersionRef = useRef(0);
   const acceptedRef = useRef(false);
+  const invalidConfirmationRef = useRef({ value: "", count: 0, lastSeenAt: 0 });
+  const invalidWarningVisibleRef = useRef(false);
   const scanStateRef = useRef<ScannerStatus>("starting");
   const scanHealthRef = useRef({
     startedAt: 0,
@@ -46,7 +89,6 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     consecutiveErrors: 0,
     decodedResult: false,
   });
-  const scanDiagnosticsRef = useRef({ attempts: 0, loggedResult: false, loggedDimensions: false, loggedWaiting: false });
   const [status, setStatus] = useState<ScannerStatus>("starting");
   const [invalid, setInvalid] = useState(false);
 
@@ -62,6 +104,9 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     frameRef.current = null;
     if (healthTimerRef.current !== null) window.clearInterval(healthTimerRef.current);
     healthTimerRef.current = null;
+    if (invalidWarningTimerRef.current !== null) window.clearTimeout(invalidWarningTimerRef.current);
+    invalidWarningTimerRef.current = null;
+    invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -71,19 +116,15 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
   }, []);
 
   const accept = useCallback(
-    (value: string) => {
-      const parsed = parseDevicePairingApprovalUrl(value);
-      if (!parsed) {
-        setInvalid(true);
-        setScannerStatus("decoded-invalid");
-        return;
-      }
+    (requestId: string) => {
       if (acceptedRef.current) return;
       acceptedRef.current = true;
+      invalidWarningVisibleRef.current = false;
+      setInvalid(false);
       stop();
-      onAccepted(parsed.requestId);
+      onAccepted(requestId);
     },
-    [onAccepted, setScannerStatus, stop],
+    [onAccepted, stop],
   );
 
   const start = useCallback(async () => {
@@ -91,6 +132,8 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     const startVersion = startVersionRef.current;
     acceptedRef.current = false;
     setInvalid(false);
+    invalidWarningVisibleRef.current = false;
+    invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
     scanHealthRef.current = {
       startedAt: 0,
       firstFrameAt: 0,
@@ -131,57 +174,136 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
         return;
       }
 
+      const barcodeDetector = await getBarcodeDetector();
+      if (startVersion !== startVersionRef.current || acceptedRef.current) return;
       setScannerStatus("scanning");
       scanHealthRef.current.startedAt = performance.now();
-      scanDiagnosticsRef.current = { attempts: 0, loggedResult: false, loggedDimensions: false, loggedWaiting: false };
       let lastScanAt = 0;
+      let detectionInProgress = false;
+      let barcodeDetectorEmptyCount = 0;
+      let usingJsQr = barcodeDetector === null;
+      const noDecodeLogged = new Set<DecoderName>();
+      const logNoDecodeOnce = (decoder: DecoderName) => {
+        if (noDecodeLogged.has(decoder)) return;
+        noDecodeLogged.add(decoder);
+        logScanDiagnostic({ decoder, decoded: false, parseResult: null, decodedLength: null, invalidConfirmationCount: invalidConfirmationRef.current.count });
+      };
+
+      const readJsQr = (activeVideo: HTMLVideoElement, canvas: HTMLCanvasElement) => {
+        const sourceWidth = activeVideo.videoWidth;
+        const sourceHeight = activeVideo.videoHeight;
+        const scale = Math.min(1, MAX_SCAN_DIMENSION / sourceWidth, MAX_SCAN_DIMENSION / sourceHeight);
+        canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+        canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) return null;
+        context.drawImage(activeVideo, 0, 0, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+        const image = context.getImageData(0, 0, canvas.width, canvas.height);
+        return jsQR(image.data, canvas.width, canvas.height)?.data ?? null;
+      };
+
+      const handleDecodedValue = (value: string, decoder: DecoderName, now: number) => {
+        const parsed = parseDevicePairingApprovalUrl(value);
+        if (parsed) {
+          invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
+          if (invalidWarningTimerRef.current !== null) window.clearTimeout(invalidWarningTimerRef.current);
+          invalidWarningTimerRef.current = null;
+          invalidWarningVisibleRef.current = false;
+          setInvalid(false);
+          logScanDiagnostic({ decoder, decoded: true, parseResult: "valid", decodedLength: value.length, invalidConfirmationCount: 0 });
+          scanHealthRef.current.decodedResult = true;
+          accept(parsed.requestId);
+          return;
+        }
+
+        const parseResult = getDevicePairingApprovalUrlParseError(value) || "invalid_url";
+        const previous = invalidConfirmationRef.current;
+        const isSameRecentValue = previous.value === value && now - previous.lastSeenAt <= INVALID_CONFIRMATION_WINDOW_MS;
+        const confirmationCount = isSameRecentValue ? previous.count + 1 : 1;
+        invalidConfirmationRef.current = { value, count: confirmationCount, lastSeenAt: now };
+        scanHealthRef.current.decodedResult = true;
+        logScanDiagnostic({ decoder, decoded: true, parseResult, decodedLength: value.length, invalidConfirmationCount: confirmationCount });
+
+        if (confirmationCount >= INVALID_CONFIRMATION_THRESHOLD) {
+          if (!invalidWarningVisibleRef.current) {
+            invalidWarningVisibleRef.current = true;
+            setInvalid(true);
+          }
+          if (invalidWarningTimerRef.current !== null) window.clearTimeout(invalidWarningTimerRef.current);
+          invalidWarningTimerRef.current = window.setTimeout(() => {
+            invalidWarningVisibleRef.current = false;
+            setInvalid(false);
+            invalidWarningTimerRef.current = null;
+            invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
+          }, INVALID_WARNING_TIMEOUT_MS);
+        }
+      };
+
       const scan = (now: number) => {
         const activeVideo = videoRef.current;
         if (acceptedRef.current || startVersion !== startVersionRef.current || !activeVideo) return;
-        if (now - lastScanAt >= SCAN_INTERVAL_MS && activeVideo.videoWidth && activeVideo.videoHeight) {
+        if (now - lastScanAt >= SCAN_INTERVAL_MS && activeVideo.videoWidth && activeVideo.videoHeight && !detectionInProgress) {
           lastScanAt = now;
           const scanHealth = scanHealthRef.current;
           scanHealth.attempts += 1;
           scanHealth.lastFrameAt = now;
           if (!scanHealth.firstFrameAt) scanHealth.firstFrameAt = now;
-          const diagnostics = scanDiagnosticsRef.current;
-          diagnostics.attempts += 1;
-          try {
-            const canvas = canvasRef.current || document.createElement("canvas");
-            canvasRef.current = canvas;
-            const sourceWidth = activeVideo.videoWidth;
-            const sourceHeight = activeVideo.videoHeight;
-            const scale = Math.min(1, MAX_SCAN_DIMENSION / sourceWidth, MAX_SCAN_DIMENSION / sourceHeight);
-            canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-            canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-            const context = canvas.getContext("2d", { willReadFrequently: true });
-            if (!diagnostics.loggedDimensions) {
-              diagnostics.loggedDimensions = true;
-            }
-            if (context) {
-              context.drawImage(activeVideo, 0, 0, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
-              const image = context.getImageData(0, 0, canvas.width, canvas.height);
-              const result = jsQR(image.data, canvas.width, canvas.height);
+          const canvas = canvasRef.current || document.createElement("canvas");
+          canvasRef.current = canvas;
+          const processJsQr = () => {
+            try {
+              const value = readJsQr(activeVideo, canvas);
               scanHealth.consecutiveErrors = 0;
-              if (result && !diagnostics.loggedResult) {
-                diagnostics.loggedResult = true;
-              }
-              if (result) {
-                scanHealth.decodedResult = true;
-                accept(result.data);
-              }
+              if (value) handleDecodedValue(value, "jsqr", now);
+              else logNoDecodeOnce("jsqr");
               if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
+            } catch {
+              scanHealth.errors += 1;
+              scanHealth.consecutiveErrors += 1;
+              if (scanHealth.consecutiveErrors >= REPEATED_ERROR_THRESHOLD) setScannerStatus("recovered-error");
             }
-          } catch {
-            scanHealth.errors += 1;
-            scanHealth.consecutiveErrors += 1;
-            if (scanHealth.consecutiveErrors >= REPEATED_ERROR_THRESHOLD && scanStateRef.current !== "decoded-invalid") {
-              setScannerStatus("recovered-error");
+          };
+
+          if (barcodeDetector && !usingJsQr) {
+            detectionInProgress = true;
+            const handleBarcodeDetectorError = () => {
+              if (startVersion !== startVersionRef.current || acceptedRef.current) return;
+              scanHealth.errors += 1;
+              scanHealth.consecutiveErrors += 1;
+              usingJsQr = true;
+              processJsQr();
+              detectionInProgress = false;
+            };
+            try {
+              void Promise.resolve(barcodeDetector.detect(activeVideo)).then((results) => {
+                if (startVersion !== startVersionRef.current || acceptedRef.current) return;
+                scanHealth.consecutiveErrors = 0;
+                const decodedValues = results
+                  .map((result) => result.rawValue)
+                  .filter((value): value is string => typeof value === "string");
+                if (decodedValues.length > 0) {
+                  barcodeDetectorEmptyCount = 0;
+                  decodedValues.forEach((value) => {
+                    if (!acceptedRef.current) handleDecodedValue(value, "barcode-detector", now);
+                  });
+                } else {
+                  barcodeDetectorEmptyCount += 1;
+                  logNoDecodeOnce("barcode-detector");
+                  if (barcodeDetectorEmptyCount >= BARCODE_DETECTOR_EMPTY_FALLBACK_THRESHOLD) {
+                    usingJsQr = true;
+                    processJsQr();
+                  }
+                }
+                if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
+              }).catch(handleBarcodeDetectorError).finally(() => {
+                detectionInProgress = false;
+              });
+            } catch {
+              handleBarcodeDetectorError();
             }
+          } else {
+            processJsQr();
           }
-        }
-        if (!(activeVideo.videoWidth && activeVideo.videoHeight) && !scanDiagnosticsRef.current.loggedWaiting) {
-          scanDiagnosticsRef.current.loggedWaiting = true;
         }
         if (!acceptedRef.current && startVersion === startVersionRef.current) {
           frameRef.current = requestAnimationFrame(scan);
@@ -191,7 +313,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
       healthTimerRef.current = window.setInterval(() => {
         const health = scanHealthRef.current;
         const now = performance.now();
-        if (scanStateRef.current === "decoded-invalid" || (scanStateRef.current === "recovered-error" && health.consecutiveErrors >= REPEATED_ERROR_THRESHOLD)) return;
+        if (scanStateRef.current === "recovered-error" && health.consecutiveErrors >= REPEATED_ERROR_THRESHOLD) return;
         if (!health.lastFrameAt) {
           if (now - health.startedAt >= STALL_THRESHOLD_MS) setScannerStatus("stalled");
           return;
