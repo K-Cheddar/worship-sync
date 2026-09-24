@@ -129,6 +129,17 @@ const TransmitHandler = ({
     [ownedOutputs, visibleScreens],
   );
 
+  // An aux projector is the TVs output. Keep its live/resolved preview first,
+  // then show either the presentation projector or its own staged slot below.
+  // The mirror relationship remains owned by presentation.followingOutputId.
+  const auxTvOutput =
+    controllerProfile.type === "aux-presentation"
+      ? visibleOutputs.find((output) => output.type === "projector")
+      : undefined;
+  const auxTvFollowingId = auxTvOutput
+    ? followingOutputIdByOutputId[auxTvOutput.id] ?? ""
+    : "";
+
   // Aux controllers join another room's screen for a shared moment (sermon,
   // announcements) without sending there. Sources are enabled same-type
   // displays this controller does not own, plus a currently followed source
@@ -196,6 +207,17 @@ const TransmitHandler = ({
     mirrorSourceIdsByOutput,
     visibleOutputs,
   ]);
+
+  const auxProjectorSource = auxTvOutput
+    ? displayOutputs.find(
+        (output) =>
+          output.id === "projector" &&
+          mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id),
+      ) ??
+      displayOutputs.find((output) =>
+        mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id),
+      )
+    : undefined;
 
   // The overlay controller's focused header acts on the first stream output it
   // shows; per-stream control lives on each tile below it.
@@ -580,7 +602,68 @@ const TransmitHandler = ({
             {/* One ordered pass over every push output. Splitting streams into
                 a second pass pinned them last, so reordering a stream relative to
                 a projector changed the registry and nothing on screen. */}
-            {previewOutputs.map(({ output, isMirrorSource }) => {
+            {auxTvOutput && (
+              <Fragment key={`aux-tv-preview-${auxTvOutput.id}`}>
+                <ProjectorPresentationPreview
+                  outputId={auxTvOutput.id}
+                  name={auxTvOutput.name}
+                  toggleIsTransmitting={toggleByOutputId[auxTvOutput.id]}
+                  quickLinks={quickLinksByOutputId[auxTvOutput.id] ?? []}
+                  isMobile={isMobile}
+                  previewScale={previewScale}
+                  fillWidth={fillWidth}
+                  readOnly={readOnly}
+                  isVisible={isPreviewActive}
+                  footer={
+                    !readOnly ? (
+                      <MirrorDisplayTile
+                        outputId={auxTvOutput.id}
+                        sourceOutputIds={
+                          mirrorSourceIdsByOutput[auxTvOutput.id] ?? []
+                        }
+                      />
+                    ) : undefined
+                  }
+                />
+                {auxTvFollowingId ? (
+                  <ProjectorPresentationPreview
+                    outputId={auxTvOutput.id}
+                    name="Staged for TVs"
+                    readOnly
+                    resolveOwnOutput
+                    quickLinks={[]}
+                    toggleIsTransmitting={NOOP_TOGGLE}
+                    isMobile={isMobile}
+                    previewScale={previewScale}
+                    fillWidth={fillWidth}
+                    isVisible={isPreviewActive}
+                  />
+                ) : auxProjectorSource ? (
+                  <ProjectorPresentationPreview
+                    outputId={auxProjectorSource.id}
+                    name="Projector"
+                    readOnly
+                    quickLinks={[]}
+                    toggleIsTransmitting={NOOP_TOGGLE}
+                    isMobile={isMobile}
+                    previewScale={previewScale}
+                    fillWidth={fillWidth}
+                    isVisible={isPreviewActive}
+                  />
+                ) : null}
+              </Fragment>
+            )}
+            {previewOutputs
+              .filter(
+                ({ output, isMirrorSource }) =>
+                  output.id !== auxTvOutput?.id &&
+                  !(
+                    auxTvOutput &&
+                    isMirrorSource &&
+                    mirrorSourceIdsByOutput[auxTvOutput.id]?.includes(output.id)
+                  ),
+              )
+              .map(({ output, isMirrorSource }) => {
               // The board sits directly under the display hosting it, so it
               // travels with that tile when the operator reorders displays.
               const board =
@@ -705,7 +788,7 @@ const TransmitHandler = ({
                     )}
                 </Fragment>
               );
-            })}
+              })}
             {showBoardSection && !boardAnchorOutputId && boardSection}
           </div>
         </section>

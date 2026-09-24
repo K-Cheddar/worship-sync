@@ -334,7 +334,7 @@ describe("mirror controls on an auxiliary controller", () => {
     return store;
   };
 
-  it("shows the source preview and offers Mirror under the owned display", () => {
+  it("puts the TVs preview first and the projector preview directly below it", () => {
     const store = createAuxStore();
     render(
       <Provider store={store}>
@@ -349,7 +349,12 @@ describe("mirror controls on an auxiliary controller", () => {
         name: "Mirror Main",
       }),
     ).toBeInTheDocument();
-    const sourcePreview = screen.getByTestId("preview-Main");
+    expect(
+      screen.getAllByTestId(/^preview-/).slice(0, 2).map((preview) =>
+        preview.getAttribute("data-testid"),
+      ),
+    ).toEqual(["preview-Lobby", "preview-Projector"]);
+    const sourcePreview = screen.getByTestId("preview-Projector");
     expect(sourcePreview).toHaveAttribute("data-read-only", "true");
     expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
@@ -468,27 +473,22 @@ describe("mirror controls on an auxiliary controller", () => {
 
     const auxPreview = screen.getByTestId("preview-Lobby");
     const preview = within(auxPreview);
-    const sourcePreview = screen.getByTestId("preview-Main");
-    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
     await user.click(preview.getByRole("button", { name: "Mirror Main" }));
 
-    expect(sourcePreview).toHaveAttribute("data-read-only", "true");
-    expect(sourcePreview).toHaveAttribute("data-live", "true");
-    expect(sourcePreview).toHaveAttribute("data-info-name", "Slide A");
-    expect(sourcePreview).toHaveAttribute("data-slide-id", "slide-Slide A");
-    expect(sourcePreview).toHaveAttribute("data-video-position", "20");
-    expect(sourcePreview).toHaveAttribute("data-video-paused", "false");
-    expect(within(sourcePreview).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-Lobby")).toBe(auxPreview);
     expect(auxPreview).toHaveAttribute("data-read-only", "false");
     expect(auxPreview).toHaveAttribute("data-info-name", "Slide A");
-    expect(screen.getByText("SOURCE")).toBeInTheDocument();
-    const stagedPreview = within(
-      screen.getByTestId("staged-preview-out_lobby"),
-    ).getByTestId("preview-Staged for TVs");
+    expect(auxPreview).toHaveAttribute("data-slide-id", "slide-Slide A");
+    expect(auxPreview).toHaveAttribute("data-video-position", "20");
+    expect(auxPreview).toHaveAttribute("data-video-paused", "false");
+    expect(screen.queryByTestId("preview-Projector")).not.toBeInTheDocument();
+    const stagedPreview = screen.getByTestId("preview-Staged for TVs");
     expect(stagedPreview).toHaveAttribute("data-info-name", "Lobby slide");
     expect(stagedPreview).toHaveAttribute("data-slide-id", "slide-lobby");
     expect(stagedPreview).toHaveAttribute("data-video-position", "7");
-    expect(screen.getByText("Staged for TVs")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^preview-/).slice(0, 2).map((preview) =>
+      preview.getAttribute("data-testid"),
+    )).toEqual(["preview-Lobby", "preview-Staged for TVs"]);
     expect(screen.getByText("Following Main")).toBeInTheDocument();
 
     act(() => {
@@ -503,17 +503,18 @@ describe("mirror controls on an auxiliary controller", () => {
     });
     expect(auxPreview).toHaveAttribute("data-info-name", "Slide B");
     expect(auxPreview).toHaveAttribute("data-video-position", "32");
-    expect(
-      within(screen.getByTestId("staged-preview-out_lobby")).getByTestId(
-        "preview-Staged for TVs",
-      ),
-    ).toHaveAttribute("data-info-name", "Lobby slide");
+    expect(stagedPreview).toHaveAttribute("data-info-name", "Lobby slide");
+    expect(stagedPreview).toHaveAttribute("data-video-position", "7");
 
     await user.click(preview.getByRole("button", { name: "Stop mirroring" }));
+    expect(screen.getByTestId("preview-Lobby")).toBe(auxPreview);
     expect(auxPreview).toHaveAttribute("data-info-name", "Lobby slide");
-    expect(screen.getByTestId("preview-Main")).toBeInTheDocument();
-    expect(screen.getByTestId("preview-Lobby")).toBeInTheDocument();
-    expect(screen.queryByTestId("staged-preview-out_lobby")).not.toBeInTheDocument();
+    const projectorPreview = screen.getByTestId("preview-Projector");
+    expect(projectorPreview).toHaveAttribute("data-info-name", "Slide B");
+    expect(screen.queryByTestId("preview-Staged for TVs")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId(/^preview-/).slice(0, 2).map((preview) =>
+      preview.getAttribute("data-testid"),
+    )).toEqual(["preview-Lobby", "preview-Projector"]);
 
     await user.click(preview.getByRole("button", { name: "Toggle Lobby" }));
     expect(store.getState().presentation.outputs.out_lobby.isTransmitting).toBe(
@@ -554,10 +555,7 @@ describe("mirror controls on an auxiliary controller", () => {
     expect(preview.getByTestId("mirror-status-out_lobby")).toHaveTextContent(
       "Main",
     );
-    expect(screen.getByTestId("preview-Main")).toHaveAttribute(
-      "data-read-only",
-      "true",
-    );
+    expect(screen.queryByTestId("preview-Projector")).not.toBeInTheDocument();
     expect(preview.getByTestId("mirror-status-out_lobby")).not.toHaveTextContent(
       "Synced",
     );
