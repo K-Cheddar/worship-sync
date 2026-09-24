@@ -2,6 +2,21 @@
 
 Cloudinary and Mux quota enforcement is gated by `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED`. Keep it unset or set to `false` until every existing church has been reconciled. New permanent uploads still receive provider ownership metadata while the gate is off.
 
+## Apply quotas after a completed backfill
+
+When the provider-storage backfill is already complete and every church is ready with no issues, do not run the backfill again to change quota limits. Deploy the server defaults from `server/churchStorageQuota.js`, then apply only the required church overrides in Firestore:
+
+| Firestore document | Field path | Value |
+| --- | --- | ---: |
+| `churches/eliathah` | `storageQuotas.muxMinutes` | `2000` |
+| `churches/demo` | `storageQuotas.r2Bytes` | `524288000` |
+
+In the Firestore console, edit the existing church document and add or update only the listed nested field. If `storageQuotas` does not exist, create it as a map with that one field. Preserve any other fields and map entries. Do not replace the whole church document or change `providerUsageReady`, quota ledger, reservation, or provider asset documents. These updates do not change recorded usage or provider ownership.
+
+The defaults are R2 `2147483648` bytes (2 GiB), Cloudinary `524288000` bytes (500 MiB), and Mux `1000` minutes. The `eliathah` and `demo` maps stay partial; unspecified providers inherit those defaults.
+
+Before enabling enforcement, use an authenticated session to read `GET /api/churches/{churchId}/storage-quota` for a normal church, `eliathah`, and `demo`. Confirm the returned `quotas` report limits of 2147483648 / 524288000 / 1000 for a normal church; the same values with Mux 2000 for `eliathah`; and R2 524288000 with Cloudinary 524288000 / Mux 1000 for `demo`. Confirm the `used` values still match the completed backfill and the church documents still have `providerUsageReady: true`. Keep `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED` unset or `false` until those checks pass; this quota configuration does not enable enforcement.
+
 ## Production sequence
 
 1. Deploy the server and client with `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED=false`. Confirm Cloudinary, Mux, Firebase Admin, and CouchDB credentials are present in the backfill environment. The backfill process never prints credentials.

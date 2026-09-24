@@ -71,6 +71,7 @@ const snapshot = (docs, id) => ({
 
 const createQuota = ({
   limits = { r2Bytes: 10, cloudinaryBytes: 10, muxMinutes: 10 },
+  church = { storageQuotas: limits },
   initialUsage = 0,
   providerQuotaEnforcementEnabled = () => true,
 } = {}) => {
@@ -78,7 +79,7 @@ const createQuota = ({
   let currentTime = 1_000;
   const service = createChurchStorageQuotaService({
     getFirestore: () => firestore,
-    getChurch: async () => ({ storageQuotas: limits }),
+    getChurch: async () => church,
     loadR2Usage: async () => initialUsage,
     providerQuotaEnforcementEnabled,
     now: () => currentTime,
@@ -89,14 +90,19 @@ const createQuota = ({
 
 test("central quota defaults stay separate and church overrides apply", async () => {
   assert.deepEqual(CHURCH_STORAGE_QUOTA_DEFAULTS, {
-    r2Bytes: 1024 ** 3,
+    r2Bytes: 2 * 1024 ** 3,
     cloudinaryBytes: 500 * 1024 ** 2,
-    muxMinutes: 400,
+    muxMinutes: 1_000,
   });
   assert.deepEqual(normalizeChurchStorageQuotas({ r2Bytes: 7 }), {
     r2Bytes: 7,
     cloudinaryBytes: 500 * 1024 ** 2,
-    muxMinutes: 400,
+    muxMinutes: 1_000,
+  });
+  assert.deepEqual(normalizeChurchStorageQuotas({ muxMinutes: 2_000 }), {
+    r2Bytes: 2 * 1024 ** 3,
+    cloudinaryBytes: 500 * 1024 ** 2,
+    muxMinutes: 2_000,
   });
   const { service } = createQuota({ limits: { r2Bytes: 7, cloudinaryBytes: 6, muxMinutes: 5 } });
   await service.reserve({ churchId: "church-a", amount: 7, operationId: "at-limit" });
@@ -108,6 +114,66 @@ test("central quota defaults stay separate and church overrides apply", async ()
       /7 bytes file storage limit/.test(error.message),
   );
   await service.reserve({ churchId: "church-b", amount: 7, operationId: "separate-church" });
+});
+
+test("normal churches resolve current defaults even when a quota ledger has stale cached limits", async () => {
+  const { service, firestore } = createQuota({ church: {} });
+  firestore.collection("churchStorageQuotas")._docs.set("normal-church", {
+    r2Initialized: true,
+    limits: {
+      r2Bytes: 1024 ** 3,
+      cloudinaryBytes: 500 * 1024 ** 2,
+      muxMinutes: 400,
+    },
+  });
+
+  assert.deepEqual(await service.getUsage("normal-church"), {
+    r2: { used: 0, limit: 2 * 1024 ** 3, unit: "bytes" },
+    cloudinary: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+    mux: { used: 0, limit: 1_000, unit: "minutes" },
+  });
+});
+
+test("partial church overrides inherit all unspecified current defaults", async () => {
+  const eliathah = createQuota({ church: { storageQuotas: { muxMinutes: 2_000 } } });
+  assert.deepEqual(await eliathah.service.getUsage("eliathah"), {
+    r2: { used: 0, limit: 2 * 1024 ** 3, unit: "bytes" },
+    cloudinary: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+    mux: { used: 0, limit: 2_000, unit: "minutes" },
+  });
+
+  const demo = createQuota({ church: { storageQuotas: { r2Bytes: 500 * 1024 ** 2 } } });
+  assert.deepEqual(await demo.service.getUsage("demo"), {
+    r2: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+    cloudinary: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+    mux: { used: 0, limit: 1_000, unit: "minutes" },
+  });
+});
+
+test("lowering a quota preserves recorded provider usage and rejects new permanent storage", async () => {
+  const church = { storageQuotas: { cloudinaryBytes: 100 } };
+  const { service } = createQuota({
+    church,
+    limits: { r2Bytes: 10, cloudinaryBytes: 100, muxMinutes: 10 },
+  });
+  await service.markProviderUsageReady({ churchId: "church-a" });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "existing-image", amount: 80,
+  });
+
+  church.storageQuotas.cloudinaryBytes = 50;
+  assert.deepEqual(await service.getUsage("church-a"), {
+    r2: { used: 0, limit: 2 * 1024 ** 3, unit: "bytes" },
+    cloudinary: { used: 80, limit: 50, unit: "bytes" },
+    mux: { used: 0, limit: 1_000, unit: "minutes" },
+  });
+  await assert.rejects(
+    service.recordProviderAsset({
+      churchId: "church-a", provider: "cloudinaryBytes", assetId: "new-image", amount: 1,
+    }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
+  assert.equal((await service.getUsage("church-a")).cloudinary.used, 80);
 });
 
 test("concurrent R2 admissions cannot both exceed the church limit", async () => {

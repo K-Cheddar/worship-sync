@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 export const CHURCH_STORAGE_QUOTA_DEFAULTS = Object.freeze({
-  r2Bytes: 1024 ** 3,
+  r2Bytes: 2 * 1024 ** 3,
   cloudinaryBytes: 500 * 1024 ** 2,
-  muxMinutes: 400,
+  muxMinutes: 1_000,
 });
 
 export class ChurchStorageQuotaError extends Error {
@@ -144,9 +144,7 @@ export const createChurchStorageQuotaService = ({
   };
 
   const publicQuotaUsage = (value = {}, baseline) => {
-    const quotas = normalizeChurchStorageQuotas(
-      baseline?.church?.storageQuotas || value.limits,
-    );
+    const quotas = normalizeChurchStorageQuotas(baseline?.church?.storageQuotas);
     return {
       r2: {
         used: Number.isFinite(baseline?.metadataBytes)
@@ -171,7 +169,7 @@ export const createChurchStorageQuotaService = ({
   const reconcileR2Usage = async (churchId) => {
     const db = getFirestore?.();
     if (!db) throw new Error("Church storage quota persistence is unavailable.");
-    const { metadataBytes, church } = await ensureR2Baseline(churchId);
+    const { metadataBytes } = await ensureR2Baseline(churchId);
     const { quota, reservations } = getRefs(db, churchId);
     await db.runTransaction(async (transaction) => {
       const [snapshot, reservationSnapshot] = await Promise.all([
@@ -204,9 +202,6 @@ export const createChurchStorageQuotaService = ({
           ])),
           r2Bytes: metadataBytes,
           r2Initialized: true,
-          ...(church?.storageQuotas
-            ? { limits: normalizeChurchStorageQuotas(church.storageQuotas) }
-            : {}),
           reconciledAt: now(),
         },
         { merge: true },
@@ -282,7 +277,7 @@ export const createChurchStorageQuotaService = ({
             .reduce((total, { value }) => total + Number(value.delta ?? value.amount ?? 0), 0),
         ]),
       );
-      const limits = normalizeChurchStorageQuotas(church?.storageQuotas || current.limits);
+      const limits = normalizeChurchStorageQuotas(church?.storageQuotas);
       const limit = limits[provider];
       const reservationDelta = numericAmount - replacement;
       if (provider !== "r2Bytes" && enforceLimit && current.providerUsageReady !== true) {
@@ -300,7 +295,6 @@ export const createChurchStorageQuotaService = ({
             (field === reservedField ? reservationDelta : 0),
         ])),
         ...(provider === "r2Bytes" ? { r2Initialized: true } : {}),
-        limits,
       }, { merge: true });
       expired.forEach(({ ref }) => transaction.delete(ref));
       transaction.set(reservation, {
