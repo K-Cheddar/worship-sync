@@ -190,12 +190,41 @@ const publicScriptureLabels = (element) => {
     .filter(Boolean);
 };
 
+const publicSongResource = (reference) => ({
+  type: "song",
+  title: String(
+    reference?.kind === "library" ? reference.songName : reference?.title || "",
+  ).trim() || "Untitled song",
+});
+
+const publicScriptureResource = (reference) => ({
+  type: "scripture",
+  title: String(reference?.label || "").trim() || "Scripture",
+});
+
 const isHttpUrl = (value) => {
   try {
     const url = new URL(String(value || "").trim());
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
+  }
+};
+
+const publicResourceUrl = (resource) => {
+  if (["document", "church-resource", "custom-document", "audio"].includes(resource?.type)) return "";
+  const value = String(resource?.url || "").trim();
+  if (!isHttpUrl(value)) return "";
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "";
+    const sensitiveParameter = /^(?:x-amz-|x-goog-|awsaccesskeyid$|googleaccessid$|key-pair-id$|credential$|signature$|sig$|token$|access_token$|auth$|key$|expires$|policy$|code$)/i;
+    if ([...url.searchParams.keys()].some((key) => sensitiveParameter.test(key))) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
   }
 };
 
@@ -212,21 +241,64 @@ const publicResourceDetail = (resource) => {
 };
 
 /** Expose only the display fields needed by the public resource rows. */
-const publicResources = (element) =>
-  (Array.isArray(element?.resources) ? element.resources : [])
-    .filter((resource) => resource?.type !== "song" && resource?.type !== "scripture")
-    .map((resource) => {
-      const type = String(resource?.type || "generic").trim() || "generic";
-      const title = String(resource?.title || "Untitled resource").trim() || "Untitled resource";
-      const url = String(resource?.url || "").trim();
-      const detail = publicResourceDetail(resource);
-      return {
-        type,
-        title,
-        ...(isHttpUrl(url) ? { url } : {}),
-        ...(detail ? { detail } : {}),
-      };
-    });
+const publicResources = (element) => {
+  const resources = Array.isArray(element?.resources) ? element.resources : [];
+  const songRefs = Array.isArray(element?.songRefs) && element.songRefs.length
+    ? element.songRefs
+    : element?.songRef
+      ? [element.songRef]
+      : [];
+  const scriptureRefs = Array.isArray(element?.scriptureRefs) && element.scriptureRefs.length
+    ? element.scriptureRefs
+    : element?.scriptureRef
+      ? [element.scriptureRef]
+      : [];
+  const legacy = [];
+  songRefs.forEach((reference) => {
+    legacy.push(publicSongResource(reference));
+  });
+  scriptureRefs.forEach((reference) => {
+    legacy.push(publicScriptureResource(reference));
+  });
+
+  const resourcesWithoutLegacyDuplicates = resources.filter((resource) => {
+    if (resource?.type === "song") {
+      const storedSongRef = resource?.data?.songRef;
+      const storedSongId = storedSongRef && typeof storedSongRef === "object"
+        ? String(storedSongRef.songId || "")
+        : String(resource?.data?.songId || "");
+      return !songRefs.some(
+        (reference) => reference?.kind === "library" && storedSongId === String(reference.songId || ""),
+      );
+    }
+    if (resource?.type === "scripture") {
+      return !scriptureRefs.some(
+        (reference) => String(resource?.data?.label || "") === String(reference?.label || ""),
+      );
+    }
+    return true;
+  });
+
+  return [...legacy, ...resourcesWithoutLegacyDuplicates].map((resource) => {
+    const type = String(resource?.type || "generic").trim() || "generic";
+    const rawTitle = String(resource?.title || "").trim();
+    const url = String(resource?.url || "").trim();
+    const safeUrl = publicResourceUrl(resource);
+    const titleIsPlaceholder = ["untitled resource", "church resource"].includes(rawTitle.toLowerCase());
+    const title = rawTitle && rawTitle !== url && !titleIsPlaceholder
+      ? rawTitle
+      : safeUrl
+        ? new URL(safeUrl).hostname.replace(/^www\./i, "")
+        : "Untitled resource";
+    const detail = publicResourceDetail(resource);
+    return {
+      type,
+      title,
+      ...(safeUrl ? { url: safeUrl } : {}),
+      ...(detail ? { detail } : {}),
+    };
+  });
+};
 
 /** Church mic catalog keyed by id — built once per public snapshot. */
 const buildPublicMicrophonesById = (microphones) =>
@@ -680,10 +752,10 @@ export const buildPublicServicePlanSnapshot = ({
             notes: isGeneralView
               ? { blocks: [] }
               : normalizeRichTextDocument(element.notes),
-            ...(publicSongLabels(element).length
+            ...(isGeneralView && publicSongLabels(element).length
               ? { songs: publicSongLabels(element) }
               : {}),
-            ...(publicScriptureLabels(element).length
+            ...(isGeneralView && publicScriptureLabels(element).length
               ? { scriptureRefs: publicScriptureLabels(element) }
               : {}),
             ...(resources.length ? { resources } : {}),

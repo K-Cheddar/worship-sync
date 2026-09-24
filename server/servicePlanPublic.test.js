@@ -338,11 +338,13 @@ test("public service plan snapshot exposes sanitized song and scripture labels",
     },
   });
 
-  assert.deepEqual(snapshot.service.sections[0].items[0].songs, [
-    "Great Are You Lord",
-    "Unlinked Song",
+  assert.deepEqual(snapshot.service.sections[0].items[0].resources, [
+    { type: "song", title: "Great Are You Lord" },
+    { type: "song", title: "Unlinked Song" },
+    { type: "scripture", title: "Psalm 100:1–5" },
   ]);
-  assert.deepEqual(snapshot.service.sections[0].items[0].scriptureRefs, ["Psalm 100:1–5"]);
+  assert.equal(snapshot.service.sections[0].items[0].songs, undefined);
+  assert.equal(snapshot.service.sections[0].items[0].scriptureRefs, undefined);
   assert.equal(JSON.stringify(snapshot).includes("private-song"), false);
   assert.equal(JSON.stringify(snapshot).includes("private lyrics"), false);
 });
@@ -376,6 +378,12 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
               url: "ftp://example.com/private",
               data: { notes: "Check the side entrance." },
             },
+            {
+              id: "signed-url-resource",
+              type: "url",
+              title: "Temporary link",
+              url: "https://example.com/private?X-Amz-Signature=private-signature",
+            },
           ],
         }],
       }],
@@ -398,9 +406,52 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
       title: "Other resource",
       detail: "Check the side entrance.",
     },
+    { type: "url", title: "Temporary link" },
   ]);
   assert.equal(JSON.stringify(snapshot).includes("private-url-resource"), false);
   assert.equal(JSON.stringify(snapshot).includes("do not expose"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private-signature"), false);
+});
+
+test("detailed public snapshot combines legacy and new content without duplicate or private references", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          songRef: { kind: "library", songId: "private-song-id", songName: "Opening Song" },
+          scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+          resources: [
+            { id: "song-resource", type: "song", title: "Opening Song", data: { songId: "private-song-id" } },
+            { id: "scripture-resource", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
+            { id: "youtube", type: "youtube", title: "Sermon video", url: "https://youtube.com/watch?v=abc123" },
+            { id: "audio", type: "audio", title: "Reference audio", data: { audioId: "private-audio-id" } },
+            { id: "document", type: "document", title: "Service notes", data: { resourceId: "private-document-id", storageKey: "private-key" } },
+            { id: "custom-document", type: "custom-document", title: "Presentation Notes", data: { customDocumentId: "private-custom-document-id" } },
+            { id: "link", type: "url", title: "Reading", url: "https://example.com/reading" },
+          ],
+        }],
+      }],
+    },
+  });
+
+  const resources = snapshot.service.sections[0].items[0].resources;
+  assert.deepEqual(resources.map(({ type, title }) => [type, title]), [
+    ["song", "Opening Song"],
+    ["scripture", "Psalm 100"],
+    ["youtube", "Sermon video"],
+    ["audio", "Reference audio"],
+    ["document", "Service notes"],
+    ["custom-document", "Presentation Notes"],
+    ["url", "Reading"],
+  ]);
+  assert.equal(JSON.stringify(snapshot).includes("private-song-id"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private-audio-id"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private-document-id"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private-custom-document-id"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private-key"), false);
 });
 
 test("public snapshots preserve a server-anchored live timeline", () => {

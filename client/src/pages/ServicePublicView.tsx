@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { BookOpen, ExternalLink, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
+import { BookOpen, Eye, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
+import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
+import type { ContentPreviewResource } from "../components/ContentPreview/contentPreview";
 import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImagePreview";
 import Select from "../components/Select/Select";
 import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
@@ -139,47 +141,42 @@ const visibleMicrophoneAssignmentsForItem = (
 const PublicItemContent = ({
   item,
   theme,
+  isGeneralView,
 }: {
   item: PublicServiceFlowItem;
   theme: ServicePublicTheme;
+  isGeneralView: boolean;
 }) => {
-  const songs = item.songs || [];
-  const scriptureRefs = item.scriptureRefs || [];
-  const resources = item.resources || [];
-  if (!songs.length && !scriptureRefs.length && !resources.length) return null;
-
-  const renderReferences = (labels: string[], IconComponent: typeof Music, tone: string) => {
-    const visible = labels.slice(0, 3);
-    const remaining = labels.length - visible.length;
-    return (
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-        {visible.map((label, index) => (
-          <span key={`${label}:${index}`} className="inline-flex min-w-0 items-center gap-1">
-            <IconComponent className={cn("size-3.5 shrink-0", tone)} aria-hidden />
-            <span className="truncate">{label}</span>
-          </span>
-        ))}
-        {remaining > 0 ? (
-          <span title={labels.slice(3).join(", ")}>+{remaining} more</span>
-        ) : null}
-      </div>
-    );
-  };
-
-  return (
-    <div className="mt-1.5 space-y-1 text-xs leading-5">
-      {songs.length || scriptureRefs.length ? (
-        <div
-          className={theme === "light" ? "text-slate-700" : "text-neutral-300"}
-          aria-label="Songs and scripture"
-        >
-          {songs.length ? renderReferences(songs, Music, SERVICE_PLAN_SONG_ICON_CLASS) : null}
-          {scriptureRefs.length ? renderReferences(scriptureRefs, BookOpen, SERVICE_PLAN_SCRIPTURE_ICON_CLASS) : null}
+  if (isGeneralView) {
+    const renderReferences = (labels: string[], IconComponent: typeof Eye, tone: string) => {
+      const visible = labels.slice(0, 3);
+      const remaining = labels.length - visible.length;
+      return (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          {visible.map((label, index) => (
+            <span key={`${label}:${index}`} className="inline-flex min-w-0 items-center gap-1">
+              <IconComponent className={cn("size-3.5 shrink-0", tone)} aria-hidden />
+              <span className="truncate">{label}</span>
+            </span>
+          ))}
+          {remaining > 0 ? <span title={labels.slice(3).join(", ")}>+{remaining} more</span> : null}
         </div>
-      ) : null}
-      {resources.length ? <PublicResourceReferences resources={resources} theme={theme} /> : null}
-    </div>
-  );
+      );
+    };
+    return item.songs?.length || item.scriptureRefs?.length ? (
+      <div className={cn("mt-1.5 space-y-1 text-xs leading-5", theme === "light" ? "text-slate-700" : "text-neutral-300")} aria-label="Songs and scripture">
+        {item.songs?.length ? renderReferences(item.songs, Music, SERVICE_PLAN_SONG_ICON_CLASS) : null}
+        {item.scriptureRefs?.length ? renderReferences(item.scriptureRefs, BookOpen, SERVICE_PLAN_SCRIPTURE_ICON_CLASS) : null}
+      </div>
+    ) : null;
+  }
+  const resources = item.resources?.length
+    ? item.resources
+    : [
+        ...(item.songs || []).map((title) => ({ type: "song", title })),
+        ...(item.scriptureRefs || []).map((title) => ({ type: "scripture", title })),
+      ];
+  return resources.length ? <PublicResourceReferences resources={resources} theme={theme} /> : null;
 };
 
 const PublicResourceReferences = ({
@@ -188,49 +185,66 @@ const PublicResourceReferences = ({
 }: {
   resources: PublicServiceFlowResource[];
   theme: ServicePublicTheme;
-}) => (
-  <div
-    className={cn(
-      "flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1",
-      theme === "light" ? "text-slate-700" : "text-neutral-300",
-    )}
-    aria-label="Resources"
-  >
-    {resources.map((resource, index) => {
-      const definition = getServicePlanResourceDefinition(resource.type);
-      const ResourceIcon = definition.icon;
-      const content = (
-        <>
-          <ResourceIcon className={cn("mt-0.5 size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
-          <span className="min-w-0">
-            <span className="block truncate">{resource.title}</span>
-            <span className={cn("block text-[10px] uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
-              {definition.label}
+}) => {
+  const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
+  const makePreviewResource = (resource: PublicServiceFlowResource, index: number): ContentPreviewResource => ({
+    id: `${resource.type}:${resource.title}:${index}`,
+    title: resource.title,
+    type: resource.type,
+    ...(resource.url ? { url: resource.url } : {}),
+    ...((resource.type === "text" || resource.type === "generic") && resource.detail
+      ? { textContent: resource.detail }
+      : {}),
+  });
+
+  return (
+    <>
+      <div
+        className={cn(
+          "flex min-w-0 flex-wrap items-center gap-1.5",
+          theme === "light" ? "text-slate-700" : "text-neutral-300",
+        )}
+        aria-label="Resources"
+      >
+        {resources.map((resource, index) => {
+          const definition = getServicePlanResourceDefinition(resource.type);
+          const ResourceIcon = definition.icon;
+          const canPreview = Boolean(resource.url || resource.detail);
+          const content = (
+            <>
+              <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">{resource.title}</span>
+              {canPreview ? <Eye className="size-3 shrink-0 opacity-70" aria-hidden /> : null}
+            </>
+          );
+          const className = cn(
+            "inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-left text-xs leading-5",
+            theme === "light"
+              ? "border-slate-300 bg-white/80 hover:border-cyan-600 hover:bg-cyan-50"
+              : "border-neutral-700 bg-neutral-900/80 hover:border-cyan-500/70 hover:bg-neutral-800",
+            canPreview && "cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400",
+          );
+          return canPreview ? (
+            <button
+              key={`${resource.type}:${resource.title}:${index}`}
+              type="button"
+              className={className}
+              aria-label={`View ${definition.label}: ${resource.title}`}
+              onClick={() => setPreviewResource(makePreviewResource(resource, index))}
+            >
+              {content}
+            </button>
+          ) : (
+            <span key={`${resource.type}:${resource.title}:${index}`} className={className} title={`${definition.label}: ${resource.title}`}>
+              {content}
             </span>
-            {resource.detail ? <span className="block whitespace-pre-wrap break-words text-xs leading-4">{resource.detail}</span> : null}
-          </span>
-          {resource.url ? <ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden /> : null}
-        </>
-      );
-      const className = "inline-flex min-w-0 max-w-full items-start gap-1 text-left hover:text-cyan-200";
-      return resource.url ? (
-        <a
-          key={`${resource.type}:${resource.title}:${index}`}
-          href={resource.url}
-          target="_blank"
-          rel="noreferrer"
-          className={className}
-        >
-          {content}
-        </a>
-      ) : (
-        <span key={`${resource.type}:${resource.title}:${index}`} className={className}>
-          {content}
-        </span>
-      );
-    })}
-  </div>
-);
+          );
+        })}
+      </div>
+      <ContentPreviewDialog resource={previewResource} onClose={() => setPreviewResource(null)} />
+    </>
+  );
+};
 
 const rolePositionIds = (note: { positionId?: string; positionIds?: string[] }) =>
   note.positionIds?.filter(Boolean) ?? (note.positionId ? [note.positionId] : []);
@@ -930,7 +944,7 @@ const ServicePublicView = ({
                                 ) : null}
                               </div>
 
-                              <PublicItemContent item={item} theme={theme} />
+                              <PublicItemContent item={item} theme={theme} isGeneralView={isGeneralView} />
 
                               {hasNotes ? (
                                 <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
