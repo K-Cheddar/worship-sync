@@ -499,6 +499,7 @@ const getChangedDocumentIds = (event: CustomEventInit): string[] => {
  */
 export const useServiceVideoCandidates = ({
   enabled,
+  cacheMedia = true,
   outputId,
   currentItemId,
   currentMedia,
@@ -514,6 +515,8 @@ export const useServiceVideoCandidates = ({
   contextSource,
 }: {
   enabled: boolean;
+  /** Discovery can be used by a controller manifest publisher without warming its own renderer cache. */
+  cacheMedia?: boolean;
   outputId?: string;
   currentItemId?: string;
   currentMedia?: ElectronMediaSurfaceCandidate;
@@ -527,7 +530,10 @@ export const useServiceVideoCandidates = ({
   controllerProfileName?: string;
   outlineScope?: string;
   outlineName?: string;
-  contextSource?: "local runtime selection" | "persisted ItemLists fallback";
+  contextSource?:
+    | "local runtime selection"
+    | "persisted ItemLists fallback"
+    | "effective mirrored output source";
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
@@ -783,7 +789,7 @@ export const useServiceVideoCandidates = ({
   }, [loadServiceMedia]);
 
   useEffect(() => {
-    if (!enabled || !window.electronAPI?.ensureMediaCached) return;
+    if (!enabled || !cacheMedia || !window.electronAPI?.ensureMediaCached) return;
     const diagnosticsByKey = new Map<string, ElectronMediaSurfaceCandidateDiagnostic>();
     [
       ...serviceMedia.flatMap((item) => item.diagnostics),
@@ -958,6 +964,7 @@ export const useServiceVideoCandidates = ({
     };
   }, [
     currentItemId,
+    cacheMedia,
     currentMediaDiscovery.diagnostic,
     enabled,
     loadServiceMedia,

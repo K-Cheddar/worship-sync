@@ -61,6 +61,26 @@ describe("WorkstationPair", () => {
     });
   });
 
+  it("hides the preparation message after the QR expires", async () => {
+    (authApi.getDevicePairingRequestStatus as jest.Mock).mockResolvedValue({
+      success: true,
+      status: "expired",
+      expiresAt: "2026-04-08T00:10:00.000Z",
+    });
+
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ sessionKind: null }) as any}>
+        <MemoryRouter initialEntries={["/workstation/pair"]}>
+          <WorkstationPair lockedPairType="workstation" />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This QR code expired. Generate a new one.");
+    expect(screen.queryByText("Preparing QR code…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate new QR" })).toBeVisible();
+  });
+
   it("clears a stale display token when web workstation pairing succeeds", async () => {
     const refreshAuthBootstrap = jest.fn(() => Promise.resolve());
     (authApi.redeemWorkstationPairing as jest.Mock).mockResolvedValue({

@@ -49,6 +49,7 @@ import {
   cleanupUnprocessedCanvaAssets,
   type CanvaImportedAsset,
 } from "../../utils/canvaImportCleanup";
+import { formatCanvaImportError } from "../../utils/canvaImportError";
 
 const pageStatusLabel = (status: CanvaPageImportStatus) => {
   switch (status) {
@@ -142,16 +143,18 @@ const CanvaImportSheet = ({
     useState<CanvaMp4ImportMode>("combined");
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isCleaningUpCanvaAssets, setIsCleaningUpCanvaAssets] = useState(false);
   const [pageProgress, setPageProgress] = useState<
     Map<number, { status: CanvaPageImportStatus; exported?: boolean; error?: string }>
   >(new Map());
   const [importPhase, setImportPhase] = useState("");
   const [error, setError] = useState("");
   const importControllerRef = useRef<AbortController | null>(null);
-  const importCancelledRef = useRef(false);
+  const importAttemptRef = useRef(0);
+  const isImportPending = isImporting || isCleaningUpCanvaAssets;
   useEffect(
     () => () => {
-      importCancelledRef.current = true;
+      importAttemptRef.current += 1;
       importControllerRef.current?.abort();
     },
     [],
@@ -356,7 +359,7 @@ const CanvaImportSheet = ({
   };
 
   const togglePage = (pageNumber: number) => {
-    if (isImporting) return;
+    if (isImportPending) return;
     if (!selectedPages.has(pageNumber) && selectedPages.size >= 25) {
       setError("Import up to 25 pages at a time. Clear a page before adding another.");
       return;
@@ -372,7 +375,7 @@ const CanvaImportSheet = ({
   };
 
   const toggleAllPages = () => {
-    if (isImporting || pages.length > 25) return;
+    if (isImportPending || pages.length > 25) return;
     setError("");
     setSelectedPages((current) => {
       const allSelected = pages.every((pageNumber) => current.has(pageNumber));
@@ -474,7 +477,7 @@ const CanvaImportSheet = ({
   };
 
   const importSelected = async () => {
-    if (!selectedDesign || selectedPages.size === 0) return;
+    if (isImportPending || !selectedDesign || selectedPages.size === 0) return;
     const importPages = [...selectedPages].sort((a, b) => a - b);
     const designImportKeyPrefix = `canva:${selectedDesign.id}:`;
     const existingImportKeys = existingMedia
@@ -511,7 +514,7 @@ const CanvaImportSheet = ({
       }];
     });
     setIsImporting(true);
-    importCancelledRef.current = false;
+    const attemptId = ++importAttemptRef.current;
     const importController = new AbortController();
     importControllerRef.current = importController;
     setError("");
@@ -531,7 +534,7 @@ const CanvaImportSheet = ({
         replacementAssets,
       };
       const handleProgress = (event: CanvaImportProgressEvent) => {
-        if (importCancelledRef.current) return;
+        if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
         if (event.type === "started") {
           setPageProgress(
             new Map(
@@ -568,7 +571,7 @@ const CanvaImportSheet = ({
           : await importCanvaDesign(churchId, importRequest, undefined, {
               signal: importController.signal,
             });
-      if (importCancelledRef.current) return;
+      if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
       returnedAssets = result.assets;
       const recordDeckPages = (
         deckPageByNumber: Map<number, MediaType>,
@@ -581,6 +584,7 @@ const CanvaImportSheet = ({
       };
 
       if (result.assets.length === 0) {
+        setPageProgress(new Map());
         const existingDeckPages =
           createDeckItem && onCreateDeckItem
             ? buildOrderedDeckPages(new Map(), result.revision)
@@ -672,35 +676,59 @@ const CanvaImportSheet = ({
         await onCreateDeckItem(orderedDeckPages, selectedDesign.title);
       }
     } catch (importError) {
-      if (importCancelledRef.current) return;
+      if (attemptId !== importAttemptRef.current || importController.signal.aborted) return;
+      console.error("Canva import failed:", importError);
       setImportPhase("");
-      const unprocessedAssets = returnedAssets.slice(processedAssetCount + 1);
-      const cleanupFailures = onUnprocessedAssetCleanup
-        ? await cleanupUnprocessedCanvaAssets(
-            unprocessedAssets,
-            onUnprocessedAssetCleanup,
-          )
-        : [];
-      const importMessage =
-        importError instanceof Error
-          ? importError.message
-          : "Could not import that Canva design. Try again.";
-      setError(
-        cleanupFailures.length > 0
-          ? `${importMessage} Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.`
-          : importMessage,
-      );
-    } finally {
+      setPageProgress((current) => {
+        const next = new Map(current);
+        for (const [page, progress] of next) {
+          if (["waiting", "exporting", "processing", "saving"].includes(progress.status)) {
+            next.set(page, { ...progress, status: "error" });
+          }
+        }
+        return next;
+      });
+      setError(formatCanvaImportError(importError, format));
+      const failedAttemptGeneration = ++importAttemptRef.current;
+      importController.abort();
       if (importControllerRef.current === importController) {
         importControllerRef.current = null;
       }
       setIsImporting(false);
+      const unprocessedAssets = returnedAssets.slice(processedAssetCount + 1);
+      let cleanupFailures: CanvaImportedAsset[] = [];
+      if (onUnprocessedAssetCleanup && unprocessedAssets.length > 0) {
+        setIsCleaningUpCanvaAssets(true);
+        try {
+          cleanupFailures = await cleanupUnprocessedCanvaAssets(
+            unprocessedAssets,
+            onUnprocessedAssetCleanup,
+          );
+        } finally {
+          if (failedAttemptGeneration === importAttemptRef.current) {
+            setIsCleaningUpCanvaAssets(false);
+          }
+        }
+      }
+      if (
+        failedAttemptGeneration === importAttemptRef.current &&
+        cleanupFailures.length > 0
+      ) {
+        setError((current) =>
+          `${current} Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.`,
+        );
+      }
+    } finally {
+      if (importControllerRef.current === importController) {
+        importControllerRef.current = null;
+        setIsImporting(false);
+      }
     }
   };
 
   const cancelImport = () => {
     if (!isImporting) return;
-    importCancelledRef.current = true;
+    importAttemptRef.current += 1;
     importControllerRef.current?.abort();
     importControllerRef.current = null;
     setIsImporting(false);
@@ -727,7 +755,8 @@ const CanvaImportSheet = ({
     ),
   );
   let submitLabel = "Import selected";
-  if (isImporting) submitLabel = "Working";
+  if (isCleaningUpCanvaAssets) submitLabel = "Cleaning up";
+  else if (isImporting) submitLabel = "Working";
   else if (selectedFormatHasUpdate) submitLabel = "Refresh selected";
   const allPagesSelected =
     pages.length > 0 && pages.every((pageNumber) => selectedPages.has(pageNumber));
@@ -776,7 +805,7 @@ const CanvaImportSheet = ({
       open={open}
       onOpenChange={(nextOpen) => {
         if (isImporting) cancelImport();
-        else onOpenChange(nextOpen);
+        else if (!isCleaningUpCanvaAssets) onOpenChange(nextOpen);
       }}
     >
       <SheetContent className="max-w-xl">
@@ -788,7 +817,7 @@ const CanvaImportSheet = ({
             Media instead.
           </SheetDescription>
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="scrollbar-portal min-h-0 flex-1 overflow-y-auto p-5">
           {connected === null ? (
             <div className="flex justify-center py-12" aria-label="Checking Canva connection">
               <Spinner />
@@ -934,7 +963,7 @@ const CanvaImportSheet = ({
                         <Button
                           variant="secondary"
                           svg={ExternalLink}
-                          disabled={isImporting}
+                          disabled={isImportPending}
                           onClick={() => void editCanvaDesign()}
                         >
                           Edit in Canva
@@ -942,7 +971,7 @@ const CanvaImportSheet = ({
                       ) : null}
                       <Button
                         variant="tertiary"
-                        disabled={isImporting}
+                        disabled={isImportPending}
                         onClick={changeDesign}
                       >
                         Change design
@@ -987,7 +1016,7 @@ const CanvaImportSheet = ({
                             key={pageNumber}
                             type="button"
                             aria-pressed={selected}
-                            disabled={isImporting}
+                            disabled={isImportPending}
                             className={`overflow-hidden rounded-lg border text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected
                               ? "border-cyan-400 bg-cyan-400/10 ring-1 ring-cyan-400"
                               : "border-gray-600 bg-gray-900"
@@ -1069,7 +1098,7 @@ const CanvaImportSheet = ({
                       >
                         <TabsTrigger
                           value="png"
-                          disabled={isImporting}
+                          disabled={isImportPending}
                           className={lineTabsTriggerClassName}
                         >
                           <ImageIcon aria-hidden="true" />
@@ -1077,7 +1106,7 @@ const CanvaImportSheet = ({
                         </TabsTrigger>
                         <TabsTrigger
                           value="mp4"
-                          disabled={isImporting}
+                          disabled={isImportPending}
                           className={lineTabsTriggerClassName}
                         >
                           <Video aria-hidden="true" />
@@ -1105,7 +1134,7 @@ const CanvaImportSheet = ({
                           ariaLabel="MP4 import mode"
                           variant="muted"
                           fullWidth
-                          disabled={isImporting}
+                          disabled={isImportPending}
                           className="mt-1"
                           options={[
                             {
@@ -1135,7 +1164,7 @@ const CanvaImportSheet = ({
                               : "Create a custom item with the imported video"
                           }
                           checked={createDeckItem}
-                          disabled={isImporting}
+                          disabled={isImportPending}
                           onCheckedChange={(checked) =>
                             setCreateDeckItem(checked === true)
                           }
@@ -1154,24 +1183,33 @@ const CanvaImportSheet = ({
             >
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-gray-200">{progressSummary}</span>
-                <span className="shrink-0 text-gray-400">{overallProgress}%</span>
+                {isImporting || (readyPageCount > 0 && failedPageCount === 0) ? (
+                  <span className="shrink-0 text-gray-400">{overallProgress}%</span>
+                ) : null}
               </div>
               {importPhase ? (
                 <p className="mt-1 text-xs text-gray-400">{importPhase}</p>
               ) : null}
-              <div
-                className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-700"
-                role="progressbar"
-                aria-label="Canva import progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={overallProgress}
-              >
+              {isCleaningUpCanvaAssets ? (
+                <p role="status" className="mt-1 text-xs text-gray-300">
+                  Cleaning up unprocessed files…
+                </p>
+              ) : null}
+              {isImporting || (readyPageCount > 0 && failedPageCount === 0) ? (
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ${failedPageCount ? "bg-amber-500" : "bg-cyan-500"}`}
-                  style={{ width: `${overallProgress}%` }}
-                />
-              </div>
+                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-700"
+                  role="progressbar"
+                  aria-label="Canva import progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={overallProgress}
+                >
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${failedPageCount ? "bg-amber-500" : "bg-cyan-500"}`}
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
           {error ? (
@@ -1189,13 +1227,13 @@ const CanvaImportSheet = ({
               <SelectAllButton
                 allSelected={allPagesSelected}
                 onClick={toggleAllPages}
-                disabled={isImporting || pages.length > 25}
+                disabled={isImportPending || pages.length > 25}
               />
             </div>
             <Button
               variant="cta"
-              disabled={selectedPages.size === 0 || isImporting}
-              isLoading={isImporting}
+              disabled={selectedPages.size === 0 || isImportPending}
+              isLoading={isImportPending}
               onClick={() => void importSelected()}
             >
               {submitLabel}

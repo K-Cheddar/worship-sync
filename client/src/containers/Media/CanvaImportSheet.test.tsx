@@ -586,7 +586,14 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
   const onImageRefresh = jest.fn(async (_info: mediaInfoType, mediaId: string) => {
     if (mediaId === "media-2") throw new Error("page 2 replacement failed");
   });
-  const cleanup = jest.fn(async () => true);
+  let finishFirstCleanup: ((success: boolean) => void) | undefined;
+  const cleanup = jest.fn()
+    .mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => {
+        finishFirstCleanup = resolve;
+      }),
+    )
+    .mockResolvedValueOnce(true);
 
   render(
     <MemoryRouter>
@@ -623,8 +630,21 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
   expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[0], "media-1");
   expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[1], "media-2");
   await waitFor(() => {
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+  expect(screen.getByText("Cleaning up unprocessed files…")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Cleaning up/i })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Change design" })).toBeDisabled();
+  await act(async () => finishFirstCleanup?.(false));
+  await waitFor(() => {
     expect(cleanup).toHaveBeenCalledTimes(2);
   });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.",
+    );
+  });
+  expect(screen.getByRole("button", { name: /Refresh selected/i })).toBeEnabled();
   expect(cleanup).toHaveBeenNthCalledWith(
     1,
     expect.objectContaining({ kind: "image", data: refreshedPages[2] }),
@@ -1076,7 +1096,7 @@ test("shows live separate-video page progress and disables import controls", asy
   expect(onVideoComplete).toHaveBeenCalledTimes(4);
 });
 
-test("keeps the failed Canva page visible and does not create a partial deck", async () => {
+test("ends a failed import, hides backend details, and leaves selection retryable", async () => {
   setCanvaDesignList(3);
   const onOpenChange = jest.fn();
   const onCreateDeckItem = jest.fn();
@@ -1090,7 +1110,9 @@ test("keeps the failed Canva page visible and does not create a partial deck", a
         status: "error",
         error: "Canva could not export page 2.",
       });
-      throw new Error("Canva could not export page 2.");
+      throw new Error(
+        "9 FAILED_PRECONDITION: The query requires an index. https://console.firebase.google.com/project/example/firestore/indexes",
+      );
     },
   );
 
@@ -1119,11 +1141,75 @@ test("keeps the failed Canva page visible and does not create a partial deck", a
   await user.click(screen.getByRole("button", { name: "Separate video per page" }));
   await user.click(screen.getByRole("button", { name: /Import selected/i }));
 
-  expect(await screen.findByText("Failed")).toBeInTheDocument();
-  expect(screen.getByText("1 of 3 ready · 1 waiting · 1 failed")).toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveTextContent("page 2");
+  expect(await screen.findByText("Video import couldn't start. Please try again.")).toBeInTheDocument();
+  expect(screen.getByText("1 of 3 ready · 2 failed")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Video import couldn't start. Please try again.",
+  );
+  expect(screen.getByRole("alert")).not.toHaveTextContent(/FAILED_PRECONDITION|firebase\.google|index/i);
+  expect(screen.queryByRole("progressbar", { name: "Canva import progress" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Import selected/i })).toBeEnabled();
+  expect(screen.getAllByText("Failed")).toHaveLength(2);
+  expect(screen.getByRole("button", { name: /Page 2/i })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.queryByText("Waiting…")).not.toBeInTheDocument();
   expect(onCreateDeckItem).not.toHaveBeenCalled();
   expect(onOpenChange).not.toHaveBeenCalledWith(false);
+});
+
+test("ignores progress from a failed attempt after retry starts", async () => {
+  setCanvaDesignList(2);
+  let oldProgress: ((event: { type: "page-progress"; page: number; status: "ready" }) => void) | undefined;
+  let retryProgress: ((event: { type: "page-progress"; page: number; status: "ready" }) => void) | undefined;
+  let finishRetry: (() => void) | undefined;
+  jest.mocked(importCanvaDesign)
+    .mockImplementationOnce(async (_churchId, _request, onProgress) => {
+      oldProgress = onProgress as typeof oldProgress;
+      throw new Error("FAILED_PRECONDITION: private backend detail");
+    })
+    .mockImplementationOnce(async (_churchId, _request, onProgress) => {
+      retryProgress = onProgress as typeof retryProgress;
+      return new Promise((resolve) => {
+        finishRetry = () => resolve({ assets: [], skippedCount: 0, revision: 100 });
+      });
+    });
+
+  render(
+    <MemoryRouter>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <CanvaImportSheet
+          open
+          onOpenChange={jest.fn()}
+          onImageComplete={jest.fn()}
+          onVideoComplete={jest.fn()}
+          onImageRefresh={jest.fn()}
+          onVideoRefresh={jest.fn()}
+          existingMedia={[]}
+        />
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Page 2/i }));
+  await user.click(screen.getByRole("tab", { name: /MP4 video/i }));
+  await user.click(screen.getByRole("button", { name: "Separate video per page" }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Video import couldn't start. Please try again.",
+  );
+
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  expect(await screen.findByRole("button", { name: /Page 2/i })).toBeDisabled();
+  act(() => oldProgress?.({ type: "page-progress", page: 2, status: "ready" }));
+  expect(screen.getByText("0 of 2 ready · 2 waiting")).toBeInTheDocument();
+  expect(retryProgress).toBeDefined();
+
+  await act(async () => finishRetry?.());
+  expect(await screen.findByRole("alert")).toHaveTextContent("already in Media");
 });
 
 test("cancels an active import and immediately closes the sheet", async () => {

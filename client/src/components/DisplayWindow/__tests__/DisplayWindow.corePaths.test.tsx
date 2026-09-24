@@ -2522,7 +2522,7 @@ describe("DisplayWindow core paths", () => {
     ).toEqual(["C"]);
   });
 
-  it("publishes preparation only for output surfaces, not mounted previews", () => {
+  it("leaves preparation publication to the controller lifecycle", () => {
     const props = {
       displayType: "projector" as const,
       outputId: "projector",
@@ -2530,9 +2530,7 @@ describe("DisplayWindow core paths", () => {
     };
     const { rerender } = render(<DisplayWindow {...props} />);
 
-    expect(
-      mockPublishMediaPreparationManifest.mock.calls.at(-1)?.[0],
-    ).toMatchObject({ enabled: true, outputId: "projector" });
+    expect(mockPublishMediaPreparationManifest).not.toHaveBeenCalled();
 
     rerender(
       <DisplayWindow
@@ -2541,9 +2539,7 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(
-      mockPublishMediaPreparationManifest.mock.calls.at(-1)?.[0],
-    ).toMatchObject({ enabled: false, outputId: "projector" });
+    expect(mockPublishMediaPreparationManifest).not.toHaveBeenCalled();
   });
 
   it("keeps the video poster up for media-cache URLs until the player is paint-ready", async () => {

@@ -26,7 +26,6 @@ import {
 import { logVideoCue } from "../../utils/videoBackgroundPlayback";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import {
-  usePublishMediaPreparationManifest,
   useRemoteMediaPreparationManifest,
 } from "../../hooks/useMediaPreparationManifest";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -424,13 +423,6 @@ const DisplayBoxTransitionStage = ({
   }, [poolCandidateResult.posterUrls]);
   const remotePreparation = useRemoteMediaPreparationManifest({
     enabled: poolEnabled && sessionKind === "display",
-    outputId: mediaPlayback?.outputId,
-  });
-  usePublishMediaPreparationManifest({
-    enabled:
-      mediaPlayback?.playbackRole === "output" &&
-      sessionKind !== "display",
-    discovery: poolCandidateResult.discovery,
     outputId: mediaPlayback?.outputId,
   });
   const remoteManifestCandidates = useMemo(

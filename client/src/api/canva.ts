@@ -2,6 +2,7 @@ import { getApiBasePath, isPackagedElectronRenderer } from "../utils/environment
 import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
 import type { mediaInfoType } from "../containers/Media/cloudinaryTypes";
 import type { MuxUploadResult } from "../containers/Media/MediaUploadInput.types";
+import { CanvaImportError } from "../utils/canvaImportError";
 
 export type CanvaStatus = {
   oauthConfigured: boolean;
@@ -60,7 +61,7 @@ export type CanvaImportProgressEvent =
     }
   | { type: "finalizing" }
   | { type: "complete"; result: CanvaImportResult }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; code?: string };
 
 export type CanvaImportResult = {
   assets: CanvaImportedAsset[];
@@ -200,9 +201,14 @@ export const importCanvaDesign = async (
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
+        code?: string;
       };
-      throw new Error(
+      throw new CanvaImportError(
         payload.error || "Canva could not complete that import. Try again.",
+        {
+          code: payload.code || (response.status === 429 ? "CANVA_RATE_LIMITED" : undefined),
+          status: response.status,
+        },
       );
     }
     if (!contentType.includes("application/x-ndjson") || !response.body) {
@@ -217,7 +223,9 @@ export const importCanvaDesign = async (
       if (!line.trim()) return;
       const event = JSON.parse(line) as CanvaImportProgressEvent;
       if (event.type === "complete") result = event.result;
-      if (event.type === "error") throw new Error(event.error);
+      if (event.type === "error") {
+        throw new CanvaImportError(event.error, { code: event.code });
+      }
       onProgress?.(event);
     };
     while (true) {

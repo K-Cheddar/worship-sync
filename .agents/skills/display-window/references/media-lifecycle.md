@@ -61,5 +61,23 @@ unavailable.
 
 The pool exposes development diagnostics for per-surface phase, source kind,
 preparation/play-to-frame timing, errors, evictions, and optional renderer CPU /
-memory metrics. This phase does not add a server/PouchDB preparation manifest,
-LAN pixel streaming, or remote-window ownership protocol.
+memory metrics.
+
+Controller routes publish a separate preparation manifest after the canonical
+service-media discovery hook has completely loaded the selected outline. The
+publisher is mounted for both the main and auxiliary controllers, resolves
+controller output ownership and mirrored source output, and uses Firebase only
+as a transport for the versioned manifest. It does not cache media locally.
+Local Electron output windows still discover and cache from their local PouchDB
+and continue to work if manifest publication is unavailable. A paired remote
+Electron window has no controller PouchDB or Redux state: it subscribes to its
+church/output manifest, converts safe URLs into existing pool candidates, and
+warms its own Electron cache. A cached manifest survives a temporary network
+loss and is reconciled with the latest state and manifest after reconnecting.
+
+The manifest is preparation metadata, not presentation state. It changes when
+the selected outline's structural media composition changes, not on slide
+advances, playback positions, or timer ticks. Unsupported versions and
+malformed entries are ignored so the normal poster/video fallback remains
+authoritative. This architecture does not add LAN pixel streaming, a new video
+player, a backend worker, or a change to the 24-surface pool budget.
