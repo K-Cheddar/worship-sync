@@ -11,7 +11,10 @@ import { buildServicePlanOutlineItems } from "./servicePlanOutlineBridge";
 const mockDispatch = jest.fn();
 const mockState = {
   allItems: { list: [], isAllItemsLoading: false },
-  allDocs: { allSongDocs: [] },
+  allDocs: {
+    allSongDocs: [],
+    allFreeFormDocs: [{ _id: "custom-doc-1", name: "Welcome Slides", type: "free" }],
+  },
   undoable: {
     present: {
       itemList: { list: [] },
@@ -63,6 +66,9 @@ describe("useServicePlanOutlinePush", () => {
       await result.current.pushPlanToOutline({} as ServicePlan);
     });
 
+    expect(mockBuildOutline).toHaveBeenCalledWith(
+      expect.objectContaining({ customDocuments: mockState.allDocs.allFreeFormDocs }),
+    );
     expect(mockDispatch).toHaveBeenCalledWith(updateItemList([customItem]));
     expect(mockDispatch).toHaveBeenCalledWith(
       upsertItemInAllItemsList({ ...customItem, listId: "" }),
@@ -96,6 +102,37 @@ describe("useServicePlanOutlinePush", () => {
 
     expect(mockDispatch).toHaveBeenCalledWith(
       upsertItemInAllItemsList({ ...bibleItem, listId: "" }),
+    );
+  });
+
+  it("does not overwrite an existing custom document with its outline reference", async () => {
+    const customDocumentReference: ServiceItem = {
+      _id: "custom-doc-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "outline-entry-1",
+    };
+    mockBuildOutline.mockResolvedValue({
+      items: [customDocumentReference],
+      updatedSections: [],
+      insertedCount: 1,
+      skippedTitles: [],
+    });
+    const db = {} as PouchDB.Database;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        {children}
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useServicePlanOutlinePush(), { wrapper });
+
+    await act(async () => {
+      await result.current.pushPlanToOutline({} as ServicePlan);
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([customDocumentReference]));
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: upsertItemInAllItemsList.type }),
     );
   });
 

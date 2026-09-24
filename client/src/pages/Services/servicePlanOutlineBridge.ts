@@ -28,7 +28,7 @@
  * (repositioning it back under its original heading) is out of scope for v1.
  */
 import type PouchDB from "pouchdb-browser";
-import type { ServiceItem } from "../../types";
+import type { DBItem, ServiceItem } from "../../types";
 import { createNewFreeForm, createNewHeading } from "../../utils/itemUtil";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import generateRandomId from "../../utils/generateRandomId";
@@ -44,6 +44,7 @@ import type {
   ServicePlanSection,
 } from "../../types/servicePlan";
 import {
+  getServicePlanCustomDocumentId,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
@@ -111,6 +112,11 @@ const outlineListIdFor = (
 type PlannedOutlineItem =
   | { kind: "song"; listId: string; songId: string; songName: string }
   | { kind: "scripture"; listId: string; scriptureRef: ServicePlanScriptureReference }
+  | {
+      kind: "custom-document";
+      listId: string;
+      document: Pick<DBItem, "_id" | "name" | "type">;
+    }
   /** No attachment: a blank placeholder standing in for the element itself. */
   | { kind: "placeholder"; listId: string };
 
@@ -132,6 +138,7 @@ type ElementOutlinePlan = {
 const planElementOutlineItems = (
   element: ServicePlanElement,
   songs: ServiceItem[],
+  customDocuments: Pick<DBItem, "_id" | "name" | "type">[],
 ): ElementOutlinePlan => {
   const title = richTextToPlainText(element.title).trim() || "Untitled";
   const planned: PlannedOutlineItem[] = [];
@@ -172,6 +179,23 @@ const planElementOutlineItems = (
         `bible:${scriptureRef.book}:${scriptureRef.chapter}:${scriptureRef.verseRange}:${scriptureRef.version}`,
       ),
       scriptureRef,
+    });
+  }
+
+  for (const resource of element.resources ?? []) {
+    if (resource.type !== "custom-document") continue;
+    const documentId = getServicePlanCustomDocumentId(resource);
+    const document = customDocuments.find(
+      (candidate) => candidate._id === documentId && candidate.type === "free",
+    );
+    if (!documentId || !document) {
+      hasUnresolvedAttachment = true;
+      continue;
+    }
+    planned.push({
+      kind: "custom-document",
+      listId: listIdFor(`custom-document:${documentId}`),
+      document,
     });
   }
 
@@ -238,6 +262,15 @@ const buildOutlineItem = async ({
     };
   }
 
+  if (planned.kind === "custom-document") {
+    return {
+      _id: planned.document._id,
+      name: planned.document.name,
+      type: "free",
+      listId: planned.listId,
+    };
+  }
+
   if (plan.element.type === "heading") {
     const result = await createNewHeading({ name: plan.title, list, db });
     return { ...result, listId: planned.listId };
@@ -266,6 +299,7 @@ export const buildServicePlanOutlineItems = async ({
   db,
   bibleDb,
   songs,
+  customDocuments = [],
 }: {
   plan: ServicePlan;
   currentList: ServiceItem[];
@@ -274,6 +308,8 @@ export const buildServicePlanOutlineItems = async ({
   /** The song library as it stands now, for re-checking unmatched imports.
    * Required rather than defaulted: omitting it silently drops songs. */
   songs: ServiceItem[];
+  /** Current church free-form library, used to resolve custom-document refs. */
+  customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
 }): Promise<ServicePlanOutlinePushResult> => {
   const items: ServiceItem[] = [];
   const skippedTitles: string[] = [];
@@ -283,7 +319,7 @@ export const buildServicePlanOutlineItems = async ({
 
   for (const section of plan.sections) {
     const elementPlans = section.elements.map((element) =>
-      planElementOutlineItems(element, songs),
+      planElementOutlineItems(element, songs, customDocuments),
     );
 
     // A song with nothing behind it in the library is the operator's to fix, so

@@ -83,9 +83,7 @@ type HeadingGroup = {
 
 type GroupedOutlineCandidates = {
   headingGroups: HeadingGroup[];
-  tailSongs: OutlineItemCandidate[];
-  tailBibles: OutlineItemCandidate[];
-  tailCustomDocuments: OutlineItemCandidate[];
+  tailCandidates: OutlineItemCandidate[];
 };
 
 const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
@@ -95,18 +93,23 @@ const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
 const isInsertableBibleCandidate = (candidate: OutlineItemCandidate) =>
   candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef);
 
+const getCustomDocumentId = (candidate: OutlineItemCandidate): string =>
+  candidate.customDocumentId?.trim() ||
+  (candidate.matchedLibraryItem?.type === "free"
+    ? candidate.matchedLibraryItem._id.trim()
+    : "");
+
 const isInsertableCustomDocumentCandidate = (candidate: OutlineItemCandidate) =>
   candidate.outlineItemType === "custom-document" &&
-  candidate.matchedLibraryItem?.type === "free";
+  candidate.matchedLibraryItem?.type === "free" &&
+  getCustomDocumentId(candidate) === candidate.matchedLibraryItem._id;
 
 const buildHeadingGroups = (
   outlineCandidates: OutlineItemCandidate[],
 ): GroupedOutlineCandidates => {
   const groups: HeadingGroup[] = [];
   const seenHeadings = new Set<string>();
-  const tailSongs: OutlineItemCandidate[] = [];
-  const tailBibles: OutlineItemCandidate[] = [];
-  const tailCustomDocuments: OutlineItemCandidate[] = [];
+  const tailCandidates: OutlineItemCandidate[] = [];
 
   for (const candidate of outlineCandidates) {
     if (
@@ -117,13 +120,7 @@ const buildHeadingGroups = (
       continue;
     }
     if (!candidate.headingName) {
-      if (candidate.outlineItemType === "song") {
-        tailSongs.push(candidate);
-      } else if (candidate.outlineItemType === "bible") {
-        tailBibles.push(candidate);
-      } else if (candidate.outlineItemType === "custom-document") {
-        tailCustomDocuments.push(candidate);
-      }
+      tailCandidates.push(candidate);
       continue;
     }
 
@@ -137,7 +134,7 @@ const buildHeadingGroups = (
       .candidates.push(candidate);
   }
 
-  return { headingGroups: groups, tailSongs, tailBibles, tailCustomDocuments };
+  return { headingGroups: groups, tailCandidates };
 };
 
 const normalizeOutlineItemName = (name: string): string =>
@@ -199,7 +196,7 @@ export const isOutlineCandidatePresentInList = (
       .some(
         (item) =>
           item.type === "free" &&
-          item._id === candidate.matchedLibraryItem?._id,
+          item._id === getCustomDocumentId(candidate),
       );
   }
 
@@ -215,8 +212,7 @@ export const planServicePlanningOutlineSyncSteps = (
   outlineCandidates: OutlineItemCandidate[],
   currentList: ServiceItem[] = [],
 ): ServicePlanningOutlineSyncStep[] => {
-  const { headingGroups, tailSongs, tailBibles, tailCustomDocuments } =
-    buildHeadingGroups(outlineCandidates);
+  const { headingGroups, tailCandidates } = buildHeadingGroups(outlineCandidates);
   const steps: ServicePlanningOutlineSyncStep[] = [];
   let plannedList = [...currentList];
 
@@ -243,6 +239,9 @@ export const planServicePlanningOutlineSyncSteps = (
       }
       const candidateName = getOutlineCandidateItemName(candidate);
       if (!candidateName) continue;
+      const customDocumentId = isInsertableCustomDocumentCandidate(candidate)
+        ? getCustomDocumentId(candidate)
+        : "";
 
       itemSteps.push({
         kind: candidate.outlineItemType === "bible"
@@ -256,12 +255,14 @@ export const planServicePlanningOutlineSyncSteps = (
       groupList = [
         ...groupList,
         {
-          _id: `planned-item-${group.headingName}-${candidateName}`,
+          _id: customDocumentId || `planned-item-${group.headingName}-${candidateName}`,
           name: candidateName,
           type: candidate.outlineItemType === "custom-document"
             ? "free"
             : candidate.outlineItemType,
-          listId: `planned-item-${group.headingName}-${candidateName}`,
+          listId: customDocumentId
+            ? `planned-item-${group.headingName}-${customDocumentId}`
+            : `planned-item-${group.headingName}-${candidateName}`,
         },
       ];
     }
@@ -280,55 +281,28 @@ export const planServicePlanningOutlineSyncSteps = (
     plannedList = groupList;
   }
 
-  for (const candidate of tailSongs) {
+  for (const candidate of tailCandidates) {
     const candidateName = getOutlineCandidateItemName(candidate);
     if (!candidateName) continue;
 
-    steps.push({
-      kind: "insertSongAtEnd",
-      candidate,
-    });
+    const customDocumentId = isInsertableCustomDocumentCandidate(candidate)
+      ? getCustomDocumentId(candidate)
+      : "";
+    const stepKind = candidate.outlineItemType === "bible"
+      ? "insertBibleAtEnd"
+      : customDocumentId
+        ? "insertCustomDocumentAtEnd"
+        : "insertSongAtEnd";
+    steps.push({ kind: stepKind, candidate });
     plannedList = [
       ...plannedList,
       {
-        _id: `planned-tail-song-${candidateName}`,
+        _id: customDocumentId || `planned-tail-${candidate.outlineItemType}-${candidateName}`,
         name: candidateName,
-        type: candidate.outlineItemType,
-        listId: `planned-tail-song-${candidateName}`,
-      },
-    ];
-  }
-
-  for (const candidate of tailBibles) {
-    const candidateName = getOutlineCandidateItemName(candidate);
-    if (!candidateName) continue;
-
-    steps.push({
-      kind: "insertBibleAtEnd",
-      candidate,
-    });
-    plannedList = [
-      ...plannedList,
-      {
-        _id: `planned-tail-bible-${candidateName}`,
-        name: candidateName,
-        type: candidate.outlineItemType,
-        listId: `planned-tail-bible-${candidateName}`,
-      },
-    ];
-  }
-
-  for (const candidate of tailCustomDocuments) {
-    const candidateName = getOutlineCandidateItemName(candidate);
-    if (!candidateName) continue;
-    steps.push({ kind: "insertCustomDocumentAtEnd", candidate });
-    plannedList = [
-      ...plannedList,
-      {
-        _id: candidate.matchedLibraryItem?._id || `planned-tail-document-${candidateName}`,
-        name: candidateName,
-        type: "free",
-        listId: `planned-tail-document-${candidateName}`,
+        type: customDocumentId ? "free" : candidate.outlineItemType,
+        listId: customDocumentId
+          ? `planned-tail-custom-document-${customDocumentId}`
+          : `planned-tail-${candidate.outlineItemType}-${candidateName}`,
       },
     ];
   }
@@ -468,7 +442,15 @@ export const executeServicePlanningOutlineSyncStep = async ({
       step.kind === "insertCustomDocumentAtEnd") &&
     isInsertableCustomDocumentCandidate(step.candidate)
   ) {
-    sourceItem = step.candidate.matchedLibraryItem;
+    const document = step.candidate.matchedLibraryItem;
+    if (document?.type === "free") {
+      sourceItem = {
+        _id: document._id,
+        name: document.name,
+        type: "free",
+        listId: document.listId,
+      };
+    }
   }
 
   if (!sourceItem) {
