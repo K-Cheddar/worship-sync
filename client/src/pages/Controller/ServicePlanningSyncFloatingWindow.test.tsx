@@ -13,6 +13,7 @@ import servicePlanningImportReducer, {
   completeServicePlanningSync,
   advanceServicePlanningSyncStep,
 } from "../../store/servicePlanningImportSlice";
+import allDocsReducer from "../../store/allDocsSlice";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
@@ -131,6 +132,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -206,7 +208,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ];
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(
       setServicePlanningServiceOutline(
@@ -247,6 +249,140 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     );
   });
 
+  it("uses combobox keyboard navigation to select a plan", async () => {
+    const user = userEvent.setup();
+    mockPlanSource.savedPlans = [
+      {
+        planKey: "service-1@2026-07-30",
+        serviceId: "service-1",
+        name: "Test 1",
+        date: "2026-07-30",
+        startsAt: "2026-07-30T19:00:00.000Z",
+      },
+      {
+        planKey: "service-2@2026-08-06",
+        serviceId: "service-2",
+        name: "Test 2",
+        date: "2026-08-06",
+        startsAt: "2026-08-06T19:00:00.000Z",
+      },
+    ];
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+    await user.click(screen.getByRole("button", { name: /Select service plan:/i }));
+
+    const search = await screen.findByRole("combobox", {
+      name: "Search all saved plans",
+    });
+    expect(search).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    const trigger = screen.getByRole("button", { name: /Select service plan:/i });
+    expect(screen.queryByRole("combobox", { name: "Search all saved plans" }))
+      .not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    const reopenedSearch = await screen.findByRole("combobox", {
+      name: "Search all saved plans",
+    });
+    expect(reopenedSearch).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    const nextOption = screen.getByRole("option", { name: /Test 2/ });
+    expect(reopenedSearch).toHaveAttribute(
+      "aria-activedescendant",
+      nextOption.id,
+    );
+    await user.keyboard("{Enter}");
+
+    expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
+      "service-2@2026-08-06",
+    );
+    expect(screen.queryByRole("combobox", { name: "Search all saved plans" }))
+      .not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["minimum supported viewport", 320, 240],
+    ["iPad portrait viewport", 768, 1024],
+    ["iPad landscape viewport", 1024, 768],
+  ])("keeps plan results scrollable at the %s", async (_label, width, height) => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: width,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: height,
+    });
+
+    try {
+      const user = userEvent.setup();
+      mockPlanSource.savedPlans = Array.from({ length: 30 }, (_, index) => ({
+        planKey: `service-${index + 1}`,
+        serviceId: `service-${index + 1}`,
+        name: `Plan ${index + 1}`,
+        date: "2099-08-01",
+        startsAt: `2099-08-${String((index % 28) + 1).padStart(2, "0")}T10:00:00.000Z`,
+      }));
+
+      const store = configureStore({
+        reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+      });
+      store.dispatch(setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [],
+        teamAssignments: [],
+      }) as any));
+      act(() => {
+        store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+      });
+
+      const { unmount } = renderWindow(store);
+      await user.click(screen.getByRole("button", { name: /Select service plan:/i }));
+
+      const picker = await screen.findByRole("listbox", {
+        name: "Saved service plans",
+      });
+      expect(picker).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+      expect(screen.getByTestId("service-plan-picker-content")).toHaveClass(
+        "max-h-[min(var(--radix-popper-available-height),65vh,24rem)]",
+      );
+      expect(screen.getByTestId("floating-window")).toHaveStyle({
+        maxHeight: `min(${Math.max(height - 32, 240)}px, 100vh)`,
+      });
+      unmount();
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalWidth,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalHeight,
+      });
+    }
+  });
+
   it("marks the selected plan and searches plans beyond the initial groups", async () => {
     const user = userEvent.setup();
     const upcomingPlans = Array.from({ length: 11 }, (_, index) => ({
@@ -268,7 +404,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = upcomingPlans[0].planKey;
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
     renderWindow(store);
@@ -287,7 +423,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ).not.toBeInTheDocument();
 
     await user.type(
-      floatingWindow.getByRole("searchbox", { name: "Search all saved plans" }),
+      floatingWindow.getByRole("combobox", { name: "Search all saved plans" }),
       "Recent 1",
     );
     const extraPlan = await floatingWindow.findByRole("option", {
@@ -307,7 +443,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     };
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
     renderWindow(store);
@@ -344,7 +480,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.isManualSelection = true;
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     act(() => {
       store.dispatch(setServicePlanningFloatingWindowDismissed(false));
@@ -386,7 +522,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.isManualSelection = true;
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     act(() => {
       store.dispatch(setServicePlanningFloatingWindowDismissed(false));
@@ -410,7 +546,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   it("shows a loading status instead of the previous plan while selection changes", () => {
     mockPlanSource.isLoading = true;
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(
       setServicePlanningServiceOutline(
@@ -452,6 +588,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -525,6 +662,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -565,6 +703,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -695,6 +834,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -759,6 +899,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -832,6 +973,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
         undoable: () => ({
           present: {
             itemLists: {
@@ -903,6 +1045,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
         undoable: () => ({
           present: {
             itemLists: {
@@ -936,6 +1079,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -979,6 +1123,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -1046,6 +1191,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 

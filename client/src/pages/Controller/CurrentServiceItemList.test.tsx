@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CurrentServiceItemList from "./CurrentServiceItemList";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -11,7 +11,7 @@ jest.mock("../../utils/generalUtils", () => ({
 }));
 
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
-  useCachedMediaUrl: () => null,
+  useCachedMediaUrl: () => "https://example.test/slide.png",
 }));
 
 jest.mock("./useLiveOutlinePreview", () => ({
@@ -48,6 +48,28 @@ describe("CurrentServiceItemList", () => {
     expect(mockedKeepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({ shouldScrollToCenter: true }),
     );
+  });
+
+  it("hides a slide thumbnail when its image cannot load", () => {
+    mockedUseLiveOutlinePreview.mockReturnValue({
+      items: [
+        {
+          listId: "item-1",
+          _id: "song-1",
+          name: "First song",
+          type: "song",
+          background: "https://example.test/missing.png",
+        },
+      ] as any,
+      isLoading: false,
+    });
+
+    render(<CurrentServiceItemList />);
+    const image = screen.getByRole("presentation");
+    fireEvent.error(image);
+
+    expect(image).not.toBeVisible();
+    expect(screen.getByText("First song")).toBeInTheDocument();
   });
 
   it("can highlight a projector item by name when it has no outline ids", () => {

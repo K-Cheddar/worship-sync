@@ -497,7 +497,7 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: "View 1 attached resource for Pastoral Greetings" }));
+    await user.click(screen.getByRole("button", { name: "Edit scripture Psalm 100 (NIV)" }));
 
     expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
     expect(screen.queryByLabelText(/Scripture reference/i)).not.toBeInTheDocument();
@@ -898,12 +898,26 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    const summary = screen.getByRole("button", { name: "View 6 attached resources for Pastoral Greetings" });
+    const summary = screen.getByRole("button", { name: "Manage content for Pastoral Greetings" });
     expect(summary).toHaveTextContent("Opening Song");
     expect(summary).toHaveTextContent("+5");
     summary.focus();
     await user.keyboard("{Enter}");
     expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
+  });
+
+  it("keeps the attached resource chip, remove control, and panel button together", () => {
+    const onOpenContent = jest.fn();
+    renderRow({
+      onOpenContent,
+      element: {
+        ...baseElement,
+        resources: [{ id: "notes", type: "url", title: "Notes", url: "https://example.com/notes" }],
+      },
+    });
+
+    expect(screen.getByRole("button", { name: "Remove resource Notes" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Manage content for Pastoral Greetings" })).toHaveLength(2);
   });
 
   it("previews titled and untitled linked resources in view mode without selecting the row", async () => {

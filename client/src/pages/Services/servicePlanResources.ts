@@ -157,6 +157,9 @@ export const normalizeServicePlanResourceForPreview = (
   mimeType: resource.metadata?.mimeType || options.churchResource?.storage.contentType,
   fileName: options.churchResource?.storage.fileName,
   textContent: richTextToFormattedPlainText(getServicePlanResourceText(resource)) || undefined,
+  ...(resource.type === "text"
+    ? { richTextContent: getServicePlanResourceText(resource) }
+    : {}),
   ...(options.resolveSource ? { resolveSource: options.resolveSource } : {}),
 });
 

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -302,6 +303,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isPlanPickerOpen, setIsPlanPickerOpen] = useState(false);
   const [planSearch, setPlanSearch] = useState("");
+  const [activePlanKey, setActivePlanKey] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
@@ -511,6 +513,30 @@ const ServicePlanningSyncFloatingWindow = ({
     }),
     [planPickerPlans],
   );
+  const planPickerId = useId();
+  const planPickerIndexByKey = useMemo(
+    () => new Map(planPickerPlans.map((plan, index) => [plan.planKey, index])),
+    [planPickerPlans],
+  );
+  const activePlan =
+    planPickerPlans.find((plan) => plan.planKey === activePlanKey) ??
+    planPickerPlans.find((plan) => plan.planKey === selectedPlanKey) ??
+    planPickerPlans[0] ??
+    null;
+  const activePlanIndex = activePlan
+    ? planPickerIndexByKey.get(activePlan.planKey) ?? -1
+    : -1;
+  const activePlanOptionRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!isPlanPickerOpen || activePlanIndex < 0) return;
+    activePlanOptionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activePlanIndex, isPlanPickerOpen]);
+  const selectPickerPlan = (planKey: string) => {
+    selectPlan(planKey);
+    setIsPlanPickerOpen(false);
+    setPlanSearch("");
+    setActivePlanKey(null);
+  };
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping;
@@ -721,7 +747,16 @@ const ServicePlanningSyncFloatingWindow = ({
           open={isPlanPickerOpen}
           onOpenChange={(open) => {
             setIsPlanPickerOpen(open);
-            if (!open) setPlanSearch("");
+            if (open) {
+              setActivePlanKey(
+                planPickerPlans.some((plan) => plan.planKey === selectedPlanKey)
+                  ? selectedPlanKey
+                  : planPickerPlans[0]?.planKey ?? null,
+              );
+            } else {
+              setPlanSearch("");
+              setActivePlanKey(null);
+            }
           }}
         >
           <PopoverTrigger asChild>
@@ -742,18 +777,54 @@ const ServicePlanningSyncFloatingWindow = ({
           <PopoverContent
             portal={false}
             align="start"
-            className="max-h-[min(65vh,24rem)] w-(--radix-popover-trigger-width) overflow-y-auto border-zinc-700 bg-gray-800 p-2 text-white"
+            data-testid="service-plan-picker-content"
+            className="flex max-h-[min(var(--radix-popper-available-height),65vh,24rem)] w-(--radix-popover-trigger-width) flex-col overflow-hidden border-zinc-700 bg-gray-800 p-2 text-white"
           >
             <input
               type="search"
+              autoFocus
+              role="combobox"
               aria-label="Search all saved plans"
+              aria-autocomplete="list"
+              aria-expanded={isPlanPickerOpen}
+              aria-controls={`${planPickerId}-listbox`}
+              aria-activedescendant={
+                activePlanIndex >= 0
+                  ? `${planPickerId}-option-${activePlanIndex}`
+                  : undefined
+              }
               placeholder="Search all saved plans"
               value={planSearch}
-              onChange={(event) => setPlanSearch(event.target.value)}
-              className="mb-2 h-8 w-full rounded border border-zinc-600 bg-zinc-900 px-2 text-xs text-white outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-cyan-500"
+              onChange={(event) => {
+                setPlanSearch(event.target.value);
+                setActivePlanKey(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  if (planPickerPlans.length === 0) return;
+                  event.preventDefault();
+                  const direction = event.key === "ArrowDown" ? 1 : -1;
+                  const nextIndex = activePlanIndex < 0
+                    ? direction > 0
+                      ? 0
+                      : planPickerPlans.length - 1
+                    : (activePlanIndex + direction + planPickerPlans.length) %
+                      planPickerPlans.length;
+                  setActivePlanKey(planPickerPlans[nextIndex].planKey);
+                } else if (event.key === "Home" || event.key === "End") {
+                  if (planPickerPlans.length === 0) return;
+                  event.preventDefault();
+                  const index = event.key === "Home" ? 0 : planPickerPlans.length - 1;
+                  setActivePlanKey(planPickerPlans[index].planKey);
+                } else if (event.key === "Enter" && activePlan && !isSyncActive) {
+                  event.preventDefault();
+                  selectPickerPlan(activePlan.planKey);
+                }
+              }}
+              className="mb-2 h-8 w-full shrink-0 rounded border border-zinc-600 bg-zinc-900 px-2 text-xs text-white outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-cyan-500"
             />
             {plansError ? (
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-700 py-2 text-xs">
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-700 py-2 text-xs">
                 <span className="text-amber-300">{plansError}</span>
                 <Button
                   type="button"
@@ -765,31 +836,49 @@ const ServicePlanningSyncFloatingWindow = ({
                 </Button>
               </div>
             ) : null}
-            {planPickerPlans.length > 0 ? (
-              <div role="listbox" aria-label="Saved service plans">
-                {([
+            <div
+              id={`${planPickerId}-listbox`}
+              role="listbox"
+              aria-label="Saved service plans"
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
+              {planPickerPlans.length > 0 ? (
+                ([
                   ["Upcoming", plansByGroup.upcoming],
                   ["Recent", plansByGroup.recent],
                 ] as const).map(([group, plans]) =>
                   plans.length > 0 ? (
-                    <div key={group}>
-                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <div
+                      key={group}
+                      role="group"
+                      aria-labelledby={`${planPickerId}-${group}`}
+                    >
+                      <p
+                        id={`${planPickerId}-${group}`}
+                        className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400"
+                      >
                         {group}
                       </p>
                       {plans.map((plan) => {
                         const selected = plan.planKey === selectedPlanKey;
+                        const optionIndex = planPickerIndexByKey.get(plan.planKey) ?? 0;
+                        const active = plan.planKey === activePlan?.planKey;
                         return (
                           <button
                             key={plan.planKey}
+                            id={`${planPickerId}-option-${optionIndex}`}
+                            ref={active ? activePlanOptionRef : undefined}
                             type="button"
                             role="option"
                             aria-selected={selected}
+                            tabIndex={-1}
                             disabled={isSyncActive}
-                            onClick={() => {
-                              selectPlan(plan.planKey);
-                              setIsPlanPickerOpen(false);
-                            }}
-                            className="flex min-h-9 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-zinc-700 focus-visible:bg-zinc-700 focus-visible:outline-none disabled:opacity-60"
+                            onMouseMove={() => setActivePlanKey(plan.planKey)}
+                            onClick={() => selectPickerPlan(plan.planKey)}
+                            className={cn(
+                              "flex min-h-9 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-zinc-700 disabled:opacity-60",
+                              active && "bg-zinc-700 outline-none",
+                            )}
                           >
                             <span className="min-w-0 flex-1 truncate">
                               {formatControllerServicePlanLabel(plan)}
@@ -800,15 +889,15 @@ const ServicePlanningSyncFloatingWindow = ({
                       })}
                     </div>
                   ) : null,
-                )}
-              </div>
-            ) : (
+                )
+              ) : (
               <p className="px-2 py-3 text-xs text-zinc-400">
                 {savedPlans.length === 0
                   ? "No saved plans yet."
                   : "No plans match your search."}
               </p>
-            )}
+              )}
+            </div>
             {!planSearch.trim() && savedPlans.length > visiblePlans.length ? (
               <p className="border-t border-zinc-700 px-2 pt-2 text-[11px] text-zinc-400">
                 Search to find more saved plans.

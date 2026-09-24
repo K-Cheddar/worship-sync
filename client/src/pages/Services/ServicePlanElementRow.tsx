@@ -1633,10 +1633,6 @@ const ServicePlanElementRow = ({
   );
   const hasContentReferences = normalizedContentResources.length > 0;
   const contentReferenceCount = normalizedContentResources.length;
-  const firstContentResource = normalizedContentResources[0];
-  const firstContentResourceDefinition = firstContentResource
-    ? getServicePlanResourceDefinition(firstContentResource.type)
-    : null;
 
   const renderItemActionsMenu = () => allowEdit ? (
     <ItemActionsMenu
@@ -2152,29 +2148,20 @@ const ServicePlanElementRow = ({
 
   const contentSummaryControl = usesContentPanel ? (
     hasContentReferences ? (
-      <button
-        type="button"
-        className={cn(
-          SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-          "flex w-full min-w-0 max-w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70 px-1.5 text-left hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300",
-        )}
-        aria-label={`View ${contentReferenceCount} attached ${contentReferenceCount === 1 ? "resource" : "resources"} for ${itemLabel}`}
-        title={firstContentResource ? getServicePlanResourceDisplayLabel(firstContentResource) : undefined}
-        onClick={(event) => openContent(event.currentTarget)}
-      >
-        {firstContentResourceDefinition ? (
-          <firstContentResourceDefinition.icon
-            className={cn("size-3.5 shrink-0", firstContentResourceDefinition.toneClassName)}
-            aria-hidden
+      <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
+        {attachmentChips("summary")}
+        {contentReferenceCount > 1 ? null : (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={FilePlus}
+            iconSize="sm"
+            className="h-full max-h-full min-h-0 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs font-normal text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 [&_svg]:size-4"
+            aria-label={`Manage content for ${itemLabel}`}
+            onClick={(event) => openContent(event.currentTarget)}
           />
-        ) : null}
-        <span className="min-w-0 flex-1 truncate leading-5">
-          {firstContentResource ? getServicePlanResourceDisplayLabel(firstContentResource) : "Content"}
-        </span>
-        {contentReferenceCount > 1 ? (
-          <span className="shrink-0 text-xs text-gray-300">+{contentReferenceCount - 1}</span>
-        ) : null}
-      </button>
+        )}
+      </div>
     ) : (
       <Button
         type="button"

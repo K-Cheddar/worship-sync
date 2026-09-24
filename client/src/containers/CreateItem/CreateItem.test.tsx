@@ -1,6 +1,6 @@
 import React from "react";
 import { configureStore } from "@reduxjs/toolkit";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import {
   MemoryRouter,
@@ -870,6 +870,132 @@ describe("CreateItem", () => {
     expect(
       screen.getByRole("button", { name: /Create and attach/i }),
     ).toBeDisabled();
+  });
+
+  it("creates a custom document from the embedded form and returns it to the caller", async () => {
+    const createdDocument = createMockItem({
+      _id: "new-document",
+      name: "Prayer Guide",
+      type: "free",
+    });
+    mockedCreateNewFreeForm.mockResolvedValue(createdDocument);
+    const onCreated = jest.fn();
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: true,
+      },
+    });
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <CreateItem variant="embedded" embeddedType="free" onCreated={onCreated} />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(screen.getByLabelText("Item Name:")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Item Name:"), {
+      target: { value: "Prayer Guide" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
+
+    await waitFor(() => expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Prayer Guide" }),
+    ));
+    expect(onCreated).toHaveBeenCalledWith(createdDocument);
+  });
+
+  it("keeps custom-document creation pending and ignores duplicate activation", async () => {
+    const createdDocument = createMockItem({
+      _id: "new-document",
+      name: "Prayer Guide",
+      type: "free",
+    });
+    let resolveCreate!: (item: ItemState) => void;
+    mockedCreateNewFreeForm.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const onCreated = jest.fn();
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Prayer Guide",
+        type: "free",
+        hasUserSelectedType: true,
+      },
+    });
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <CreateItem variant="embedded" embeddedType="free" onCreated={onCreated} />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    const createButton = screen.getByRole("button", { name: "Create and attach" });
+    fireEvent.click(createButton);
+    fireEvent.click(createButton);
+
+    expect(mockedCreateNewFreeForm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Creating..." })).toBeDisabled();
+
+    await act(async () => resolveCreate(createdDocument));
+    expect(onCreated).toHaveBeenCalledWith(createdDocument);
+  });
+
+  it("allows retry after custom-document creation fails", async () => {
+    const createdDocument = createMockItem({
+      _id: "new-document",
+      name: "Prayer Guide",
+      type: "free",
+    });
+    mockedCreateNewFreeForm
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(createdDocument);
+    const onCreated = jest.fn();
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Prayer Guide",
+        type: "free",
+        hasUserSelectedType: true,
+      },
+    });
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <CreateItem variant="embedded" embeddedType="free" onCreated={onCreated} />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not create the custom document.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(createdDocument));
+    expect(mockedCreateNewFreeForm).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the draft when navigating to Bible and back without creating", async () => {

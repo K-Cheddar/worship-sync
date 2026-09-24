@@ -51,6 +51,9 @@ const CurrentItemRow = ({
         <img
           src={resolvedImage ?? item.background}
           alt=""
+          onError={(event) => {
+            event.currentTarget.hidden = true;
+          }}
           className="h-6 w-10 shrink-0 rounded-sm object-cover"
         />
       )}

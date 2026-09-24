@@ -3,6 +3,7 @@ import {
   createServicePlanGenericResource,
   createServicePlanChurchResourceReference,
   createServicePlanDocumentResource,
+  createServicePlanTextResource,
   createServicePlanCustomDocumentReference,
   getEffectiveServicePlanResourceDefinition,
   getServicePlanCustomDocumentDisplayLabel,
@@ -48,6 +49,18 @@ describe("service-plan content resources", () => {
 
     expect(getServicePlanResourceDisplayLabel(resource)).toBe(resource.url);
     expect(normalizeServicePlanResourceForPreview(resource).title).toBeUndefined();
+  });
+
+  it("keeps the saved rich text document in the preview resource", () => {
+    const document = {
+      blocks: [{
+        type: "paragraph" as const,
+        spans: [{ text: "Important note", bold: true, italic: true }],
+      }],
+    };
+    const resource = createServicePlanTextResource({ title: "Notes", text: document });
+
+    expect(normalizeServicePlanResourceForPreview(resource).richTextContent).toEqual(document);
   });
 
   it("creates a generic resource without requiring a URL", () => {
