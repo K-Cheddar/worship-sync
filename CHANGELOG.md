@@ -1,3 +1,12 @@
+## [2.37.1](https://github.com/K-Cheddar/worship-sync/compare/v2.37.0...v2.37.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* Minor fixes for QR code scanning ([fb722f8](https://github.com/K-Cheddar/worship-sync/commit/fb722f8df7f24e3180796973e1f40cfc28026de5))
+* move media manifest publication to controllers ([c2ea3dd](https://github.com/K-Cheddar/worship-sync/commit/c2ea3ddfe05f695a2011dd6fd86395c55fdfc32d))
+* **schedule:** expand single-column cards ([649d0e7](https://github.com/K-Cheddar/worship-sync/commit/649d0e7d81c9f42fd55858d354bddc584e233172))
+
 # [2.37.0](https://github.com/K-Cheddar/worship-sync/compare/v2.36.1...v2.37.0) (2026-09-24)
 
 
