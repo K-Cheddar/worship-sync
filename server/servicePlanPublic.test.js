@@ -413,6 +413,74 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
   assert.equal(JSON.stringify(snapshot).includes("private-signature"), false);
 });
 
+test("public text resource details match the client formatter for rich-text notes", async () => {
+  const richText = {
+    blocks: [
+      { type: "paragraph", spans: [{ text: "First paragraph." }] },
+      { type: "paragraph", spans: [{ text: "Second paragraph." }] },
+      {
+        type: "list-item",
+        listStyle: "ordered",
+        listStart: 3,
+        spans: [{ text: "Checklist item." }],
+      },
+    ],
+  };
+  const testPlan = {
+    ...plan,
+    sections: [{
+      ...plan.sections[0],
+      elements: [{
+        ...plan.sections[0].elements[0],
+        songRef: { kind: "library", songId: "private-song", songName: "Opening song" },
+        scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+        resources: [
+          { id: "song-duplicate", type: "song", title: "Opening song", data: { songId: "private-song" } },
+          { id: "scripture-duplicate", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
+          { id: "notes", type: "text", title: "Service notes", data: { text: richText, internal: "private note metadata" } },
+          { id: "safe-link", type: "url", title: "Schedule", url: "https://example.com/schedule" },
+          { id: "unsafe-link", type: "url", title: "Private link", url: "https://example.com/private?token=private-token" },
+          { id: "document", type: "custom-document", title: "Welcome slides", data: { customDocumentId: "private-document-id" } },
+        ],
+      }],
+    }],
+  };
+  const serverSnapshot = buildPublicServicePlanSnapshot({ plan: testPlan });
+  const { buildServicePlanFlowSnapshot } = await import(
+    "../client/src/pages/buildServicePlanFlowSnapshot.ts"
+  );
+  const clientSnapshot = buildServicePlanFlowSnapshot({
+    plan: {
+      planKey: "sunday-service",
+      name: testPlan.name,
+      timezone: testPlan.timezone,
+      sections: testPlan.sections,
+    },
+    startsAt: testPlan.startsAt,
+  });
+
+  assert.deepEqual(
+    serverSnapshot.service.sections[0].items[0].resources,
+    clientSnapshot.service.sections[0].items[0].resources,
+  );
+  const publicResources = serverSnapshot.service.sections[0].items[0].resources;
+  assert.equal(
+    publicResources.find((resource) => resource.type === "text").detail,
+    "First paragraph.\nSecond paragraph.\n3. Checklist item.",
+  );
+  assert.deepEqual(publicResources.map(({ type, title }) => [type, title]), [
+    ["song", "Opening song"],
+    ["scripture", "Psalm 100"],
+    ["text", "Service notes"],
+    ["url", "Schedule"],
+    ["url", "Private link"],
+    ["custom-document", "Welcome slides"],
+  ]);
+  assert.equal(JSON.stringify(serverSnapshot).includes("private note metadata"), false);
+  assert.equal(JSON.stringify(serverSnapshot).includes("private-token"), false);
+  assert.equal(JSON.stringify(serverSnapshot).includes("private-document-id"), false);
+});
+
 test("detailed public snapshot combines legacy and new content without duplicate or private references", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan: {

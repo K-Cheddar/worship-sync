@@ -231,7 +231,47 @@ const publicResourceUrl = (resource) => {
 const publicResourceDetail = (resource) => {
   if (resource?.type === "text") {
     const text = resource.data?.text;
-    return typeof text === "string" && text.trim() ? text.trim() : undefined;
+    if (typeof text === "string") return text.trim() || undefined;
+    if (!text || typeof text !== "object" || !Array.isArray(text.blocks)) {
+      return undefined;
+    }
+
+    const orderedCounters = new Map();
+    const detail = text.blocks
+      .filter((block) => block && typeof block === "object")
+      .map((block) => {
+        const spans = Array.isArray(block.spans) ? block.spans : [];
+        const blockText = spans
+          .map((span) => typeof span?.text === "string" ? span.text : "")
+          .join("");
+        if (block.type !== "list-item") {
+          orderedCounters.clear();
+          return blockText;
+        }
+
+        const rawIndent = Number(block.indent);
+        const indent = Number.isInteger(rawIndent)
+          ? Math.max(0, Math.min(4, rawIndent))
+          : 0;
+        for (const depth of orderedCounters.keys()) {
+          if (depth > indent) orderedCounters.delete(depth);
+        }
+
+        if (block.listStyle === "ordered") {
+          const rawStart = Number(block.listStart);
+          const value = Number.isInteger(rawStart) && rawStart > 0
+            ? rawStart
+            : (orderedCounters.get(indent) || 0) + 1;
+          orderedCounters.set(indent, value);
+          return `${"  ".repeat(indent)}${value}. ${blockText}`;
+        }
+
+        orderedCounters.delete(indent);
+        return `${"  ".repeat(indent)}- ${blockText}`;
+      })
+      .join("\n")
+      .trim();
+    return detail || undefined;
   }
   if (resource?.type === "generic") {
     const notes = resource.data?.notes;

@@ -26,6 +26,7 @@ import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlo
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ServicePlanCustomDocumentPicker from "./ServicePlanCustomDocumentPicker";
+import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 import {
   DropdownMenu,
@@ -34,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import type { DBItem } from "../../types";
 import { useSelector } from "../../hooks";
 import { getChurchResource, getChurchResourceUrl, listChurchResources, getSongAudioUrl } from "../../api/auth";
 import { openExternalUrl } from "../../utils/openExternalUrl";
@@ -140,6 +142,7 @@ const ServicePlanContentPanel = ({
   const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [customDocumentPickerOpen, setCustomDocumentPickerOpen] = useState(false);
+  const [previewCustomDocument, setPreviewCustomDocument] = useState<DBItem | null>(null);
   const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const [scriptureAddOpen, setScriptureAddOpen] = useState(false);
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
@@ -188,14 +191,15 @@ const ServicePlanContentPanel = ({
     () => new Set(getServicePlanElementContentResources(element).map((resource) => resource.id)),
     [element],
   );
-  const resources = useMemo(
+  const displayResources = useMemo(
     () => persistedResources.filter((resource) => normalizedContentResourceIds.has(resource.id)),
     [persistedResources, normalizedContentResourceIds],
   );
-  const customDocumentResources = resources.filter(
+  const resources = persistedResources;
+  const customDocumentResources = displayResources.filter(
     (resource) => resource.type === "custom-document",
   );
-  const otherResources = resources.filter(
+  const otherResources = displayResources.filter(
     (resource) => resource.type !== "custom-document",
   );
   const attachedCustomDocumentIds = customDocumentResources
@@ -204,13 +208,13 @@ const ServicePlanContentPanel = ({
   const referencedChurchResourceIds = useMemo(
     () => [
       ...new Set(
-        resources
+        displayResources
           .filter(isServicePlanChurchResourceReference)
           .map(getServicePlanChurchResourceId)
           .filter(Boolean),
       ),
     ],
-    [resources],
+    [displayResources],
   );
   const itemLabel = richTextToPlainText(element.title).trim() || "Untitled item";
   const audioSongs = useMemo(
@@ -684,7 +688,19 @@ const ServicePlanContentPanel = ({
           return (
             <div key={resource.id} className="flex min-w-0 items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1.5">
               <Icon svg={Files} size="xs" className="shrink-0 text-indigo-300" />
-              <span className="min-w-0 flex-1 truncate text-sm text-gray-100" title={label}>{label}</span>
+              {document ? (
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm text-gray-100 hover:text-indigo-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300"
+                  title={label}
+                  aria-label={`Preview custom document ${label}`}
+                  onClick={() => setPreviewCustomDocument(document)}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-sm text-gray-100" title={label}>{label}</span>
+              )}
               {!document ? <span className="shrink-0 text-xs text-amber-200">Unavailable</span> : null}
               {allowEdit ? <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-5 w-5" svg={X} aria-label={`Remove custom document ${label}`} onClick={() => updateResources(resources.filter((candidate) => candidate.id !== resource.id))} /> : null}
             </div>
@@ -815,6 +831,10 @@ const ServicePlanContentPanel = ({
       <ContentPreviewDialog
         resource={previewResource}
         onClose={() => setPreviewResource(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={previewCustomDocument}
+        onClose={() => setPreviewCustomDocument(null)}
       />
     </div>
   );

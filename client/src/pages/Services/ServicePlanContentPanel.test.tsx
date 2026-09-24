@@ -58,6 +58,11 @@ jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   ) : null,
 }));
 
+jest.mock("../../containers/ItemSlides/StaticSlideThumbnail", () => ({
+  __esModule: true,
+  default: ({ slide }: { slide: { name: string } }) => <div>{slide.name}</div>,
+}));
+
 const element = (overrides: Partial<ServicePlanElement> = {}): ServicePlanElement => ({
   id: "element-1",
   type: "free",
@@ -126,6 +131,73 @@ describe("ServicePlanContentPanel resources", () => {
     );
     await user.click(screen.getByRole("button", { name: "Remove resource Sermon notes" }));
     expect(onUpdate.mock.calls.at(-1)?.[0].resources).toEqual([secondResources[1]]);
+  });
+
+  it("preserves stored song and scripture resource references when removing another resource", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const storedSong = {
+      id: "stored-song",
+      type: "song",
+      title: "Opening Song",
+      data: { songId: "song-1" },
+    };
+    const storedScripture = {
+      id: "stored-scripture",
+      type: "scripture",
+      title: "Psalm 100",
+      data: { label: "Psalm 100" },
+    };
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+          scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+          resources: [
+            storedSong,
+            storedScripture,
+            { id: "extra", type: "url", title: "Extra link", url: "https://example.com" },
+          ],
+        })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Remove resource Extra link" }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      resources: [storedSong, storedScripture],
+    });
+  });
+
+  it("opens an authenticated custom document in a read-only slide preview", async () => {
+    const user = userEvent.setup();
+    mockAllFreeFormDocs = [{
+      _id: "document-1",
+      name: "Welcome slides",
+      type: "free",
+      slides: [{ id: "slide-1", name: "Title slide" }],
+    }];
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          resources: [{
+            id: "document-ref",
+            type: "custom-document",
+            title: "Welcome slides",
+            data: { customDocumentId: "document-1" },
+          }],
+        })}
+        allowEdit={false}
+        onUpdate={jest.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Preview custom document Welcome slides" }));
+
+    expect(await screen.findByRole("heading", { name: "Welcome slides" })).toBeInTheDocument();
+    expect(screen.getByText("Title slide", { selector: "figcaption" })).toBeInTheDocument();
   });
 
   it("renders YouTube resources with the shared player and unknown resources safely", () => {

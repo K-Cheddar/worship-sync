@@ -17,10 +17,15 @@ import type {
 } from "../../types/servicePlan";
 
 let mockSongDocs: Array<Record<string, unknown>> = [];
-let mockFreeFormDocs: Array<{ _id: string; name: string }> = [];
+let mockFreeFormDocs: Array<{ _id: string; name: string; type?: string; slides?: unknown[] }> = [];
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({ allDocs: { allSongDocs: mockSongDocs, allFreeFormDocs: mockFreeFormDocs } }),
+}));
+
+jest.mock("../../containers/ItemSlides/StaticSlideThumbnail", () => ({
+  __esModule: true,
+  default: ({ slide }: { slide: { name: string } }) => <div>{slide.name}</div>,
 }));
 
 // Both read Redux song state; the row's contract is only which one opens, with
@@ -132,6 +137,38 @@ describe("custom document content badges", () => {
 
     expect(screen.getByText("Updated presentation")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Preview Updated presentation" })).toBeInTheDocument();
+  });
+
+  it("opens the authenticated custom document preview in read-only mode", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+    mockFreeFormDocs = [{
+      _id: "document-1",
+      name: "Updated presentation",
+      type: "free",
+      slides: [{ id: "slide-1", name: "Welcome slide" }],
+    }];
+
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      onSelect,
+      element: {
+        ...baseElement,
+        resources: [{
+          id: "custom-document-ref",
+          type: "custom-document",
+          title: "Old title",
+          data: { customDocumentId: "document-1" },
+        }],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Preview Updated presentation" }));
+
+    expect(await screen.findByRole("heading", { name: "Updated presentation" })).toBeInTheDocument();
+    expect(screen.getByText("Welcome slide", { selector: "figcaption" })).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 

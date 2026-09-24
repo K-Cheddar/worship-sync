@@ -31,7 +31,9 @@ import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
 import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
+import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
   addMicrophoneSlot,
   addServicePlanAssignee,
@@ -1211,6 +1213,7 @@ const ServicePlanElementRow = ({
   const usesAssignmentPanel = Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
   const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
+  const [previewCustomDocument, setPreviewCustomDocument] = useState<DBItem | null>(null);
   const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
@@ -1624,7 +1627,8 @@ const ServicePlanElementRow = ({
   const normalizedResourceIds = new Set(
     normalizedContentResources.map((resource) => resource.id),
   );
-  const contentResources = (element.resources || []).filter((resource) =>
+  const persistedContentResources = element.resources || [];
+  const contentResources = persistedContentResources.filter((resource) =>
     normalizedResourceIds.has(resource.id),
   );
   const hasContentReferences = normalizedContentResources.length > 0;
@@ -2109,9 +2113,15 @@ const ServicePlanElementRow = ({
                 )}
                 aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${resourceLabel}`}
                 title={resourceLabel}
+                disabled={!allowEdit && resource.type === "custom-document" && !customDocument}
                 onClick={(event) => {
                   if (allowEdit) {
                     if (usesContentPanel) openContent(event.currentTarget);
+                    return;
+                  }
+                  if (resource.type === "custom-document" && customDocument) {
+                    event.stopPropagation();
+                    setPreviewCustomDocument(customDocument);
                     return;
                   }
                   if (resource.url || !isRichTextEmpty(getServicePlanResourceText(resource)) || getServicePlanChurchResourceId(resource)) {
@@ -2131,7 +2141,7 @@ const ServicePlanElementRow = ({
                   className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
                   svg={X}
                   aria-label={`Remove resource ${resource.title}`}
-                  onClick={() => onUpdate({ resources: contentResources.filter((_, currentIndex) => currentIndex !== index) })}
+                  onClick={() => onUpdate({ resources: persistedContentResources.filter((candidate) => candidate.id !== resource.id) })}
                 />
               ) : null}
             </span>
@@ -2845,6 +2855,10 @@ const ServicePlanElementRow = ({
       <ContentPreviewDialog
         resource={previewResource}
         onClose={() => setPreviewResource(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={previewCustomDocument}
+        onClose={() => setPreviewCustomDocument(null)}
       />
     </div>
   );
