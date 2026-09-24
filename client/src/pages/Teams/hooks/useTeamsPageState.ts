@@ -983,9 +983,9 @@ export const useTeamsPageState = () => {
     scheduleDeferredBackgroundRefresh,
   ]);
 
-  // Focus recovery is bounded: SSE covers schedule and service-plan changes,
-  // while the bootstrap fills remaining Teams data gaps after an outage or when
-  // the last accepted snapshot has become stale.
+  // Focus recovery uses the same snapshot-age bound as the periodic check.
+  // SSE reconnects recover missed events; the bootstrap also fills data gaps
+  // for collections that do not publish live events.
   useEffect(() => {
     if (!churchId) return undefined;
     const handleVisible = () => {
@@ -1008,6 +1008,34 @@ export const useTeamsPageState = () => {
       document.removeEventListener("visibilitychange", handleVisible);
     };
   }, [backgroundRefresh, churchId, connectionState]);
+
+  // The stream carries schedule and service-plan events, but other bootstrap
+  // collections can change while this tab stays open. Revalidate those
+  // collections at the same bounded cadence used for stale-on-focus recovery.
+  // Schedule events remain incremental and do not trigger a bootstrap.
+  useEffect(() => {
+    if (!churchId) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (
+        Date.now() - lastSuccessfulBootstrapAtRef.current <
+        TEAMS_FOCUS_REFRESH_MAX_AGE_MS
+      ) {
+        return;
+      }
+      if (isLocalEditCoolingDown()) {
+        scheduleDeferredBackgroundRefresh();
+      } else {
+        void backgroundRefresh();
+      }
+    }, TEAMS_FOCUS_REFRESH_MAX_AGE_MS);
+    return () => window.clearInterval(intervalId);
+  }, [
+    backgroundRefresh,
+    churchId,
+    isLocalEditCoolingDown,
+    scheduleDeferredBackgroundRefresh,
+  ]);
 
   useEffect(() => {
     // Set in the effect body (not just init) so a StrictMode/remount re-run

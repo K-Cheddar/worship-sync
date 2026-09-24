@@ -135,6 +135,42 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("revalidates uncovered Teams data on a bounded interval while connected", async () => {
+    const { unmount } = renderPageState();
+    await flushMicrotasks();
+    act(() => MockEventSource.instances[0].onopen?.());
+
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("skips interval reads while hidden and recovers when the page returns", async () => {
+    const { unmount } = renderPageState();
+    await flushMicrotasks();
+    act(() => MockEventSource.instances[0].onopen?.());
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    emitVisibilityChange();
+    await flushMicrotasks();
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
   it("counts an unchanged recovery response as a fresh validation", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
@@ -195,9 +231,10 @@ describe("useTeamsPageState bootstrap recovery", () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
     act(() => MockEventSource.instances[0].onopen?.());
-    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
-
     mockGetTeamsBootstrap.mockRejectedValueOnce(new Error("offline"));
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+
     emitFocus();
     await flushMicrotasks();
     emitFocus();
