@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, Download, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -29,6 +29,7 @@ import {
   PopoverAnchor,
   PopoverContent,
   PopoverClose,
+  PopoverTrigger,
 } from "../../components/ui/Popover";
 import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
@@ -57,7 +58,6 @@ import { bibleRefToSearchString } from "../../integrations/servicePlanning/parse
 import { cn } from "../../utils/cnHelper";
 import { iconColorMap } from "../../utils/itemTypeMaps";
 
-import Select from "../../components/Select/Select";
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
@@ -69,7 +69,6 @@ import {
   isControllerServicePlanUpcoming,
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
-import { formatOccurrenceLabel } from "./currentServiceWorkspaceUtils";
 
 const MARGIN = 16;
 
@@ -299,6 +298,8 @@ const ServicePlanningSyncFloatingWindow = ({
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isPlanPickerOpen, setIsPlanPickerOpen] = useState(false);
+  const [planSearch, setPlanSearch] = useState("");
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
@@ -308,10 +309,7 @@ const ServicePlanningSyncFloatingWindow = ({
     selectedPlan,
     selectedPlanKey,
     selectPlan,
-    occurrences,
     occurrence,
-    selectedOccurrenceId,
-    selectOccurrence,
     returnToCurrentService,
     isManualSelection,
     isEnabled: isSavedPlanAccessEnabled,
@@ -489,33 +487,27 @@ const ServicePlanningSyncFloatingWindow = ({
       }),
     [outlinePlanBinding?.planKey, savedPlans, selectedPlanKey],
   );
-  const planOptions = useMemo(
-    () =>
-      visiblePlans.map((plan) => ({
-        value: plan.planKey,
-        label: formatControllerServicePlanLabel(plan),
-        group: isControllerServicePlanUpcoming(plan) ? "Upcoming" : "Recent",
-      })),
-    [visiblePlans],
+  const planPickerPlans = useMemo(() => {
+    const search = planSearch.trim().toLocaleLowerCase();
+    const candidates = search ? savedPlans : visiblePlans;
+    if (!search) return candidates;
+    return candidates.filter((plan) =>
+      `${plan.name || "Service plan"} ${plan.date} ${plan.startsAt || ""}`
+        .toLocaleLowerCase()
+        .includes(search),
+    );
+  }, [planSearch, savedPlans, visiblePlans]);
+  const plansByGroup = useMemo(
+    () => ({
+      upcoming: planPickerPlans.filter((plan) =>
+        isControllerServicePlanUpcoming(plan),
+      ),
+      recent: planPickerPlans.filter(
+        (plan) => !isControllerServicePlanUpcoming(plan),
+      ),
+    }),
+    [planPickerPlans],
   );
-  const occurrenceOptions = useMemo(
-    () =>
-      occurrences.map((candidate) => ({
-        value: candidate.occurrenceId,
-        label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt)}`,
-      })),
-    [occurrences],
-  );
-  const hasManualPlanWithoutOccurrence =
-    isManualSelection && Boolean(selectedPlan) && !occurrence;
-  let occurrenceStatus = "No scheduled service context";
-  if (hasManualPlanWithoutOccurrence) {
-    occurrenceStatus = "Manually selected plan (no matching occurrence)";
-  } else if (isManualSelection) {
-    occurrenceStatus = "Manually selected";
-  } else if (occurrence) {
-    occurrenceStatus = `Following current service: ${occurrence.name}`;
-  }
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping;
@@ -699,6 +691,19 @@ const ServicePlanningSyncFloatingWindow = ({
     dispatch(setServicePlanningFloatingWindowDismissed(true));
   };
 
+  let selectedPlanLabel = "Choose a service plan";
+  if (selectedPlan) {
+    selectedPlanLabel = formatControllerServicePlanLabel(selectedPlan);
+  } else if (!isPlanSourced && serviceOutline?.planLabel?.trim()) {
+    selectedPlanLabel = serviceOutline.planLabel.trim();
+  } else if (plansError) {
+    selectedPlanLabel = "Saved plans unavailable";
+  } else if (occurrence && !isLoadingPlans) {
+    selectedPlanLabel = "No plan for current service";
+  } else if (!isLoadingPlans && savedPlans.length === 0) {
+    selectedPlanLabel = "No saved plans yet";
+  }
+
   let savedPlanControl: ReactNode;
   if (!isSavedPlanAccessEnabled) {
     savedPlanControl = (
@@ -706,134 +711,152 @@ const ServicePlanningSyncFloatingWindow = ({
         Saved plans are not available for this account.
       </p>
     );
-  } else if (plansError) {
-    savedPlanControl = (
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-amber-300">{plansError}</p>
-        <Button
-          type="button"
-          variant="tertiary"
-          className="shrink-0 text-xs"
-          onClick={() => void refreshPlans()}
-        >
-          Try again
-        </Button>
-      </div>
-    );
-  } else if (isLoadingPlans) {
-    savedPlanControl = (
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
-        <Spinner width="14px" borderWidth="2px" />
-        Loading saved plans…
-      </div>
-    );
-  } else if (planOptions.length > 0) {
-    savedPlanControl = (
-      <div className="flex flex-col gap-1">
-        <Select
-          label="Service plan"
-          selectClassName="h-8 text-xs"
-          disablePortal
-          value={selectedPlanKey || ""}
-          onChange={selectPlan}
-          disabled={isSyncActive}
-          options={planOptions}
-        />
-        <div className="flex items-center justify-between gap-2">
-          {savedPlans.length > planOptions.length ? (
-            <p className="text-[11px] text-zinc-500">
-              Showing {planOptions.length} of {savedPlans.length} plans
-            </p>
-          ) : (
-            <span />
-          )}
-          <Button
-            type="button"
-            variant="tertiary"
-            className="shrink-0 text-xs"
-            onClick={() => navigate("/teams-and-services/plans")}
-          >
-            View all plans
-          </Button>
-        </div>
-        {!selectedPlan && occurrence ? (
-          <p className="text-[11px] text-amber-300">
-            No Service Plan yet for this service.
-          </p>
-        ) : null}
-      </div>
-    );
   } else {
     savedPlanControl = (
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-zinc-400">
-          {occurrence ? "No Service Plan yet for this service." : "No saved plans yet."}
-        </p>
-        <Button
-          type="button"
-          variant="tertiary"
-          className="shrink-0 text-xs"
-          onClick={() => navigate("/teams-and-services/plans")}
+      <div className="flex min-w-0 flex-col gap-1">
+        <Popover
+          open={isPlanPickerOpen}
+          onOpenChange={(open) => {
+            setIsPlanPickerOpen(open);
+            if (!open) setPlanSearch("");
+          }}
         >
-          Open Plans
-        </Button>
-      </div>
-    );
-  }
-
-  const occurrenceControl = occurrenceOptions.length > 0 || isManualSelection ? (
-    <div className="flex flex-col gap-1">
-      {occurrenceOptions.length > 0 ? (
-        <Select
-          label="Service occurrence"
-          selectClassName="h-8 text-xs"
-          disablePortal
-          value={selectedOccurrenceId || occurrence?.occurrenceId || ""}
-          onChange={selectOccurrence}
-          disabled={isSyncActive}
-          options={occurrenceOptions}
-        />
-      ) : null}
-      <div className="flex items-center justify-between gap-2">
-        <p
-          className={
-            isManualSelection ? "text-[11px] text-amber-300" : "text-[11px] text-zinc-400"
-          }
-          role="status"
-        >
-          {occurrenceStatus}
-        </p>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Select service plan: ${selectedPlanLabel}`}
+              disabled={isSyncActive || isLoadingPlans}
+              className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-600 bg-zinc-900 px-2.5 text-left text-xs text-white outline-none transition-colors hover:border-zinc-400 focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="truncate">{selectedPlanLabel}</span>
+              {isLoadingPlans ? (
+                <Spinner width="14px" borderWidth="2px" />
+              ) : (
+                <ChevronDown size={14} className="shrink-0 text-zinc-400" aria-hidden />
+              )}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            portal={false}
+            align="start"
+            className="max-h-[min(65vh,24rem)] w-(--radix-popover-trigger-width) overflow-y-auto border-zinc-700 bg-gray-800 p-2 text-white"
+          >
+            <input
+              type="search"
+              aria-label="Search all saved plans"
+              placeholder="Search all saved plans"
+              value={planSearch}
+              onChange={(event) => setPlanSearch(event.target.value)}
+              className="mb-2 h-8 w-full rounded border border-zinc-600 bg-zinc-900 px-2 text-xs text-white outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-cyan-500"
+            />
+            {plansError ? (
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-700 py-2 text-xs">
+                <span className="text-amber-300">{plansError}</span>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="shrink-0 text-xs"
+                  onClick={() => void refreshPlans()}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : null}
+            {planPickerPlans.length > 0 ? (
+              <div role="listbox" aria-label="Saved service plans">
+                {([
+                  ["Upcoming", plansByGroup.upcoming],
+                  ["Recent", plansByGroup.recent],
+                ] as const).map(([group, plans]) =>
+                  plans.length > 0 ? (
+                    <div key={group}>
+                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                        {group}
+                      </p>
+                      {plans.map((plan) => {
+                        const selected = plan.planKey === selectedPlanKey;
+                        return (
+                          <button
+                            key={plan.planKey}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            disabled={isSyncActive}
+                            onClick={() => {
+                              selectPlan(plan.planKey);
+                              setIsPlanPickerOpen(false);
+                            }}
+                            className="flex min-h-9 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-zinc-700 focus-visible:bg-zinc-700 focus-visible:outline-none disabled:opacity-60"
+                          >
+                            <span className="min-w-0 flex-1 truncate">
+                              {formatControllerServicePlanLabel(plan)}
+                            </span>
+                            {selected ? <Check size={14} className="shrink-0 text-cyan-300" aria-hidden /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            ) : (
+              <p className="px-2 py-3 text-xs text-zinc-400">
+                {savedPlans.length === 0
+                  ? "No saved plans yet."
+                  : "No plans match your search."}
+              </p>
+            )}
+            {!planSearch.trim() && savedPlans.length > visiblePlans.length ? (
+              <p className="border-t border-zinc-700 px-2 pt-2 text-[11px] text-zinc-400">
+                Search to find more saved plans.
+              </p>
+            ) : null}
+          </PopoverContent>
+        </Popover>
         {isManualSelection ? (
           <Button
             type="button"
             variant="tertiary"
             svg={RotateCcw}
-            className="shrink-0 text-xs"
+            className="self-start px-1 py-0.5 text-[11px] text-zinc-400 hover:text-white"
             disabled={isSyncActive}
             onClick={returnToCurrentService}
           >
             Return to current service
           </Button>
         ) : null}
+        {plansError && !isPlanPickerOpen ? (
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-amber-300">{plansError}</span>
+            <Button
+              type="button"
+              variant="tertiary"
+              className="shrink-0 text-xs"
+              onClick={() => void refreshPlans()}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : null}
       </div>
-    </div>
-  ) : null;
+    );
+  }
 
   let emptyPreviewMessage = "Choose a saved plan to review it in the controller.";
   if (isLoading) {
     emptyPreviewMessage = "Loading the selected plan…";
+  } else if (plansError) {
+    emptyPreviewMessage = "Saved plans could not be loaded. Try again above.";
+  } else if (!selectedPlan && occurrence) {
+    emptyPreviewMessage =
+      "No saved plan exists for the current service. Choose another saved plan above.";
   } else if (selectedPlan) {
     emptyPreviewMessage =
       "This plan has no controller preview yet. Refresh it or choose another plan.";
   }
 
   const planContextControls = (
-    <section className="rounded-lg border border-zinc-700 bg-zinc-950/35 p-2.5">
-      <div className="flex flex-col gap-2">
-        {occurrenceControl}
-        {savedPlanControl}
-      </div>
-    </section>
+    <section className="min-w-0">{savedPlanControl}</section>
   );
 
   return (
@@ -850,6 +873,76 @@ const ServicePlanningSyncFloatingWindow = ({
       <div className="flex flex-col gap-3 text-sm text-white">
         {planContextControls}
 
+        <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
+          <Tabs
+            value={activeTab}
+            onValueChange={(nextValue) =>
+              setActiveTab(nextValue as "plan" | "assignments")
+            }
+            className="w-full gap-0"
+          >
+            <TabsList variant="line" className={lineTabsListShellClassName}>
+              <TabsTrigger value="plan" className={lineTabsTriggerSmClassName}>
+                Plan
+              </TabsTrigger>
+              {hasAssignments ? (
+                <TabsTrigger
+                  value="assignments"
+                  className={lineTabsTriggerSmClassName}
+                >
+                  Assignments
+                </TabsTrigger>
+              ) : null}
+            </TabsList>
+          </Tabs>
+
+          <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
+            <PopoverAnchor asChild>
+              <div className="w-full">
+                <ActionBar items={actionBarItemDefs} className="mt-2" disablePortal />
+              </div>
+            </PopoverAnchor>
+            <PopoverContent
+              portal={false}
+              align="start"
+              className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
+            >
+              <div className="flex flex-col gap-3">
+                <p className="text-sm font-semibold">Load Service Plan</p>
+                <Input
+                  label="Planning URL"
+                  value={importUrl}
+                  onChange={(v) => setImportUrl(String(v))}
+                  placeholder="https://..."
+                  disabled={isImporting}
+                  onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
+                />
+                <div className="flex justify-end gap-2">
+                  <PopoverClose asChild>
+                    <Button variant="tertiary" className="text-sm" disabled={isImporting}>Cancel</Button>
+                  </PopoverClose>
+                  <Button
+                    variant="cta"
+                    className="text-sm"
+                    isLoading={isImporting}
+                    disabled={isImporting || !importUrl.trim()}
+                    onClick={() => void handleImport()}
+                  >
+                    {isImporting ? "Loading…" : "Load"}
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {serviceOutline?.loadedAt ? (
+            <div className="mt-2 text-xs text-zinc-400">
+              {isPlanSourced ? "Updated" : "Imported"}{" "}
+              {new Date(serviceOutline.loadedAt).toLocaleString()}
+            </div>
+          ) : null}
+        </div>
+
         {isFailed ? (
           <p className="text-red-400">{sync.error || "Try again."}</p>
         ) : null}
@@ -865,82 +958,6 @@ const ServicePlanningSyncFloatingWindow = ({
 
         {!isLoading && preview ? (
           <div className="flex flex-col gap-2">
-            <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
-              <Tabs
-                value={activeTab}
-                onValueChange={(nextValue) =>
-                  setActiveTab(nextValue as "plan" | "assignments")
-                }
-                className="w-full gap-0"
-              >
-                <TabsList
-                  variant="line"
-                  className={lineTabsListShellClassName}
-                >
-                  <TabsTrigger
-                    value="plan"
-                    className={lineTabsTriggerSmClassName}
-                  >
-                    Plan
-                  </TabsTrigger>
-                  {hasAssignments && (
-                    <TabsTrigger
-                      value="assignments"
-                      className={lineTabsTriggerSmClassName}
-                    >
-                      Assignments
-                    </TabsTrigger>
-                  )}
-                </TabsList>
-              </Tabs>
-
-              {serviceOutline?.loadedAt ? (
-                <div className="mt-2 text-xs text-zinc-400">
-                  {isPlanSourced ? "Updated" : "Imported"}{" "}
-                  {new Date(serviceOutline.loadedAt).toLocaleString()}
-                </div>
-              ) : null}
-
-              <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
-                <PopoverAnchor asChild>
-                  <div className="w-full">
-                    <ActionBar items={actionBarItemDefs} className="mt-2" disablePortal />
-                  </div>
-                </PopoverAnchor>
-                <PopoverContent
-                  portal={false}
-                  align="start"
-                  className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
-                >
-                  <div className="flex flex-col gap-3">
-                    <p className="text-sm font-semibold">Load Service Plan</p>
-                    <Input
-                      label="Planning URL"
-                      value={importUrl}
-                      onChange={(v) => setImportUrl(String(v))}
-                      placeholder="https://..."
-                      disabled={isImporting}
-                      onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
-                    />
-                    <div className="flex justify-end gap-2">
-                      <PopoverClose asChild>
-                        <Button variant="tertiary" className="text-sm" disabled={isImporting}>Cancel</Button>
-                      </PopoverClose>
-                      <Button
-                        variant="cta"
-                        className="text-sm"
-                        isLoading={isImporting}
-                        disabled={isImporting || !importUrl.trim()}
-                        onClick={() => void handleImport()}
-                      >
-                        {isImporting ? "Loading…" : "Load"}
-                      </Button>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-
             {activeTab === "plan" ? (
               <div className="flex flex-col gap-2 pr-1">
                 {Array.from(lineItemsBySection.entries()).map(([sectionName, items]) => (
