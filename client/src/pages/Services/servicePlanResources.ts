@@ -16,6 +16,12 @@ import type {
   ServicePlanContentResourceType,
 } from "../../types/servicePlan";
 import type { ChurchResource } from "../../types/churchResource";
+import {
+  multilineTextToRichText,
+  normalizeRichTextDocument,
+  richTextToFormattedPlainText,
+  type RichTextDocument,
+} from "../../types/richText";
 import type {
   ContentPreviewResource,
   ContentPreviewResolvedSource,
@@ -67,6 +73,16 @@ export const getServicePlanResourceNotes = (
   resource: ServicePlanContentResource,
 ): string => getServicePlanResourceDataString(resource, "notes");
 
+/** Read rich and legacy plain-text resource notes through one compatible path. */
+export const getServicePlanResourceText = (
+  resource: ServicePlanContentResource,
+): RichTextDocument => {
+  const value = resource.data?.text;
+  return typeof value === "string"
+    ? multilineTextToRichText(value)
+    : normalizeRichTextDocument(value);
+};
+
 const getExplicitServicePlanResourceTitle = (
   resource: ServicePlanContentResource,
 ): string => {
@@ -104,7 +120,7 @@ export const normalizeServicePlanResourceForPreview = (
   mediaId: resource.mediaId,
   mimeType: resource.metadata?.mimeType || options.churchResource?.storage.contentType,
   fileName: options.churchResource?.storage.fileName,
-  textContent: getServicePlanResourceDataString(resource, "text") || undefined,
+  textContent: richTextToFormattedPlainText(getServicePlanResourceText(resource)) || undefined,
   ...(options.resolveSource ? { resolveSource: options.resolveSource } : {}),
 });
 
@@ -175,7 +191,7 @@ export const createServicePlanTextResource = ({
   text,
 }: {
   title: string;
-  text: string;
+  text: RichTextDocument;
 }): ServicePlanContentResource => ({
   id: generateRandomId(),
   type: "text",

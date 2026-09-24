@@ -59,18 +59,15 @@ describe("ServicePlanContentPanel resources", () => {
     mockListChurchResources.mockReset();
   });
 
-  it("auto-expands the notes field while editing a text resource", async () => {
+  it("uses the shared rich-text toolbar while editing a text resource", async () => {
     const user = userEvent.setup();
     render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={jest.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
 
-    const notes = screen.getByRole("textbox", { name: "Notes:" }) as HTMLTextAreaElement;
-    Object.defineProperty(notes, "scrollHeight", { configurable: true, value: 120 });
-    await user.type(notes, "A longer note");
-
-    expect(notes.style.height).toBe("122px");
+    expect(screen.getByRole("toolbar", { name: "Note formatting" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
   });
 
   it("adds multiple resources and removes one without touching the other", async () => {
@@ -89,7 +86,7 @@ describe("ServicePlanContentPanel resources", () => {
     expect(firstResources[0]).toMatchObject({
       type: "text",
       title: "Sermon notes",
-      data: { text: "Welcome the guest speaker." },
+      data: { text: plainTextToRichText("Welcome the guest speaker.") },
     });
     rerender(<ServicePlanContentPanel element={element({ resources: firstResources })} allowEdit onUpdate={onUpdate} />);
 

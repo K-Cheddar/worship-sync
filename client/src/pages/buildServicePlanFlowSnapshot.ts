@@ -5,10 +5,18 @@ import {
   getServicePlanElementSongRefs,
   type ServicePlan,
 } from "../types/servicePlan";
-import { normalizeRichTextDocument, richTextToPlainText } from "../types/richText";
+import {
+  normalizeRichTextDocument,
+  richTextToFormattedPlainText,
+  richTextToPlainText,
+} from "../types/richText";
 import { getServicePlanDurationSeconds } from "./Services/servicePlanDuration";
 import { resolvePlanTimelineStartMs } from "./Services/servicePlanTimingUtils";
-import { getServicePlanResourceDataString, isHttpUrl } from "./Services/servicePlanResources";
+import {
+  getServicePlanResourceDataString,
+  getServicePlanResourceText,
+  isHttpUrl,
+} from "./Services/servicePlanResources";
 
 export type ServicePlanFlowSnapshotOptions = {
   plan: ServicePlan;
@@ -22,7 +30,7 @@ const getSongLabel = (song: ReturnType<typeof getServicePlanElementSongRefs>[num
 
 const getPublicResourceDetail = (resource: ReturnType<typeof getServicePlanElementContentResources>[number]) => {
   const detail = resource.type === "text"
-    ? getServicePlanResourceDataString(resource, "text")
+    ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
     : resource.type === "generic"
       ? getServicePlanResourceDataString(resource, "notes")
       : "";

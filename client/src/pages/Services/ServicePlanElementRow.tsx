@@ -87,6 +87,7 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDefinition,
   getServicePlanResourceDisplayLabel,
+  getServicePlanResourceText,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
@@ -2083,7 +2084,7 @@ const ServicePlanElementRow = ({
                     if (usesContentPanel) openContent(event.currentTarget);
                     return;
                   }
-                  if (resource.url || resource.data?.text || getServicePlanChurchResourceId(resource)) {
+                  if (resource.url || !isRichTextEmpty(getServicePlanResourceText(resource)) || getServicePlanChurchResourceId(resource)) {
                     openResourcePreview(resource, event);
                   }
                 }}

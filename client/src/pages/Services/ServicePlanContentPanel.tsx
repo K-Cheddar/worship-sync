@@ -20,6 +20,8 @@ import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
+import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
+import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
@@ -42,7 +44,12 @@ import {
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
-import { richTextToPlainText } from "../../types/richText";
+import {
+  EMPTY_RICH_TEXT,
+  isRichTextEmpty,
+  richTextToPlainText,
+  type RichTextDocument,
+} from "../../types/richText";
 import {
   createServicePlanAudioResource,
   createServicePlanChurchResourceReference,
@@ -54,6 +61,7 @@ import {
   getServicePlanResourceDataString,
   getServicePlanResourceDisplayLabel,
   getServicePlanResourceNotes,
+  getServicePlanResourceText,
   isHttpUrl,
   normalizeServicePlanResourceForPreview,
   isServicePlanChurchResourceReference,
@@ -137,7 +145,7 @@ const ServicePlanContentPanel = ({
   const [resourceEditorMode, setResourceEditorMode] = useState<ResourceEditorMode | null>(null);
   const [resourceTitle, setResourceTitle] = useState("");
   const [resourceUrl, setResourceUrl] = useState("");
-  const [resourceText, setResourceText] = useState("");
+  const [resourceText, setResourceText] = useState<RichTextDocument>(EMPTY_RICH_TEXT);
   const [resourceNotes, setResourceNotes] = useState("");
   const [resourceError, setResourceError] = useState("");
   const [openingResourceId, setOpeningResourceId] = useState<string | null>(null);
@@ -302,7 +310,7 @@ const ServicePlanContentPanel = ({
     setResourceEditorMode(null);
     setResourceTitle("");
     setResourceUrl("");
-    setResourceText("");
+    setResourceText(EMPTY_RICH_TEXT);
     setResourceNotes("");
     setResourceError("");
   };
@@ -316,7 +324,7 @@ const ServicePlanContentPanel = ({
     setResourceEditorMode(mode);
     setResourceTitle(resource?.title || "");
     setResourceUrl(resource?.url || "");
-    setResourceText(getServicePlanResourceDataString(resource || ({} as ServicePlanContentResource), "text"));
+    setResourceText(resource ? getServicePlanResourceText(resource) : EMPTY_RICH_TEXT);
     setResourceNotes(getServicePlanResourceNotes(resource || ({} as ServicePlanContentResource)));
     setResourceError("");
   };
@@ -330,7 +338,7 @@ const ServicePlanContentPanel = ({
       setResourceError("Enter a valid http or https URL.");
       return;
     }
-    if (resourceEditorMode === "text" && !resourceText.trim()) {
+    if (resourceEditorMode === "text" && isRichTextEmpty(resourceText)) {
       setResourceError("Add a note before saving.");
       return;
     }
@@ -534,7 +542,12 @@ const ServicePlanContentPanel = ({
       );
     }
     if (resource.type === "text") {
-      return <p className="whitespace-pre-wrap text-sm text-gray-200">{getServicePlanResourceDataString(resource, "text")}</p>;
+      return (
+        <ServiceFlowRichText
+          document={getServicePlanResourceText(resource)}
+          className="text-gray-200"
+        />
+      );
     }
     if (resource.type === "generic" || !SERVICE_PLAN_RESOURCE_TYPES.has(resource.type)) {
       return resource.data?.notes ? <p className="whitespace-pre-wrap text-sm text-gray-300">{getServicePlanResourceNotes(resource)}</p> : null;
@@ -582,7 +595,12 @@ const ServicePlanContentPanel = ({
             <Input label="URL (optional)" value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
           ) : null}
           {resourceEditorMode === "text" ? (
-            <TextArea label="Notes" value={resourceText} onChange={setResourceText} autoResize />
+            <RichTextEditor
+              label="Notes"
+              value={resourceText}
+              onChange={setResourceText}
+              placeholder="Notes for this item (optional)"
+            />
           ) : (
             <TextArea label="Notes (optional)" value={resourceNotes} onChange={setResourceNotes} autoResize />
           )}
