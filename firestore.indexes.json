@@ -61,6 +61,14 @@
       "collectionGroup": "chatMessages",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "attachmentCleanupPending", "order": "ASCENDING" },
+        { "fieldPath": "attachmentCleanupAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "dayKey", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }

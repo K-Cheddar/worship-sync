@@ -24,6 +24,8 @@ type ProjectorPresentationPreviewProps = {
   name?: string;
   /** Mirror / follower chrome for this display, shown inside the card. */
   footer?: ReactNode;
+  /** Render this display's saved slot rather than its mirrored source. */
+  resolveOwnOutput?: boolean;
 };
 
 const ProjectorPresentationPreview = memo(
@@ -38,12 +40,15 @@ const ProjectorPresentationPreview = memo(
     outputId = "projector",
     name = "Projector",
     footer,
+    resolveOwnOutput = false,
   }: ProjectorPresentationPreviewProps) => {
     // Content follows the mirror so the preview shows what is on the screen,
     // not what this display would show if it stopped mirroring. Live state stays
     // this display's own.
     const { info, prevInfo } = useSelector((state) =>
-      selectResolvedOutputSlot(state, outputId, "projector"),
+      resolveOwnOutput
+        ? selectOutputSlot(state, outputId, "projector")
+        : selectResolvedOutputSlot(state, outputId, "projector"),
     );
     const isTransmitting = useSelector(
       (state) => selectOutputSlot(state, outputId, "projector").isTransmitting,
@@ -55,6 +60,11 @@ const ProjectorPresentationPreview = memo(
     const prevTimerInfo = useSelector((state) =>
       state.timers.timers.find((timer) => timer.id === prevInfo.timerId),
     );
+    const previewFooter =
+      footer ??
+      (resolveOwnOutput && !info.slide ? (
+        <p className="text-xs text-gray-400">No independent slide staged</p>
+      ) : undefined);
 
     return (
       <PresentationPreview
@@ -74,7 +84,7 @@ const ProjectorPresentationPreview = memo(
         showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
-        footer={footer}
+        footer={previewFooter}
         isVisible={isVisible}
       />
     );

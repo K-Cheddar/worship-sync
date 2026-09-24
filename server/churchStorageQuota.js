@@ -78,7 +78,20 @@ export const getMuxStoredMinutes = (asset) => {
   return durationSeconds / 60;
 };
 
-export const sumR2ChurchMetadataUsage = ({ resources = [], songs = [] } = {}) =>
+const timestampMs = (value) => {
+  if (typeof value === "number") return value;
+  if (value instanceof Date) return value.getTime();
+  if (value && typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value === "string") return Date.parse(value);
+  return 0;
+};
+
+export const sumR2ChurchMetadataUsage = ({
+  resources = [],
+  songs = [],
+  chatMessages = [],
+  now = Date.now(),
+} = {}) =>
   resources.reduce(
     (total, resource) => total + finiteNonNegative(resource?.storage?.sizeBytes),
     0,
@@ -86,7 +99,21 @@ export const sumR2ChurchMetadataUsage = ({ resources = [], songs = [] } = {}) =>
   songs.reduce(
     (total, song) => total + finiteNonNegative(song?.songAudio?.sizeBytes),
     0,
-  );
+  ) +
+  chatMessages.reduce((total, message) => {
+    const attachment = message?.attachment;
+    const expiresAt = timestampMs(attachment?.expiresAt);
+    if (
+      attachment?.type !== "image" ||
+      expiresAt <= now ||
+      (message?.deletedAt && message?.attachmentCleanupPending !== true)
+    ) {
+      return total;
+    }
+    return total +
+      finiteNonNegative(attachment.sizeBytes) +
+      finiteNonNegative(attachment.thumbnailSizeBytes);
+  }, 0);
 
 const quotaDocId = (churchId) => encodeURIComponent(String(churchId));
 const operationDocId = (value) => encodeURIComponent(String(value));

@@ -36,6 +36,7 @@ type ItemSlideProps = {
   draggedSection: string | null;
   /** True when this slide matches last-sent presentation for enabled outputs. */
   isLive: boolean;
+  isStaged?: boolean;
   isStreamFormat: boolean;
   getBibleInfo: (index: number) => { title: string; text: string };
   borderWidth: string;
@@ -92,6 +93,7 @@ const MediaSlideInsertTarget = ({
 
 const ItemSlide = ({
   isLive,
+  isStaged = false,
   slide,
   index,
   selectSlide,
@@ -360,6 +362,10 @@ const ItemSlide = ({
             aria-label="Live on output"
           >
             Live
+          </span>
+        ) : isStaged ? (
+          <span className="pointer-events-none absolute bottom-1 right-1 z-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow">
+            Staged
           </span>
         ) : null}
         <h4

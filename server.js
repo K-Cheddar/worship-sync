@@ -81,8 +81,8 @@ import { createChurchResourceHandlers } from "./server/churchResourceApi.js";
 import { createChurchResourceUploadGuard } from "./server/churchResourceUploadGuard.js";
 import {
   createChurchStorageQuotaService,
-  sumR2ChurchMetadataUsage,
 } from "./server/churchStorageQuota.js";
+import { createChurchR2UsageLoader } from "./server/churchR2Usage.js";
 import { createProviderStorageService } from "./server/providerStorageService.js";
 import { toWorshipSyncContentDbName } from "./server/couchContentDatabase.js";
 import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
@@ -359,42 +359,17 @@ const youtubeSearchService = createYouTubeSearchService({
 });
 
 let songAudioStorage;
+const loadChurchR2Usage = createChurchR2UsageLoader({
+  getFirestore: getServerFirestore,
+  queryDocs,
+  axios,
+});
 const churchStorageQuota = createChurchStorageQuotaService({
   getFirestore: getServerFirestore,
   getChurch: (churchId) => getDoc(COLLECTIONS.churches, churchId),
   providerQuotaEnforcementEnabled: () =>
     process.env.CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED === "true",
-  loadR2Usage: async (churchId) => {
-    const firestore = getServerFirestore();
-    const resources = firestore
-      ? (await firestore.collection(COLLECTIONS.churchResources)
-          .where("churchId", "==", churchId).get())
-          .docs.map((doc) => doc.data())
-      : await queryDocs(
-          COLLECTIONS.churchResources,
-          [{ field: "churchId", value: churchId }],
-          { limit: Number.MAX_SAFE_INTEGER },
-        );
-    let songs = [];
-    if (process.env.COUCHDB_HOST && process.env.COUCHDB_USER && process.env.COUCHDB_PASSWORD) {
-      const database = toWorshipSyncContentDbName(churchId);
-      const url = `https://${process.env.COUCHDB_HOST}/${encodeURIComponent(database)}/_all_docs`;
-      const headers = {
-        Authorization: `Basic ${Buffer.from(`${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`).toString("base64")}`,
-      };
-      const pageSize = 1000;
-      for (let skip = 0; ; skip += pageSize) {
-        const response = await axios.get(url, {
-          headers,
-          params: { include_docs: true, limit: pageSize, skip },
-        });
-        const rows = response.data?.rows || [];
-        songs.push(...rows.map((row) => row.doc).filter((doc) => doc?.songAudio));
-        if (rows.length < pageSize) break;
-      }
-    }
-    return sumR2ChurchMetadataUsage({ resources, songs });
-  },
+  loadR2Usage: loadChurchR2Usage,
 });
 const getSongAudioStorage = () => {
   if (!songAudioStorage) {
@@ -440,7 +415,7 @@ const getChurchResourceHandlers = () => {
 let chatImageStorage;
 const getChatImageStorage = () => {
   if (!chatImageStorage) {
-    chatImageStorage = createChatImageStorage();
+    chatImageStorage = createChatImageStorage({ quota: churchStorageQuota });
   }
   return chatImageStorage;
 };
@@ -789,8 +764,14 @@ let planningCenterService;
 const chatService = createChatService({
   getFirestore: getServerFirestore,
   getRealtimeDatabase: getServerRealtimeDatabase,
-  onAttachmentRemoved: ({ churchId, attachment }) =>
-    getChatImageStorage().deleteAttachment({ churchId, attachment }),
+  onAttachmentRemoved: ({ churchId, attachment, expired }) =>
+    expired
+      ? getChatImageStorage().deleteExpiredAttachment({ churchId, attachment })
+      : getChatImageStorage().deleteAttachment({ churchId, attachment }),
+  onAttachmentAttached: ({ churchId, attachment }) =>
+    getChatImageStorage().commitAttachment({ churchId, attachment }),
+  onAttachmentAborted: ({ churchId, attachment }) =>
+    getChatImageStorage().abortAttachment({ churchId, attachment }),
 });
 const chatHandlers = createChatHandlers({ chatService, getChatImageStorage });
 

@@ -268,6 +268,58 @@ test("R2 reconciliation sums persisted resource and song metadata", async () => 
   assert.equal((await service.reconcileR2Usage("church-a")).r2.used, 36);
 });
 
+test("R2 usage includes only unexpired chat images and their thumbnails", () => {
+  const now = 1_000;
+  assert.equal(sumR2ChurchMetadataUsage({
+    resources: [{ storage: { sizeBytes: 100 } }],
+    songs: [{ songAudio: { sizeBytes: 200 } }],
+    now,
+    chatMessages: [
+      { attachment: { type: "image", sizeBytes: 10, thumbnailSizeBytes: 5, expiresAt: now + 1 } },
+      { attachment: { type: "image", sizeBytes: 30, thumbnailSizeBytes: 10, expiresAt: now } },
+      { attachment: { type: "image", sizeBytes: 40, thumbnailSizeBytes: 10 } },
+      {
+        deletedAt: new Date(now),
+        attachmentCleanupPending: true,
+        attachment: { type: "image", sizeBytes: 20, thumbnailSizeBytes: 5, expiresAt: now + 1 },
+      },
+      {
+        deletedAt: new Date(now),
+        attachmentCleanupPending: false,
+        attachment: { type: "image", sizeBytes: 50, thumbnailSizeBytes: 5, expiresAt: now + 1 },
+      },
+    ],
+  }), 340);
+});
+
+test("chat image full and thumbnail bytes reserve, commit, and release through the church ledger", async () => {
+  const { service } = createQuota({
+    limits: { r2Bytes: 100, cloudinaryBytes: 500, muxMinutes: 1_000 },
+    initialUsage: 0,
+  });
+  await service.reserve({
+    churchId: "church-a", provider: "r2Bytes", amount: 75, operationId: "chat-image:one",
+  });
+  await assert.rejects(
+    service.reserve({
+      churchId: "church-a", provider: "r2Bytes", amount: 30, operationId: "chat-image:two",
+    }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
+  await service.commitR2({
+    churchId: "church-a", reservationId: "chat-image:one", assetId: "chat-image:one", actualAmount: 75,
+  });
+  assert.equal((await service.getUsage("church-a")).r2.used, 75);
+  assert.equal((await service.getUsage("church-b")).r2.used, 0);
+  await service.releaseR2({
+    churchId: "church-a", reservationId: "chat-image-remove:one", assetId: "chat-image:one",
+  });
+  await service.releaseR2({
+    churchId: "church-a", reservationId: "chat-image-remove:one", assetId: "chat-image:one",
+  });
+  assert.equal((await service.getUsage("church-a")).r2.used, 0);
+});
+
 test("Cloudinary bytes and Mux stored duration accounting ignore temporary assets", async () => {
   assert.equal(getCloudinaryAssetBytes({ bytes: 1234 }), 1234);
   assert.equal(getCloudinaryAssetBytes({ byte_size: 4321 }), 4321);

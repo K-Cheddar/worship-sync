@@ -17,6 +17,37 @@ The defaults are R2 `2147483648` bytes (2 GiB), Cloudinary `524288000` bytes (50
 
 Before enabling enforcement, use an authenticated session to read `GET /api/churches/{churchId}/storage-quota` for a normal church, `eliathah`, and `demo`. Confirm the returned `quotas` report limits of 2147483648 / 524288000 / 1000 for a normal church; the same values with Mux 2000 for `eliathah`; and R2 524288000 with Cloudinary 524288000 / Mux 1000 for `demo`. Confirm the `used` values still match the completed backfill and the church documents still have `providerUsageReady: true`. Keep `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED` unset or `false` until those checks pass; this quota configuration does not enable enforcement.
 
+## Chat image R2 accounting prerequisite
+
+This deployment also moves new chat photos to `R2_RESOURCES_BUCKET`. Keep
+`R2_BUCKET` assigned to the SongAudio bucket. Before enabling provider quota
+enforcement:
+
+1. Configure the Resources bucket CORS for the deployed WorshipSync and local
+   development origins, allowing browser `PUT` and `GET` with `Content-Type`.
+2. Configure Resources bucket lifecycle rules for `pending/chat/` after 1 day
+   and `chat/` after 30 days. Keep the existing `pending/churches/` 1-day rule
+   for ChurchResource uploads; do not expire `churches/`.
+3. Deploy the server, client, and Firestore indexes. Schedule
+   `npm run cleanup:chat-images` daily with Firebase Admin, CouchDB, and
+   `R2_RESOURCES_BUCKET` credentials.
+4. Once deployment is live and any current uploads have settled, run
+   `npm run cleanup:chat-images` once. Confirm it reports no failed cleanup or
+   church reconciliation. This initializes R2 usage from Resources, SongAudio,
+   and unexpired chat attachment metadata. New chat image uploads reserve and
+   commit actual processed full-image and thumbnail bytes through the existing
+   R2 quota ledger.
+5. Recheck the authenticated storage-quota endpoint for representative
+   churches. Confirm the R2 `used` value includes chat photos and thumbnails,
+   while Cloudinary and Mux values remain those recorded by the completed
+   provider backfill. Only then follow the rollout step that enables
+   `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED`.
+
+Do not rerun provider-storage backfill for this quota change. The completed
+backfill state and usage records remain untouched. New or legacy chat objects
+without a valid `expiresAt` are not counted; legacy demo images remain
+unavailable after the bucket switch and are not copied automatically.
+
 ## Production sequence
 
 1. Deploy the server and client with `CHURCH_PROVIDER_STORAGE_QUOTAS_ENABLED=false`. Confirm Cloudinary, Mux, Firebase Admin, and CouchDB credentials are present in the backfill environment. The backfill process never prints credentials.

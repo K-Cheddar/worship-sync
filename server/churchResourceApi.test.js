@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createChurchResourceHandlers } from "./churchResourceApi.js";
+import { createChurchR2UsageLoader } from "./churchR2Usage.js";
 
 const makeResponse = () => ({
   statusCode: 200,
@@ -87,6 +88,52 @@ test("resource upload admission returns structured quota errors and the church q
   assert.equal(rejected.statusCode, 413);
   assert.equal(rejected.body.code, "CHURCH_STORAGE_QUOTA_EXCEEDED");
   assert.equal(rejected.body.quota, "r2Bytes");
+});
+
+test("authenticated church storage quota endpoint includes chat image and thumbnail bytes", async () => {
+  const firestore = {
+    collection(name) {
+      return {
+        where(_field, _operator, churchId) {
+          return {
+            async get() {
+              const docs = name === "chatMessages" && churchId === "church-1"
+                ? [{
+                    churchId,
+                    attachment: {
+                      type: "image",
+                      sizeBytes: 700,
+                      thumbnailSizeBytes: 120,
+                      expiresAt: Date.now() + 60_000,
+                    },
+                  }]
+                : [];
+              return { docs: docs.map((data) => ({ data: () => data })) };
+            },
+          };
+        },
+      };
+    },
+  };
+  const loadR2Usage = createChurchR2UsageLoader({
+    getFirestore: () => firestore,
+    env: {},
+  });
+  const { handlers } = makeHarness({
+    quota: {
+      async getUsage(churchId) {
+        return {
+          r2: { used: await loadR2Usage(churchId), limit: 2 * 1024 ** 3, unit: "bytes" },
+          cloudinary: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+          mux: { used: 0, limit: 1000, unit: "minutes" },
+        };
+      },
+    },
+  });
+  const response = makeResponse();
+  await handlers.storageQuota(request("church-1"), response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.quotas.r2.used, 820);
 });
 
 const request = (churchId, body = {}, extra = {}) => ({

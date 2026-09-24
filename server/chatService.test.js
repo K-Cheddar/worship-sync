@@ -161,6 +161,42 @@ test("creates, lists, and idempotently retries a daily message", async () => {
   );
 });
 
+test("commits chat image quota before publishing the permanent message", async () => {
+  const order = [];
+  const service = createChatService({
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
+    onAttachmentAttached: async () => { order.push("quota-committed"); },
+  });
+  service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-09",
+    onEvent: (event) => {
+      if (event.type === "message-updated") order.push("message-published");
+    },
+  });
+  await service.createMessage({
+    churchId: "church_1",
+    session: humanSession,
+    text: "Photo",
+    clientMessageId: "client-image-quota-order",
+    completeAttachment: async () => ({
+      type: "image",
+      id: "12345678-1234-4123-8123-123456789abc",
+      key: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/image.webp",
+      thumbnailKey: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/thumbnail.webp",
+      contentType: "image/webp",
+      sizeBytes: 100,
+      thumbnailSizeBytes: 20,
+      expiresAt: Date.parse("2026-09-08T16:00:00.000Z"),
+      width: 32,
+      height: 24,
+      thumbnailWidth: 32,
+      thumbnailHeight: 24,
+    }),
+  });
+  assert.deepEqual(order, ["quota-committed", "message-published"]);
+});
+
 test("validates message content and retained history range", async () => {
   const { service } = createService();
   await assert.rejects(
@@ -570,8 +606,8 @@ test("stores private image keys while serializing only safe attachment metadata"
   const attachment = {
     type: "image",
     id: "12345678-1234-4123-8123-123456789abc",
-    key: "churches/church_1/chat/id/image.webp",
-    thumbnailKey: "churches/church_1/chat/id/thumbnail.webp",
+    key: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/image.webp",
+    thumbnailKey: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/thumbnail.webp",
     contentType: "image/webp",
     sizeBytes: 1200,
     thumbnailSizeBytes: 300,
@@ -579,6 +615,7 @@ test("stores private image keys while serializing only safe attachment metadata"
     height: 800,
     thumbnailWidth: 480,
     thumbnailHeight: 320,
+    expiresAt: Date.parse("2026-09-08T16:00:00.000Z"),
   };
   const message = await service.createMessage({
     churchId: "church_1",
@@ -622,6 +659,78 @@ test("stores private image keys while serializing only safe attachment metadata"
       messageId: message.messageId,
     }),
     /no longer available/i,
+  );
+});
+
+test("failed message deletion cleanup retries from the durable attachment marker", async () => {
+  let attempts = 0;
+  const retryingService = createChatService({
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
+    onAttachmentRemoved: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary R2 failure");
+    },
+  });
+  const message = await retryingService.createMessage({
+    churchId: "church_1",
+    session: humanSession,
+    text: "",
+    clientMessageId: "client-image-cleanup-retry",
+    timeZoneHint: "UTC",
+    attachment: {
+      type: "image",
+      id: "12345678-1234-4123-8123-123456789abc",
+      key: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/image.webp",
+      thumbnailKey: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/thumbnail.webp",
+      contentType: "image/webp",
+      sizeBytes: 120,
+      thumbnailSizeBytes: 30,
+      width: 120,
+      height: 80,
+      thumbnailWidth: 48,
+      thumbnailHeight: 32,
+    },
+  });
+  await retryingService.deleteMessage({
+    churchId: "church_1",
+    session: humanSession,
+    messageId: message.messageId,
+  });
+  const report = await retryingService.cleanupDueAttachments();
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(report, { scanned: 1, due: 1, cleaned: 1, failed: 0 });
+});
+
+test("image download is rejected at the exact attachment expiry boundary", async () => {
+  const { service, setNow } = createService();
+  const expiresAt = Date.parse("2026-08-10T16:00:00.000Z");
+  const message = await service.createMessage({
+    churchId: "church_1",
+    session: humanSession,
+    text: "",
+    clientMessageId: "client-image-expiry-boundary",
+    timeZoneHint: "UTC",
+    attachment: {
+      type: "image",
+      id: "12345678-1234-4123-8123-123456789abc",
+      key: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/image.webp",
+      thumbnailKey: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/thumbnail.webp",
+      contentType: "image/webp",
+      sizeBytes: 120,
+      thumbnailSizeBytes: 30,
+      width: 120,
+      height: 80,
+      thumbnailWidth: 48,
+      thumbnailHeight: 32,
+      expiresAt,
+    },
+  });
+
+  setNow(expiresAt);
+  await assert.rejects(
+    service.getImageAttachment({ churchId: "church_1", messageId: message.messageId }),
+    (error) => error.statusCode === 410 && error.code === "CHAT_IMAGE_EXPIRED",
   );
 });
 

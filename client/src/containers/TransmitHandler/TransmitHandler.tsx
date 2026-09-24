@@ -107,6 +107,13 @@ const TransmitHandler = ({
   // what keeps an auxiliary controller from showing — or arming — a display
   // that belongs to someone else.
   const displayOutputs = useSelector(selectDisplayOutputs);
+  const followingOutputIdByOutputId = useSelector((state) => {
+    const map: Record<string, string> = {};
+    for (const slot of Object.values(selectOutputSlots(state))) {
+      map[slot.id] = slot.followingOutputId ?? "";
+    }
+    return map;
+  }, shallowEqual);
   const controllerProfile = useActiveControllerProfile();
   const ownedOutputs = useMemo(
     () => getControllerOutputs(controllerProfile, displayOutputs),
@@ -123,8 +130,9 @@ const TransmitHandler = ({
   );
 
   // Aux controllers join another room's screen for a shared moment (sermon,
-  // announcements) without sending there. Sources are every same-type display
-  // this controller does not own — owned screens stay independently driven.
+  // announcements) without sending there. Sources are enabled same-type
+  // displays this controller does not own, plus a currently followed source
+  // that became unavailable so its last preview and status remain visible.
   const mirrorSourceIdsByOutput = useMemo(() => {
     if (controllerProfile.type !== "aux-presentation") return {};
     const ownedIds = new Set(ownedOutputs.map((output) => output.id));
@@ -132,14 +140,20 @@ const TransmitHandler = ({
       acc[output.id] = displayOutputs
         .filter(
           (candidate) =>
-            candidate.enabled &&
+            (candidate.enabled ||
+              followingOutputIdByOutputId[output.id] === candidate.id) &&
             candidate.type === output.type &&
             !ownedIds.has(candidate.id),
         )
         .map((candidate) => candidate.id);
       return acc;
     }, {});
-  }, [controllerProfile.type, ownedOutputs, displayOutputs]);
+  }, [
+    controllerProfile.type,
+    ownedOutputs,
+    displayOutputs,
+    followingOutputIdByOutputId,
+  ]);
 
   // Keep eligible source previews visible before a mirror is selected. This
   // makes the source and the follower's mirror control a single visual pair;
@@ -578,14 +592,33 @@ const TransmitHandler = ({
               // Mirror controls stay on the follower only. The source does not
               // need a "mirrored by" badge — that status is irrelevant there.
               const displayFooter =
-                !isMirrorSource &&
-                !readOnly &&
-                controllerProfile.type === "aux-presentation" ? (
-                  <MirrorDisplayTile
-                    outputId={output.id}
-                    sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
-                  />
-                ) : null;
+                isMirrorSource ? (
+                  <div className="w-full px-2 pb-2 text-center text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
+                    SOURCE
+                  </div>
+                ) : !readOnly &&
+                  controllerProfile.type === "aux-presentation" ? (
+                    <MirrorDisplayTile
+                      outputId={output.id}
+                      sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
+                      stagedPreview={
+                        output.type === "projector" ? (
+                          <ProjectorPresentationPreview
+                            outputId={output.id}
+                            name="Staged for TVs"
+                            readOnly
+                            resolveOwnOutput
+                            quickLinks={[]}
+                            toggleIsTransmitting={NOOP_TOGGLE}
+                            isMobile={isMobile}
+                            previewScale={previewScale}
+                            fillWidth={fillWidth}
+                            isVisible={isPreviewActive}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  ) : null;
               const outputReadOnly = readOnly || isMirrorSource;
               const toggleIsTransmitting = isMirrorSource
                 ? NOOP_TOGGLE
