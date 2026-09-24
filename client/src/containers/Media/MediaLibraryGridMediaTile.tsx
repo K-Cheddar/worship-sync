@@ -4,7 +4,11 @@ import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiS
 import MediaTypeBadge from "./MediaTypeBadge";
 import cn from "classnames";
 import type { MediaType } from "../../types";
-import { getMediaLibraryOriginBadgeLabel } from "./mediaLibraryOrigin";
+import {
+  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES,
+  getMediaLibraryOrigin,
+  getMediaLibraryOriginBadgeLabel,
+} from "./mediaLibraryOrigin";
 import { useDraggable } from "@dnd-kit/core";
 import type { MediaDragData } from "../../utils/presentationDnd";
 import MediaLibraryMediaVisual from "./MediaLibraryMediaVisual";
@@ -57,6 +61,8 @@ export default function MediaLibraryGridMediaTile({
     ? name.split("/").slice(1).join("/")
     : name;
   const originBadgeLabel = getMediaLibraryOriginBadgeLabel(mediaItem);
+  const originBadgeClassName =
+    MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES[getMediaLibraryOrigin(mediaItem)].badge;
 
   const dragMediaIds =
     isMultiSelected && orderedSelectedMediaIds.length > 0
@@ -179,7 +185,12 @@ export default function MediaLibraryGridMediaTile({
           />
           <MediaTypeBadge type={type} />
           {originBadgeLabel ? (
-            <span className="absolute right-1.5 top-1.5 rounded bg-cyan-950/90 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100 ring-1 ring-cyan-500/60">
+            <span
+              className={cn(
+                "absolute right-1.5 top-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1",
+                originBadgeClassName,
+              )}
+            >
               {originBadgeLabel}
             </span>
           ) : null}

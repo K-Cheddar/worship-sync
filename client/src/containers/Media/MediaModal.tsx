@@ -40,6 +40,7 @@ import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
+import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -341,7 +342,9 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={() => onAddMediaClick()}
             >
-              <HardDrive /> Add files
+              <HardDrive
+                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
+              /> Add files
             </DropdownMenuItem>
           ) : null}
           {onAddVideoInput ? (
@@ -349,7 +352,11 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={onAddVideoInput}
             >
-              <Video /> Add video input
+              <Video
+                className={
+                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                }
+              /> Add video input
             </DropdownMenuItem>
           ) : null}
           {onAddScreenShare ? (
@@ -357,7 +364,11 @@ const MediaModal = ({
               disabled={mediaUploadDisabled}
               onSelect={onAddScreenShare}
             >
-              <MonitorUp /> Add screen or window
+              <MonitorUp
+                className={
+                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
+                }
+              /> Add screen or window
             </DropdownMenuItem>
           ) : null}
           {onImportFromCanva ? (
@@ -365,7 +376,9 @@ const MediaModal = ({
               disabled={mediaUploadDisabled || isGuestSession}
               onSelect={() => onImportFromCanva()}
             >
-              <ImageUp /> Import from Canva
+              <ImageUp
+                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon}
+              /> Import from Canva
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>
