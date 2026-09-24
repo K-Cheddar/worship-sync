@@ -1,3 +1,31 @@
+# [2.38.0](https://github.com/K-Cheddar/worship-sync/compare/v2.37.1...v2.38.0) (2026-09-24)
+
+
+### Bug Fixes
+
+* **auth:** use method-aware sign-in errors ([d8129eb](https://github.com/K-Cheddar/worship-sync/commit/d8129eb76fab80fc8fdd10a585dc6645009378ca))
+* **aux-controller:** preserve alternate mirror previews ([3257ded](https://github.com/K-Cheddar/worship-sync/commit/3257ded8704b44a2573855566a0bbf7a54b5379e))
+* **controller:** remove speculative next badge ([c361f8b](https://github.com/K-Cheddar/worship-sync/commit/c361f8bb251ef5c5d9bccca3c2165d47c7867e67))
+* Minor improvements for media ([d0e9290](https://github.com/K-Cheddar/worship-sync/commit/d0e9290b1c2d35121c16ae8ba691429b05e90f9d))
+* **previews:** restore two-column display layout ([8b58469](https://github.com/K-Cheddar/worship-sync/commit/8b58469ea307f603d8afd08e3b1ee289a14cfa64))
+* **rich-text:** restore updates after strict mode replay ([ed41372](https://github.com/K-Cheddar/worship-sync/commit/ed413726d356505b58b54962db3242b765825758))
+* **service-plan:** address content review findings ([cb8c6b7](https://github.com/K-Cheddar/worship-sync/commit/cb8c6b7f3046f65bdef786fd6fbb75e3a1c77477))
+* **service-plans:** preserve custom document references ([bed6420](https://github.com/K-Cheddar/worship-sync/commit/bed64200a0b859e3024b82376b23769af273106d))
+* **services:** preserve formatting in resource notes ([66c5ed6](https://github.com/K-Cheddar/worship-sync/commit/66c5ed62747d6a1f9411b5770847d046586ac2e4))
+* **teams:** refresh stale data on a bounded interval ([782ed65](https://github.com/K-Cheddar/worship-sync/commit/782ed6555def285c4826d8e802b58218d670723c))
+
+
+### Features
+
+* **aux-controller:** reorder previews ([76340a0](https://github.com/K-Cheddar/worship-sync/commit/76340a0c8cd4be69c3e9d6eefd19ec1347484f56))
+* **controller:** simplify service plan selector ([ffad620](https://github.com/K-Cheddar/worship-sync/commit/ffad62078100b5462c9a66526580233e4ed7c19b))
+* **media:** color source labels and icons ([2a35b61](https://github.com/K-Cheddar/worship-sync/commit/2a35b61a3b64c549e332d1750661aa68118707e0))
+* **service-plan:** normalize controller content references ([e196c6f](https://github.com/K-Cheddar/worship-sync/commit/e196c6f88fffbed056c4cfbbe4a4cf9596113634))
+* **service-plan:** render public plan resources as pills ([f3e728a](https://github.com/K-Cheddar/worship-sync/commit/f3e728a53defbef58a66b877771f2fc782ce817f))
+* **service-plans:** support custom documents ([5922de1](https://github.com/K-Cheddar/worship-sync/commit/5922de142a6da501edf7afab94a5d78f92f491cc))
+* **services:** use rich text for resource notes ([e4a1e55](https://github.com/K-Cheddar/worship-sync/commit/e4a1e551e573d1ba801afb804ad584a67f27e0cc))
+* **workspace:** add cross-controller previews ([b627568](https://github.com/K-Cheddar/worship-sync/commit/b62756824803521a85b5965f72544d8e14980631))
+
 ## [2.37.1](https://github.com/K-Cheddar/worship-sync/compare/v2.37.0...v2.37.1) (2026-09-24)
 
 
