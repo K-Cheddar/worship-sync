@@ -25,6 +25,8 @@ const createHarness = ({ libraries, cloudAsset, muxAsset } = {}) => {
   const muxState = { ...(muxAsset || { id: "mux-1", duration: 120, status: "ready", meta: {} }) };
   const quota = {
     listProviderAssets: async ({ churchId }) => [...owners.values()].filter((row) => row.churchId === churchId),
+    listProviderUploads: async () => [],
+    recordProviderUpload: async () => {},
     getProviderAssetOwner: async ({ provider, assetId }) => owners.get(`${provider}:${assetId}`) || null,
     recordProviderAsset: async (row) => {
       const key = `${row.provider}:${row.assetId}`;
@@ -50,6 +52,7 @@ const createHarness = ({ libraries, cloudAsset, muxAsset } = {}) => {
       video: {
         assets: {
           retrieve: async () => muxState,
+          list: async function* () { yield muxState; },
           update: async (...args) => {
             passthroughs.push(args);
             muxState.passthrough = args[1].passthrough;
@@ -93,6 +96,21 @@ test("ambiguous cross-church provider references are reported without assigning 
   assert.equal(harness.records.size, 0);
   assert.equal(harness.ready.size, 0);
   assert.deepEqual(report.churches.map((church) => church.issues[0].type), ["ambiguous", "ambiguous"]);
+});
+
+test("Mux assets with church metadata are reconciled without a Media-library reference", async () => {
+  const harness = createHarness({
+    libraries: { "church-a": { list: [] } },
+    muxAsset: {
+      id: "abandoned-mux-asset",
+      duration: 180,
+      status: "ready",
+      meta: { creator_id: "church-a", external_id: "media-that-was-never-saved" },
+    },
+  });
+  const report = await harness.service.run();
+  assert.equal(report.complete, true);
+  assert.equal(harness.records.get("muxMinutes:abandoned-mux-asset"), 3);
 });
 
 test("dry run reports usage without mutating provider metadata or quota ownership", async () => {

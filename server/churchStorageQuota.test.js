@@ -22,18 +22,34 @@ class MemoryFirestore {
     const makeRef = (id) => ({
       id,
       get: async () => snapshot(docs, id),
+      set: async (value, options = {}) => {
+        const current = docs.get(id) || {};
+        docs.set(id, options.merge ? { ...current, ...value } : { ...value });
+      },
       _docs: docs,
     });
     return {
       doc: (id) => makeRef(id),
-      where: (field, operator, value) => ({
-        _query: true,
-        docs,
-        filters: [[field, operator, value]],
-        where(nextField, nextOperator, nextValue) {
-          return { ...this, filters: [...this.filters, [nextField, nextOperator, nextValue]] };
-        },
-      }),
+      where: (field, operator, value) => {
+        const makeQuery = (filters) => ({
+          _query: true,
+          docs,
+          filters,
+          where(nextField, nextOperator, nextValue) {
+            return makeQuery([...filters, [nextField, nextOperator, nextValue]]);
+          },
+          get: async () => ({
+            docs: [...docs.entries()]
+              .filter(([, data]) => filters.every(([filterField, filterOperator, filterValue]) => {
+                if (filterOperator === "==") return data[filterField] === filterValue;
+                if (filterOperator === "<=") return data[filterField] <= filterValue;
+                return false;
+              }))
+              .map(([id, data]) => ({ id, data: () => data })),
+          }),
+        });
+        return makeQuery([[field, operator, value]]);
+      },
       _docs: docs,
     };
   }
@@ -399,6 +415,35 @@ test("Cloudinary bytes and Mux stored duration accounting ignore temporary asset
     assetId: "video",
   }), "church-a");
   assert.equal((await service.getUsage("church-a")).mux.used, 0);
+});
+
+test("Mux direct uploads retain durable completion tracking for reconciliation", async () => {
+  const { service } = createQuota();
+  await service.recordProviderUpload({
+    churchId: "church-a",
+    provider: "mux",
+    uploadId: "upload-1",
+    mediaId: "media-1",
+  });
+  await service.recordProviderUpload({
+    churchId: "church-a",
+    provider: "mux",
+    uploadId: "upload-1",
+    mediaId: "media-1",
+    status: "asset_created",
+    assetId: "asset-1",
+  });
+  assert.deepEqual(await service.listProviderUploads({ churchId: "church-a" }), [{
+    churchId: "church-a",
+    provider: "mux",
+    uploadId: "upload-1",
+    mediaId: "media-1",
+    temporary: false,
+    status: "asset_created",
+    assetId: "asset-1",
+    updatedAt: 1_000,
+    createdAt: 1_000,
+  }]);
 });
 
 test("provider replacement admission uses the old asset as credit and deletion releases it after commit", async () => {

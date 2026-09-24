@@ -142,6 +142,7 @@ export const createChurchStorageQuotaService = ({
   const operationCollection = "churchStorageQuotaOperations";
   const lockCollection = "churchStorageQuotaLocks";
   const providerAssetCollection = "churchStorageQuotaProviderAssets";
+  const providerUploadCollection = "churchStorageQuotaProviderUploads";
 
   const getRefs = (db, churchId) => ({
     quota: db.collection(collection).doc(quotaDocId(churchId)),
@@ -627,6 +628,53 @@ export const createChurchStorageQuotaService = ({
     return snapshot.docs.map((doc) => doc.data());
   };
 
+  const providerUploadRef = (db, provider, uploadId) =>
+    db.collection(providerUploadCollection)
+      .doc(operationDocId(`${provider}:${uploadId}`));
+
+  const recordProviderUpload = async ({
+    churchId,
+    provider,
+    uploadId,
+    mediaId,
+    temporary = false,
+    status = "waiting",
+    assetId,
+  }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const ref = providerUploadRef(db, provider, uploadId);
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      const existing = snapshot.exists ? snapshot.data() : null;
+      if (existing?.churchId && existing.churchId !== churchId) {
+        throw new Error("That provider upload is already assigned to another church.");
+      }
+      const recordedAt = now();
+      transaction.set(ref, {
+        ...(existing || {}),
+        churchId,
+        provider,
+        uploadId,
+        ...(mediaId ? { mediaId } : {}),
+        temporary: Boolean(temporary),
+        status,
+        ...(assetId ? { assetId } : {}),
+        updatedAt: recordedAt,
+        ...(existing?.createdAt ? {} : { createdAt: recordedAt }),
+      }, { merge: true });
+    });
+    return { id: ref.id };
+  };
+
+  const listProviderUploads = async ({ churchId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const snapshot = await db.collection(providerUploadCollection)
+      .where("churchId", "==", churchId).get();
+    return snapshot.docs.map((doc) => doc.data());
+  };
+
   const markProviderUsageReady = async ({ churchId }) => {
     const db = getFirestore?.();
     if (!db) throw new Error("Church storage quota persistence is unavailable.");
@@ -681,6 +729,8 @@ export const createChurchStorageQuotaService = ({
     removeProviderAssetByIdentity,
     getProviderAssetOwner,
     listProviderAssets,
+    recordProviderUpload,
+    listProviderUploads,
     markProviderUsageReady,
     markProviderUsageNotReady,
     isProviderUsageReady,

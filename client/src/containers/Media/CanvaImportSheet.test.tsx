@@ -309,6 +309,7 @@ test("refreshes an existing Canva media record when its design revision changes"
     pages: [1],
     format: "png",
     existingImportKeys: ["canva:DAF_design_1:rev:100:png:1"],
+    replacementAssets: [],
   }, undefined, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
@@ -377,7 +378,7 @@ test("refreshes an existing Canva video through the awaited callback", async () 
     skippedCount: 0,
     revision: 101,
   });
-  const onVideoRefresh = jest.fn(async () => {});
+  const onVideoRefresh = jest.fn(async () => { });
 
   render(
     <MemoryRouter>
@@ -470,7 +471,7 @@ test("awaits each refreshed Canva page before starting the next callback", async
     skippedCount: 0,
     revision: 101,
   });
-  let releaseFirst: () => void = () => {};
+  let releaseFirst: () => void = () => { };
   const firstRefreshComplete = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
@@ -729,6 +730,7 @@ test("creates a one-slide custom item for an imported Canva video", async () => 
     format: "mp4",
     mp4ImportMode: "combined",
     existingImportKeys: [],
+    replacementAssets: [],
   }, undefined, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
@@ -831,6 +833,7 @@ test("creates one custom-item slide per imported Canva video page", async () => 
     format: "mp4",
     mp4ImportMode: "separate",
     existingImportKeys: [],
+    replacementAssets: [],
   }, expect.any(Function), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 

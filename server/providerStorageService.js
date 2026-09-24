@@ -151,6 +151,22 @@ export const createProviderStorageService = ({
         passthrough: `worship-sync:church:${churchId}:${identity}`,
       },
     });
+    try {
+      await storageQuota.recordProviderUpload?.({
+        churchId,
+        provider: "mux",
+        uploadId: upload.id,
+        mediaId: temporary ? undefined : mediaId,
+        temporary,
+        status: upload.status || "waiting",
+        assetId: upload.asset_id,
+      });
+    } catch (error) {
+      if (typeof mux.video.uploads.cancel === "function") {
+        await mux.video.uploads.cancel(upload.id).catch(() => {});
+      }
+      throw error;
+    }
     return { uploadId: upload.id, url: upload.url };
   };
 
@@ -166,6 +182,17 @@ export const createProviderStorageService = ({
       error.statusCode = 403;
       throw error;
     }
+    await storageQuota.recordProviderUpload?.({
+      churchId,
+      provider: "mux",
+      uploadId: upload.id || uploadId,
+      mediaId: upload.new_asset_settings?.meta?.external_id?.startsWith("temporary:")
+        ? undefined
+        : upload.new_asset_settings?.meta?.external_id,
+      temporary: upload.new_asset_settings?.meta?.external_id?.startsWith("temporary:"),
+      status: upload.status,
+      assetId: upload.asset_id,
+    });
     return { status: upload.status, assetId: upload.asset_id };
   };
 

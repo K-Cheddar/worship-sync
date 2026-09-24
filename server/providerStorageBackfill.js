@@ -37,6 +37,17 @@ const findCloudinaryChurchMetadata = (asset) => {
   return nonEmpty(context.worshipsync_church_id);
 };
 
+const muxChurchFromPassthrough = (passthrough) => {
+  const match = nonEmpty(passthrough).match(/^worship-sync:church:([^:]+):/);
+  return match?.[1] || "";
+};
+
+const muxAssetChurchId = (asset) =>
+  nonEmpty(asset?.meta?.creator_id) || muxChurchFromPassthrough(asset?.passthrough);
+
+const muxAssetIsTemporary = (asset) =>
+  nonEmpty(asset?.meta?.external_id).startsWith("temporary:");
+
 export const createProviderStorageBackfill = ({
   listChurches,
   readMediaLibrary,
@@ -54,6 +65,22 @@ export const createProviderStorageBackfill = ({
     }
     const reports = [];
     const references = new Map();
+    const knownChurchIds = new Set(
+      churches.map((church) => nonEmpty(church.id || church.churchId)).filter(Boolean),
+    );
+    const reportFor = (churchId) => {
+      const existing = reports.find((report) => report.churchId === churchId);
+      if (existing) return existing;
+      const report = {
+        churchId,
+        cloudinaryBytes: 0,
+        muxMinutes: 0,
+        processedAssets: 0,
+        issues: [],
+      };
+      reports.push(report);
+      return report;
+    };
     const addReference = (churchId, reference) => {
       if (!reference?.assetId) return false;
       const key = providerKey(reference.provider, reference.assetId);
@@ -113,6 +140,83 @@ export const createProviderStorageBackfill = ({
           continue;
         }
         addReference(churchId, reference);
+      }
+    }
+
+    for (const church of churches) {
+      const churchId = nonEmpty(church.id || church.churchId);
+      if (!churchId || typeof storageQuota.listProviderUploads !== "function") continue;
+      const report = reportFor(churchId);
+      try {
+        for (const tracked of await storageQuota.listProviderUploads({ churchId })) {
+          if (
+            tracked?.provider !== "mux" ||
+            tracked?.temporary ||
+            !tracked?.uploadId
+          ) continue;
+          const upload = await muxClient.video.uploads.retrieve(tracked.uploadId);
+          if (upload.asset_id) {
+            addReference(churchId, {
+              provider: "muxMinutes",
+              assetId: upload.asset_id,
+              mediaId: nonEmpty(tracked.mediaId),
+            });
+          }
+          if (!dryRun) {
+            await storageQuota.recordProviderUpload?.({
+              churchId,
+              provider: "mux",
+              uploadId: tracked.uploadId,
+              mediaId: nonEmpty(tracked.mediaId) || undefined,
+              temporary: false,
+              status: upload.status,
+              assetId: upload.asset_id,
+            });
+          }
+        }
+      } catch (error) {
+        report.issues.push({
+          type: "unowned",
+          reason: `Could not reconcile tracked Mux uploads: ${error.message}`,
+        });
+      }
+    }
+
+    if (typeof muxClient?.video?.assets?.list !== "function") {
+      for (const report of reports) {
+        report.issues.push({
+          type: "unowned",
+          reason: "Mux asset enumeration is unavailable; provider storage cannot be reconciled comprehensively.",
+        });
+      }
+    } else {
+      try {
+        for await (const asset of muxClient.video.assets.list()) {
+          if (muxAssetIsTemporary(asset)) continue;
+          const churchId = muxAssetChurchId(asset);
+          if (!churchId || !asset?.id) continue;
+          if (!knownChurchIds.has(churchId)) {
+            reportFor(churchId).issues.push({
+              type: "unowned",
+              provider: "muxMinutes",
+              assetId: asset.id,
+              reason: "Mux ownership metadata names a church that is not present in the church registry.",
+            });
+            continue;
+          }
+          addReference(churchId, {
+            provider: "muxMinutes",
+            assetId: asset.id,
+            mediaId: nonEmpty(asset?.meta?.external_id),
+          });
+        }
+      } catch (error) {
+        for (const report of reports) {
+          report.issues.push({
+            type: "unowned",
+            reason: `Could not enumerate Mux assets: ${error.message}`,
+          });
+        }
       }
     }
 

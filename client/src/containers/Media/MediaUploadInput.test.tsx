@@ -388,6 +388,7 @@ describe("MediaUploadInput", () => {
           isCancelled: expect.any(Function),
           onProgress: expect.any(Function),
         }),
+        "church-1",
       );
     });
     await waitFor(() => {

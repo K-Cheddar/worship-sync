@@ -3,17 +3,19 @@ import test from "node:test";
 import { ChurchStorageQuotaError } from "./churchStorageQuota.js";
 import { createProviderStorageService } from "./providerStorageService.js";
 
-const createQuota = ({ owner = null, record = async () => {}, remove = async () => {} } = {}) => ({
+const createQuota = ({ owner = null, record = async () => {}, remove = async () => {}, recordUpload = async () => {} } = {}) => ({
   assertProviderUsageReady: async () => {},
   getProviderAssetOwner: async () => owner,
   recordProviderAsset: record,
   removeProviderAsset: remove,
+  recordProviderUpload: recordUpload,
 });
 
 test("normal Mux uploads carry church ownership and media identity metadata", async () => {
   let settings;
+  let tracked;
   const service = createProviderStorageService({
-    storageQuota: createQuota(),
+    storageQuota: createQuota({ recordUpload: async (value) => { tracked = value; } }),
     getMuxClient: () => ({
       video: { uploads: { create: async (value) => { settings = value; return { id: "upload-1", url: "https://upload" }; } } },
     }),
@@ -22,6 +24,15 @@ test("normal Mux uploads carry church ownership and media identity metadata", as
   assert.equal(settings.new_asset_settings.meta.creator_id, "church-a");
   assert.equal(settings.new_asset_settings.meta.external_id, "media-1");
   assert.equal(settings.new_asset_settings.meta.title, "Service opener");
+  assert.deepEqual(tracked, {
+    churchId: "church-a",
+    provider: "mux",
+    uploadId: "upload-1",
+    mediaId: "media-1",
+    temporary: false,
+    status: "waiting",
+    assetId: undefined,
+  });
 });
 
 test("unreconciled churches are rejected before a permanent Mux upload is created", async () => {
