@@ -275,6 +275,86 @@ describe("DeviceQrScanner", () => {
     expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
   });
 
+  it("falls back to jsQR when native detection remains pending", async () => {
+    jest.useFakeTimers();
+    try {
+      const detector = {
+        detect: jest.fn(() => new Promise<{ rawValue: string }[]>(() => undefined)),
+      };
+      installBarcodeDetector(detector);
+      const pixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+      const onAccepted = jest.fn();
+      const { frameCallbacks } = await setupActiveScanner(() => pixels, onAccepted);
+
+      await act(async () => frameCallbacks.shift()?.(200));
+      expect(detector.detect).toHaveBeenCalledTimes(1);
+      expect(onAccepted).not.toHaveBeenCalled();
+
+      await act(async () => jest.advanceTimersByTime(1_500));
+
+      expect(onAccepted).toHaveBeenCalledTimes(1);
+      expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a native result that arrives after the pending detection timed out", async () => {
+    jest.useFakeTimers();
+    try {
+      let resolveDetection: ((results: { rawValue: string }[]) => void) | undefined;
+      const detector = {
+        detect: jest.fn(() => new Promise<{ rawValue: string }[]>((resolve) => { resolveDetection = resolve; })),
+      };
+      installBarcodeDetector(detector);
+      const emptyFrame = { data: new Uint8ClampedArray(320 * 240 * 4), width: 320, height: 240 };
+      const pixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+      const getImageData = jest.fn().mockReturnValueOnce(emptyFrame).mockReturnValue(pixels);
+      const onAccepted = jest.fn();
+      const { frameCallbacks } = await setupActiveScanner(getImageData, onAccepted);
+
+      await act(async () => frameCallbacks.shift()?.(200));
+      await act(async () => jest.advanceTimersByTime(1_500));
+      expect(getImageData).toHaveBeenCalledTimes(1);
+      expect(onAccepted).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveDetection?.([{ rawValue: "https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123" }]);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(onAccepted).not.toHaveBeenCalled();
+
+      await act(async () => frameCallbacks.shift()?.(1_800));
+      expect(onAccepted).toHaveBeenCalledTimes(1);
+      expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("falls back to jsQR after repeated native values fail pairing validation", async () => {
+    const detector = {
+      detect: jest.fn().mockResolvedValue([{ rawValue: "https://www.worshipsync.net/#/not-a-device-link" }]),
+    };
+    installBarcodeDetector(detector);
+    const pixels = createCameraFramePixels("https://www.worshipsync.net/#/device-pairing/approve/devicePairing_test_123");
+    const onAccepted = jest.fn();
+    const { frameCallbacks } = await setupActiveScanner(() => pixels, onAccepted);
+
+    for (let time = 200; time <= 1_600; time += 200) {
+      await act(async () => {
+        frameCallbacks.shift()?.(time);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(detector.detect).toHaveBeenCalledTimes(8);
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledWith("devicePairing_test_123");
+  });
+
   it("ignores a native detector result that arrives after scanning stops", async () => {
     let resolveDetection: ((results: { rawValue: string }[]) => void) | undefined;
     const detector = {

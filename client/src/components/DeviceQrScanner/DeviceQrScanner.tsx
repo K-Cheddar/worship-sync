@@ -25,7 +25,8 @@ const REPEATED_ERROR_THRESHOLD = 3;
 const INVALID_CONFIRMATION_THRESHOLD = 3;
 const INVALID_CONFIRMATION_WINDOW_MS = 1_500;
 const INVALID_WARNING_TIMEOUT_MS = 1_800;
-const BARCODE_DETECTOR_EMPTY_FALLBACK_THRESHOLD = 8;
+const BARCODE_DETECTOR_MISS_FALLBACK_THRESHOLD = 8;
+const BARCODE_DETECTOR_TIMEOUT_MS = 1_500;
 
 type BarcodeDetectorResult = { rawValue?: string };
 type BarcodeDetectorLike = {
@@ -75,6 +76,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
   const frameRef = useRef<number | null>(null);
   const healthTimerRef = useRef<number | null>(null);
   const invalidWarningTimerRef = useRef<number | null>(null);
+  const barcodeDetectorTimeoutRef = useRef<number | null>(null);
   const startVersionRef = useRef(0);
   const acceptedRef = useRef(false);
   const invalidConfirmationRef = useRef({ value: "", count: 0, lastSeenAt: 0 });
@@ -106,6 +108,8 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
     healthTimerRef.current = null;
     if (invalidWarningTimerRef.current !== null) window.clearTimeout(invalidWarningTimerRef.current);
     invalidWarningTimerRef.current = null;
+    if (barcodeDetectorTimeoutRef.current !== null) window.clearTimeout(barcodeDetectorTimeoutRef.current);
+    barcodeDetectorTimeoutRef.current = null;
     invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -180,7 +184,9 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
       scanHealthRef.current.startedAt = performance.now();
       let lastScanAt = 0;
       let detectionInProgress = false;
-      let barcodeDetectorEmptyCount = 0;
+      let barcodeDetectorMissCount = 0;
+      let detectorAttemptSequence = 0;
+      let activeDetectorAttemptId: number | null = null;
       let usingJsQr = barcodeDetector === null;
       const noDecodeLogged = new Set<DecoderName>();
       const logNoDecodeOnce = (decoder: DecoderName) => {
@@ -202,7 +208,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
         return jsQR(image.data, canvas.width, canvas.height)?.data ?? null;
       };
 
-      const handleDecodedValue = (value: string, decoder: DecoderName, now: number) => {
+      const handleDecodedValue = (value: string, decoder: DecoderName, now: number): boolean => {
         const parsed = parseDevicePairingApprovalUrl(value);
         if (parsed) {
           invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
@@ -213,7 +219,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
           logScanDiagnostic({ decoder, decoded: true, parseResult: "valid", decodedLength: value.length, invalidConfirmationCount: 0 });
           scanHealthRef.current.decodedResult = true;
           accept(parsed.requestId);
-          return;
+          return true;
         }
 
         const parseResult = getDevicePairingApprovalUrlParseError(value) || "invalid_url";
@@ -237,6 +243,7 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
             invalidConfirmationRef.current = { value: "", count: 0, lastSeenAt: 0 };
           }, INVALID_WARNING_TIMEOUT_MS);
         }
+        return false;
       };
 
       const scan = (now: number) => {
@@ -250,11 +257,11 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
           if (!scanHealth.firstFrameAt) scanHealth.firstFrameAt = now;
           const canvas = canvasRef.current || document.createElement("canvas");
           canvasRef.current = canvas;
-          const processJsQr = () => {
+          const processJsQr = (scanAt = now) => {
             try {
               const value = readJsQr(activeVideo, canvas);
               scanHealth.consecutiveErrors = 0;
-              if (value) handleDecodedValue(value, "jsqr", now);
+              if (value) handleDecodedValue(value, "jsqr", scanAt);
               else logNoDecodeOnce("jsqr");
               if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
             } catch {
@@ -266,38 +273,61 @@ export const DeviceQrScanner = ({ onAccepted, onClose }: DeviceQrScannerProps) =
 
           if (barcodeDetector && !usingJsQr) {
             detectionInProgress = true;
+            const attemptId = ++detectorAttemptSequence;
+            activeDetectorAttemptId = attemptId;
+            const finishDetectorAttempt = () => {
+              if (startVersion !== startVersionRef.current || activeDetectorAttemptId !== attemptId) return false;
+              activeDetectorAttemptId = null;
+              detectionInProgress = false;
+              if (barcodeDetectorTimeoutRef.current !== null) window.clearTimeout(barcodeDetectorTimeoutRef.current);
+              barcodeDetectorTimeoutRef.current = null;
+              return true;
+            };
             const handleBarcodeDetectorError = () => {
-              if (startVersion !== startVersionRef.current || acceptedRef.current) return;
+              if (startVersion !== startVersionRef.current || acceptedRef.current || !finishDetectorAttempt()) return;
               scanHealth.errors += 1;
               scanHealth.consecutiveErrors += 1;
               usingJsQr = true;
-              processJsQr();
-              detectionInProgress = false;
+              processJsQr(performance.now());
             };
+            barcodeDetectorTimeoutRef.current = window.setTimeout(() => {
+              if (startVersion !== startVersionRef.current || acceptedRef.current || !finishDetectorAttempt()) return;
+              usingJsQr = true;
+              scanHealth.lastFrameAt = performance.now();
+              processJsQr(scanHealth.lastFrameAt);
+            }, BARCODE_DETECTOR_TIMEOUT_MS);
             try {
               void Promise.resolve(barcodeDetector.detect(activeVideo)).then((results) => {
-                if (startVersion !== startVersionRef.current || acceptedRef.current) return;
+                if (startVersion !== startVersionRef.current || acceptedRef.current || !finishDetectorAttempt()) return;
                 scanHealth.consecutiveErrors = 0;
                 const decodedValues = results
                   .map((result) => result.rawValue)
                   .filter((value): value is string => typeof value === "string");
                 if (decodedValues.length > 0) {
-                  barcodeDetectorEmptyCount = 0;
+                  let foundValidValue = false;
                   decodedValues.forEach((value) => {
-                    if (!acceptedRef.current) handleDecodedValue(value, "barcode-detector", now);
+                    if (acceptedRef.current) return;
+                    if (handleDecodedValue(value, "barcode-detector", now)) {
+                      foundValidValue = true;
+                      barcodeDetectorMissCount = 0;
+                    } else {
+                      barcodeDetectorMissCount += 1;
+                    }
                   });
+                  if (!foundValidValue && !acceptedRef.current && barcodeDetectorMissCount >= BARCODE_DETECTOR_MISS_FALLBACK_THRESHOLD) {
+                    usingJsQr = true;
+                    processJsQr();
+                  }
                 } else {
-                  barcodeDetectorEmptyCount += 1;
+                  barcodeDetectorMissCount += 1;
                   logNoDecodeOnce("barcode-detector");
-                  if (barcodeDetectorEmptyCount >= BARCODE_DETECTOR_EMPTY_FALLBACK_THRESHOLD) {
+                  if (barcodeDetectorMissCount >= BARCODE_DETECTOR_MISS_FALLBACK_THRESHOLD) {
                     usingJsQr = true;
                     processJsQr();
                   }
                 }
                 if (scanStateRef.current === "recovered-error") setScannerStatus("scanning");
-              }).catch(handleBarcodeDetectorError).finally(() => {
-                detectionInProgress = false;
-              });
+              }).catch(handleBarcodeDetectorError).finally(finishDetectorAttempt);
             } catch {
               handleBarcodeDetectorError();
             }

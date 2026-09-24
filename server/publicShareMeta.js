@@ -17,13 +17,17 @@ const RESERVED_BOARD_SEGMENTS = new Set(["controller", "display"]);
 const LINK_PREVIEW_CRAWLER_PATTERN =
   /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|TelegramBot|SkypeUriPreview|Googlebot|bingbot|Applebot|Embedly|Quora Link Preview|outbrain|Pinterest|redditbot|Showyoubot|DuckDuckBot|MetaInspector|iframely/i;
 
-/** @typedef {"invite" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "board" | "board-present"} PublicShareKind */
+/** @typedef {"invite" | "sms-opt-in" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "board" | "board-present"} PublicShareKind */
 
 /** @type {Record<PublicShareKind, { title: string, description: string }>} */
 const META_BY_KIND = {
   invite: {
     title: "You're invited | WorshipSync",
     description: "Accept your invitation to join WorshipSync.",
+  },
+  "sms-opt-in": {
+    title: "SMS messaging | WorshipSync",
+    description: "Learn about SMS messaging and choose whether to opt in.",
   },
   service: {
     title: "Service plan | WorshipSync",
@@ -88,7 +92,26 @@ export const matchPublicShareRoute = (pathname, search = "") => {
     };
   }
 
-  let match = path.match(/^\/services\/([^/]+)$/);
+  if (path === "/sms-opt-in") {
+    return {
+      kind: "sms-opt-in",
+      canonicalPath: "/sms-opt-in",
+      hashTarget: `/sms-opt-in${querySuffix}`,
+    };
+  }
+
+  let match = path.match(/^\/sms-opt-in\/([^/]+)$/);
+  if (match) {
+    const param = match[1];
+    return {
+      kind: "sms-opt-in",
+      canonicalPath: `/sms-opt-in/${param}`,
+      hashTarget: `/sms-opt-in/${param}${querySuffix}`,
+      param,
+    };
+  }
+
+  match = path.match(/^\/services\/([^/]+)$/);
   if (match) {
     const param = match[1];
     return {
