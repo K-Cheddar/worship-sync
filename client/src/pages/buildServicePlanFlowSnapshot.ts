@@ -14,6 +14,7 @@ import {
   getPublicServicePlanResourceTitle,
   getSafePublicServicePlanResourceUrl,
   getServicePlanResourceDataString,
+  getServicePlanResourceNotes,
   getServicePlanResourceText,
 } from "./Services/servicePlanResources";
 
@@ -28,7 +29,7 @@ const getPublicResourceDetail = (resource: ReturnType<typeof getServicePlanEleme
   const detail = resource.type === "text"
     ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
     : resource.type === "generic"
-      ? getServicePlanResourceDataString(resource, "notes")
+      ? getServicePlanResourceNotes(resource)
       : "";
   return detail.trim() || undefined;
 };
