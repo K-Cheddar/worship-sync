@@ -20,6 +20,7 @@ import type {
 import type { ChurchResource } from "../../types/churchResource";
 import {
   multilineTextToRichText,
+  isRichTextEmpty,
   normalizeRichTextDocument,
   richTextToFormattedPlainText,
   type RichTextDocument,
@@ -96,13 +97,23 @@ export const getServicePlanResourceDataString = (
 
 export const getServicePlanResourceNotes = (
   resource: ServicePlanContentResource,
-): string => getServicePlanResourceDataString(resource, "notes");
+): string => richTextToFormattedPlainText(getServicePlanResourceRichNotes(resource));
 
 /** Read rich and legacy plain-text resource notes through one compatible path. */
 export const getServicePlanResourceText = (
   resource: ServicePlanContentResource,
 ): RichTextDocument => {
   const value = resource.data?.text;
+  return typeof value === "string"
+    ? multilineTextToRichText(value)
+    : normalizeRichTextDocument(value);
+};
+
+/** Read rich and legacy plain-text optional notes through one compatible path. */
+export const getServicePlanResourceRichNotes = (
+  resource: ServicePlanContentResource,
+): RichTextDocument => {
+  const value = resource.data?.notes;
   return typeof value === "string"
     ? multilineTextToRichText(value)
     : normalizeRichTextDocument(value);
@@ -265,14 +276,14 @@ export const createServicePlanGenericResource = ({
   url,
 }: {
   title: string;
-  notes: string;
+  notes: RichTextDocument;
   url: string;
 }): ServicePlanContentResource => ({
   id: generateRandomId(),
   type: "generic",
   title: title.trim() || "Untitled resource",
   ...(url.trim() ? { url: url.trim() } : {}),
-  ...(notes.trim() ? { data: { notes } } : {}),
+  ...(!isRichTextEmpty(notes) ? { data: { notes } } : {}),
 });
 
 export const createServicePlanAudioResource = ({

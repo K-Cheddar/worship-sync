@@ -90,6 +90,71 @@ describe("ServicePlanContentPanel resources", () => {
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
   });
 
+  it("preserves inline formatting when a text resource is saved", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const { rerender } = render(
+      <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
+    const editor = screen.getByRole("textbox", { name: "Notes" });
+    await user.type(editor, "Important note");
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
+    await user.click(screen.getByRole("button", { name: "Italic" }));
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+
+    const resources = onUpdate.mock.calls.at(-1)?.[0].resources;
+    expect(resources?.[0].data?.text).toEqual({
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Important note", bold: true, italic: true }] },
+      ],
+    });
+
+    rerender(
+      <ServicePlanContentPanel
+        element={element({ resources })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+    expect(screen.getByText("Important note")).toHaveClass("font-bold", "italic");
+  });
+
+  it("preserves formatting in a generic resource's optional notes", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          resources: [
+            { id: "generic-1", type: "generic", title: "Instructions", data: { notes: "Important note" } },
+          ],
+        })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit resource Instructions" }));
+    const editor = screen.getByRole("textbox", { name: "Notes (optional)" });
+    await user.click(editor);
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
+    await user.click(screen.getByRole("button", { name: "Italic" }));
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+
+    expect(onUpdate.mock.calls.at(-1)?.[0].resources[0].data?.notes).toEqual({
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Important note", bold: true, italic: true }] },
+      ],
+    });
+  });
+
   it("adds multiple resources and removes one without touching the other", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();

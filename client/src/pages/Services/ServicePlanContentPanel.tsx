@@ -20,7 +20,6 @@ import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import Input from "../../components/Input/Input";
-import TextArea from "../../components/TextArea/TextArea";
 import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
@@ -68,7 +67,7 @@ import {
   getServicePlanResourceDataString,
   getServicePlanResourceDisplayLabel,
   getServicePlanCustomDocumentDisplayLabel,
-  getServicePlanResourceNotes,
+  getServicePlanResourceRichNotes,
   getServicePlanResourceText,
   isHttpUrl,
   normalizeServicePlanResourceForPreview,
@@ -157,7 +156,7 @@ const ServicePlanContentPanel = ({
   const [resourceTitle, setResourceTitle] = useState("");
   const [resourceUrl, setResourceUrl] = useState("");
   const [resourceText, setResourceText] = useState<RichTextDocument>(EMPTY_RICH_TEXT);
-  const [resourceNotes, setResourceNotes] = useState("");
+  const [resourceNotes, setResourceNotes] = useState<RichTextDocument>(EMPTY_RICH_TEXT);
   const [resourceError, setResourceError] = useState("");
   const [openingResourceId, setOpeningResourceId] = useState<string | null>(null);
   const [previewResource, setPreviewResource] = useState<ReturnType<typeof normalizeServicePlanResourceForPreview> | null>(null);
@@ -345,7 +344,7 @@ const ServicePlanContentPanel = ({
     setResourceTitle("");
     setResourceUrl("");
     setResourceText(EMPTY_RICH_TEXT);
-    setResourceNotes("");
+    setResourceNotes(EMPTY_RICH_TEXT);
     setResourceError("");
   };
 
@@ -359,7 +358,7 @@ const ServicePlanContentPanel = ({
     setResourceTitle(resource?.title || "");
     setResourceUrl(resource?.url || "");
     setResourceText(resource ? getServicePlanResourceText(resource) : EMPTY_RICH_TEXT);
-    setResourceNotes(getServicePlanResourceNotes(resource || ({} as ServicePlanContentResource)));
+    setResourceNotes(resource ? getServicePlanResourceRichNotes(resource) : EMPTY_RICH_TEXT);
     setResourceError("");
   };
 
@@ -584,7 +583,10 @@ const ServicePlanContentPanel = ({
       );
     }
     if (resource.type === "generic" || !SERVICE_PLAN_RESOURCE_TYPES.has(resource.type)) {
-      return resource.data?.notes ? <p className="whitespace-pre-wrap text-sm text-gray-300">{getServicePlanResourceNotes(resource)}</p> : null;
+      const notes = getServicePlanResourceRichNotes(resource);
+      return !isRichTextEmpty(notes) ? (
+        <ServiceFlowRichText document={notes} className="text-gray-300" />
+      ) : null;
     }
     return null;
   };
@@ -636,7 +638,12 @@ const ServicePlanContentPanel = ({
               placeholder="Notes for this item (optional)"
             />
           ) : (
-            <TextArea label="Notes (optional)" value={resourceNotes} onChange={setResourceNotes} autoResize />
+            <RichTextEditor
+              label="Notes (optional)"
+              value={resourceNotes}
+              onChange={setResourceNotes}
+              placeholder="Notes about this resource (optional)"
+            />
           )}
           {resourceError ? <p className="text-sm text-red-300" role="alert">{resourceError}</p> : null}
           <Button variant="cta" className="w-full cursor-pointer justify-center" onClick={saveResource}>

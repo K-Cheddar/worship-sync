@@ -12,6 +12,7 @@ import {
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
+import { plainTextToRichText } from "../../types/richText";
 
 describe("service-plan content resources", () => {
   it.each([
@@ -53,13 +54,13 @@ describe("service-plan content resources", () => {
     expect(
       createServicePlanGenericResource({
         title: "Offering instructions",
-        notes: "Mention the online giving option.",
+        notes: plainTextToRichText("Mention the online giving option."),
         url: "",
       }),
     ).toMatchObject({
       type: "generic",
       title: "Offering instructions",
-      data: { notes: "Mention the online giving option." },
+      data: { notes: plainTextToRichText("Mention the online giving option.") },
     });
   });
 
