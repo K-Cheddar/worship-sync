@@ -6,7 +6,10 @@ import {
   useRemoteMediaPreparationManifest,
   usePublishMediaPreparationManifest,
 } from "./useMediaPreparationManifest";
-import type { MediaPreparationManifest } from "../utils/mediaPreparationManifest";
+import {
+  mediaPreparationManifestToCandidates,
+  type MediaPreparationManifest,
+} from "../utils/mediaPreparationManifest";
 import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagnostics";
 
 jest.mock("firebase/database", () => ({
@@ -267,5 +270,74 @@ describe("useRemoteMediaPreparationManifest", () => {
         expect.objectContaining({ outlineId: "outline-b", revision: 1 }),
       ),
     );
+  });
+
+  it("feeds a controller-published manifest into the remote candidate contract", async () => {
+    let published: MediaPreparationManifest | undefined;
+    runTransactionMock.mockImplementation(
+      async (_target: unknown, update: (current: unknown) => unknown) => {
+        published = update(undefined) as MediaPreparationManifest;
+        return { snapshot: { val: () => published } };
+      },
+    );
+    const discovery: ElectronMediaDiscovery = {
+      renderer: "projector",
+      outputId: "projector",
+      controllerProfileId: "presentation",
+      outlineScope: "presentation",
+      outlineId: "outline-1",
+      outlineLoadState: "loaded",
+      itemCount: 1,
+      uniqueFiniteVideoCount: 1,
+      items: [
+        {
+          itemIndex: 0,
+          itemId: "item-1",
+          itemName: "Opening",
+          videos: [
+            {
+              mediaKey: "remote:opening",
+              source: "https://cdn.example.com/opening.mp4",
+              sourceKind: "remote",
+              status: "eligible",
+              cacheStatus: "not-required",
+            },
+          ],
+        },
+      ],
+    };
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider
+        value={
+          {
+            firebaseDb: { name: "shared" },
+            churchId: "church-integrated",
+            sharedDataReady: true,
+            sessionKind: "controller",
+          } as never
+        }
+      >
+        {children}
+      </GlobalInfoContext.Provider>
+    );
+
+    renderHook(
+      () =>
+        usePublishMediaPreparationManifest({
+          enabled: true,
+          discovery,
+          outputId: "projector",
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(published).toBeDefined());
+    expect(mediaPreparationManifestToCandidates(published)).toEqual([
+      expect.objectContaining({
+        mediaKey: "remote:opening",
+        source: "https://cdn.example.com/opening.mp4",
+        itemId: "item-1",
+      }),
+    ]);
   });
 });
