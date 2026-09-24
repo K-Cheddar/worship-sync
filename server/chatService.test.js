@@ -197,6 +197,71 @@ test("commits chat image quota before publishing the permanent message", async (
   assert.deepEqual(order, ["quota-committed", "message-published"]);
 });
 
+test("preserves a chat image when both the write response and read-back fail", async () => {
+  let storedMessage;
+  let messageReads = 0;
+  let aborted = 0;
+  let attached = 0;
+  const messageRef = {
+    async get() {
+      messageReads += 1;
+      if (messageReads === 1) return { exists: false };
+      if (messageReads === 2) throw new Error("read response lost");
+      return { exists: true, id: storedMessage.messageId, data: () => storedMessage };
+    },
+    async create(message) {
+      storedMessage = message;
+      throw new Error("write response lost");
+    },
+  };
+  const service = createChatService({
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
+    getFirestore: () => ({
+      collection: (name) => ({
+        doc: () =>
+          name === "chatMessages"
+            ? messageRef
+            : { get: async () => ({ exists: true, data: () => ({ timeZone: "UTC" }) }) },
+      }),
+    }),
+    onAttachmentAttached: async () => {
+      attached += 1;
+    },
+    onAttachmentAborted: async () => {
+      aborted += 1;
+    },
+  });
+  const payload = {
+    churchId: "church_1",
+    session: humanSession,
+    text: "Photo",
+    clientMessageId: "client-image-ambiguous-write",
+    timeZoneHint: "UTC",
+    completeAttachment: async () => ({
+      type: "image",
+      id: "12345678-1234-4123-8123-123456789abc",
+      key: "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/image.webp",
+      thumbnailKey:
+        "chat/churches/church_1/12345678-1234-4123-8123-123456789abc/thumbnail.webp",
+      contentType: "image/webp",
+      sizeBytes: 100,
+      thumbnailSizeBytes: 20,
+      width: 32,
+      height: 24,
+      thumbnailWidth: 32,
+      thumbnailHeight: 24,
+    }),
+  };
+
+  await assert.rejects(service.createMessage(payload), /write response lost/);
+  assert.equal(aborted, 0);
+  assert.equal(storedMessage.attachment.id, "12345678-1234-4123-8123-123456789abc");
+
+  const retry = await service.createMessage(payload);
+  assert.equal(retry.messageId, storedMessage.messageId);
+  assert.equal(attached, 2);
+});
+
 test("validates message content and retained history range", async () => {
   const { service } = createService();
   await assert.rejects(

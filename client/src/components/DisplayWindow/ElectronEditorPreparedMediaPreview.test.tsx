@@ -34,6 +34,10 @@ const currentMedia = {
   mediaKey: "remote:clip",
   source: "https://cdn.example.com/clip.mp4",
 };
+const warmedMedia = {
+  mediaKey: "remote:warmed",
+  source: "https://cdn.example.com/warmed.mp4",
+};
 const preparedMediaContext = {
   controllerProfileId: "profile-a",
   controllerProfileName: "Profile A",
@@ -63,7 +67,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
   beforeEach(() => {
     latestPoolProps = undefined;
     mockedUseServiceVideoCandidates.mockReturnValue({
-      candidates: [currentMedia],
+      candidates: [currentMedia, warmedMedia],
       diagnostics: [],
       discovery: {
         renderer: "editor",
@@ -81,6 +85,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
         items: [],
       } satisfies ElectronMediaDiscovery,
       poolCapacity: 1,
+      posterUrls: [],
     });
   });
 
@@ -90,6 +95,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
       <ElectronEditorPreparedMediaPreview
         enabled
         currentItemId="item-a"
+        reportsEditorTransport
         currentMedia={currentMedia}
         preparedMediaContext={preparedMediaContext}
         videoBox={videoBox}
@@ -102,19 +108,27 @@ describe("ElectronEditorPreparedMediaPreview", () => {
       mediaKey: currentMedia.mediaKey,
       opacity: 0,
       shouldPlay: true,
+      reportsEditorTransport: false,
     });
+    expect(latestPoolProps?.views).toHaveLength(1);
     expect(activeChanges.at(-1)).toBe(false);
 
     act(() => {
       latestPoolProps?.onStatusChange(makeStatus("ready-paused"));
     });
-    expect(latestPoolProps?.views[0]?.opacity).toBe(0);
+    expect(latestPoolProps?.views[0]).toMatchObject({
+      opacity: 0,
+      reportsEditorTransport: false,
+    });
     expect(activeChanges.at(-1)).toBe(false);
 
     act(() => {
       latestPoolProps?.onStatusChange(makeStatus("active-playing"));
     });
-    expect(latestPoolProps?.views[0]?.opacity).toBe(1);
+    expect(latestPoolProps?.views[0]).toMatchObject({
+      opacity: 1,
+      reportsEditorTransport: true,
+    });
     expect(activeChanges.at(-1)).toBe(true);
   });
 
@@ -123,6 +137,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
       <ElectronEditorPreparedMediaPreview
         enabled
         currentItemId="item-a"
+        reportsEditorTransport
         currentMedia={currentMedia}
         preparedMediaContext={preparedMediaContext}
         videoBox={videoBox}
@@ -142,6 +157,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
       mediaKey: currentMedia.mediaKey,
       opacity: 0,
       shouldPlay: true,
+      reportsEditorTransport: false,
     });
   });
 });

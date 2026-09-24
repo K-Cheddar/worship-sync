@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   LocalVideoInputPresentation,
   VideoBackgroundPlaybackCue,
@@ -10,6 +10,9 @@ import HLSPlayer from "./HLSVideoPlayer";
 import LocalVideoInputView from "./LocalVideoInputView";
 import type { LaneBackgroundMedia } from "./laneBackgroundMedia";
 
+/** Independent of the configured slide transition: this only reveals a live frame. */
+const POSTER_TO_VIDEO_FADE_MS = 200;
+
 type LaneFullFrameMediaProps = {
   media: LaneBackgroundMedia;
   /** Outgoing/demoted lane: keep frames, never audible. */
@@ -17,15 +20,18 @@ type LaneFullFrameMediaProps = {
   onPaintReadyChange: (ready: boolean) => void;
   /** Reports when the actual file-video surface can replace its fallback. */
   onLivePaintReadyChange?: (ready: boolean) => void;
+  onPosterPaintReadyChange?: (ready: boolean) => void;
   fileVideoAudioEnabled?: boolean;
   volume?: number;
   playbackRole?: "preview" | "output";
   preloadRole?: "preview" | "output";
+  transportRole?: "editor" | "none";
   suspendPlayback?: boolean;
   /** Cue for the file-video lane; outgoing lanes retain their own cue. */
   playback?: VideoBackgroundPlaybackCue;
   outputId?: string;
   windowRole?: string;
+  transitionSendTimestamp?: number;
   isEditor?: boolean;
   localVideo?: {
     playAudio: boolean;
@@ -52,14 +58,17 @@ const LaneFullFrameMedia = ({
   isPrevious,
   onPaintReadyChange,
   onLivePaintReadyChange,
+  onPosterPaintReadyChange,
   fileVideoAudioEnabled = false,
   volume = 1,
   playbackRole = "output",
   preloadRole,
+  transportRole = "none",
   suspendPlayback = false,
   playback,
   outputId,
   windowRole,
+  transitionSendTimestamp,
   isEditor = false,
   localVideo,
 }: LaneFullFrameMediaProps) => {
@@ -95,9 +104,12 @@ const LaneFullFrameMedia = ({
     localVideoThumbnail.url ||
     (media.kind === "fileVideo" ? media.fallbackSrc : undefined);
   const [fallbackPaintReady, setFallbackPaintReady] = useState(false);
+  const onPosterPaintReadyChangeRef = useRef(onPosterPaintReadyChange);
+  onPosterPaintReadyChangeRef.current = onPosterPaintReadyChange;
 
   useEffect(() => {
     setFallbackPaintReady(false);
+    onPosterPaintReadyChangeRef.current?.(false);
   }, [fallbackSrc]);
 
   if (
@@ -200,17 +212,38 @@ const LaneFullFrameMedia = ({
             alt=""
             aria-hidden
             data-testid="file-video-fallback"
-            className={`absolute inset-0 h-full w-full transition-opacity duration-150 ${
+            className={`absolute inset-0 h-full w-full transition-opacity ${
               fileVideoBox.shouldKeepAspectRatio ? "object-contain" : "object-cover"
             }`}
             style={{
               opacity: fileVideoPaintReady ? 0 : 1,
+              transitionDuration: `${POSTER_TO_VIDEO_FADE_MS}ms`,
               filter: fileVideoBox.brightness
                 ? `brightness(${fileVideoBox.brightness}%)`
                 : undefined,
             }}
-            onLoad={() => setFallbackPaintReady(true)}
-            onError={() => setFallbackPaintReady(false)}
+            onLoad={() => {
+              setFallbackPaintReady(true);
+              onPosterPaintReadyChangeRef.current?.(true);
+            }}
+            onError={() => {
+              setFallbackPaintReady(false);
+              onPosterPaintReadyChangeRef.current?.(false);
+            }}
+            onTransitionEnd={(event) => {
+              if (event.propertyName === "opacity" && fileVideoPaintReady) {
+                logVideoCue("poster.videoHandoffComplete", {
+                  outputId,
+                  windowRole,
+                  mediaKey: fileMediaKey,
+                  fadeDurationMs: POSTER_TO_VIDEO_FADE_MS,
+                  sendToPosterVideoCompleteMs:
+                    transitionSendTimestamp == null
+                      ? undefined
+                      : performance.now() - transitionSendTimestamp,
+                });
+              }
+            }}
           />
         )}
         {frozenResolvedSrc && (
@@ -225,6 +258,7 @@ const LaneFullFrameMedia = ({
             volume={volume}
             playbackRole={isEditor ? "preview" : playbackRole}
             preloadRole={preloadRole ?? (isEditor ? "preview" : playbackRole)}
+            transportRole={transportRole}
             suspendPlayback={suspendPlayback}
             mediaKey={fileMediaKey}
             playback={playback}

@@ -40,6 +40,7 @@ import {
 } from "../utils/electronMediaSurfaceDiagnostics";
 import { DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET } from "../utils/electronMediaSurfacePool";
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
+import { getImageFromVideoUrl } from "../utils/generalUtils";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -47,6 +48,7 @@ type ServiceItemMedia = {
   itemIndex: number;
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
+  posterUrls: string[];
 };
 
 type CacheRequestState = {
@@ -69,6 +71,7 @@ export type ServiceVideoCandidateResult = {
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
   discovery: ElectronMediaDiscovery;
   poolCapacity: number;
+  posterUrls: string[];
 };
 
 type PouchAllDocsResult = {
@@ -447,14 +450,35 @@ const getItemMedia = async (
     .map((discovery) => discovery.diagnostic)
     .filter(
       (diagnostic): diagnostic is ElectronMediaSurfaceCandidateDiagnostic =>
-        Boolean(diagnostic),
+      Boolean(diagnostic),
     );
+  const posterUrls = Array.from(
+    new Set(
+      doc.slides.flatMap((slide) =>
+        Array.isArray(slide?.boxes)
+          ? slide.boxes.flatMap((box) => {
+              const media = box.mediaInfo;
+              if (media?.type !== "video" || !media.background) return [];
+              const poster =
+                media.placeholderImage ||
+                media.thumbnail ||
+                getImageFromVideoUrl(media.background, {
+                  width: 960,
+                  height: 540,
+                });
+              return isTransportSafeMediaUrl(poster) ? [poster] : [];
+            })
+          : [],
+      ),
+    ),
+  );
   return {
     itemId: doc._id,
     itemName: doc.name,
     itemIndex,
     candidates,
     diagnostics,
+    posterUrls,
   };
 };
 
@@ -964,6 +988,28 @@ export const useServiceVideoCandidates = ({
 
   useGlobalBroadcast(handleUpdate);
 
+  const posterUrls = useMemo(() => {
+    const currentItemIndex = serviceMedia.find(
+      (item) => item.itemId === currentItemId,
+    )?.itemIndex;
+    return Array.from(
+      new Set(
+        [...serviceMedia]
+          .sort((left, right) => {
+            if (currentItemIndex == null) {
+              return left.itemIndex - right.itemIndex;
+            }
+            return (
+              Math.abs(left.itemIndex - currentItemIndex) -
+                Math.abs(right.itemIndex - currentItemIndex) ||
+              left.itemIndex - right.itemIndex
+            );
+          })
+          .flatMap((item) => item.posterUrls),
+      ),
+    ).slice(0, 8);
+  }, [currentItemId, serviceMedia]);
+
   const candidateResult = useMemo(() => {
     const candidates = serviceMedia.flatMap((item) => item.candidates);
     const diagnostics: ElectronMediaSurfaceCandidateDiagnostic[] = serviceMedia
@@ -1076,6 +1122,7 @@ export const useServiceVideoCandidates = ({
         0,
         Math.floor(maxSurfaces ?? DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET),
       ),
+      posterUrls,
     };
   }, [
     controllerProfileId,
@@ -1087,6 +1134,7 @@ export const useServiceVideoCandidates = ({
     outlineName,
     outlineLoad,
     contextSource,
+    posterUrls,
     outlineScope,
     outputId,
     protectedMediaKeys,

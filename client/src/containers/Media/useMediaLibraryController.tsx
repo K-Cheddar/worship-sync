@@ -140,6 +140,7 @@ export type UseMediaLibraryControllerArgs = {
   pageMode?: MediaLibraryPageMode;
   onManageCanvaSource?: (media: MediaType) => void;
   onRelinkVideoInput?: (media: MediaType) => void;
+  onStorageUsageChanged?: () => void;
 };
 
 export function useMediaLibraryController({
@@ -147,6 +148,7 @@ export function useMediaLibraryController({
   pageMode = "default",
   onManageCanvaSource,
   onRelinkVideoInput,
+  onStorageUsageChanged,
 }: UseMediaLibraryControllerArgs = {}) {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -294,7 +296,7 @@ export function useMediaLibraryController({
   const [showOtherDeviceLocalMedia, setShowOtherDeviceLocalMedia] =
     useState(false);
   const { deviceId, getBarAction: getLocalMediaCloudShareBarAction } =
-    useLocalMediaCloudShare();
+    useLocalMediaCloudShare(onStorageUsageChanged);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
@@ -1003,6 +1005,7 @@ export function useMediaLibraryController({
   const deleteFromProviders = useCallback(
     async (rows: MediaType[]): Promise<MediaType[]> => {
       const failed: MediaType[] = [];
+      let providerUsageChanged = false;
       for (const row of rows) {
         const provider = row.providerStorage?.provider ||
           (row.localImage?.cloudUrl ? "cloudinary" : "") ||
@@ -1022,10 +1025,12 @@ export function useMediaLibraryController({
             if (publicId) {
               if (!churchId) throw new Error("Church session is unavailable.");
               await deleteCloudinaryMediaAsset(churchId, publicId);
+              providerUsageChanged = true;
             }
           } else if (provider === "mux" && muxAssetId) {
             if (!churchId) throw new Error("Church session is unavailable.");
             await deleteChurchMuxAsset(churchId, muxAssetId);
+            providerUsageChanged = true;
           }
           if (row.source === "local") {
             if (row.localImage) await deleteLocalImage(row.localImage.id);
@@ -1042,9 +1047,10 @@ export function useMediaLibraryController({
           failed.push(row);
         }
       }
+      if (providerUsageChanged) onStorageUsageChanged?.();
       return failed;
     },
-    [churchId],
+    [churchId, onStorageUsageChanged],
   );
 
   const deleteCanvaProvider = useCallback(

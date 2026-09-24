@@ -14,10 +14,10 @@ export type VideoPreviewSnapshot = {
 };
 
 export type VideoPreviewCommand =
-  | { type: "play"; generation: number }
-  | { type: "pause"; generation: number }
-  | { type: "seek"; generation: number; positionSeconds: number }
-  | { type: "restart"; generation: number };
+  | { type: "play"; mediaKey: string; generation: number }
+  | { type: "pause"; mediaKey: string; generation: number }
+  | { type: "seek"; mediaKey: string; generation: number; positionSeconds: number }
+  | { type: "restart"; mediaKey: string; generation: number };
 
 /**
  * A command before it is stamped with a generation. The Omit has to
@@ -26,7 +26,7 @@ export type VideoPreviewCommand =
  */
 type PreviewCommandInput = VideoPreviewCommand extends infer Command
   ? Command extends VideoPreviewCommand
-    ? Omit<Command, "generation">
+    ? Omit<Command, "generation" | "mediaKey">
     : never
   : never;
 
@@ -37,7 +37,8 @@ const emptySnapshot = (): VideoPreviewSnapshot => ({
   paused: true,
 });
 
-let snapshot = emptySnapshot();
+const snapshots = new Map<string, VideoPreviewSnapshot>();
+const emptySnapshots = new Map<string, VideoPreviewSnapshot>();
 /** Media whose preview transport the operator touched since the last send. */
 let dirtyMediaKey: string | null = null;
 let cueGeneration = 0;
@@ -57,8 +58,10 @@ const nextCueGeneration = (): number => {
 };
 let commandGeneration = 0;
 
-const snapshotListeners = new Set<(next: VideoPreviewSnapshot) => void>();
-const commandListeners = new Set<(command: VideoPreviewCommand) => void>();
+const snapshotListeners = new Map<string, Set<(next: VideoPreviewSnapshot) => void>>();
+const commandListeners = new Map<string, Set<(command: VideoPreviewCommand) => void>>();
+let reporterGeneration = 0;
+const activeReporterByMediaKey = new Map<string, number>();
 
 export const isFileVideoBackground = (media?: MediaType): boolean => {
   if (!media || media.type !== "video" || !media.background) return false;
@@ -225,78 +228,140 @@ export const logVideoCue = (scope: string, detail: unknown): void => {
   console.log(`[video-cue] ${scope}`, detail);
 };
 
-export const getVideoPreviewSnapshot = (): VideoPreviewSnapshot => snapshot;
+const emptySnapshotFor = (mediaKey: string): VideoPreviewSnapshot => ({
+  ...emptySnapshot(),
+  mediaKey,
+});
+
+export const getVideoPreviewSnapshot = (mediaKey: string): VideoPreviewSnapshot =>
+  snapshots.get(mediaKey) ?? getEmptySnapshot(mediaKey);
+
+const getEmptySnapshot = (mediaKey: string): VideoPreviewSnapshot => {
+  const cached = emptySnapshots.get(mediaKey);
+  if (cached) return cached;
+  const empty = emptySnapshotFor(mediaKey);
+  emptySnapshots.set(mediaKey, empty);
+  return empty;
+};
 
 export const subscribeVideoPreviewSnapshot = (
+  mediaKey: string,
   listener: (next: VideoPreviewSnapshot) => void,
 ): (() => void) => {
-  snapshotListeners.add(listener);
+  const listeners = snapshotListeners.get(mediaKey) ?? new Set();
+  listeners.add(listener);
+  snapshotListeners.set(mediaKey, listeners);
   return () => {
-    snapshotListeners.delete(listener);
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      snapshotListeners.delete(mediaKey);
+      if (!snapshots.has(mediaKey)) emptySnapshots.delete(mediaKey);
+    }
   };
 };
 
 /** Sub-frame playhead moves are not worth a re-render of the transport UI. */
 const REPORT_EPSILON_SECONDS = 0.05;
 
-export const reportVideoPreviewState = (next: VideoPreviewSnapshot): void => {
+const publishVideoPreviewState = (next: VideoPreviewSnapshot): void => {
+  const snapshot = getVideoPreviewSnapshot(next.mediaKey);
+  const hasSnapshot = snapshots.has(next.mediaKey);
   // `timeupdate` fires several times a second on every surface; skipping
   // no-op reports keeps the transport UI off React's render path unless the
   // operator would actually see a difference.
   if (
-    snapshot.mediaKey === next.mediaKey &&
     snapshot.paused === next.paused &&
     Math.abs(snapshot.duration - next.duration) < REPORT_EPSILON_SECONDS &&
     Math.abs(snapshot.currentTime - next.currentTime) < REPORT_EPSILON_SECONDS
   ) {
+    if (!hasSnapshot) snapshots.set(next.mediaKey, next);
     return;
   }
-  snapshot = next;
-  snapshotListeners.forEach((listener) => listener(snapshot));
+  snapshots.set(next.mediaKey, next);
+  snapshotListeners.get(next.mediaKey)?.forEach((listener) => listener(next));
+};
+
+export const reportVideoPreviewState = (next: VideoPreviewSnapshot): void => {
+  publishVideoPreviewState(next);
+};
+
+/** Claims one media's editor transport until this reporter is replaced or cleared. */
+export const createVideoPreviewReporter = (mediaKey: string) => {
+  const reporterId = ++reporterGeneration;
+  activeReporterByMediaKey.set(mediaKey, reporterId);
+  return {
+    report: (next: VideoPreviewSnapshot) => {
+      if (
+        activeReporterByMediaKey.get(mediaKey) !== reporterId ||
+        next.mediaKey !== mediaKey
+      ) return;
+      publishVideoPreviewState(next);
+    },
+    clear: () => {
+      if (activeReporterByMediaKey.get(mediaKey) !== reporterId) return;
+      activeReporterByMediaKey.delete(mediaKey);
+      clearVideoPreviewState(mediaKey);
+    },
+  };
 };
 
 export const clearVideoPreviewState = (mediaKey?: string): void => {
-  if (mediaKey && snapshot.mediaKey && snapshot.mediaKey !== mediaKey) return;
-  snapshot = emptySnapshot();
-  snapshotListeners.forEach((listener) => listener(snapshot));
+  const keys = mediaKey ? [mediaKey] : [...snapshots.keys()];
+  keys.forEach((key) => {
+    snapshots.delete(key);
+    const listeners = snapshotListeners.get(key);
+    if (!listeners?.size) {
+      emptySnapshots.delete(key);
+      return;
+    }
+    const next = emptySnapshotFor(key);
+    emptySnapshots.set(key, next);
+    listeners.forEach((listener) => listener(next));
+  });
 };
 
 export const subscribeVideoPreviewCommands = (
+  mediaKey: string,
   listener: (command: VideoPreviewCommand) => void,
 ): (() => void) => {
-  commandListeners.add(listener);
+  const listeners = commandListeners.get(mediaKey) ?? new Set();
+  listeners.add(listener);
+  commandListeners.set(mediaKey, listeners);
   return () => {
-    commandListeners.delete(listener);
+    listeners.delete(listener);
+    if (listeners.size === 0) commandListeners.delete(mediaKey);
   };
 };
 
 const emitPreviewCommand = (
+  mediaKey: string,
   command: PreviewCommandInput,
 ): VideoPreviewCommand => {
   commandGeneration += 1;
   const next = {
     ...command,
+    mediaKey,
     generation: commandGeneration,
   } as VideoPreviewCommand;
-  if (snapshot.mediaKey) dirtyMediaKey = snapshot.mediaKey;
-  commandListeners.forEach((listener) => listener(next));
+  dirtyMediaKey = mediaKey;
+  commandListeners.get(mediaKey)?.forEach((listener) => listener(next));
   return next;
 };
 
-export const playVideoPreview = (): void => {
-  emitPreviewCommand({ type: "play" });
+export const playVideoPreview = (mediaKey: string): void => {
+  emitPreviewCommand(mediaKey, { type: "play" });
 };
 
-export const pauseVideoPreview = (): void => {
-  emitPreviewCommand({ type: "pause" });
+export const pauseVideoPreview = (mediaKey: string): void => {
+  emitPreviewCommand(mediaKey, { type: "pause" });
 };
 
-export const seekVideoPreview = (positionSeconds: number): void => {
-  emitPreviewCommand({ type: "seek", positionSeconds });
+export const seekVideoPreview = (mediaKey: string, positionSeconds: number): void => {
+  emitPreviewCommand(mediaKey, { type: "seek", positionSeconds });
 };
 
-export const restartVideoPreview = (): void => {
-  emitPreviewCommand({ type: "restart" });
+export const restartVideoPreview = (mediaKey: string): void => {
+  emitPreviewCommand(mediaKey, { type: "restart" });
 };
 
 /**
@@ -336,27 +401,26 @@ export const applyVideoBackgroundTransport = (
   options?: { emitPreviewCommands?: boolean },
 ): VideoBackgroundPlaybackCue => {
   const cue = buildVideoPlaybackCue(update);
-  snapshot = {
+  publishVideoPreviewState({
     mediaKey: update.mediaKey,
     currentTime: update.positionSeconds,
-    duration: snapshot.mediaKey === update.mediaKey ? snapshot.duration : 0,
+    duration: getVideoPreviewSnapshot(update.mediaKey).duration,
     paused: update.paused,
-  };
-  snapshotListeners.forEach((listener) => listener(snapshot));
+  });
   dirtyMediaKey = update.mediaKey;
 
   if (options?.emitPreviewCommands === false) return cue;
 
   if (update.applySeek) {
-    emitPreviewCommand({
+    emitPreviewCommand(update.mediaKey, {
       type: "seek",
       positionSeconds: update.positionSeconds,
     });
   }
   if (update.paused) {
-    emitPreviewCommand({ type: "pause" });
+    emitPreviewCommand(update.mediaKey, { type: "pause" });
   } else {
-    emitPreviewCommand({ type: "play" });
+    emitPreviewCommand(update.mediaKey, { type: "play" });
   }
 
   return cue;
@@ -444,7 +508,7 @@ export const buildVideoPlaybackCueForSend = (
   const generation = nextCueGeneration();
 
   if (mode === "restart") {
-    restartVideoPreview();
+    restartVideoPreview(mediaKey);
     consumeVideoPreviewDirty(mediaKey);
     return {
       mediaKey,
@@ -456,7 +520,8 @@ export const buildVideoPlaybackCueForSend = (
     };
   }
 
-  const samePreview = snapshot.mediaKey === mediaKey;
+  const snapshot = getVideoPreviewSnapshot(mediaKey);
+  const samePreview = snapshots.has(mediaKey);
   const dirty = consumeVideoPreviewDirty(mediaKey);
 
   // An output already playing this video knows where it is; the local preview
@@ -498,10 +563,12 @@ export const buildVideoPlaybackCueForSend = (
 };
 
 export const resetVideoBackgroundPlaybackForTests = (): void => {
-  snapshot = emptySnapshot();
+  snapshots.clear();
+  emptySnapshots.clear();
   dirtyMediaKey = null;
   cueGeneration = 0;
   commandGeneration = 0;
   snapshotListeners.clear();
   commandListeners.clear();
+  activeReporterByMediaKey.clear();
 };

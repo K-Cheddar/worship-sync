@@ -3749,42 +3749,34 @@ app.post(
   },
 );
 
-app.delete("/api/cloudinary/delete", async (req, res) => {
-  try {
-    const { publicId, resourceType } = req.body;
+app.delete(
+  "/api/cloudinary/delete",
+  requireAppSession,
+  requireFullAppAccess,
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      const { publicId, resourceType } = req.body || {};
+      if (!publicId) {
+        return res.status(400).json({ error: "publicId is required" });
+      }
+      if (resourceType && resourceType !== "image") {
+        return res.status(400).json({
+          error: "Only Cloudinary images can be deleted here.",
+        });
+      }
 
-    if (!publicId) {
-      return res.status(400).json({ error: "publicId is required" });
-    }
-
-    const resolvedResourceType = resourceType || "image";
-    const providerOwner = resolvedResourceType === "image"
-      ? await churchStorageQuota.getProviderAssetOwner({
-          provider: "cloudinaryBytes",
-          assetId: publicId,
-        })
-      : null;
-    if (providerOwner) {
-      return res.status(403).json({
-        error: "Church media must be deleted through its authenticated church session.",
+      return res.json(await providerStorageService.deleteCloudinaryImage({
+        churchId: req.appSession.churchId,
+        publicId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Failed to delete image",
       });
     }
-    const result = await cloudinary.uploader.destroy(publicId, {
-      resource_type: resolvedResourceType,
-    });
-
-    if (result.result === "ok" || result.result === "not found") {
-      res.json({ success: true, message: "Image deleted successfully" });
-    } else {
-      res.status(500).json({ error: "Failed to delete image", result });
-    }
-  } catch (error) {
-    console.error("Error deleting from Cloudinary:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to delete image", details: error.message });
-  }
-});
+  },
+);
 
 app.all("/api/mux/*path", (_req, res) =>
   res.status(410).json({ error: "Sign in to upload and manage church videos." }),

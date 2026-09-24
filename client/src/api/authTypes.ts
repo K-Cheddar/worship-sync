@@ -19,6 +19,18 @@ export type BirthDate = {
 
 export type SessionKind = "human" | "workstation" | "display" | null;
 export type ChurchStatus = "active" | "needs-admin";
+export type ChurchStorageQuota = {
+  used: number;
+  limit: number;
+  unit: "bytes" | "minutes";
+};
+
+export type ChurchStorageQuotaUsage = {
+  r2: ChurchStorageQuota;
+  cloudinary: ChurchStorageQuota;
+  mux: ChurchStorageQuota;
+};
+
 export type DesktopAuthProvider = "google" | "microsoft";
 export type DesktopAuthStatus =
   | "pending"

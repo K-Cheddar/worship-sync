@@ -264,6 +264,8 @@ type DisplayWindowProps = {
   outputId?: string;
   /** Current outline item used only as a local media-preparation priority hint. */
   currentItemId?: string;
+  /** Only the selected SlideEditor may own local editor video transport. */
+  editorTransportOwner?: boolean;
   /** Explicit controller-owned preparation context, used by editor surfaces. */
   preparedMediaContext?: PreparedMediaContext;
   /**
@@ -350,6 +352,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       outputId,
       currentItemId,
+      editorTransportOwner = false,
       preparedMediaContext: preparedMediaContextOverride,
 
       canCaptureLocalVideo = false,
@@ -1395,6 +1398,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           volume: localVideoVolume,
           playbackRole,
           preloadRole: videoPreloadRole ?? (isEditor ? "preview" : "output"),
+          transportRole: isEditor && editorTransportOwner ? "editor" : "none",
           suspendPlayback: suspendVideoPlayback,
           activeFileVideoPlayback: activeVideoPlayback,
           isEditor,
@@ -1421,6 +1425,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         canCaptureLocalVideo,
         directLocalVideoCapture,
         displayType,
+        editorTransportOwner,
         isEditor,
         localVideoContentVisible,
         localVideoFileAudioEnabled,
@@ -1552,6 +1557,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             playbackRole={isEditor ? "preview" : "output"}
             preloadRole={
               videoPreloadRole ?? (isEditor ? "preview" : "output")
+            }
+            transportRole={
+              isEditor && editorTransportOwner ? "editor" : "none"
             }
             suspendPlayback={suspendVideoPlayback}
             mediaKey={isEditor ? videoMediaKey : undefined}
@@ -1762,6 +1770,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             <ElectronEditorPreparedMediaPreview
               enabled
               currentItemId={currentItemId}
+              reportsEditorTransport={editorTransportOwner}
               currentMedia={editorPreparedCurrentMedia}
               preparedMediaContext={preparedMediaContext}
               videoBox={videoBox}

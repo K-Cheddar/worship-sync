@@ -577,6 +577,7 @@ describe("HLSVideoPlayer", () => {
       <HLSPlayer
         src="https://cdn.example.com/video.mp4"
         playbackRole="preview"
+        transportRole="editor"
         mediaKey="remote:video-1"
         playback={{
           mediaKey: "remote:video-1",
@@ -1288,20 +1289,37 @@ describe("HLSVideoPlayer", () => {
       <HLSPlayer
         src="https://cdn.example.com/video.mp4"
         playbackRole="preview"
+        transportRole="editor"
         mediaKey="remote:video-1"
       />,
     );
     const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
     video.playbackRate = 1.02;
 
-    seekVideoPreview(17);
+    seekVideoPreview("remote:video-1", 17);
     expect(video.currentTime).toBe(17);
     expect(video.playbackRate).toBe(1);
 
     video.playbackRate = 1.02;
-    restartVideoPreview();
+    restartVideoPreview("remote:video-1");
     expect(video.currentTime).toBe(0);
     expect(video.playbackRate).toBe(1);
+  });
+
+  it("keeps preview buffering/playback separate from editor transport commands", () => {
+    render(
+      <HLSPlayer
+        src="https://cdn.example.com/output-preview.mp4"
+        playbackRole="preview"
+        mediaKey="remote:output-preview"
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+
+    seekVideoPreview("remote:editor-selected", 17);
+
+    expect(video.currentTime).toBe(0);
+    expect(getVideoPreviewSnapshot("remote:output-preview").duration).toBe(0);
   });
 
   it("retries playback when the element stays paused under a playing cue", () => {
@@ -1358,6 +1376,7 @@ describe("HLSVideoPlayer", () => {
       <HLSPlayer
         src="https://cdn.example.com/loop.mp4"
         playbackRole="preview"
+        transportRole="editor"
         mediaKey="remote:video-1"
         playback={{
           mediaKey: "remote:video-1",
@@ -1374,7 +1393,7 @@ describe("HLSVideoPlayer", () => {
 
     // Without this the transport scrubber loses its duration - and therefore
     // the ability to seek - the moment a slide goes live.
-    expect(getVideoPreviewSnapshot()).toMatchObject({
+    expect(getVideoPreviewSnapshot("remote:video-1")).toMatchObject({
       mediaKey: "remote:video-1",
       duration: 40,
     });

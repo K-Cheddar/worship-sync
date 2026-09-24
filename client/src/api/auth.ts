@@ -28,6 +28,7 @@ import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImpo
 import type {
   AuthBootstrap,
   ChurchBranding,
+  ChurchStorageQuotaUsage,
   ChurchInviteRow,
   ChurchMemberRow,
   CurrentServiceWorkspaceConfig,
@@ -617,6 +618,11 @@ const uploadChurchResourceFromPackagedElectron = async ({
 export const listChurchResources = async (churchId: string) =>
   apiFetch<{ success: boolean; resources: ChurchResource[] }>(
     churchResourcesPath(churchId),
+  );
+
+export const getChurchStorageQuota = async (churchId: string) =>
+  apiFetch<{ success: boolean; quotas: ChurchStorageQuotaUsage }>(
+    `api/churches/${encodeURIComponent(churchId)}/storage-quota`,
   );
 
 export const getChurchResource = async (

@@ -3,13 +3,14 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext as AppGlobalInfoContext } from "../context/globalInfo";
-import ResourcesPage from "./Resources";
+import ResourcesPage, { ResourceTableSkeleton } from "./Resources";
 import type { DBItem } from "../types";
 import type { ChurchResource } from "../types/churchResource";
 import {
   deleteChurchResource,
   deleteSongAudioWithRetry,
   getChurchResourceUrl,
+  getChurchStorageQuota,
   getSongAudioUrl,
   listChurchResources,
   updateChurchResource,
@@ -17,15 +18,25 @@ import {
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
 
+let mockUploadedResources: ChurchResource[] = [];
+
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+jest.mock("./ResourceUploadDialog", () => ({
+  __esModule: true,
+  default: ({ onResourcesUploaded }: { onResourcesUploaded: (resources: ChurchResource[]) => void }) => (
+    <button type="button" onClick={() => onResourcesUploaded(mockUploadedResources)}>Complete resource upload</button>
+  ),
 }));
 
 jest.mock("../api/auth", () => ({
   deleteChurchResource: jest.fn(),
   deleteSongAudioWithRetry: jest.fn(),
   getChurchResourceUrl: jest.fn(),
+  getChurchStorageQuota: jest.fn(),
   getSongAudioUrl: jest.fn(),
   listChurchResources: jest.fn(),
   updateChurchResource: jest.fn(),
@@ -62,6 +73,8 @@ jest.mock("../hooks", () => ({
 const mockUpdateAllDocs = jest.mocked(updateAllDocs);
 const mockListChurchResources = jest.mocked(listChurchResources);
 const mockGetSongAudioUrl = jest.mocked(getSongAudioUrl);
+const mockGetChurchStorageQuota = jest.mocked(getChurchStorageQuota);
+const mockUploadChurchResource = jest.mocked(uploadChurchResource);
 
 const song = (withAudio = true): DBItem => ({
   _id: "song-1",
@@ -118,6 +131,8 @@ const deferred = <T,>() => {
 
 describe("Resources page", () => {
   beforeEach(() => {
+    mockGetChurchStorageQuota.mockClear();
+    mockUploadedResources = [resource];
     mockSongDocs = [song()];
     mockResources = [];
     mockState = {
@@ -131,6 +146,15 @@ describe("Resources page", () => {
       }
     });
     mockListChurchResources.mockResolvedValue({ success: true, resources: [] });
+    mockGetChurchStorageQuota.mockResolvedValue({
+      success: true,
+      quotas: {
+        r2: { used: 3.5 * 1024 ** 2, limit: 500 * 1024 ** 2, unit: "bytes" },
+        cloudinary: { used: 0, limit: 500 * 1024 ** 2, unit: "bytes" },
+        mux: { used: 0, limit: 1_000, unit: "minutes" },
+      },
+    });
+    mockUploadChurchResource.mockResolvedValue(resource);
     mockGetSongAudioUrl.mockResolvedValue({ url: "https://audio.test/rehearsal.mp3", expiresAt: "2026-09-22T00:00:00.000Z" });
     mockUpdateAllDocs.mockImplementation(async (dispatch, _db, shouldApply) => {
       if (shouldApply && !shouldApply()) return false;
@@ -162,6 +186,21 @@ describe("Resources page", () => {
     await user.click(screen.getByRole("button", { name: "All" }));
     await user.click(screen.getByRole("button", { name: /rehearsal\.mp3/i }));
     await waitFor(() => expect(mockGetSongAudioUrl).toHaveBeenCalledWith(expect.objectContaining({ songId: "song-1" })));
+  });
+
+  it("shows the church R2 quota independently of the visible resources", async () => {
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [] });
+    renderPage();
+    expect(await screen.findByRole("region", { name: "File storage" })).toHaveTextContent("3.5 MB / 500 MB");
+    expect(screen.getByText("496.5 MB remaining")).toBeInTheDocument();
+    expect(mockGetChurchStorageQuota).toHaveBeenCalledWith("church-1");
+  });
+
+  it("refreshes R2 usage after a successful Resources upload", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Complete resource upload" }));
+    await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
   });
 
   it("combines ChurchResources and song audio, and applies both filters", async () => {
@@ -210,6 +249,13 @@ describe("Resources page", () => {
 
     songLoad.resolve(true);
     expect(await screen.findByText("No resources match this view.")).toBeInTheDocument();
+  });
+
+  it("uses the Resources table columns and row spacing for its loading skeleton", () => {
+    render(<ResourceTableSkeleton />);
+    const loadingTable = within(screen.getByRole("region", { name: "Loading resources" })).getByRole("table", { name: "Resource list loading" });
+    expect(within(loadingTable).getAllByRole("row")).toHaveLength(6);
+    expect(within(loadingTable).getAllByRole("columnheader")).toHaveLength(6);
   });
 
   it("shows a true empty state only after both sources load empty", async () => {
@@ -296,6 +342,7 @@ describe("Resources page", () => {
     expect(confirmation).toHaveTextContent("Guidelines.pdf");
     await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteChurchResource).toHaveBeenCalledWith({ churchId: "church-1", resourceId: "resource-1" }));
+    await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
   });
 
   it("supports selecting multiple church resources for deletion", async () => {

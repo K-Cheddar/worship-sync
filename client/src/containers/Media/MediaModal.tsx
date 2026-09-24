@@ -38,6 +38,7 @@ import cn from "classnames";
 import { RootState } from "../../store/store";
 import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
 import {
   DropdownMenu,
@@ -97,6 +98,8 @@ import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
 } from "./mediaLibraryOrangeFolderIcon";
+import { StorageUsageIndicators } from "../../components/StorageUsage/StorageUsageIndicators";
+import { useChurchStorageQuota } from "../../components/StorageUsage/useChurchStorageQuota";
 
 type MediaModalGridZoomSliderProps = {
   modalZoomLevel: number;
@@ -202,6 +205,8 @@ type MediaModalProps = {
   /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
   isGuestSession?: boolean;
+  onStorageUsageChanged: () => void;
+  onStorageUsageRefreshReady: (refresh: () => void) => void;
 };
 
 const MediaModal = ({
@@ -242,11 +247,15 @@ const MediaModal = ({
   onImportFromCanva,
   mediaUploadDisabled = false,
   isGuestSession = false,
+  onStorageUsageChanged,
+  onStorageUsageRefreshReady,
 }: MediaModalProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
   const { showToast } = useToast();
   const { db } = useContext(ControllerInfoContext) || {};
+  const { churchId = "" } = useContext(GlobalInfoContext) || {};
+  const storageQuota = useChurchStorageQuota(churchId || undefined, isOpen);
   const handleDroppedFiles = useCallback(
     (files: File[]) => mediaUploadInputRef?.current?.openModalWithFiles(files),
     [mediaUploadInputRef],
@@ -256,7 +265,11 @@ const MediaModal = ({
     onFiles: handleDroppedFiles,
   });
   const { getBarAction: getLocalMediaCloudShareBarAction } =
-    useLocalMediaCloudShare();
+    useLocalMediaCloudShare(onStorageUsageChanged);
+
+  useEffect(() => {
+    onStorageUsageRefreshReady(storageQuota.refresh);
+  }, [onStorageUsageRefreshReady, storageQuota.refresh]);
 
   const notifyMediaAction = useCallback(
     (message: string, variant: ToastVariant = "success") => {
@@ -1148,6 +1161,17 @@ const MediaModal = ({
               )}
             </div>
           </div>
+
+          {isOpen ? (
+            <div className="px-4 py-2">
+              <StorageUsageIndicators
+                status={storageQuota.status}
+                quotas={storageQuota.quotas}
+                providers={["cloudinary", "mux"]}
+                onRetry={storageQuota.refresh}
+              />
+            </div>
+          ) : null}
 
           <div className="w-full">
             <MediaLibraryActionBar

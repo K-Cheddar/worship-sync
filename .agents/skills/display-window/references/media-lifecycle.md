@@ -31,8 +31,14 @@ wedged pool attempt to the fallback lane.
 Opaque persisted references such as `local-video-file://`, `local-image://`, and
 `local-video-input://` are resolved before candidate eligibility and before any
 HTML media assignment. The pool remains optional: an unavailable or failed
-candidate is not a transition gate, and the normal live-file-video fallback
-must present its real frame before the transition.
+candidate is not a transition gate. For a new selection, a usable prepared
+surface wins; otherwise a paint-ready poster can start the slide transition
+while that selection's fallback player loads. The coordinator locks the
+selected owner at the transition boundary, so a later pool-ready event cannot
+promote over an active poster-to-video handoff. The fallback video's
+presented-frame signal then drives the existing local poster fade. If no
+poster is ready, the fallback video must present a frame before the transition
+can start.
 
 The service-wide preparation input is the resolved outline id for the output's
 controller scope. Persisted ItemLists selection is the reload/recovery fallback;
@@ -40,9 +46,9 @@ controller selection is also sent immediately through the existing local
 renderer broadcast so projector and editor preparation changes without waiting
 for persistence. It must not use the church-wide `activeList` for an auxiliary
 output. A full transition keeps the outgoing foreground and media intact until
-both incoming planes are ready, then uses one coordinated A/B timeline. A ready
-pool surface cannot replace an active lane fallback; the transition adopts the
-incoming surface explicitly. Adopted ownership is keyed by `mediaKey` plus
+incoming boxes and an acceptable visual are ready, then uses one coordinated
+A/B timeline. A ready pool surface cannot replace an active lane fallback; the
+transition adopts the incoming surface explicitly. Adopted ownership is keyed by `mediaKey` plus
 lifecycle generation and remains valid through transient readiness/geometry
 updates. Terminal `error` or `disposed` status releases that ownership
 immediately so the normal fallback renderer can recover. The resolved source

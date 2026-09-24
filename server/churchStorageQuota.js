@@ -6,6 +6,10 @@ export const CHURCH_STORAGE_QUOTA_DEFAULTS = Object.freeze({
   muxMinutes: 1_000,
 });
 
+export const CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_DAYS = 7;
+export const CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS =
+  CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
 export class ChurchStorageQuotaError extends Error {
   constructor(provider, limit, statusCode = 413) {
     const formatBytes = (bytes) => {
@@ -130,6 +134,7 @@ export const createChurchStorageQuotaService = ({
   loadR2Usage,
   now = () => Date.now(),
   reservationTtlMs = 60 * 60 * 1000,
+  reservationRetentionMs = CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS,
   providerQuotaEnforcementEnabled = () => true,
 }) => {
   const collection = "churchStorageQuotas";
@@ -145,6 +150,15 @@ export const createChurchStorageQuotaService = ({
     locks: db.collection(lockCollection),
     providerAssets: db.collection(providerAssetCollection),
   });
+
+  const committedReservationFields = () => {
+    const committedAt = now();
+    return {
+      status: "committed",
+      committedAt,
+      ttlExpireAt: new Date(committedAt + reservationRetentionMs),
+    };
+  };
 
   const ensureR2Baseline = async (churchId) => {
     const [metadataBytes, church] = await Promise.all([
@@ -201,13 +215,14 @@ export const createChurchStorageQuotaService = ({
     await db.runTransaction(async (transaction) => {
       const [snapshot, reservationSnapshot] = await Promise.all([
         transaction.get(quota),
-        transaction.get(reservations.where("churchId", "==", churchId)),
+        transaction.get(
+          reservations.where("churchId", "==", churchId).where("status", "==", "pending"),
+        ),
       ]);
       const current = snapshot.exists ? snapshot.data() : {};
       const rows = reservationSnapshot.docs
         .map((doc) => ({ ref: doc.ref, value: doc.data() }))
-        .filter(({ value }) => value.status === "pending");
-      const active = rows.filter(({ value }) => value.status === "pending" && value.expiresAt > now());
+      const active = rows.filter(({ value }) => value.expiresAt > now());
       if (active.length) {
         throw new Error("Church storage usage cannot be reconciled while uploads are pending.");
       }
@@ -218,7 +233,7 @@ export const createChurchStorageQuotaService = ({
             .reduce((total, { value }) => total + Number(value.delta ?? value.amount ?? 0), 0),
         ]),
       );
-      rows.filter(({ value }) => value.status === "pending").forEach(({ ref }) => transaction.delete(ref));
+      rows.forEach(({ ref }) => transaction.delete(ref));
       transaction.set(
         quota,
         {
@@ -266,7 +281,9 @@ export const createChurchStorageQuotaService = ({
     const lock = lockId ? locks.doc(scopedDocId(churchId, lockId)) : null;
     await db.runTransaction(async (transaction) => {
       const expiredQuery = reservations
-        .where("churchId", "==", churchId);
+        .where("churchId", "==", churchId)
+        .where("status", "==", "pending")
+        .where("expiresAt", "<=", now());
       const [quotaSnapshot, reservationSnapshot, expiredSnapshot, lockSnapshot] = await Promise.all([
         transaction.get(quota),
         transaction.get(reservation),
@@ -289,9 +306,7 @@ export const createChurchStorageQuotaService = ({
       const used = provider === "r2Bytes" && !current.r2Initialized
         ? finiteNonNegative(metadataBytes)
         : finiteNonNegative(current[usageField]);
-      const expired = expiredSnapshot.docs
-        .map((doc) => ({ ref: doc.ref, value: doc.data() }))
-        .filter(({ value }) => value.status === "pending" && value.expiresAt <= now());
+      const expired = expiredSnapshot.docs.map((doc) => ({ ref: doc.ref, value: doc.data() }));
       const expiredForProvider = expired
         .filter(({ value }) => value.provider === provider)
         .reduce((total, { value }) => total + Number(value.delta ?? value.amount ?? 0), 0);
@@ -306,11 +321,14 @@ export const createChurchStorageQuotaService = ({
       );
       const limits = normalizeChurchStorageQuotas(church?.storageQuotas);
       const limit = limits[provider];
-      const reservationDelta = numericAmount - replacement;
+      const admissionDelta = numericAmount - replacement;
+      // Replacement credit is private to this admission check. A smaller
+      // replacement must not create shared capacity for unrelated uploads.
+      const reservationDelta = Math.max(0, admissionDelta);
       if (provider !== "r2Bytes" && enforceLimit && current.providerUsageReady !== true) {
         throw new ChurchProviderStorageNotReconciledError();
       }
-      if (enforceLimit && used + reserved + reservationDelta > limit) {
+      if (enforceLimit && used + reserved + admissionDelta > limit) {
         throw new ChurchStorageQuotaError(provider, limit);
       }
       transaction.set(quota, {
@@ -374,7 +392,7 @@ export const createChurchStorageQuotaService = ({
           transaction.set(quota, {
             [reservedField]: finiteSigned(current[reservedField]) - Number(pending.delta ?? pending.amount ?? 0),
           }, { merge: true });
-          transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+          transaction.set(reservation, { ...pending, ...committedReservationFields() });
           if (lockSnapshot?.data()?.operationId === reservationId) transaction.delete(lock);
         }
         return;
@@ -403,7 +421,7 @@ export const createChurchStorageQuotaService = ({
       }
       transaction.set(op, { completedAt: now() });
       if (pending) {
-        transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+        transaction.set(reservation, { ...pending, ...committedReservationFields() });
         if (lockSnapshot?.data()?.operationId === reservationId) transaction.delete(lock);
       }
     });
@@ -507,7 +525,7 @@ export const createChurchStorageQuotaService = ({
           transaction.set(quota, {
             [`reserved_${provider}`]: finiteSigned(current[`reserved_${provider}`]) - Number(pending.delta ?? pending.amount ?? 0),
           }, { merge: true });
-          transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+          transaction.set(reservation, { ...pending, ...committedReservationFields() });
           const lock = getRefs(db, churchId).locks.doc(scopedDocId(churchId, pending.lockId));
           transaction.delete(lock);
         }
@@ -544,7 +562,7 @@ export const createChurchStorageQuotaService = ({
       transaction.set(asset, { provider, amount: actual, updatedAt: now() });
       transaction.set(operation, { completedAt: now(), amount: actual });
       transaction.set(owner, { churchId, provider, assetId, amount: actual, updatedAt: now() });
-      transaction.set(reservation, { ...pending, status: "committed", committedAt: now() });
+      transaction.set(reservation, { ...pending, ...committedReservationFields() });
       if (pending.lockId) {
         transaction.delete(getRefs(db, churchId).locks.doc(scopedDocId(churchId, pending.lockId)));
       }

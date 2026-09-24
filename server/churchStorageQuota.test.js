@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CHURCH_STORAGE_QUOTA_DEFAULTS,
+  CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS,
   ChurchStorageQuotaError,
   createChurchStorageQuotaService,
   getCloudinaryAssetBytes,
@@ -12,6 +13,7 @@ import {
 
 class MemoryFirestore {
   collections = new Map();
+  queryReads = [];
   transactionQueue = Promise.resolve();
 
   collection(name) {
@@ -40,6 +42,7 @@ class MemoryFirestore {
     const execute = async () => callback({
       get: async (ref) => {
         if (ref._query) {
+          this.queryReads.push(ref.filters);
           return {
             docs: [...ref.docs.entries()]
               .filter(([, data]) => ref.filters.every(([field, operator, value]) => {
@@ -257,6 +260,54 @@ test("cancelled and expired pending uploads stop reserving quota", async () => {
   await service.reserve({ churchId: "church-a", amount: 7, operationId: "after-expiry" });
 });
 
+test("reservation cleanup queries only expired pending rows for the church", async () => {
+  const { service, firestore } = createQuota();
+  const reservations = firestore.collection("churchStorageQuotaReservations")._docs;
+  reservations.set("committed-history", {
+    churchId: "church-a",
+    provider: "r2Bytes",
+    status: "committed",
+    expiresAt: 0,
+  });
+  reservations.set("expired-pending", {
+    churchId: "church-a",
+    provider: "r2Bytes",
+    status: "pending",
+    delta: 2,
+    expiresAt: 999,
+  });
+
+  await service.reserve({ churchId: "church-a", amount: 2, operationId: "next-upload" });
+
+  assert.deepEqual(firestore.queryReads.at(-1), [
+    ["churchId", "==", "church-a"],
+    ["status", "==", "pending"],
+    ["expiresAt", "<=", 1_000],
+  ]);
+  assert.equal(reservations.has("committed-history"), true);
+  assert.equal(reservations.has("expired-pending"), false);
+});
+
+test("committed reservation records receive a bounded retention TTL", async () => {
+  const { service, firestore } = createQuota();
+  const reservation = await service.reserve({
+    churchId: "church-a",
+    amount: 2,
+    operationId: "retained-upload",
+  });
+  await service.commitR2({
+    churchId: "church-a",
+    reservationId: reservation.id,
+    assetId: "resource:retained",
+    actualAmount: 2,
+  });
+
+  const committed = [...firestore.collection("churchStorageQuotaReservations")._docs.values()]
+    .find((row) => row.status === "committed");
+  assert.ok(committed);
+  assert.equal(committed.ttlExpireAt.getTime(), 1_000 + CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS);
+});
+
 test("R2 reconciliation sums persisted resource and song metadata", async () => {
   const resources = [
     { storage: { sizeBytes: 5 } },
@@ -365,6 +416,47 @@ test("provider replacement admission uses the old asset as credit and deletion r
     churchId: "church-a", provider: "cloudinaryBytes", assetId: "old-image",
   });
   assert.equal((await service.getUsage("church-a")).cloudinary.used, 7);
+});
+
+test("smaller provider replacement credit is not shared with unrelated admissions", async () => {
+  const { service } = createQuota({
+    limits: { r2Bytes: 10, cloudinaryBytes: 10, muxMinutes: 10 },
+  });
+  await service.markProviderUsageReady({ churchId: "church-a" });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "old-image", amount: 8,
+  });
+  await service.recordProviderAsset({
+    churchId: "church-a", provider: "cloudinaryBytes", assetId: "other-image", amount: 2,
+  });
+
+  const replacement = await service.reserve({
+    churchId: "church-a",
+    provider: "cloudinaryBytes",
+    amount: 1,
+    replaceAmount: 8,
+    operationId: "replacement-image",
+  });
+  await assert.rejects(
+    service.reserve({
+      churchId: "church-a",
+      provider: "cloudinaryBytes",
+      amount: 1,
+      operationId: "unrelated-image",
+    }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
+
+  await service.cancel({ churchId: "church-a", reservationId: replacement.id });
+  await assert.rejects(
+    service.reserve({
+      churchId: "church-a",
+      provider: "cloudinaryBytes",
+      amount: 1,
+      operationId: "after-failed-replacement",
+    }),
+    (error) => error.code === "CHURCH_STORAGE_QUOTA_EXCEEDED",
+  );
 });
 
 test("provider admissions are atomic across concurrent assets", async () => {

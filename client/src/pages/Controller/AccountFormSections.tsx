@@ -218,13 +218,16 @@ const isBrandingDirtyFromLive = (
 const formatBrandingSaveError = (error: unknown) =>
   formatAccountError(error, "Could not save branding. Try again.");
 
-const cleanupLogoAssets = async (assets: Array<ChurchLogoAsset | null>) => {
+const cleanupLogoAssets = async (
+  assets: Array<ChurchLogoAsset | null>,
+  churchId: string,
+) => {
   await Promise.all(
     assets
       .filter((asset): asset is ChurchLogoAsset => Boolean(asset?.publicId))
       .map(async (asset) => {
         try {
-          await deleteFromCloudinary(brandingCloud, asset.publicId, "image");
+          await deleteFromCloudinary(brandingCloud, asset.publicId, "image", churchId);
         } catch (error) {
           console.warn("Could not delete branding asset:", error);
         }
@@ -1570,6 +1573,8 @@ export const BrandingForm = memo(function BrandingForm({
           pendingFile,
           CLOUDINARY_UNSIGNED_UPLOAD_PRESET,
           CLOUDINARY_CLOUD_NAME,
+          {},
+          { folder: `branding/${encodeURIComponent(churchId)}` },
         );
         const asset = toChurchLogoAsset(uploaded);
         uploadedAssets.push(asset);
@@ -1601,9 +1606,9 @@ export const BrandingForm = memo(function BrandingForm({
         return [];
       });
 
-      void cleanupLogoAssets(replacedAssets);
+      void cleanupLogoAssets(replacedAssets, churchId);
     } catch (error) {
-      await cleanupLogoAssets(uploadedAssets);
+      await cleanupLogoAssets(uploadedAssets, churchId);
       const message = formatBrandingSaveError(error);
       setFormError(message);
       showApiError(error, message);

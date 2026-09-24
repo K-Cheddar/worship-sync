@@ -222,7 +222,12 @@ describe("uploadImageToCloudinary", () => {
       json: async () => ({ success: true }),
     } as Response);
 
-    const result = await convertCloudinaryImageToLocalWebp(file, "preset");
+    const result = await convertCloudinaryImageToLocalWebp(
+      file,
+      "preset",
+      {},
+      "church-1",
+    );
 
     expect(result.name).toBe("design.webp");
     expect(result.type).toBe("image/webp");

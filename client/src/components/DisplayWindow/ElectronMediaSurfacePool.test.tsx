@@ -1,5 +1,9 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Box } from "../../types";
+import {
+  getVideoPreviewSnapshot,
+  resetVideoBackgroundPlaybackForTests,
+} from "../../utils/videoBackgroundPlayback";
 import type {
   ElectronMediaSurfaceCandidate,
   ElectronMediaSurfaceView,
@@ -71,6 +75,7 @@ describe("ElectronMediaSurfacePool", () => {
 
   beforeEach(() => {
     presentedFrameCount = 0;
+    resetVideoBackgroundPlaybackForTests();
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
       value: {
@@ -255,6 +260,52 @@ describe("ElectronMediaSurfacePool", () => {
     act(() => unmount());
     expect(readyChanges.at(-1)).toBe(false);
     expect(liveChanges.at(-1)).toBe(false);
+  });
+
+  it("reports transport only from the visible selected editor surface", async () => {
+    const selected = makeCandidate("remote:selected");
+    const warmed = makeCandidate("remote:warmed");
+    const selectedView = {
+      ...makeView(selected.mediaKey, selected.source, true),
+      reportsEditorTransport: true,
+    };
+    render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[selected, warmed]}
+        views={[selectedView]}
+        route="editor"
+        role="editor-preview"
+        outlineId="outline-a"
+      />,
+    );
+
+    const video = screen.getByTestId(
+      `electron-media-surface-video-${selected.mediaKey}`,
+    ) as HTMLVideoElement;
+    Object.defineProperty(video, "duration", {
+      configurable: true,
+      value: 10,
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`electron-media-surface-${selected.mediaKey}`),
+      ).toHaveAttribute("data-prepared-state", "playing"),
+    );
+
+    video.currentTime = 3.25;
+    fireEvent.timeUpdate(video);
+
+    expect(getVideoPreviewSnapshot(selected.mediaKey)).toMatchObject({
+      currentTime: 3.25,
+      duration: 10,
+      paused: false,
+    });
+    expect(getVideoPreviewSnapshot(warmed.mediaKey)).toMatchObject({
+      currentTime: 0,
+      duration: 0,
+      paused: true,
+    });
   });
 
   it("promotes the current prepared surface without remounting its video element", async () => {

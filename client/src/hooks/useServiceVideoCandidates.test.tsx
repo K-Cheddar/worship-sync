@@ -170,6 +170,29 @@ describe("useServiceVideoCandidates", () => {
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
 
+  it("returns a bounded, deduplicated set of posters near the current item", async () => {
+    const docs = [
+      item("item-1", "One", [
+        slide("slide-1", [
+          { id: "a", mediaInfo: video("a", "https://cdn.example.com/a.mp4", { placeholderImage: "https://cdn.example.com/a.jpg" }) },
+          { id: "b", mediaInfo: video("b", "https://cdn.example.com/b.mp4", { thumbnail: "https://cdn.example.com/b.jpg" }) },
+        ]),
+      ]),
+      ...Array.from({ length: 5 }, (_, index) =>
+        item(`item-${index + 2}`, `Song ${index + 2}`, [
+          slide(`slide-${index + 2}`, [
+            { id: `v-${index}`, mediaInfo: video(`v-${index}`, `https://cdn.example.com/v-${index}.mp4`, { thumbnail: `https://cdn.example.com/v-${index}.jpg` }) },
+          ]),
+        ]),
+      ),
+    ];
+    const { result } = renderCandidates(docs, { currentItemId: "item-3" });
+    await waitFor(() => expect(result.current.discovery.itemCount).toBe(6));
+    expect(result.current.posterUrls).toHaveLength(7);
+    expect(result.current.posterUrls[0]).toBe("https://cdn.example.com/v-1.jpg");
+    expect(new Set(result.current.posterUrls).size).toBe(7);
+  });
+
   it("includes finite MP4, media-cache, and WorshipSync media sources", async () => {
     const docs = [
       item("item-1", "Song One", [

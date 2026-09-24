@@ -46,6 +46,8 @@ export type ElectronMediaSurfaceView = {
     generation: number;
     applySeek: boolean;
   };
+  /** Only an active selected editor surface may publish editor transport. */
+  reportsEditorTransport?: boolean;
 };
 
 const finiteItemIndex = (value: number | undefined): number =>

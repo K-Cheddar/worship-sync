@@ -6,6 +6,7 @@ import type {
 import { serverNow } from "./serverTime";
 import {
   buildVideoPlaybackCueForSend,
+  createVideoPreviewReporter,
   formatVideoClock,
   getSlideVideoBackgroundMedia,
   getVideoBackgroundMediaKey,
@@ -155,7 +156,7 @@ describe("videoBackgroundPlayback", () => {
       paused: false,
     });
     const commands: string[] = [];
-    const unsubscribe = subscribeVideoPreviewCommands((command) => {
+    const unsubscribe = subscribeVideoPreviewCommands("remote:video-1", (command) => {
       commands.push(command.type);
     });
 
@@ -189,7 +190,7 @@ describe("videoBackgroundPlayback", () => {
       applySeek: false,
     });
 
-    seekVideoPreview(22);
+    seekVideoPreview("remote:video-1", 22);
     const afterSeek = buildVideoPlaybackCueForSend(
       slideWithVideo(videoMedia()),
     );
@@ -332,7 +333,7 @@ describe("videoBackgroundPlayback", () => {
       duration: 40,
       paused: false,
     });
-    seekVideoPreview(27);
+    seekVideoPreview("remote:video-1", 27);
 
     expect(
       buildVideoPlaybackCueForSend(slideWithVideo(videoMedia()), {
@@ -378,8 +379,8 @@ describe("videoBackgroundPlayback", () => {
     });
     const cue = buildVideoPlaybackCueForSend(slideWithVideo(videoMedia()));
     expect(cue?.applySeek).toBe(true);
-    expect(getVideoPreviewSnapshot().mediaKey).toBe("remote:video-1");
-    expect(getVideoPreviewSnapshot().paused).toBe(true);
+    expect(getVideoPreviewSnapshot("remote:video-1").mediaKey).toBe("remote:video-1");
+    expect(getVideoPreviewSnapshot("remote:video-1").paused).toBe(true);
   });
 
   it("does not let transport on one clip force another clip to restart", () => {
@@ -415,7 +416,7 @@ describe("videoBackgroundPlayback", () => {
 
   it("skips snapshot notifications that would not change the transport UI", () => {
     const seen: number[] = [];
-    const unsubscribe = subscribeVideoPreviewSnapshot((next) =>
+    const unsubscribe = subscribeVideoPreviewSnapshot("remote:video-1", (next) =>
       seen.push(next.currentTime),
     );
 
@@ -441,6 +442,70 @@ describe("videoBackgroundPlayback", () => {
 
     expect(seen).toEqual([12, 12.5]);
     unsubscribe();
+  });
+
+  it("keeps snapshots and subscriptions isolated by media key", () => {
+    const seenA: number[] = [];
+    const unsubscribe = subscribeVideoPreviewSnapshot("media:A", (next) =>
+      seenA.push(next.currentTime),
+    );
+    reportVideoPreviewState({
+      mediaKey: "media:A",
+      currentTime: 4,
+      duration: 10,
+      paused: false,
+    });
+    reportVideoPreviewState({
+      mediaKey: "media:B",
+      currentTime: 37,
+      duration: 59,
+      paused: true,
+    });
+
+    expect(getVideoPreviewSnapshot("media:A")).toMatchObject({
+      currentTime: 4,
+      duration: 10,
+      paused: false,
+    });
+    expect(seenA).toEqual([4]);
+    unsubscribe();
+  });
+
+  it("ignores reports and cleanup from a superseded media reporter", () => {
+    const oldPreparedOwner = createVideoPreviewReporter("media:A");
+    oldPreparedOwner.report({
+      mediaKey: "media:A",
+      currentTime: 8,
+      duration: 10,
+      paused: false,
+    });
+    const newFallbackOwner = createVideoPreviewReporter("media:A");
+    newFallbackOwner.report({
+      mediaKey: "media:A",
+      currentTime: 2,
+      duration: 10,
+      paused: true,
+    });
+
+    oldPreparedOwner.clear();
+    oldPreparedOwner.report({
+      mediaKey: "media:A",
+      currentTime: 9,
+      duration: 59,
+      paused: false,
+    });
+
+    expect(getVideoPreviewSnapshot("media:A")).toMatchObject({
+      currentTime: 2,
+      duration: 10,
+      paused: true,
+    });
+    newFallbackOwner.clear();
+    expect(getVideoPreviewSnapshot("media:A")).toMatchObject({
+      currentTime: 0,
+      duration: 0,
+      paused: true,
+    });
   });
 
   it("stamps generations from server time so a restart cannot look stale", () => {

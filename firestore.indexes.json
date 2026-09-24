@@ -99,6 +99,15 @@
         { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "recipientId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "churchStorageQuotaReservations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -132,6 +141,12 @@
     },
     {
       "collectionGroup": "restreamConnectRequests",
+      "fieldPath": "ttlExpireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "churchStorageQuotaReservations",
       "fieldPath": "ttlExpireAt",
       "ttl": true,
       "indexes": []

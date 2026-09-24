@@ -749,7 +749,7 @@ const MemberManager = ({
           ? previousProfileImagePublicId
           : "";
       if (profileImagePublicIdToDelete) {
-        void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image");
+        void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image", churchId);
       }
       if (!profileImageUploadFailed) {
         setPendingProfileImage(null);
@@ -797,7 +797,7 @@ const MemberManager = ({
       }
     } catch (error) {
       if (uploadedProfileImagePublicId) {
-        void deleteCloudinaryAsset(uploadedProfileImagePublicId, "image");
+        void deleteCloudinaryAsset(uploadedProfileImagePublicId, "image", churchId);
       }
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();

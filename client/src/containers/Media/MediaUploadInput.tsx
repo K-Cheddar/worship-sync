@@ -59,6 +59,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       showButton = true,
       uploadPreset = "bpqu4ma5",
       onUploadActiveChange,
+      onUploadComplete,
       uploadDisabled = false,
     },
     ref,
@@ -290,6 +291,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                   fileProgress.file,
                   resolvedUploadPreset,
                   callbacks,
+                  churchId,
                 )
               : await convertMuxVideoToLocalMp4(
                   fileProgress.file,
@@ -441,6 +443,9 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         setError("Upload cancelled");
         setStatusMessage("Upload was cancelled");
       } else {
+        if (storagePolicy === "local-and-cloud" && successCount > 0) {
+          onUploadComplete?.();
+        }
         if (errorCount === 0) {
           setUploadStatus("ready");
           const noun = successCount === 1 ? "file" : "files";

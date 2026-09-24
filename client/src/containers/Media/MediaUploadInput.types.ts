@@ -29,6 +29,8 @@ export type MediaUploadInputProps = {
   uploadPreset?: string;
   /** Called when upload starts (true) or ends (false). Use to start/stop external progress polling. */
   onUploadActiveChange?: (active: boolean) => void;
+  /** Called once a batch has successfully added at least one cloud asset. */
+  onUploadComplete?: () => void;
   /** When true, the upload modal cannot be opened and file upload is disabled. */
   uploadDisabled?: boolean;
 };

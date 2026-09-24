@@ -123,7 +123,7 @@ export const getLocalMediaCloudShareBarAction = ({
   return null;
 };
 
-export function useLocalMediaCloudShare() {
+export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
   const dispatch = useDispatch();
   const { showToast } = useToast();
   const { churchId = "", uploadPreset = "bpqu4ma5" } =
@@ -168,6 +168,7 @@ export function useLocalMediaCloudShare() {
             workspaceId: churchId,
             uploadPreset,
           });
+          onStorageUsageChanged?.();
           dispatch(
             updateMediaItemFields({
               id: media.id,
@@ -191,6 +192,7 @@ export function useLocalMediaCloudShare() {
       try {
         const patch = await uploadOwnedLocalVideoToCloud(media, churchId);
         dispatch(updateMediaItemFields({ id: media.id, patch }));
+        onStorageUsageChanged?.();
         showToast(
           `${label} is available in Media and on other devices.`,
           "success",
@@ -207,6 +209,7 @@ export function useLocalMediaCloudShare() {
       deviceId,
       dispatch,
       isGuestSession,
+      onStorageUsageChanged,
       showToast,
       uploadPreset,
     ],

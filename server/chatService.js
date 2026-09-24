@@ -565,8 +565,10 @@ export const createChatService = ({
         await ref.create(message);
       } catch (error) {
         let existing;
+        let readCompleted = false;
         try {
           const snapshot = await ref.get();
+          readCompleted = true;
           if (snapshot.exists) existing = { id: snapshot.id, ...snapshot.data() };
         } catch {
           // The write outcome is unknown; leave its R2 reservation for retry
@@ -586,7 +588,7 @@ export const createChatService = ({
           }
           return serializeChatMessage(existing);
         }
-        if (completedByStorage && normalizedAttachment) {
+        if (readCompleted && completedByStorage && normalizedAttachment) {
           await onAttachmentAborted({ churchId, attachment: normalizedAttachment });
         }
         throw error;

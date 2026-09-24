@@ -19,6 +19,12 @@ const churchFolder = (churchId) =>
   `worship-sync/churches/${encodeURIComponent(churchId)}/media`;
 const canvaFolder = (churchId) =>
   `worship-sync/canva/${encodeURIComponent(churchId)}`;
+const memberProfileFolder = (churchId) =>
+  `member-profiles/${encodeURIComponent(churchId)}`;
+const brandingFolder = (churchId) =>
+  `branding/${encodeURIComponent(churchId)}`;
+const temporaryConversionFolder = (churchId) =>
+  `temporary-conversions/${encodeURIComponent(churchId)}`;
 const mediaAssetId = (asset) =>
   String(asset?.asset_id || asset?.assetId || asset?.id || "").trim();
 const cloudinaryAssetBytes = (asset) => getCloudinaryAssetBytes(asset);
@@ -38,10 +44,19 @@ export const createProviderStorageService = ({
     return (
       publicId.startsWith(`${churchFolder(churchId)}/`) ||
       publicId.startsWith(`${canvaFolder(churchId)}/`) ||
+      publicId.startsWith(`${memberProfileFolder(churchId)}/`) ||
+      publicId.startsWith(`${brandingFolder(churchId)}/`) ||
+      publicId.startsWith(`${temporaryConversionFolder(churchId)}/`) ||
       folder === churchFolder(churchId) ||
       folder.startsWith(`${churchFolder(churchId)}/`) ||
       folder === canvaFolder(churchId) ||
-      folder.startsWith(`${canvaFolder(churchId)}/`)
+      folder.startsWith(`${canvaFolder(churchId)}/`) ||
+      folder === memberProfileFolder(churchId) ||
+      folder.startsWith(`${memberProfileFolder(churchId)}/`) ||
+      folder === brandingFolder(churchId) ||
+      folder.startsWith(`${brandingFolder(churchId)}/`) ||
+      folder === temporaryConversionFolder(churchId) ||
+      folder.startsWith(`${temporaryConversionFolder(churchId)}/`)
     );
   };
 

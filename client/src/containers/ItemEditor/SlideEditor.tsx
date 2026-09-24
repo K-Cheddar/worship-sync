@@ -1499,6 +1499,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
                 onChange(onChangeInfo);
               }}
               displayType="editor"
+              editorTransportOwner
               preparedMediaContext={editorPreparedMediaContext}
               currentItemId={_id}
               selectedBox={selectedBox}
