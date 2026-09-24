@@ -13,6 +13,25 @@ export const MEDIA_LIBRARY_ORIGINS = [
 
 export type MediaLibraryOrigin = (typeof MEDIA_LIBRARY_ORIGINS)[number];
 
+export const MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES: Record<
+  MediaLibraryOrigin,
+  { badge: string; icon: string }
+> = {
+  uploaded: { badge: "", icon: "" },
+  local: {
+    badge: "bg-violet-950/90 text-violet-100 ring-violet-500/60",
+    icon: "text-violet-300",
+  },
+  "video-input": {
+    badge: "bg-emerald-950/90 text-emerald-100 ring-emerald-500/60",
+    icon: "text-emerald-300",
+  },
+  canva: {
+    badge: "bg-fuchsia-950/90 text-fuchsia-100 ring-fuchsia-500/60",
+    icon: "text-fuchsia-300",
+  },
+};
+
 export type MediaOriginFilterValue = "all" | MediaLibraryOrigin;
 
 type OriginMediaFields = Pick<

@@ -5,6 +5,7 @@ import {
   formatLiveSlideProgress,
   getOccurrenceServices,
   resolveLiveItemSource,
+  resolvePrimaryLiveOutput,
   listCurrentServiceOccurrences,
   resolveLiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
@@ -296,5 +297,23 @@ describe("resolveLiveItemSource", () => {
         { name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" },
       ),
     ).toEqual({ name: "Monitor Song", itemId: "monitor-item", listId: "monitor-row" });
+  });
+});
+
+describe("resolvePrimaryLiveOutput", () => {
+  it("uses the first active output in registry order and keeps blank outputs from stealing focus", () => {
+    const selected = resolvePrimaryLiveOutput([
+      { id: "tv-one", name: "", itemId: "", listId: "" },
+      { id: "tv-two", name: "Aux item", itemId: "item-a", listId: "row-a" },
+      { id: "tv-three", name: "Different item", listId: "row-b" },
+    ]);
+    expect(selected).toEqual({
+      index: 1,
+      output: { id: "tv-two", name: "Aux item", itemId: "item-a", listId: "row-a" },
+    });
+  });
+
+  it("returns no item when every output is blank", () => {
+    expect(resolvePrimaryLiveOutput([{ name: "", itemId: "", listId: "" }])).toBeNull();
   });
 });

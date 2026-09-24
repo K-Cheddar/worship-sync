@@ -3,6 +3,7 @@ import {
   BookOpen,
   FileQuestion,
   FileText,
+  Files,
   Link as LinkIcon,
   Music,
   StickyNote,
@@ -11,11 +12,19 @@ import {
 } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import { getServicePlanCustomDocumentId } from "../../types/servicePlan";
 import type {
   ServicePlanContentResource,
   ServicePlanContentResourceType,
 } from "../../types/servicePlan";
 import type { ChurchResource } from "../../types/churchResource";
+import {
+  multilineTextToRichText,
+  isRichTextEmpty,
+  normalizeRichTextDocument,
+  richTextToFormattedPlainText,
+  type RichTextDocument,
+} from "../../types/richText";
 import type {
   ContentPreviewResource,
   ContentPreviewResolvedSource,
@@ -41,10 +50,33 @@ export const SERVICE_PLAN_RESOURCE_REGISTRY: Record<
   youtube: { label: "YouTube", icon: SquarePlay, toneClassName: "text-red-300", canEdit: false },
   audio: { label: "Audio", icon: AudioLines, toneClassName: "text-amber-300", canEdit: false },
   document: { label: "File", icon: FileText, toneClassName: "text-cyan-300", canEdit: false },
+  "custom-document": { label: "Custom document", icon: Files, toneClassName: "text-indigo-300", canEdit: false },
   url: { label: "Web link", icon: LinkIcon, toneClassName: "text-blue-300", canEdit: true },
   text: { label: "Notes", icon: StickyNote, toneClassName: "text-emerald-300", canEdit: true },
   generic: { label: "Other", icon: FileQuestion, toneClassName: "text-gray-300", canEdit: true },
 };
+
+/** Store a PouchDB custom-item id and its current name, never its slide data. */
+export const createServicePlanCustomDocumentReference = ({
+  documentId,
+  title,
+}: {
+  documentId: string;
+  title: string;
+}): ServicePlanContentResource => ({
+  id: generateRandomId(),
+  type: "custom-document",
+  title: title.trim() || "Untitled custom document",
+  data: { customDocumentId: documentId },
+});
+
+export const getServicePlanCustomDocumentDisplayLabel = (
+  resource: ServicePlanContentResource,
+  document?: { _id: string; name: string },
+): string =>
+  (document?._id === getServicePlanCustomDocumentId(resource)
+    ? document.name.trim()
+    : "") || resource.title.trim() || "Untitled custom document";
 
 export const getServicePlanResourceDefinition = (
   type: string,
@@ -65,7 +97,27 @@ export const getServicePlanResourceDataString = (
 
 export const getServicePlanResourceNotes = (
   resource: ServicePlanContentResource,
-): string => getServicePlanResourceDataString(resource, "notes");
+): string => richTextToFormattedPlainText(getServicePlanResourceRichNotes(resource));
+
+/** Read rich and legacy plain-text resource notes through one compatible path. */
+export const getServicePlanResourceText = (
+  resource: ServicePlanContentResource,
+): RichTextDocument => {
+  const value = resource.data?.text;
+  return typeof value === "string"
+    ? multilineTextToRichText(value)
+    : normalizeRichTextDocument(value);
+};
+
+/** Read rich and legacy plain-text optional notes through one compatible path. */
+export const getServicePlanResourceRichNotes = (
+  resource: ServicePlanContentResource,
+): RichTextDocument => {
+  const value = resource.data?.notes;
+  return typeof value === "string"
+    ? multilineTextToRichText(value)
+    : normalizeRichTextDocument(value);
+};
 
 const getExplicitServicePlanResourceTitle = (
   resource: ServicePlanContentResource,
@@ -104,7 +156,10 @@ export const normalizeServicePlanResourceForPreview = (
   mediaId: resource.mediaId,
   mimeType: resource.metadata?.mimeType || options.churchResource?.storage.contentType,
   fileName: options.churchResource?.storage.fileName,
-  textContent: getServicePlanResourceDataString(resource, "text") || undefined,
+  textContent: richTextToFormattedPlainText(getServicePlanResourceText(resource)) || undefined,
+  ...(resource.type === "text"
+    ? { richTextContent: getServicePlanResourceText(resource) }
+    : {}),
   ...(options.resolveSource ? { resolveSource: options.resolveSource } : {}),
 });
 
@@ -147,6 +202,41 @@ export const isHttpUrl = (value: string): boolean => {
   }
 };
 
+/** Public snapshots may link to public web resources, never church files or signed storage URLs. */
+export const getSafePublicServicePlanResourceUrl = (
+  resource: ServicePlanContentResource,
+): string | undefined => {
+  if (["document", "church-resource", "custom-document", "audio"].includes(resource.type)) {
+    return undefined;
+  }
+  const rawUrl = resource.url?.trim();
+  if (!rawUrl || !isHttpUrl(rawUrl)) return undefined;
+  try {
+    const url = new URL(rawUrl);
+    if (url.username || url.password) return undefined;
+    const sensitiveParameter = /^(?:x-amz-|x-goog-|awsaccesskeyid$|googleaccessid$|key-pair-id$|credential$|signature$|sig$|token$|access_token$|auth$|key$|expires$|policy$|code$)/i;
+    if ([...url.searchParams.keys()].some((key) => sensitiveParameter.test(key))) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+};
+
+export const getPublicServicePlanResourceTitle = (
+  resource: ServicePlanContentResource,
+): string => {
+  const title = resource.title?.trim() || "";
+  const safeUrl = getSafePublicServicePlanResourceUrl(resource);
+  const isPlaceholder = ["untitled resource", "church resource"].includes(title.toLowerCase());
+  return title && title !== resource.url?.trim() && !isPlaceholder
+    ? title
+    : safeUrl
+      ? new URL(safeUrl).hostname.replace(/^www\./i, "")
+      : "Untitled resource";
+};
+
 export const createServicePlanLinkResource = ({
   title,
   url,
@@ -175,7 +265,7 @@ export const createServicePlanTextResource = ({
   text,
 }: {
   title: string;
-  text: string;
+  text: RichTextDocument;
 }): ServicePlanContentResource => ({
   id: generateRandomId(),
   type: "text",
@@ -189,14 +279,14 @@ export const createServicePlanGenericResource = ({
   url,
 }: {
   title: string;
-  notes: string;
+  notes: RichTextDocument;
   url: string;
 }): ServicePlanContentResource => ({
   id: generateRandomId(),
   type: "generic",
   title: title.trim() || "Untitled resource",
   ...(url.trim() ? { url: url.trim() } : {}),
-  ...(notes.trim() ? { data: { notes } } : {}),
+  ...(!isRichTextEmpty(notes) ? { data: { notes } } : {}),
 });
 
 export const createServicePlanAudioResource = ({

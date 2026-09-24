@@ -190,6 +190,18 @@ const publicScriptureLabels = (element) => {
     .filter(Boolean);
 };
 
+const publicSongResource = (reference) => ({
+  type: "song",
+  title: String(
+    reference?.kind === "library" ? reference.songName : reference?.title || "",
+  ).trim() || "Untitled song",
+});
+
+const publicScriptureResource = (reference) => ({
+  type: "scripture",
+  title: String(reference?.label || "").trim() || "Scripture",
+});
+
 const isHttpUrl = (value) => {
   try {
     const url = new URL(String(value || "").trim());
@@ -199,34 +211,172 @@ const isHttpUrl = (value) => {
   }
 };
 
+const publicResourceUrl = (resource) => {
+  if (["document", "church-resource", "custom-document", "audio"].includes(resource?.type)) return "";
+  const value = String(resource?.url || "").trim();
+  if (!isHttpUrl(value)) return "";
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "";
+    const sensitiveParameter = /^(?:x-amz-|x-goog-|awsaccesskeyid$|googleaccessid$|key-pair-id$|credential$|signature$|sig$|token$|access_token$|auth$|key$|expires$|policy$|code$)/i;
+    if ([...url.searchParams.keys()].some((key) => sensitiveParameter.test(key))) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+};
+
 const publicResourceDetail = (resource) => {
   if (resource?.type === "text") {
     const text = resource.data?.text;
-    return typeof text === "string" && text.trim() ? text.trim() : undefined;
+    if (typeof text === "string") return text.trim() || undefined;
+    if (!text || typeof text !== "object" || !Array.isArray(text.blocks)) {
+      return undefined;
+    }
+
+    const orderedCounters = new Map();
+    const detail = text.blocks
+      .filter((block) => block && typeof block === "object")
+      .map((block) => {
+        const spans = Array.isArray(block.spans) ? block.spans : [];
+        const blockText = spans
+          .map((span) => typeof span?.text === "string" ? span.text : "")
+          .join("");
+        if (block.type !== "list-item") {
+          orderedCounters.clear();
+          return blockText;
+        }
+
+        const rawIndent = Number(block.indent);
+        const indent = Number.isInteger(rawIndent)
+          ? Math.max(0, Math.min(4, rawIndent))
+          : 0;
+        for (const depth of orderedCounters.keys()) {
+          if (depth > indent) orderedCounters.delete(depth);
+        }
+
+        if (block.listStyle === "ordered") {
+          const rawStart = Number(block.listStart);
+          const value = Number.isInteger(rawStart) && rawStart > 0
+            ? rawStart
+            : (orderedCounters.get(indent) || 0) + 1;
+          orderedCounters.set(indent, value);
+          return `${"  ".repeat(indent)}${value}. ${blockText}`;
+        }
+
+        orderedCounters.delete(indent);
+        return `${"  ".repeat(indent)}- ${blockText}`;
+      })
+      .join("\n")
+      .trim();
+    return detail || undefined;
   }
   if (resource?.type === "generic") {
     const notes = resource.data?.notes;
-    return typeof notes === "string" && notes.trim() ? notes.trim() : undefined;
+    if (typeof notes === "string") return notes.trim() || undefined;
+    if (!notes || typeof notes !== "object" || !Array.isArray(notes.blocks)) {
+      return undefined;
+    }
+
+    const orderedCounters = new Map();
+    const detail = notes.blocks
+      .filter((block) => block && typeof block === "object")
+      .map((block) => {
+        const spans = Array.isArray(block.spans) ? block.spans : [];
+        const blockText = spans
+          .map((span) => typeof span?.text === "string" ? span.text : "")
+          .join("");
+        if (block.type !== "list-item") {
+          orderedCounters.clear();
+          return blockText;
+        }
+
+        const rawIndent = Number(block.indent);
+        const indent = Number.isInteger(rawIndent)
+          ? Math.max(0, Math.min(4, rawIndent))
+          : 0;
+        for (const depth of orderedCounters.keys()) {
+          if (depth > indent) orderedCounters.delete(depth);
+        }
+        if (block.listStyle === "ordered") {
+          const rawStart = Number(block.listStart);
+          const value = Number.isInteger(rawStart) && rawStart > 0
+            ? rawStart
+            : (orderedCounters.get(indent) || 0) + 1;
+          orderedCounters.set(indent, value);
+          return `${"  ".repeat(indent)}${value}. ${blockText}`;
+        }
+        orderedCounters.delete(indent);
+        return `${"  ".repeat(indent)}- ${blockText}`;
+      })
+      .join("\n")
+      .trim();
+    return detail || undefined;
   }
   return undefined;
 };
 
 /** Expose only the display fields needed by the public resource rows. */
-const publicResources = (element) =>
-  (Array.isArray(element?.resources) ? element.resources : [])
-    .filter((resource) => resource?.type !== "song" && resource?.type !== "scripture")
-    .map((resource) => {
-      const type = String(resource?.type || "generic").trim() || "generic";
-      const title = String(resource?.title || "Untitled resource").trim() || "Untitled resource";
-      const url = String(resource?.url || "").trim();
-      const detail = publicResourceDetail(resource);
-      return {
-        type,
-        title,
-        ...(isHttpUrl(url) ? { url } : {}),
-        ...(detail ? { detail } : {}),
-      };
-    });
+const publicResources = (element) => {
+  const resources = Array.isArray(element?.resources) ? element.resources : [];
+  const songRefs = Array.isArray(element?.songRefs) && element.songRefs.length
+    ? element.songRefs
+    : element?.songRef
+      ? [element.songRef]
+      : [];
+  const scriptureRefs = Array.isArray(element?.scriptureRefs) && element.scriptureRefs.length
+    ? element.scriptureRefs
+    : element?.scriptureRef
+      ? [element.scriptureRef]
+      : [];
+  const legacy = [];
+  songRefs.forEach((reference) => {
+    legacy.push(publicSongResource(reference));
+  });
+  scriptureRefs.forEach((reference) => {
+    legacy.push(publicScriptureResource(reference));
+  });
+
+  const resourcesWithoutLegacyDuplicates = resources.filter((resource) => {
+    if (resource?.type === "song") {
+      const storedSongRef = resource?.data?.songRef;
+      const storedSongId = storedSongRef && typeof storedSongRef === "object"
+        ? String(storedSongRef.songId || "")
+        : String(resource?.data?.songId || "");
+      return !songRefs.some(
+        (reference) => reference?.kind === "library" && storedSongId === String(reference.songId || ""),
+      );
+    }
+    if (resource?.type === "scripture") {
+      return !scriptureRefs.some(
+        (reference) => String(resource?.data?.label || "") === String(reference?.label || ""),
+      );
+    }
+    return true;
+  });
+
+  return [...legacy, ...resourcesWithoutLegacyDuplicates].map((resource) => {
+    const type = String(resource?.type || "generic").trim() || "generic";
+    const rawTitle = String(resource?.title || "").trim();
+    const url = String(resource?.url || "").trim();
+    const safeUrl = publicResourceUrl(resource);
+    const titleIsPlaceholder = ["untitled resource", "church resource"].includes(rawTitle.toLowerCase());
+    const title = rawTitle && rawTitle !== url && !titleIsPlaceholder
+      ? rawTitle
+      : safeUrl
+        ? new URL(safeUrl).hostname.replace(/^www\./i, "")
+        : "Untitled resource";
+    const detail = publicResourceDetail(resource);
+    return {
+      type,
+      title,
+      ...(safeUrl ? { url: safeUrl } : {}),
+      ...(detail ? { detail } : {}),
+    };
+  });
+};
 
 /** Church mic catalog keyed by id — built once per public snapshot. */
 const buildPublicMicrophonesById = (microphones) =>
@@ -680,10 +830,10 @@ export const buildPublicServicePlanSnapshot = ({
             notes: isGeneralView
               ? { blocks: [] }
               : normalizeRichTextDocument(element.notes),
-            ...(publicSongLabels(element).length
+            ...(isGeneralView && publicSongLabels(element).length
               ? { songs: publicSongLabels(element) }
               : {}),
-            ...(publicScriptureLabels(element).length
+            ...(isGeneralView && publicScriptureLabels(element).length
               ? { scriptureRefs: publicScriptureLabels(element) }
               : {}),
             ...(resources.length ? { resources } : {}),

@@ -3,13 +3,17 @@ import {
   createServicePlanGenericResource,
   createServicePlanChurchResourceReference,
   createServicePlanDocumentResource,
+  createServicePlanTextResource,
+  createServicePlanCustomDocumentReference,
   getEffectiveServicePlanResourceDefinition,
+  getServicePlanCustomDocumentDisplayLabel,
   getServicePlanChurchResourceId,
   getServicePlanResourceDisplayLabel,
   isServicePlanChurchResourceReference,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
+import { plainTextToRichText } from "../../types/richText";
 
 describe("service-plan content resources", () => {
   it.each([
@@ -47,17 +51,29 @@ describe("service-plan content resources", () => {
     expect(normalizeServicePlanResourceForPreview(resource).title).toBeUndefined();
   });
 
+  it("keeps the saved rich text document in the preview resource", () => {
+    const document = {
+      blocks: [{
+        type: "paragraph" as const,
+        spans: [{ text: "Important note", bold: true, italic: true }],
+      }],
+    };
+    const resource = createServicePlanTextResource({ title: "Notes", text: document });
+
+    expect(normalizeServicePlanResourceForPreview(resource).richTextContent).toEqual(document);
+  });
+
   it("creates a generic resource without requiring a URL", () => {
     expect(
       createServicePlanGenericResource({
         title: "Offering instructions",
-        notes: "Mention the online giving option.",
+        notes: plainTextToRichText("Mention the online giving option."),
         url: "",
       }),
     ).toMatchObject({
       type: "generic",
       title: "Offering instructions",
-      data: { notes: "Mention the online giving option." },
+      data: { notes: plainTextToRichText("Mention the online giving option.") },
     });
   });
 
@@ -81,6 +97,25 @@ describe("service-plan content resources", () => {
     ).toBe("Audio");
   });
 
+  it("persists custom documents by stable id and resolves their current title", () => {
+    const reference = createServicePlanCustomDocumentReference({
+      documentId: "free-document-1",
+      title: "  Service Notes  ",
+    });
+    expect(reference).toMatchObject({
+      type: "custom-document",
+      title: "Service Notes",
+      data: { customDocumentId: "free-document-1" },
+    });
+    expect(reference).not.toHaveProperty("slides");
+    expect(getServicePlanCustomDocumentDisplayLabel(reference, {
+      _id: "free-document-1",
+      name: "Updated Service Notes",
+    })).toBe("Updated Service Notes");
+    expect(getServicePlanCustomDocumentDisplayLabel(reference)).toBe("Service Notes");
+    expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("Custom document");
+  });
+
   it("projects legacy song and scripture fields when resources is absent", () => {
     const resources = getServicePlanElementContentResources({
       songRef: { kind: "library", songId: "song-1", songName: "Welcome Song" },
@@ -93,5 +128,29 @@ describe("service-plan content resources", () => {
       },
     });
     expect(resources.map((resource) => resource.type)).toEqual(["song", "scripture"]);
+  });
+
+  it("prefers legacy song and scripture fields once when matching resources also exist", () => {
+    const resources = getServicePlanElementContentResources({
+      songRef: { kind: "library", songId: "song-1", songName: "Welcome Song" },
+      scriptureRef: {
+        label: "John 3:16 (NIV)",
+        book: "John",
+        chapter: "3",
+        verseRange: "16",
+        version: "NIV",
+      },
+      resources: [
+        { id: "song-1", type: "song", title: "Welcome Song", data: { songId: "song-1" } },
+        { id: "scripture-1", type: "scripture", title: "John 3:16", data: { label: "John 3:16 (NIV)" } },
+        { id: "youtube-1", type: "youtube", title: "Sermon video" },
+      ],
+    });
+
+    expect(resources.map(({ type, title }) => [type, title])).toEqual([
+      ["song", "Welcome Song"],
+      ["scripture", "John 3:16 (NIV)"],
+      ["youtube", "Sermon video"],
+    ]);
   });
 });

@@ -38,7 +38,9 @@ const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   (
     (candidate.outlineItemType === "song" &&
       Boolean(candidate.matchedLibraryItem)) ||
-    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)) ||
+    (candidate.outlineItemType === "custom-document" &&
+      candidate.matchedLibraryItem?.type === "free")
   );
 
 const OverlayStatusBadge = ({ matched }: { matched: boolean }) =>
@@ -310,6 +312,21 @@ const OutlineStatusCell = ({
     return (
       <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
         Bible (unrecognized)
+      </span>
+    );
+  }
+
+  if (candidate.outlineItemType === "custom-document") {
+    const documentName = candidate.matchedLibraryItem?.name || candidate.title;
+    return (
+      <span className="flex items-center gap-1">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${candidate.matchedLibraryItem ? "bg-violet-900/40 text-violet-300" : "bg-red-900/40 text-red-300"}`}>
+          {candidate.matchedLibraryItem ? "Document" : "Unavailable"}
+        </span>
+        {candidate.matchedLibraryItem ? alreadyPresentBadge : null}
+        <span className="max-w-48 truncate text-xs text-gray-300" title={documentName}>
+          {documentName}
+        </span>
       </span>
     );
   }

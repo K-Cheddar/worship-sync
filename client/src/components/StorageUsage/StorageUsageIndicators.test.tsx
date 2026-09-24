@@ -49,6 +49,8 @@ describe("storage usage formatting and indicators", () => {
         onRetry={jest.fn()}
       />,
     );
+    expect(screen.queryByRole("region", { name: "File storage" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
     expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("3.5 MB / 500 MB");
     expect(screen.getByRole("region", { name: "Image storage (Cloudinary)" })).toHaveTextContent("400 MB / 500 MB");
     expect(screen.getByRole("region", { name: "Video storage (Mux)" })).toHaveTextContent("780 min / 2,000 min");
@@ -71,6 +73,7 @@ describe("storage usage formatting and indicators", () => {
         onRetry={jest.fn()}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
     expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("500 MB / 500 MB");
     expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("Storage full");
     expect(screen.getByRole("region", { name: "Image storage (Cloudinary)" })).toHaveTextContent("600 MB / 500 MB");
@@ -91,6 +94,7 @@ describe("storage usage formatting and indicators", () => {
         onRetry={jest.fn()}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
     expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("0 B / 2 GB");
     expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("2 GB remaining");
     expect(screen.getByRole("group", { name: "Storage usage" })).toHaveClass("grid-cols-1", "sm:grid-cols-2");
@@ -101,6 +105,8 @@ describe("storage usage formatting and indicators", () => {
     mockGetQuota.mockResolvedValueOnce({ success: true, quotas });
     render(<QuotaHarness churchId="church-1" />);
     expect(screen.getByText("Loading storage usage...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show storage usage details" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
     expect(screen.getByRole("group", { name: "Storage usage" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("region", { name: "File storage loading" })).toBeInTheDocument();
     expect(await screen.findByText("Storage usage unavailable")).toBeInTheDocument();
@@ -123,7 +129,9 @@ describe("storage usage formatting and indicators", () => {
     rerender(<QuotaHarness churchId="church-2" />);
     expect(screen.queryByText("3.5 MB / 500 MB")).not.toBeInTheDocument();
     resolveFirst({ success: true, quotas });
-    expect(await screen.findByRole("region", { name: "File storage" })).toHaveTextContent("9 MB / 100 MB");
+    expect(await screen.findByText("File storage: 9 MB / 100 MB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show storage usage details" }));
+    expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("9 MB / 100 MB");
     expect(screen.queryByText("3.5 MB")).not.toBeInTheDocument();
     expect(mockGetQuota).toHaveBeenLastCalledWith("church-2");
   });

@@ -191,7 +191,9 @@ describe("Resources page", () => {
   it("shows the church R2 quota independently of the visible resources", async () => {
     mockListChurchResources.mockResolvedValue({ success: true, resources: [] });
     renderPage();
-    expect(await screen.findByRole("region", { name: "File storage" })).toHaveTextContent("3.5 MB / 500 MB");
+    expect(await screen.findByText("File storage: 3.5 MB / 500 MB")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Show storage usage details" }));
+    expect(screen.getByRole("region", { name: "File storage" })).toHaveTextContent("3.5 MB / 500 MB");
     expect(screen.getByText("496.5 MB remaining")).toBeInTheDocument();
     expect(mockGetChurchStorageQuota).toHaveBeenCalledWith("church-1");
   });

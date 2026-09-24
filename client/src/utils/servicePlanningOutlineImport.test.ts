@@ -4,6 +4,7 @@ import {
   planServicePlanningOutlineSyncSteps,
 } from "./servicePlanningOutlineImport";
 import { createBibleItemFromParsedReference } from "./servicePlanningBibleImport";
+import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 
 jest.mock("./servicePlanningBibleImport", () => ({
   createBibleItemFromParsedReference: jest.fn(),
@@ -13,6 +14,68 @@ const mockedCreateBibleItemFromParsedReference =
   createBibleItemFromParsedReference as jest.MockedFunction<
     typeof createBibleItemFromParsedReference
   >;
+
+const customDocumentCandidate = (
+  documentId: string,
+  headingName: string | null,
+  title = "Shared document title",
+): OutlineItemCandidate => ({
+  sectionName: "Service",
+  headingName,
+  sourceRowIndex: 0,
+  elementType: "Custom Document",
+  title,
+  outlineItemType: "custom-document",
+  customDocumentId: documentId,
+  cleanedTitle: title,
+  matchedLibraryItem: {
+    _id: documentId,
+    name: title,
+    type: "free",
+    listId: documentId,
+  },
+  parsedRef: null,
+  overlayReady: false,
+  outlineAlreadyPresent: false,
+});
+
+const librarySongCandidate = (
+  songId: string,
+  headingName: string | null,
+): OutlineItemCandidate => ({
+  sectionName: "Service",
+  headingName,
+  sourceRowIndex: 1,
+  elementType: "Song",
+  title: "Same title",
+  outlineItemType: "song",
+  cleanedTitle: "Same title",
+  matchedLibraryItem: {
+    _id: songId,
+    name: "Same title",
+    type: "song",
+    listId: songId,
+  },
+  parsedRef: null,
+  overlayReady: false,
+  outlineAlreadyPresent: false,
+});
+
+const bibleCandidate = (
+  headingName: string | null,
+): OutlineItemCandidate => ({
+  sectionName: "Service",
+  headingName,
+  sourceRowIndex: 2,
+  elementType: "Scripture",
+  title: "John 3:16 NIV",
+  outlineItemType: "bible",
+  cleanedTitle: "John 3:16 NIV",
+  matchedLibraryItem: null,
+  parsedRef: { book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+  overlayReady: false,
+  outlineAlreadyPresent: false,
+});
 
 describe("insertServicePlanningOutlineCandidates", () => {
   beforeEach(() => {
@@ -164,6 +227,134 @@ describe("insertServicePlanningOutlineCandidates", () => {
         }),
       },
     ]);
+  });
+
+  it("inserts existing custom documents in reference order without copying slides", async () => {
+    const first = {
+      _id: "document-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "document-1",
+      slides: [{ words: ["Welcome"] }],
+    } as any;
+    const second = {
+      _id: "document-2",
+      name: "Prayer Guide",
+      type: "free",
+      listId: "document-2",
+      slides: [{ words: ["Prayer"] }],
+    } as any;
+    const result = await insertServicePlanningOutlineCandidates({
+      outlineCandidates: [first, second].map((document) => ({
+        sectionName: "Service",
+        headingName: "Presentation",
+        sourceRowIndex: 0,
+        elementType: "free",
+        title: document.name,
+        outlineItemType: "custom-document" as const,
+        customDocumentId: document._id,
+        cleanedTitle: document.name,
+        matchedLibraryItem: document,
+        parsedRef: null,
+        overlayReady: false,
+        outlineAlreadyPresent: false,
+      })),
+      currentList: [{
+        _id: "heading-1",
+        name: "Presentation",
+        type: "heading",
+        listId: "heading-list-1",
+      }],
+      allItems: [],
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(result.inserted).toBe(2);
+    expect(result.newList.slice(1).map(({ _id, name, type }) => ({ _id, name, type }))).toEqual([
+      { _id: "document-1", name: "Welcome Slides", type: "free" },
+      { _id: "document-2", name: "Prayer Guide", type: "free" },
+    ]);
+    expect(result.newList.slice(1).every((item) => !("slides" in item))).toBe(true);
+  });
+
+  it("preserves mixed tail-candidate order across documents, songs, and Bible items", () => {
+    const steps = planServicePlanningOutlineSyncSteps([
+      customDocumentCandidate("document-1", null),
+      librarySongCandidate("song-1", null),
+      bibleCandidate(null),
+      customDocumentCandidate("document-2", null, "Another shared title"),
+    ]);
+
+    expect(steps.map(({ kind }) => kind)).toEqual([
+      "insertCustomDocumentAtEnd",
+      "insertSongAtEnd",
+      "insertBibleAtEnd",
+      "insertCustomDocumentAtEnd",
+    ]);
+  });
+
+  it("uses document ids to dedupe same-title references and keeps mixed order on repeat sync", async () => {
+    mockedCreateBibleItemFromParsedReference.mockResolvedValue({
+      _id: "bible-john-3-16",
+      name: "John 3:16 NIV",
+      type: "bible",
+      background: "",
+    } as any);
+
+    const firstDocument = customDocumentCandidate("document-1", "Presentation");
+    const sameTitleDifferentDocument = customDocumentCandidate("document-2", "Presentation");
+    const candidates: OutlineItemCandidate[] = [
+      firstDocument,
+      librarySongCandidate("song-1", "Presentation"),
+      bibleCandidate("Presentation"),
+      sameTitleDifferentDocument,
+      customDocumentCandidate("document-1", "Presentation"),
+    ];
+    const initialList = [{
+      _id: "heading-presentation",
+      name: "Presentation",
+      type: "heading",
+      listId: "list-heading-presentation",
+    }];
+
+    const first = await insertServicePlanningOutlineCandidates({
+      outlineCandidates: candidates,
+      currentList: initialList,
+      allItems: [],
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(first.newList.slice(1).map(({ _id }) => _id)).toEqual([
+      "document-1",
+      "song-1",
+      "bible-john-3-16",
+      "document-2",
+    ]);
+    expect(first.inserted).toBe(4);
+
+    const second = await insertServicePlanningOutlineCandidates({
+      outlineCandidates: candidates,
+      currentList: first.newList,
+      allItems: first.createdAllItems,
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(second.inserted).toBe(0);
+    expect(second.listChanged).toBe(false);
+    expect(second.newList).toEqual(first.newList);
+    expect(mockedCreateBibleItemFromParsedReference).toHaveBeenCalledTimes(1);
   });
 
   it("does not plan steps for items already present under the matched heading", () => {

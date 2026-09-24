@@ -27,7 +27,10 @@ import { getHumanAuth } from "../firebase/apps";
 import { GlobalInfoContext } from "../context/globalInfo";
 import Input from "../components/Input/Input";
 import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
-import { isFirebaseAuthError } from "../utils/authUserMessages";
+import {
+  getFirebaseSignInMessage,
+  isFirebaseAuthError,
+} from "../utils/authUserMessages";
 import {
   getOrCreateDeviceId,
   inferLastSignInMethodFromProviderIds,
@@ -95,19 +98,8 @@ const getInviteFlowErrorMessage = (
   options?: { provider?: "google" | "microsoft" },
 ) => {
   if (isFirebaseAuthError(error)) {
-    if (
-      error.code === "auth/popup-blocked" ||
-      error.code === "auth/popup-closed-by-user"
-    ) {
-      return "Provider sign-in did not complete. Try again, or use email and password.";
-    }
-    if (error.code === "auth/network-request-failed") {
-      return "Could not reach the sign-in service. Check your connection and try again.";
-    }
     if (options?.provider) {
-      const providerLabel =
-        options.provider === "google" ? "Google" : "Microsoft";
-      return `${providerLabel} sign-in is not available right now. Try again, or use email and password.`;
+      return getFirebaseSignInMessage(error, { method: options.provider });
     }
     return "Could not complete sign-in for this invite. Try again.";
   }

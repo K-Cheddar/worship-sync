@@ -13,6 +13,7 @@ import servicePlanningImportReducer, {
   completeServicePlanningSync,
   advanceServicePlanningSyncStep,
 } from "../../store/servicePlanningImportSlice";
+import allDocsReducer from "../../store/allDocsSlice";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
@@ -131,6 +132,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -175,7 +177,11 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Select service plan: May 2, 2026 - 10 AM",
+      }),
+    ).toBeInTheDocument();
   });
 
   // Regression: the menu was portaled, which escapes the floating window's
@@ -202,7 +208,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ];
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(
       setServicePlanningServiceOutline(
@@ -222,7 +228,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     await user.click(
-      screen.getByRole("combobox", { name: /Service plan/i }),
+      screen.getByRole("button", { name: /Select service plan:/i }),
     );
     expect(
       await screen.findByRole("option", { name: /Test 2/ }),
@@ -243,7 +249,220 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     );
   });
 
-  it("shows the manual occurrence override and return action", async () => {
+  it("uses combobox keyboard navigation to select a plan", async () => {
+    const user = userEvent.setup();
+    mockPlanSource.savedPlans = [
+      {
+        planKey: "service-1@2026-07-30",
+        serviceId: "service-1",
+        name: "Test 1",
+        date: "2026-07-30",
+        startsAt: "2026-07-30T19:00:00.000Z",
+      },
+      {
+        planKey: "service-2@2026-08-06",
+        serviceId: "service-2",
+        name: "Test 2",
+        date: "2026-08-06",
+        startsAt: "2026-08-06T19:00:00.000Z",
+      },
+    ];
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+    await user.click(screen.getByRole("button", { name: /Select service plan:/i }));
+
+    const search = await screen.findByRole("combobox", {
+      name: "Search all saved plans",
+    });
+    expect(search).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    const trigger = screen.getByRole("button", { name: /Select service plan:/i });
+    expect(screen.queryByRole("combobox", { name: "Search all saved plans" }))
+      .not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    const reopenedSearch = await screen.findByRole("combobox", {
+      name: "Search all saved plans",
+    });
+    expect(reopenedSearch).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    const nextOption = screen.getByRole("option", { name: /Test 2/ });
+    expect(reopenedSearch).toHaveAttribute(
+      "aria-activedescendant",
+      nextOption.id,
+    );
+    await user.keyboard("{Enter}");
+
+    expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
+      "service-2@2026-08-06",
+    );
+    expect(screen.queryByRole("combobox", { name: "Search all saved plans" }))
+      .not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["minimum supported viewport", 320, 240],
+    ["iPad portrait viewport", 768, 1024],
+    ["iPad landscape viewport", 1024, 768],
+  ])("keeps plan results scrollable at the %s", async (_label, width, height) => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: width,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: height,
+    });
+
+    try {
+      const user = userEvent.setup();
+      mockPlanSource.savedPlans = Array.from({ length: 30 }, (_, index) => ({
+        planKey: `service-${index + 1}`,
+        serviceId: `service-${index + 1}`,
+        name: `Plan ${index + 1}`,
+        date: "2099-08-01",
+        startsAt: `2099-08-${String((index % 28) + 1).padStart(2, "0")}T10:00:00.000Z`,
+      }));
+
+      const store = configureStore({
+        reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+      });
+      store.dispatch(setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [],
+        teamAssignments: [],
+      }) as any));
+      act(() => {
+        store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+      });
+
+      const { unmount } = renderWindow(store);
+      await user.click(screen.getByRole("button", { name: /Select service plan:/i }));
+
+      const picker = await screen.findByRole("listbox", {
+        name: "Saved service plans",
+      });
+      expect(picker).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+      expect(screen.getByTestId("service-plan-picker-content")).toHaveClass(
+        "max-h-[min(var(--radix-popper-available-height),65vh,24rem)]",
+      );
+      expect(screen.getByTestId("floating-window")).toHaveStyle({
+        maxHeight: `min(${Math.max(height - 32, 240)}px, 100vh)`,
+      });
+      unmount();
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalWidth,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalHeight,
+      });
+    }
+  });
+
+  it("marks the selected plan and searches plans beyond the initial groups", async () => {
+    const user = userEvent.setup();
+    const upcomingPlans = Array.from({ length: 11 }, (_, index) => ({
+      planKey: `upcoming-${index + 1}`,
+      serviceId: `upcoming-${index + 1}`,
+      name: `Upcoming ${index + 1}`,
+      date: "2099-08-01",
+      startsAt: `2099-08-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
+    }));
+    const recentPlans = Array.from({ length: 11 }, (_, index) => ({
+      planKey: `recent-${index + 1}`,
+      serviceId: `recent-${index + 1}`,
+      name: `Recent ${index + 1}`,
+      date: "2000-08-01",
+      startsAt: `2000-08-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
+    }));
+    mockPlanSource.savedPlans = [...upcomingPlans, ...recentPlans];
+    mockPlanSource.selectedPlan = upcomingPlans[0];
+    mockPlanSource.selectedPlanKey = upcomingPlans[0].planKey;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+
+    await user.click(
+      screen.getByRole("button", { name: /Select service plan:/i }),
+    );
+    const floatingWindow = within(screen.getByTestId("floating-window"));
+    expect(floatingWindow.getByText("Upcoming")).toBeInTheDocument();
+    expect(floatingWindow.getByText("Recent", { selector: "p" })).toBeInTheDocument();
+    expect(
+      floatingWindow.getByRole("option", { name: /^Upcoming 1 ·/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      floatingWindow.queryByRole("option", { name: /^Recent 1 ·/ }),
+    ).not.toBeInTheDocument();
+
+    await user.type(
+      floatingWindow.getByRole("combobox", { name: "Search all saved plans" }),
+      "Recent 1",
+    );
+    const extraPlan = await floatingWindow.findByRole("option", {
+      name: /^Recent 1 ·/,
+    });
+    await user.click(extraPlan);
+    expect(mockPlanSource.selectPlan).toHaveBeenCalledWith("recent-1");
+  });
+
+  it("keeps the current service empty when no matching saved plan exists", async () => {
+    const user = userEvent.setup();
+    mockPlanSource.selectPlan.mockClear();
+    mockPlanSource.occurrence = {
+      occurrenceId: "occurrence-1",
+      name: "Sunday Service",
+      startsAt: "2026-08-02T10:00:00.000Z",
+    };
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+
+    expect(
+      screen.getByRole("button", {
+        name: "Select service plan: No plan for current service",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No saved plan exists for the current service/i))
+      .toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Select service plan:/i }),
+    );
+    expect(screen.getByText("No saved plans yet.")).toBeInTheDocument();
+    expect(mockPlanSource.selectPlan).not.toHaveBeenCalled();
+  });
+
+  it("shows the selected service plan without an occurrence selector and offers return", async () => {
     mockPlanSource.occurrences = [
       {
         occurrenceId: "occurrence-1",
@@ -261,7 +480,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.isManualSelection = true;
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     act(() => {
       store.dispatch(setServicePlanningFloatingWindowDismissed(false));
@@ -269,10 +488,12 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     renderWindow(store);
 
-    expect(screen.getByRole("combobox", { name: /Service occurrence/i })).toHaveTextContent(
-      "Evening Service",
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("Manually selected");
+    expect(
+      screen.queryByRole("combobox", { name: /Service occurrence/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Select service plan:/i }),
+    ).toBeInTheDocument();
 
     await userEvent.setup().click(
       screen.getByRole("button", { name: "Return to current service" }),
@@ -301,7 +522,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.isManualSelection = true;
 
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     act(() => {
       store.dispatch(setServicePlanningFloatingWindowDismissed(false));
@@ -309,12 +530,14 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     renderWindow(store);
 
-    expect(screen.getByRole("combobox", { name: /Service occurrence/i })).toHaveTextContent(
-      "Select",
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Manually selected plan (no matching occurrence)",
-    );
+    expect(
+      screen.getByRole("button", {
+        name: /Select service plan: Outside Window Service/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: /Service occurrence/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Return to current service" }),
     ).toBeInTheDocument();
@@ -323,7 +546,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   it("shows a loading status instead of the previous plan while selection changes", () => {
     mockPlanSource.isLoading = true;
     const store = configureStore({
-      reducer: { servicePlanningImport: servicePlanningImportReducer },
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(
       setServicePlanningServiceOutline(
@@ -365,6 +588,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -417,9 +641,12 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     renderWindow(store);
 
-    expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Plan" })).toBeInTheDocument();
-    expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Select service plan: May 2, 2026 - 10 AM",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
     expect(screen.getByText("Church Updates")).toBeInTheDocument();
     expect(screen.queryByText("free")).not.toBeInTheDocument();
@@ -435,6 +662,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -475,6 +703,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -605,6 +834,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -669,6 +899,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -742,6 +973,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
         undoable: () => ({
           present: {
             itemLists: {
@@ -813,6 +1045,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
         undoable: () => ({
           present: {
             itemLists: {
@@ -846,6 +1079,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -889,6 +1123,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 
@@ -956,6 +1191,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
       },
     });
 

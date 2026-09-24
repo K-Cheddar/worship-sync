@@ -100,6 +100,7 @@ import { displayOutputsSlice } from "./displayOutputsSlice";
 import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
+import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
@@ -1014,6 +1015,19 @@ listenerMiddleware.startListening({
     listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
 
     listenerApi.dispatch(upsertItemInAllDocs(db_item));
+    if (db_item.type === "free") {
+      const indexedItem = (listenerApi.getState() as RootState).allItems.list.find(
+        (candidate) => candidate._id === db_item._id,
+      );
+      listenerApi.dispatch(
+        allItemsSlice.actions.upsertItemInAllItemsList(
+          {
+            ...freeFormDocToServiceItem(db_item),
+            listId: indexedItem?.listId ?? db_item._id,
+          },
+        ),
+      );
+    }
 
     // Local machine updates
     safePostMessage({

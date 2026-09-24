@@ -227,6 +227,7 @@ const loadStoreWithItemPersistence = () => {
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
+    updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
   };
@@ -1156,6 +1157,69 @@ describe("store module", () => {
         name: "Edited Song",
         songAudio: undefined,
       }),
+    );
+  });
+
+  it("persists and reloads a custom free section name", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, updateSlides, db } =
+      loadStoreWithItemPersistence();
+    const slides = [
+      {
+        id: "section-4",
+        type: "Section",
+        name: "Section 4",
+        boxes: [],
+      },
+    ];
+    const renamedSections = [
+      {
+        sectionNum: 4,
+        name: "First",
+        words: "Section text",
+        slideSpan: 1,
+      },
+    ];
+    db.get.mockResolvedValue(
+      createSongDoc({
+        _rev: "1-free",
+        _id: "free-1",
+        type: "free",
+        slides,
+        formattedSections: [
+          { sectionNum: 4, words: "Section text", slideSpan: 1 },
+        ],
+      }),
+    );
+    db.put.mockResolvedValue({ ok: true, id: "free-1", rev: "2-free" });
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem(
+        createSongDoc({
+          _rev: "1-free",
+          _id: "free-1",
+          type: "free",
+          slides,
+          formattedSections: [
+            { sectionNum: 4, words: "Section text", slideSpan: 1 },
+          ],
+        }),
+      ),
+    );
+    store.dispatch(
+      updateSlides({ slides, formattedSections: renamedSections }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ formattedSections: renamedSections }),
+    );
+    const savedItem = db.put.mock.calls[0][0];
+    store.dispatch(itemSlice.actions.setActiveItem(savedItem));
+    expect(store.getState().undoable.present.item.formattedSections).toEqual(
+      renamedSections,
     );
   });
 

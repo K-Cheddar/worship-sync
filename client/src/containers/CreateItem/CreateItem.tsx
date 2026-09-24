@@ -39,7 +39,10 @@ import {
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
+import {
+  addItemToAllItemsList,
+  upsertItemInAllItemsList,
+} from "../../store/allItemsSlice";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
@@ -105,28 +108,34 @@ const getLyricsImportCandidateKey = (candidate: NormalizedLrclibTrack): string =
 
 export type CreateItemProps = {
   /**
-   * `embedded`: song-only form for modals (no type picker, no navigation after create).
+   * `embedded`: single-type form for modals (no type picker, no navigation after create).
    * Defaults to the Controller create page.
    */
   variant?: "page" | "embedded";
+  /** Type locked into an embedded create form. Defaults to song. */
+  embeddedType?: "song" | "free";
   /** Heading shown above the form. */
   title?: string;
   /** Embedded: back to the previous surface without creating. */
   onCancel?: () => void;
   /**
    * Embedded: called after a successful create instead of opening the item editor.
-   * Still writes the library song (allItems + allDocs).
+   * The item is still written to the library (allItems + allDocs).
    */
   onCreated?: (item: ItemState) => void;
+  /** Embedded: reports the lifetime of a durable free-form create operation. */
+  onCreatingChange?: (isCreating: boolean) => void;
   /** Parent dialog surface for lyrics drawers opened from the embedded form. */
   drawerPortalContainer?: HTMLElement | null;
 };
 
 const CreateItem = ({
   variant = "page",
+  embeddedType = "song",
   title,
   onCancel,
   onCreated,
+  onCreatingChange,
   drawerPortalContainer,
 }: CreateItemProps = {}) => {
   const isEmbedded = variant === "embedded";
@@ -153,6 +162,8 @@ const CreateItem = ({
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [isCreatingFreeForm, setIsCreatingFreeForm] = useState(false);
+  const isCreatingFreeFormRef = useRef(false);
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] =
     useState<MobileSongTab>("create");
@@ -178,7 +189,7 @@ const CreateItem = ({
   createItemDraftRef.current = createItemDraft;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
-  const canCreateEmbeddedSong = Boolean(db && isAllItemsInitialized);
+  const canCreateEmbeddedItem = Boolean(db && isAllItemsInitialized);
 
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
@@ -213,12 +224,16 @@ const CreateItem = ({
   );
 
   const selectedTypeLabel = isEmbedded
-    ? "Song"
+    ? embeddedType === "free" ? "Custom Document" : "Song"
     : itemTypes.find((itemType) => itemType.type === selectedType)?.label ||
     "Item";
 
   const heading =
-    title !== undefined ? title : isEmbedded ? "Create song" : "Create Item";
+    title !== undefined
+      ? title
+      : isEmbedded
+        ? embeddedType === "free" ? "Create custom document" : "Create song"
+        : "Create Item";
 
   const updateCreateItemDraft = (updates: Partial<CreateItemState>) => {
     const nextDraft = {
@@ -265,10 +280,10 @@ const CreateItem = ({
 
   useEffect(() => {
     if (!isEmbedded) return;
-    if (selectedType === "song") return;
-    updateCreateItemDraft({ type: "song" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- lock embedded create to song
-  }, [isEmbedded, selectedType]);
+    if (selectedType === embeddedType) return;
+    updateCreateItemDraft({ type: embeddedType });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lock embedded create to its requested type
+  }, [embeddedType, isEmbedded, selectedType]);
 
   useEffect(() => {
     if (isEmbedded) return;
@@ -494,7 +509,11 @@ const CreateItem = ({
       _id: item._id,
       listId: "",
     };
-    dispatch(addItemToAllItemsList(listItem));
+    if (item.type === "free") {
+      dispatch(upsertItemInAllItemsList(listItem));
+    } else {
+      dispatch(addItemToAllItemsList(listItem));
+    }
     dispatch(upsertItemInAllDocs(item));
 
     if (isEmbedded) {
@@ -511,10 +530,10 @@ const CreateItem = ({
     // A Service Plan must not point at a song that exists only in this tab's
     // Redux state. The regular Controller creator can still build its local
     // draft before Pouch is ready, but the embedded "Create and attach" path
-    // promises a durable library song, so wait for the library connection.
-    if (isEmbedded && !canCreateEmbeddedSong) {
+    // promises a durable library item, so wait for the library connection.
+    if (isEmbedded && !canCreateEmbeddedItem) {
       setCreateError(
-        "Song library is still connecting. Wait a moment, then try again.",
+        `${embeddedType === "free" ? "Custom document" : "Song"} library is still connecting. Wait a moment, then try again.`,
       );
       return;
     }
@@ -556,21 +575,37 @@ const CreateItem = ({
     }
 
     if (selectedType === "free") {
-      const newItem = await createNewFreeForm({
-        name: itemName,
-        list,
-        db,
-        background: defaultFreeFormBackground.background,
-        mediaInfo: defaultFreeFormBackground.mediaInfo,
-        brightness: defaultFreeFormBackgroundBrightness,
-        text: draftText,
-        overflow: defaultFreeFormFontMode,
-        shouldSendTo,
-      });
+      if (isCreatingFreeFormRef.current) return;
+      isCreatingFreeFormRef.current = true;
+      setIsCreatingFreeForm(true);
+      onCreatingChange?.(true);
+      try {
+        let newItem: ItemState;
+        try {
+          newItem = await createNewFreeForm({
+            name: itemName,
+            list,
+            db,
+            background: defaultFreeFormBackground.background,
+            mediaInfo: defaultFreeFormBackground.mediaInfo,
+            brightness: defaultFreeFormBackgroundBrightness,
+            text: draftText,
+            overflow: defaultFreeFormFontMode,
+            shouldSendTo,
+          });
+        } catch {
+          setCreateError("Could not create the custom document. Check your connection and try again.");
+          return;
+        }
 
-      setJustCreated(true);
-      dispatch(resetCreateItem());
-      dispatchNewItem(newItem);
+        setJustCreated(true);
+        dispatch(resetCreateItem());
+        dispatchNewItem(newItem);
+      } finally {
+        isCreatingFreeFormRef.current = false;
+        setIsCreatingFreeForm(false);
+        onCreatingChange?.(false);
+      }
       return;
     }
 
@@ -747,13 +782,13 @@ const CreateItem = ({
               type="button"
               variant="tertiary"
               className="justify-start"
-              disabled={justCreated}
+              disabled={justCreated || isCreatingFreeForm}
               onClick={() => {
                 dispatch(resetCreateItem());
                 onCancel();
               }}
             >
-              Back to song search
+              Back to {embeddedType === "free" ? "custom document" : "song"} search
             </Button>
           </div>
         ) : null}
@@ -827,9 +862,11 @@ const CreateItem = ({
               )}
               {existingItem && isEmbedded && (
                 <p className="rounded-md bg-neutral-700/90 p-2 text-sm text-cyan-300">
-                  A song named &ldquo;{existingItem.name}&rdquo; already exists.
-                  You can still create another, or go back and attach the existing
-                  one.
+                  A {embeddedType === "free" ? "custom document" : "song"} named
+                  &ldquo;{existingItem.name}&rdquo; already exists.
+                  {embeddedType === "free"
+                    ? " Go back to attach the existing one."
+                    : " You can still create another, or go back and attach the existing one."}
                 </p>
               )}
               {!isEmbedded && (
@@ -1043,9 +1080,9 @@ const CreateItem = ({
               </div>
             )}
             <div className="mt-3 flex shrink-0 flex-col gap-2">
-              {isEmbedded && !canCreateEmbeddedSong ? (
+              {isEmbedded && !canCreateEmbeddedItem ? (
                 <p className="text-sm text-amber-200" role="status">
-                  Song library is still connecting.
+                  {embeddedType === "free" ? "Custom document" : "Song"} library is still connecting.
                 </p>
               ) : null}
               {createError ? (
@@ -1058,7 +1095,8 @@ const CreateItem = ({
                   !itemName ||
                   (selectedType !== "song" && !!existingItem) ||
                   justCreated ||
-                  (isEmbedded && !canCreateEmbeddedSong)
+                  isCreatingFreeForm ||
+                  (isEmbedded && !canCreateEmbeddedItem)
                 }
                 variant="cta"
                 className="w-full justify-center text-base"
@@ -1066,7 +1104,7 @@ const CreateItem = ({
                 svg={justCreated ? Check : Plus}
                 color={justCreated ? "#84cc16" : undefined}
               >
-                {createButtonLabel}
+                {isCreatingFreeForm ? "Creating..." : createButtonLabel}
               </Button>
             </div>
           </div>

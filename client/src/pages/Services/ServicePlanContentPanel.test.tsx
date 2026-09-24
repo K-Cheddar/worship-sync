@@ -7,12 +7,13 @@ import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlanElement } from "../../types/servicePlan";
 
 let mockSongDocs: Array<Record<string, unknown>> = [];
+let mockAllFreeFormDocs: Array<{ _id: string; name: string; type: string; slides: unknown[] }> = [];
 const mockGetChurchResource = jest.mocked(getChurchResource);
 const mockGetChurchResourceUrl = jest.mocked(getChurchResourceUrl);
 const mockListChurchResources = jest.mocked(listChurchResources);
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
-    selector({ allDocs: { allSongDocs: mockSongDocs } }),
+    selector({ allDocs: { allSongDocs: mockSongDocs, allFreeFormDocs: mockAllFreeFormDocs } }),
 }));
 
 jest.mock("../../api/auth", () => ({
@@ -25,6 +26,19 @@ jest.mock("../../api/auth", () => ({
 jest.mock("./ServicePlanLibraryPicker", () => ({
   __esModule: true,
   default: () => null,
+}));
+
+jest.mock("./ServicePlanCustomDocumentPicker", () => ({
+  __esModule: true,
+  default: ({ onSelectDocument }: { onSelectDocument: (document: never) => void }) => (
+    <div role="dialog" aria-label="Add custom document">
+      {mockAllFreeFormDocs.map((document) => (
+        <button key={document._id} type="button" onClick={() => onSelectDocument(document as never)}>
+          Pick {document.name}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 jest.mock("./ServicePlanScripturePopover", () => ({
@@ -44,6 +58,11 @@ jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   ) : null,
 }));
 
+jest.mock("../../containers/ItemSlides/StaticSlideThumbnail", () => ({
+  __esModule: true,
+  default: ({ slide }: { slide: { name: string } }) => <div>{slide.name}</div>,
+}));
+
 const element = (overrides: Partial<ServicePlanElement> = {}): ServicePlanElement => ({
   id: "element-1",
   type: "free",
@@ -54,23 +73,86 @@ const element = (overrides: Partial<ServicePlanElement> = {}): ServicePlanElemen
 describe("ServicePlanContentPanel resources", () => {
   beforeEach(() => {
     mockSongDocs = [];
+    mockAllFreeFormDocs = [];
     mockGetChurchResource.mockReset();
     mockGetChurchResourceUrl.mockReset();
     mockListChurchResources.mockReset();
   });
 
-  it("auto-expands the notes field while editing a text resource", async () => {
+  it("uses the shared rich-text toolbar while editing a text resource", async () => {
     const user = userEvent.setup();
     render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={jest.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
 
-    const notes = screen.getByRole("textbox", { name: "Notes:" }) as HTMLTextAreaElement;
-    Object.defineProperty(notes, "scrollHeight", { configurable: true, value: 120 });
-    await user.type(notes, "A longer note");
+    expect(screen.getByRole("toolbar", { name: "Note formatting" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+  });
 
-    expect(notes.style.height).toBe("122px");
+  it("preserves inline formatting when a text resource is saved", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const { rerender } = render(
+      <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
+    const editor = screen.getByRole("textbox", { name: "Notes" });
+    await user.type(editor, "Important note");
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
+    await user.click(screen.getByRole("button", { name: "Italic" }));
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+
+    const resources = onUpdate.mock.calls.at(-1)?.[0].resources;
+    expect(resources?.[0].data?.text).toEqual({
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Important note", bold: true, italic: true }] },
+      ],
+    });
+
+    rerender(
+      <ServicePlanContentPanel
+        element={element({ resources })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+    expect(screen.getByText("Important note")).toHaveClass("font-bold", "italic");
+  });
+
+  it("preserves formatting in a generic resource's optional notes", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          resources: [
+            { id: "generic-1", type: "generic", title: "Instructions", data: { notes: "Important note" } },
+          ],
+        })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit resource Instructions" }));
+    const editor = screen.getByRole("textbox", { name: "Notes (optional)" });
+    await user.click(editor);
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
+    await user.click(screen.getByRole("button", { name: "Italic" }));
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+
+    expect(onUpdate.mock.calls.at(-1)?.[0].resources[0].data?.notes).toEqual({
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Important note", bold: true, italic: true }] },
+      ],
+    });
   });
 
   it("adds multiple resources and removes one without touching the other", async () => {
@@ -81,7 +163,7 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
     await user.type(screen.getByLabelText(/Title/), "Sermon notes");
-    await user.type(screen.getByRole("textbox", { name: "Notes:" }), "Welcome the guest speaker.");
+    await user.type(screen.getByRole("textbox", { name: "Notes" }), "Welcome the guest speaker.");
     await user.click(screen.getByRole("button", { name: "Add resource" }));
 
     const firstResources = onUpdate.mock.calls.at(-1)?.[0].resources;
@@ -89,7 +171,7 @@ describe("ServicePlanContentPanel resources", () => {
     expect(firstResources[0]).toMatchObject({
       type: "text",
       title: "Sermon notes",
-      data: { text: "Welcome the guest speaker." },
+      data: { text: plainTextToRichText("Welcome the guest speaker.") },
     });
     rerender(<ServicePlanContentPanel element={element({ resources: firstResources })} allowEdit onUpdate={onUpdate} />);
 
@@ -114,6 +196,73 @@ describe("ServicePlanContentPanel resources", () => {
     );
     await user.click(screen.getByRole("button", { name: "Remove resource Sermon notes" }));
     expect(onUpdate.mock.calls.at(-1)?.[0].resources).toEqual([secondResources[1]]);
+  }, 15000);
+
+  it("preserves stored song and scripture resource references when removing another resource", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const storedSong = {
+      id: "stored-song",
+      type: "song",
+      title: "Opening Song",
+      data: { songId: "song-1" },
+    };
+    const storedScripture = {
+      id: "stored-scripture",
+      type: "scripture",
+      title: "Psalm 100",
+      data: { label: "Psalm 100" },
+    };
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+          scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+          resources: [
+            storedSong,
+            storedScripture,
+            { id: "extra", type: "url", title: "Extra link", url: "https://example.com" },
+          ],
+        })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Remove resource Extra link" }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      resources: [storedSong, storedScripture],
+    });
+  });
+
+  it("opens an authenticated custom document in a read-only slide preview", async () => {
+    const user = userEvent.setup();
+    mockAllFreeFormDocs = [{
+      _id: "document-1",
+      name: "Welcome slides",
+      type: "free",
+      slides: [{ id: "slide-1", name: "Title slide" }],
+    }];
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          resources: [{
+            id: "document-ref",
+            type: "custom-document",
+            title: "Welcome slides",
+            data: { customDocumentId: "document-1" },
+          }],
+        })}
+        allowEdit={false}
+        onUpdate={jest.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Preview custom document Welcome slides" }));
+
+    expect(await screen.findByRole("heading", { name: "Welcome slides" })).toBeInTheDocument();
+    expect(screen.getByText("Title slide", { selector: "figcaption" })).toBeInTheDocument();
   });
 
   it("renders YouTube resources with the shared player and unknown resources safely", () => {
@@ -346,4 +495,53 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Remove scripture John 3:16 (NIV)" }));
     expect(onUpdate).toHaveBeenCalledWith({ scriptureRef: undefined, scriptureRefs: [] });
   });
+
+  it("attaches multiple custom documents by ordered id references and removes one", async () => {
+    mockAllFreeFormDocs = [
+      { _id: "doc-1", name: "Welcome Slides", type: "free", slides: [{ text: "not copied" }] },
+      { _id: "doc-2", name: "Prayer Guide", type: "free", slides: [{ text: "not copied" }] },
+    ];
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const { rerender } = render(
+      <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add custom document" }));
+    await user.click(screen.getByRole("button", { name: "Pick Welcome Slides" }));
+    const firstResources = onUpdate.mock.calls.at(-1)?.[0].resources;
+    expect(firstResources).toHaveLength(1);
+    expect(firstResources[0]).toMatchObject({
+      type: "custom-document",
+      title: "Welcome Slides",
+      data: { customDocumentId: "doc-1" },
+    });
+    expect(firstResources[0]).not.toHaveProperty("slides");
+
+    rerender(
+      <ServicePlanContentPanel
+        element={element({ resources: firstResources })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Pick Prayer Guide" }));
+    const orderedResources = onUpdate.mock.calls.at(-1)?.[0].resources;
+    expect(orderedResources.map((resource: { data: { customDocumentId: string } }) => resource.data.customDocumentId)).toEqual([
+      "doc-1",
+      "doc-2",
+    ]);
+
+    rerender(
+      <ServicePlanContentPanel
+        element={element({ resources: orderedResources })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+    expect(screen.getByText("Welcome Slides")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove custom document Welcome Slides" }));
+    expect(onUpdate.mock.calls.at(-1)?.[0].resources).toEqual([orderedResources[1]]);
+  });
+
 });

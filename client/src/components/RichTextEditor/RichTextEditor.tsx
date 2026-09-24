@@ -206,16 +206,19 @@ const RichTextEditor = ({
     },
   });
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode replays effect setup after cleanup without recreating refs.
+    // Restore this before accepting editor changes so the replayed instance
+    // does not keep suppressing every queued onChange callback.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       if (textColorApplyTimerRef.current) {
         clearTimeout(textColorApplyTimerRef.current);
         textColorApplyTimerRef.current = null;
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (!editor) return;

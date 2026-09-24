@@ -16,6 +16,18 @@ import type {
   ServicePlanSongReference,
 } from "../../types/servicePlan";
 
+let mockSongDocs: Array<Record<string, unknown>> = [];
+let mockFreeFormDocs: Array<{ _id: string; name: string; type?: string; slides?: unknown[] }> = [];
+jest.mock("../../hooks", () => ({
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ allDocs: { allSongDocs: mockSongDocs, allFreeFormDocs: mockFreeFormDocs } }),
+}));
+
+jest.mock("../../containers/ItemSlides/StaticSlideThumbnail", () => ({
+  __esModule: true,
+  default: ({ slide }: { slide: { name: string } }) => <div>{slide.name}</div>,
+}));
+
 // Both read Redux song state; the row's contract is only which one opens, with
 // which title, and that the popover can escalate to the picker.
 jest.mock("./ServicePlanLibraryPicker", () => ({
@@ -104,6 +116,59 @@ describe("richTextOneLinePreview", () => {
         ],
       }),
     ).toBe("First line Second");
+  });
+});
+
+describe("custom document content badges", () => {
+  it("uses the current document title in the Content column", () => {
+    mockFreeFormDocs = [{ _id: "document-1", name: "Updated presentation" }];
+    renderRow({
+      canEdit: false,
+      element: {
+        ...baseElement,
+        resources: [{
+          id: "custom-document-ref",
+          type: "custom-document",
+          title: "Old title",
+          data: { customDocumentId: "document-1" },
+        }],
+      },
+    });
+
+    expect(screen.getByText("Updated presentation")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview Updated presentation" })).toBeInTheDocument();
+  });
+
+  it("opens the authenticated custom document preview in read-only mode", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+    mockFreeFormDocs = [{
+      _id: "document-1",
+      name: "Updated presentation",
+      type: "free",
+      slides: [{ id: "slide-1", name: "Welcome slide" }],
+    }];
+
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      onSelect,
+      element: {
+        ...baseElement,
+        resources: [{
+          id: "custom-document-ref",
+          type: "custom-document",
+          title: "Old title",
+          data: { customDocumentId: "document-1" },
+        }],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Preview Updated presentation" }));
+
+    expect(await screen.findByRole("heading", { name: "Updated presentation" })).toBeInTheDocument();
+    expect(screen.getByText("Welcome slide", { selector: "figcaption" })).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
@@ -811,6 +876,48 @@ describe("ServicePlanElementRow", () => {
     });
 
     expect(screen.getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
+  });
+
+  it("opens the existing content panel from a compact normalized mixed-resource summary", async () => {
+    const user = userEvent.setup();
+    const onOpenContent = jest.fn();
+    renderRow({
+      onOpenContent,
+      element: {
+        ...baseElement,
+        songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+        scriptureRef: { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+        resources: [
+          { id: "song-resource", type: "song", title: "Opening Song", data: { songId: "song-1" } },
+          { id: "scripture-resource", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
+          { id: "youtube", type: "youtube", title: "Sermon video" },
+          { id: "audio", type: "audio", title: "Reference audio" },
+          { id: "document", type: "document", title: "Service notes", data: { resourceId: "private-document-id" } },
+          { id: "link", type: "url", title: "Reading", url: "https://example.com/reading" },
+        ],
+      },
+    });
+
+    const summary = screen.getByRole("button", { name: "Manage content for Pastoral Greetings" });
+    expect(summary).toHaveTextContent("Opening Song");
+    expect(summary).toHaveTextContent("+5");
+    summary.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
+  });
+
+  it("keeps the attached resource chip, remove control, and panel button together", () => {
+    const onOpenContent = jest.fn();
+    renderRow({
+      onOpenContent,
+      element: {
+        ...baseElement,
+        resources: [{ id: "notes", type: "url", title: "Notes", url: "https://example.com/notes" }],
+      },
+    });
+
+    expect(screen.getByRole("button", { name: "Remove resource Notes" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Manage content for Pastoral Greetings" })).toHaveLength(2);
   });
 
   it("previews titled and untitled linked resources in view mode without selecting the row", async () => {

@@ -31,7 +31,9 @@ import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
 import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
+import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
   addMicrophoneSlot,
   addServicePlanAssignee,
@@ -79,6 +81,7 @@ import {
 import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchResource, getChurchResourceUrl } from "../../api/auth";
 import generateRandomId from "../../utils/generateRandomId";
@@ -87,6 +90,8 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDefinition,
   getServicePlanResourceDisplayLabel,
+  getServicePlanCustomDocumentDisplayLabel,
+  getServicePlanResourceText,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
@@ -115,7 +120,9 @@ import type {
 } from "../../types/servicePlan";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import {
+  getServicePlanCustomDocumentId,
   getServicePlanElementAssignees,
+  getServicePlanElementContentResources,
   getServicePlanElementLead,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
@@ -1206,6 +1213,7 @@ const ServicePlanElementRow = ({
   const usesAssignmentPanel = Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
   const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
+  const [previewCustomDocument, setPreviewCustomDocument] = useState<DBItem | null>(null);
   const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
@@ -1271,6 +1279,7 @@ const ServicePlanElementRow = ({
   const recognizedUnlinkedSong =
     !element.sourceSongReferenceDismissed &&
     !storedSongRefs.length &&
+    !element.resources?.some((resource) => resource.type === "song") &&
     /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "");
   const inferredSongRefs = recognizedUnlinkedSong
     ? [{
@@ -1605,9 +1614,25 @@ const ServicePlanElementRow = ({
     });
   };
 
-  const contentResources = element.resources || [];
-  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel) || contentResources.length > 0;
-  const contentReferenceCount = songRefs.length + scriptureRefs.length + contentResources.length;
+  const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
+  const normalizedContentResources = [
+    ...inferredSongRefs.map((song, index): ServicePlanContentResource => ({
+      id: `inferred-song-${index}`,
+      type: "song",
+      title: song.title,
+      data: { songRef: song },
+    })),
+    ...getServicePlanElementContentResources(element),
+  ];
+  const normalizedResourceIds = new Set(
+    normalizedContentResources.map((resource) => resource.id),
+  );
+  const persistedContentResources = element.resources || [];
+  const contentResources = persistedContentResources.filter((resource) =>
+    normalizedResourceIds.has(resource.id),
+  );
+  const hasContentReferences = normalizedContentResources.length > 0;
+  const contentReferenceCount = normalizedContentResources.length;
 
   const renderItemActionsMenu = () => allowEdit ? (
     <ItemActionsMenu
@@ -2059,6 +2084,12 @@ const ServicePlanElementRow = ({
           }
           const definition = getServicePlanResourceDefinition(resource.type);
           const ResourceIcon = definition.icon;
+          const customDocument = resource.type === "custom-document"
+            ? allFreeFormDocs.find((doc) => doc._id === getServicePlanCustomDocumentId(resource))
+            : undefined;
+          const resourceLabel = resource.type === "custom-document"
+            ? getServicePlanCustomDocumentDisplayLabel(resource, customDocument)
+            : getServicePlanResourceDisplayLabel(resource);
           return (
             <span
               key={resource.id}
@@ -2076,20 +2107,26 @@ const ServicePlanElementRow = ({
                   "box-border flex h-[2rem] min-w-0 flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded text-left leading-none hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300",
                   placement === "summary" && "px-1.5",
                 )}
-                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${getServicePlanResourceDisplayLabel(resource)}`}
-                title={getServicePlanResourceDisplayLabel(resource)}
+                aria-label={allowEdit ? `Manage content for ${itemLabel}` : `Preview ${resourceLabel}`}
+                title={resourceLabel}
+                disabled={!allowEdit && resource.type === "custom-document" && !customDocument}
                 onClick={(event) => {
                   if (allowEdit) {
                     if (usesContentPanel) openContent(event.currentTarget);
                     return;
                   }
-                  if (resource.url || resource.data?.text || getServicePlanChurchResourceId(resource)) {
+                  if (resource.type === "custom-document" && customDocument) {
+                    event.stopPropagation();
+                    setPreviewCustomDocument(customDocument);
+                    return;
+                  }
+                  if (resource.url || !isRichTextEmpty(getServicePlanResourceText(resource)) || getServicePlanChurchResourceId(resource)) {
                     openResourcePreview(resource, event);
                   }
                 }}
               >
                 <ResourceIcon className={cn("size-3.5 shrink-0", definition.toneClassName)} aria-hidden />
-                <span className="min-w-0 flex-1 truncate leading-5">{getServicePlanResourceDisplayLabel(resource)}</span>
+                <span className="min-w-0 flex-1 truncate leading-5">{resourceLabel}</span>
               </button>
               {allowEdit ? (
                 <Button
@@ -2100,7 +2137,7 @@ const ServicePlanElementRow = ({
                   className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
                   svg={X}
                   aria-label={`Remove resource ${resource.title}`}
-                  onClick={() => onUpdate({ resources: contentResources.filter((_, currentIndex) => currentIndex !== index) })}
+                  onClick={() => onUpdate({ resources: persistedContentResources.filter((candidate) => candidate.id !== resource.id) })}
                 />
               ) : null}
             </span>
@@ -2805,6 +2842,10 @@ const ServicePlanElementRow = ({
       <ContentPreviewDialog
         resource={previewResource}
         onClose={() => setPreviewResource(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={previewCustomDocument}
+        onClose={() => setPreviewCustomDocument(null)}
       />
     </div>
   );

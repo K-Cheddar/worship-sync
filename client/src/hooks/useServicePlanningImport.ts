@@ -60,6 +60,7 @@ import {
   getOverlayPlanLineItemKey,
 } from "../utils/servicePlanningSyncKeys";
 import { persistItemListServiceOutline } from "../utils/itemListImports";
+import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -114,7 +115,9 @@ const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   !candidate.outlineAlreadyPresent &&
   ((candidate.outlineItemType === "song" &&
     Boolean(candidate.matchedLibraryItem)) ||
-    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)));
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)) ||
+    (candidate.outlineItemType === "custom-document" &&
+      candidate.matchedLibraryItem?.type === "free"));
 
 export const useServicePlanningImport = () => {
   const dispatch = useDispatch();
@@ -156,11 +159,15 @@ export const useServicePlanningImport = () => {
       const importData = await getServicePlanningImportDataFromUrl(url);
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
+      const customDocumentLibrary = state.allDocs.allFreeFormDocs
+        .filter((document) => document.type === "free" && Array.isArray(document.slides))
+        .map(freeFormDocToServiceItem);
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
         overlays: state.undoable.present.overlays.list,
         songLibrary,
+        customDocumentLibrary,
         activeOutlineList: state.undoable.present.itemList.list,
       });
 
@@ -220,11 +227,15 @@ export const useServicePlanningImport = () => {
       const importData = servicePlanToImportData(plan);
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
+      const customDocumentLibrary = state.allDocs.allFreeFormDocs
+        .filter((document) => document.type === "free" && Array.isArray(document.slides))
+        .map(freeFormDocToServiceItem);
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
         overlays: state.undoable.present.overlays.list,
         songLibrary,
+        customDocumentLibrary,
         activeOutlineList: state.undoable.present.itemList.list,
         teamAssignments,
       });
@@ -409,8 +420,26 @@ export const useServicePlanningImport = () => {
       outlineCandidates: OutlineItemCandidate[],
     ): Promise<{ inserted: number }> => {
       const currentList = [...store.getState().undoable.present.itemList.list];
+      const customDocumentsById = new Map(
+        store.getState().allDocs.allFreeFormDocs
+          .filter((document) => document.type === "free" && Array.isArray(document.slides))
+          .map((document) => [document._id, freeFormDocToServiceItem(document)]),
+      );
+      const currentCandidates = outlineCandidates.map((candidate) => {
+        if (candidate.outlineItemType !== "custom-document" || !candidate.customDocumentId) {
+          return candidate;
+        }
+        const currentDocument = customDocumentsById.get(candidate.customDocumentId) ?? null;
+        const currentTitle = currentDocument?.name?.trim() || candidate.title;
+        return {
+          ...candidate,
+          title: currentTitle,
+          cleanedTitle: currentTitle,
+          matchedLibraryItem: currentDocument,
+        };
+      });
       const result = await insertServicePlanningOutlineCandidates({
-        outlineCandidates,
+        outlineCandidates: currentCandidates,
         currentList,
         allItems,
         db,
@@ -537,6 +566,8 @@ export const useServicePlanningImport = () => {
               candidate.matchedLibraryItem?.name ||
               candidate.cleanedTitle ||
               candidate.title;
+          } else if (candidate.outlineItemType === "custom-document") {
+            label = candidate.matchedLibraryItem?.name || candidate.title;
           }
           if (!label) continue;
 
@@ -614,7 +645,7 @@ export const useServicePlanningImport = () => {
           ? step.headingName
           : step.candidate.title ||
             step.candidate.cleanedTitle ||
-            (step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+            (step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd" || step.kind === "insertCustomDocumentAtEnd"
               ? ""
               : step.headingName);
 

@@ -7,6 +7,7 @@ import {
   Eye,
   ExternalLink,
   FilePlus,
+  Files,
   FileText,
   Link as LinkIcon,
   Music,
@@ -19,9 +20,12 @@ import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import Input from "../../components/Input/Input";
-import TextArea from "../../components/TextArea/TextArea";
+import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
+import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
+import ServicePlanCustomDocumentPicker from "./ServicePlanCustomDocumentPicker";
+import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 import {
   DropdownMenu,
@@ -30,21 +34,30 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import type { DBItem } from "../../types";
 import { useSelector } from "../../hooks";
 import { getChurchResource, getChurchResourceUrl, listChurchResources, getSongAudioUrl } from "../../api/auth";
 import { openExternalUrl } from "../../utils/openExternalUrl";
 import {
+  getServicePlanElementContentResources,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
+  getServicePlanCustomDocumentId,
   type ServicePlanContentResource,
   type ServicePlanElement,
   type ServicePlanScriptureReference,
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
-import { richTextToPlainText } from "../../types/richText";
+import {
+  EMPTY_RICH_TEXT,
+  isRichTextEmpty,
+  richTextToPlainText,
+  type RichTextDocument,
+} from "../../types/richText";
 import {
   createServicePlanAudioResource,
+  createServicePlanCustomDocumentReference,
   createServicePlanChurchResourceReference,
   createServicePlanGenericResource,
   createServicePlanLinkResource,
@@ -53,7 +66,9 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDataString,
   getServicePlanResourceDisplayLabel,
-  getServicePlanResourceNotes,
+  getServicePlanCustomDocumentDisplayLabel,
+  getServicePlanResourceRichNotes,
+  getServicePlanResourceText,
   isHttpUrl,
   normalizeServicePlanResourceForPreview,
   isServicePlanChurchResourceReference,
@@ -123,7 +138,10 @@ const ServicePlanContentPanel = ({
 }: ServicePlanContentPanelProps) => {
   const { churchId } = useContext(GlobalInfoContext) || {};
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [customDocumentPickerOpen, setCustomDocumentPickerOpen] = useState(false);
+  const [previewCustomDocument, setPreviewCustomDocument] = useState<DBItem | null>(null);
   const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const [scriptureAddOpen, setScriptureAddOpen] = useState(false);
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
@@ -137,8 +155,8 @@ const ServicePlanContentPanel = ({
   const [resourceEditorMode, setResourceEditorMode] = useState<ResourceEditorMode | null>(null);
   const [resourceTitle, setResourceTitle] = useState("");
   const [resourceUrl, setResourceUrl] = useState("");
-  const [resourceText, setResourceText] = useState("");
-  const [resourceNotes, setResourceNotes] = useState("");
+  const [resourceText, setResourceText] = useState<RichTextDocument>(EMPTY_RICH_TEXT);
+  const [resourceNotes, setResourceNotes] = useState<RichTextDocument>(EMPTY_RICH_TEXT);
   const [resourceError, setResourceError] = useState("");
   const [openingResourceId, setOpeningResourceId] = useState<string | null>(null);
   const [previewResource, setPreviewResource] = useState<ReturnType<typeof normalizeServicePlanResourceForPreview> | null>(null);
@@ -149,6 +167,7 @@ const ServicePlanContentPanel = ({
 
   useEffect(() => {
     setPickerOpen(false);
+    setCustomDocumentPickerOpen(false);
     setScriptureEditIndex(null);
     setScriptureAddOpen(false);
     setAudioPickerOpen(false);
@@ -160,19 +179,41 @@ const ServicePlanContentPanel = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [element.id]);
 
+  useEffect(() => {
+    setCustomDocumentPickerOpen(false);
+  }, [churchId]);
+
   const songs = getServicePlanElementSongRefs(element);
   const scriptures = getServicePlanElementScriptureRefs(element);
-  const resources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const persistedResources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
+  const normalizedContentResourceIds = useMemo(
+    () => new Set(getServicePlanElementContentResources(element).map((resource) => resource.id)),
+    [element],
+  );
+  const displayResources = useMemo(
+    () => persistedResources.filter((resource) => normalizedContentResourceIds.has(resource.id)),
+    [persistedResources, normalizedContentResourceIds],
+  );
+  const resources = persistedResources;
+  const customDocumentResources = displayResources.filter(
+    (resource) => resource.type === "custom-document",
+  );
+  const otherResources = displayResources.filter(
+    (resource) => resource.type !== "custom-document",
+  );
+  const attachedCustomDocumentIds = customDocumentResources
+    .map(getServicePlanCustomDocumentId)
+    .filter(Boolean);
   const referencedChurchResourceIds = useMemo(
     () => [
       ...new Set(
-        resources
+        displayResources
           .filter(isServicePlanChurchResourceReference)
           .map(getServicePlanChurchResourceId)
           .filter(Boolean),
       ),
     ],
-    [resources],
+    [displayResources],
   );
   const itemLabel = richTextToPlainText(element.title).trim() || "Untitled item";
   const audioSongs = useMemo(
@@ -302,8 +343,8 @@ const ServicePlanContentPanel = ({
     setResourceEditorMode(null);
     setResourceTitle("");
     setResourceUrl("");
-    setResourceText("");
-    setResourceNotes("");
+    setResourceText(EMPTY_RICH_TEXT);
+    setResourceNotes(EMPTY_RICH_TEXT);
     setResourceError("");
   };
 
@@ -316,8 +357,8 @@ const ServicePlanContentPanel = ({
     setResourceEditorMode(mode);
     setResourceTitle(resource?.title || "");
     setResourceUrl(resource?.url || "");
-    setResourceText(getServicePlanResourceDataString(resource || ({} as ServicePlanContentResource), "text"));
-    setResourceNotes(getServicePlanResourceNotes(resource || ({} as ServicePlanContentResource)));
+    setResourceText(resource ? getServicePlanResourceText(resource) : EMPTY_RICH_TEXT);
+    setResourceNotes(resource ? getServicePlanResourceRichNotes(resource) : EMPTY_RICH_TEXT);
     setResourceError("");
   };
 
@@ -330,7 +371,7 @@ const ServicePlanContentPanel = ({
       setResourceError("Enter a valid http or https URL.");
       return;
     }
-    if (resourceEditorMode === "text" && !resourceText.trim()) {
+    if (resourceEditorMode === "text" && isRichTextEmpty(resourceText)) {
       setResourceError("Add a note before saving.");
       return;
     }
@@ -534,10 +575,18 @@ const ServicePlanContentPanel = ({
       );
     }
     if (resource.type === "text") {
-      return <p className="whitespace-pre-wrap text-sm text-gray-200">{getServicePlanResourceDataString(resource, "text")}</p>;
+      return (
+        <ServiceFlowRichText
+          document={getServicePlanResourceText(resource)}
+          className="text-gray-200"
+        />
+      );
     }
     if (resource.type === "generic" || !SERVICE_PLAN_RESOURCE_TYPES.has(resource.type)) {
-      return resource.data?.notes ? <p className="whitespace-pre-wrap text-sm text-gray-300">{getServicePlanResourceNotes(resource)}</p> : null;
+      const notes = getServicePlanResourceRichNotes(resource);
+      return !isRichTextEmpty(notes) ? (
+        <ServiceFlowRichText document={notes} className="text-gray-300" />
+      ) : null;
     }
     return null;
   };
@@ -582,9 +631,19 @@ const ServicePlanContentPanel = ({
             <Input label="URL (optional)" value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
           ) : null}
           {resourceEditorMode === "text" ? (
-            <TextArea label="Notes" value={resourceText} onChange={setResourceText} autoResize />
+            <RichTextEditor
+              label="Notes"
+              value={resourceText}
+              onChange={setResourceText}
+              placeholder="Notes for this item (optional)"
+            />
           ) : (
-            <TextArea label="Notes (optional)" value={resourceNotes} onChange={setResourceNotes} autoResize />
+            <RichTextEditor
+              label="Notes (optional)"
+              value={resourceNotes}
+              onChange={setResourceNotes}
+              placeholder="Notes about this resource (optional)"
+            />
           )}
           {resourceError ? <p className="text-sm text-red-300" role="alert">{resourceError}</p> : null}
           <Button variant="cta" className="w-full cursor-pointer justify-center" onClick={saveResource}>
@@ -627,9 +686,39 @@ const ServicePlanContentPanel = ({
         {allowEdit ? <Button type="button" variant="primary" svg={BookOpen} color="#c4b5fd" iconSize="sm" className="max-md:min-h-0" onClick={() => { setScriptureAddOpen(true); onScriptureAttachModeChange?.(true); }}>Add scripture</Button> : null}
       </section>
 
+      <section className="space-y-2" aria-label="Attached custom documents">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Custom Documents</h3>
+        {customDocumentResources.length ? customDocumentResources.map((resource) => {
+          const documentId = getServicePlanCustomDocumentId(resource);
+          const document = allFreeFormDocs.find((candidate) => candidate._id === documentId);
+          const label = getServicePlanCustomDocumentDisplayLabel(resource, document);
+          return (
+            <div key={resource.id} className="flex min-w-0 items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1.5">
+              <Icon svg={Files} size="xs" className="shrink-0 text-indigo-300" />
+              {document ? (
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm text-gray-100 hover:text-indigo-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300"
+                  title={label}
+                  aria-label={`Preview custom document ${label}`}
+                  onClick={() => setPreviewCustomDocument(document)}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-sm text-gray-100" title={label}>{label}</span>
+              )}
+              {!document ? <span className="shrink-0 text-xs text-amber-200">Unavailable</span> : null}
+              {allowEdit ? <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-5 w-5" svg={X} aria-label={`Remove custom document ${label}`} onClick={() => updateResources(resources.filter((candidate) => candidate.id !== resource.id))} /> : null}
+            </div>
+          );
+        }) : <p className="text-sm text-gray-500">No custom documents attached.</p>}
+        {allowEdit ? <Button type="button" variant="primary" svg={Files} color="#c4b5fd" iconSize="sm" className="max-md:min-h-0" onClick={() => setCustomDocumentPickerOpen(true)}>Add custom document</Button> : null}
+      </section>
+
       <section className="space-y-2" aria-label="Attached resources">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Resources</h3>
-        {resources.length ? resources.map((resource) => {
+        {otherResources.length ? otherResources.map((resource) => {
           const churchResource = isServicePlanChurchResourceReference(resource)
             ? referencedChurchResources[getServicePlanChurchResourceId(resource)]
             : undefined;
@@ -685,6 +774,24 @@ const ServicePlanContentPanel = ({
       </section>
 
       {pickerOpen ? <ServicePlanLibraryPicker isOpen onClose={() => setPickerOpen(false)} onSelectSong={(song) => { updateSongs([...songs, song]); setPickerOpen(false); }} /> : null}
+      {customDocumentPickerOpen ? (
+        <ServicePlanCustomDocumentPicker
+          isOpen
+          onClose={() => setCustomDocumentPickerOpen(false)}
+          attachedDocumentIds={attachedCustomDocumentIds}
+          onSelectDocument={(document) => {
+            const documentId = document._id;
+            if (!documentId || attachedCustomDocumentIds.includes(documentId)) return;
+            updateResources([
+              ...resources,
+              createServicePlanCustomDocumentReference({
+                documentId,
+                title: document.name,
+              }),
+            ]);
+          }}
+        />
+      ) : null}
       {audioPickerOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose media">
           <div className="max-h-[min(32rem,calc(100vh-2rem))] w-[min(30rem,100%)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-3 shadow-xl">
@@ -731,6 +838,10 @@ const ServicePlanContentPanel = ({
       <ContentPreviewDialog
         resource={previewResource}
         onClose={() => setPreviewResource(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={previewCustomDocument}
+        onClose={() => setPreviewCustomDocument(null)}
       />
     </div>
   );
