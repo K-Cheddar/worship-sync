@@ -8,12 +8,33 @@ import {
   renderPublicShareHtml,
   resolvePublicShareMeta,
 } from "./publicShareMeta.js";
+import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 
 test("matchPublicShareRoute recognizes each public share path", () => {
   assert.deepEqual(matchPublicShareRoute("/invite", "?token=abc"), {
     kind: "invite",
     canonicalPath: "/invite",
     hashTarget: "/#/invite?token=abc",
+  });
+
+  assert.deepEqual(matchPublicShareRoute("/sms-opt-in"), {
+    kind: "sms-opt-in",
+    canonicalPath: "/sms-opt-in",
+    hashTarget: "/sms-opt-in",
+  });
+
+  assert.deepEqual(matchPublicShareRoute("/sms-opt-in/demo"), {
+    kind: "sms-opt-in",
+    canonicalPath: "/sms-opt-in/demo",
+    hashTarget: "/sms-opt-in/demo",
+    param: "demo",
+  });
+
+  assert.deepEqual(matchPublicShareRoute("/sms-opt-in/church-public-id"), {
+    kind: "sms-opt-in",
+    canonicalPath: "/sms-opt-in/church-public-id",
+    hashTarget: "/sms-opt-in/church-public-id",
+    param: "church-public-id",
   });
 
   assert.deepEqual(matchPublicShareRoute("/services/share-token"), {
@@ -68,7 +89,25 @@ test("matchPublicShareRoute ignores reserved board operator paths", () => {
   assert.equal(matchPublicShareRoute("/home"), null);
 });
 
+test("SMS opt-in route matching stays aligned between server and client", () => {
+  for (const pathname of [
+    "/sms-opt-in",
+    "/sms-opt-in/demo",
+    "/sms-opt-in/church-public-id",
+  ]) {
+    assert.ok(matchPublicShareRoute(pathname));
+    assert.equal(isPublicSharePathname(pathname), true);
+  }
+
+  assert.equal(matchPublicShareRoute("/sms-opt-in/demo/extra"), null);
+  assert.equal(isPublicSharePathname("/sms-opt-in/demo/extra"), false);
+});
+
 test("resolvePublicShareMeta uses route defaults and allows overrides", () => {
+  assert.deepEqual(resolvePublicShareMeta("sms-opt-in"), {
+    title: "SMS messaging | WorshipSync",
+    description: "Learn about SMS messaging and choose whether to opt in.",
+  });
   assert.deepEqual(resolvePublicShareMeta("service"), {
     title: "Service plan | WorshipSync",
     description: "Open this shared service plan.",

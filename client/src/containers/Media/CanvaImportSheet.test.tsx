@@ -586,7 +586,14 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
   const onImageRefresh = jest.fn(async (_info: mediaInfoType, mediaId: string) => {
     if (mediaId === "media-2") throw new Error("page 2 replacement failed");
   });
-  const cleanup = jest.fn(async () => true);
+  let finishFirstCleanup: ((success: boolean) => void) | undefined;
+  const cleanup = jest.fn()
+    .mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => {
+        finishFirstCleanup = resolve;
+      }),
+    )
+    .mockResolvedValueOnce(true);
 
   render(
     <MemoryRouter>
@@ -623,8 +630,21 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
   expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[0], "media-1");
   expect(onImageRefresh).toHaveBeenCalledWith(refreshedPages[1], "media-2");
   await waitFor(() => {
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+  expect(screen.getByText("Cleaning up unprocessed files…")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Cleaning up/i })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Change design" })).toBeDisabled();
+  await act(async () => finishFirstCleanup?.(false));
+  await waitFor(() => {
     expect(cleanup).toHaveBeenCalledTimes(2);
   });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some unprocessed Canva assets could not be cleaned up and were retained for provider reconciliation.",
+    );
+  });
+  expect(screen.getByRole("button", { name: /Refresh selected/i })).toBeEnabled();
   expect(cleanup).toHaveBeenNthCalledWith(
     1,
     expect.objectContaining({ kind: "image", data: refreshedPages[2] }),
