@@ -97,6 +97,7 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
 }));
 
 jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
+  useReportRemoteMediaPreparationReadiness: jest.fn(),
   usePublishMediaPreparationManifest: (
     ...args: Parameters<typeof mockPublishMediaPreparationManifest>
   ) =>

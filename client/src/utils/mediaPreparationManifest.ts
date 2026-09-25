@@ -44,13 +44,64 @@ export type MediaPreparationReadinessReport = {
   manifestRevision: number | null;
   manifestReceivedAt: number | null;
   source: "remote-manifest" | "cached-manifest" | "local-fallback" | "browser-poster";
+  /** Unique media identities in this report's inventory population. */
   candidateCount: number;
+  /** Unique finite playable sources; readiness states below partition only this population. */
   finiteCandidateCount: number;
+  /** Unique HLS/non-finite sources waiting for a finite local cache rendition. */
   pendingCacheCount: number;
+  /** Failures are partitioned by source population; finite counts below only describe finite playable sources. */
+  excludedCount?: number;
   readyCount: number;
   preparingCount: number;
   failedCount: number;
+  pendingCacheFailedCount?: number;
+  excludedFailedCount?: number;
   errors: string[];
+};
+
+export type ReadinessCandidateState = "eligible" | "pending-cache" | "excluded";
+export type ReadinessSurfacePhase = "ready-paused" | "active-playing" | "preparing" | "activation-requested" | "error" | string;
+
+/** Counts one state per unique media identity; playing and ready are the same ready population. */
+export const buildMediaPreparationReadinessCounts = (
+  candidates: Array<{ mediaKey: string; status: ReadinessCandidateState }>,
+  surfaces: Array<{ mediaKey: string; phase: ReadinessSurfacePhase }>,
+) => {
+  const byKey = new Map<string, ReadinessCandidateState>();
+  const priority: Record<ReadinessCandidateState, number> = { excluded: 0, "pending-cache": 1, eligible: 2 };
+  candidates.forEach(({ mediaKey, status }) => {
+    const current = byKey.get(mediaKey);
+    if (!current || priority[status] > priority[current]) byKey.set(mediaKey, status);
+  });
+  const finite = new Set([...byKey].filter(([, status]) => status === "eligible").map(([key]) => key));
+  const pending = new Set([...byKey].filter(([, status]) => status === "pending-cache").map(([key]) => key));
+  const excluded = new Set([...byKey].filter(([, status]) => status === "excluded").map(([key]) => key));
+  const stateByKey = new Map<string, "ready" | "preparing" | "failed">();
+  surfaces.forEach(({ mediaKey, phase }) => {
+    if (!finite.has(mediaKey) && !pending.has(mediaKey) && !excluded.has(mediaKey)) return;
+    const next = phase === "ready-paused" || phase === "active-playing"
+      ? "ready"
+      : phase === "preparing" || phase === "activation-requested"
+        ? "preparing"
+        : phase === "error" ? "failed" : undefined;
+    const current = stateByKey.get(mediaKey);
+    if (next === "ready" || (next === "preparing" && current !== "ready") || (!current && next)) {
+      stateByKey.set(mediaKey, next);
+    }
+  });
+  const failed = new Set([...stateByKey].filter(([, state]) => state === "failed").map(([key]) => key));
+  return {
+    candidateCount: byKey.size,
+    finiteCandidateCount: finite.size,
+    pendingCacheCount: pending.size,
+    excludedCount: excluded.size,
+    readyCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "ready").length,
+    preparingCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "preparing").length,
+    failedCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "failed").length,
+    pendingCacheFailedCount: [...failed].filter((key) => pending.has(key)).length,
+    excludedFailedCount: [...failed].filter((key) => excluded.has(key)).length,
+  };
 };
 
 export const isMediaPreparationReadinessReport = (
@@ -58,7 +109,7 @@ export const isMediaPreparationReadinessReport = (
 ): value is MediaPreparationReadinessReport => {
   if (!value || typeof value !== "object") return false;
   const report = value as Partial<MediaPreparationReadinessReport>;
-  const count = (entry: unknown) => Number.isInteger(entry) && Number(entry) >= 0;
+  const count = (entry: unknown) => Number.isInteger(entry) && Number(entry) >= 0 && Number(entry) <= 50_000;
   return (
     report.contract === "worshipsync.media-preparation-readiness" &&
     report.version === 1 &&
@@ -75,9 +126,16 @@ export const isMediaPreparationReadinessReport = (
     count(report.readyCount) &&
     count(report.preparingCount) &&
     count(report.failedCount) &&
+    (report.excludedCount === undefined || count(report.excludedCount)) &&
+    (report.pendingCacheFailedCount === undefined || count(report.pendingCacheFailedCount)) &&
+    (report.excludedFailedCount === undefined || count(report.excludedFailedCount)) &&
     Number(report.finiteCandidateCount) <= Number(report.candidateCount) &&
     Number(report.pendingCacheCount) <= Number(report.candidateCount) &&
+    Number(report.excludedCount ?? 0) <= Number(report.candidateCount) &&
+    Number(report.finiteCandidateCount) + Number(report.pendingCacheCount) + Number(report.excludedCount ?? 0) <= Number(report.candidateCount) &&
     Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.finiteCandidateCount) &&
+    Number(report.pendingCacheFailedCount ?? 0) <= Number(report.pendingCacheCount) &&
+    Number(report.excludedFailedCount ?? 0) <= Number(report.excludedCount ?? 0) &&
     (report.source !== "remote-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt !== null)) &&
     (report.source !== "cached-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt === null)) &&
     Array.isArray(report.errors) &&

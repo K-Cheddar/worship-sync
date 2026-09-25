@@ -15,6 +15,18 @@ import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagno
 import { getOrCreateDeviceId } from "../utils/authStorage";
 import { isHLSVideoSource } from "../utils/isInstantVideoSource";
 import { isPlayableMediaSource } from "../utils/mediaSource";
+import { isFirebasePermissionDenied } from "../utils/firebaseListeners";
+
+export const MEDIA_READINESS_STATUS_EVENT = "worship-sync-media-readiness-status";
+export type MediaReadinessLocalStatus = {
+  outputId: string;
+  churchId?: string;
+  state: "reporting" | "connected" | "disconnected" | "temporarily-unavailable" | "permission-denied" | "subscribing";
+};
+
+const publishReadinessLocalStatus = (status: MediaReadinessLocalStatus) => {
+  window.dispatchEvent(new CustomEvent(MEDIA_READINESS_STATUS_EVENT, { detail: status }));
+};
 
 const getManifestPath = (churchId: string, outputId: string) =>
   getChurchDataPath(
@@ -29,7 +41,7 @@ const getStorageKey = (churchId: string, outputId: string) =>
 
 export type MediaPreparationPublicationStatus = {
   outputId: string;
-  state: "publishing" | "published" | "failed";
+  state: "publishing" | "retrying" | "published" | "failed";
   desiredRevision?: number;
   publishedAt: number;
   error?: string;
@@ -46,7 +58,7 @@ export const readMediaPreparationPublicationStatus = (
   try {
     const value = JSON.parse(localStorage.getItem(getPublicationStatusKey(churchId, outputId)) ?? "null");
     return value && value.outputId === outputId &&
-      (value.state === "publishing" || value.state === "published" || value.state === "failed") &&
+      (value.state === "publishing" || value.state === "retrying" || value.state === "published" || value.state === "failed") &&
       typeof value.publishedAt === "number"
       ? value as MediaPreparationPublicationStatus
       : undefined;
@@ -93,9 +105,12 @@ export const useReportRemoteMediaPreparationReadiness = ({
   candidateCount,
   finiteCandidateCount,
   pendingCacheCount,
+  excludedCount,
   readyCount,
   preparingCount,
   failedCount,
+  pendingCacheFailedCount,
+  excludedFailedCount,
   errors,
 }: Omit<MediaPreparationReadinessReport, "contract" | "version" | "outputId" | "deviceId" | "sessionId" | "reportedAt" | "manifestRevision" | "manifestReceivedAt"> & {
   enabled: boolean;
@@ -105,9 +120,6 @@ export const useReportRemoteMediaPreparationReadiness = ({
 }) => {
   const { firebaseDb, churchId, sharedDataReady } = useContext(GlobalInfoContext) || {};
   const latestReportRef = useRef<MediaPreparationReadinessReport | undefined>(undefined);
-  const lastSignatureRef = useRef("");
-  const lastWriteAtRef = useRef(0);
-  const writeInFlightRef = useRef(false);
   const report: MediaPreparationReadinessReport | undefined = outputId
     ? {
         contract: "worshipsync.media-preparation-readiness",
@@ -122,9 +134,12 @@ export const useReportRemoteMediaPreparationReadiness = ({
         candidateCount,
         finiteCandidateCount,
         pendingCacheCount,
+        excludedCount,
         readyCount,
         preparingCount,
         failedCount,
+        pendingCacheFailedCount,
+        excludedFailedCount,
         errors: errors.slice(0, 8).map((error) => error.slice(0, 180)),
       }
     : undefined;
@@ -134,6 +149,15 @@ export const useReportRemoteMediaPreparationReadiness = ({
   useEffect(() => {
     if (!enabled || !outputId || !firebaseDb || !churchId || !sharedDataReady) return;
     let active = true;
+    let writeInFlight = false;
+    let permissionBlocked = false;
+    let retryExhausted = false;
+    let retryAttempt = 0;
+    let retryTimer: number | undefined;
+    let lastSignature = "";
+    let failedSignature = "";
+    let lastWriteAt = 0;
+    let connectionState: boolean | undefined;
     const reportRef = ref(
       firebaseDb,
       `${getMediaPreparationReadinessPath(churchId, outputId)}/${encodeURIComponent(getOrCreateDeviceId())}/${encodeURIComponent(mediaPreparationSessionId)}`,
@@ -141,30 +165,96 @@ export const useReportRemoteMediaPreparationReadiness = ({
     void onDisconnect(reportRef).remove().catch(() => undefined);
     const publishIfChanged = () => {
       const latest = latestReportRef.current;
-      if (!active || !latest || writeInFlightRef.current) return;
+      if (!active || !latest || writeInFlight || permissionBlocked) return;
       const signature = JSON.stringify({ ...latest, reportedAt: undefined });
+      if (retryExhausted && signature !== failedSignature) {
+        retryExhausted = false;
+        retryAttempt = 0;
+      }
+      if (retryExhausted) return;
       if (
-        signature === lastSignatureRef.current &&
-        Date.now() - lastWriteAtRef.current < 14_000
+        signature === lastSignature &&
+        Date.now() - lastWriteAt < 14_000
       ) return;
-      writeInFlightRef.current = true;
+      writeInFlight = true;
       const value = { ...latest, reportedAt: Date.now() };
+      publishReadinessLocalStatus({ outputId, churchId, state: "reporting" });
       void set(reportRef, value).then(() => {
-        lastSignatureRef.current = signature;
-        lastWriteAtRef.current = Date.now();
-        if (!active) void remove(reportRef).catch(() => undefined);
-      }).catch(() => {
-        // A denied/unavailable feedback write must not affect presentation.
+        if (!active) {
+          void remove(reportRef).catch(() => undefined);
+          return;
+        }
+        retryAttempt = 0;
+        retryExhausted = false;
+        failedSignature = "";
+        lastSignature = signature;
+        lastWriteAt = Date.now();
+        publishReadinessLocalStatus({ outputId, churchId, state: "reporting" });
+      }).catch((error) => {
+        if (!active) return;
+        if (isFirebasePermissionDenied(error)) {
+          permissionBlocked = true;
+          publishReadinessLocalStatus({ outputId, churchId, state: "permission-denied" });
+          return;
+        }
+        publishReadinessLocalStatus({ outputId, churchId, state: "temporarily-unavailable" });
+        const delays = [1000, 3000, 10000];
+        const delay = delays[retryAttempt];
+        if (delay !== undefined && retryTimer === undefined) {
+          retryAttempt += 1;
+          retryTimer = window.setTimeout(() => {
+            retryTimer = undefined;
+            publishIfChanged();
+          }, delay);
+        } else {
+          retryExhausted = true;
+          failedSignature = signature;
+        }
       }).finally(() => {
-        writeInFlightRef.current = false;
+        writeInFlight = false;
       });
     };
+    const unsubscribeConnection = onValue(ref(firebaseDb, ".info/connected"), (snapshot) => {
+      if (!active) return;
+      const connected = snapshot.val() === true;
+      if (!connected) {
+        connectionState = false;
+        publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
+        return;
+      }
+      const reconnected = connectionState === false;
+      connectionState = true;
+      if (reconnected) {
+        retryExhausted = false;
+        failedSignature = "";
+      }
+      permissionBlocked = false;
+      retryAttempt = 0;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+      publishIfChanged();
+    });
+    const retryOnOffline = () => publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
+    const retryOnOnline = () => {
+      permissionBlocked = false;
+      retryExhausted = false;
+      failedSignature = "";
+      retryAttempt = 0;
+      publishIfChanged();
+    };
+    window.addEventListener("online", retryOnOnline);
+    window.addEventListener("offline", retryOnOffline);
     publishIfChanged();
     const interval = window.setInterval(publishIfChanged, 15_000);
     return () => {
       active = false;
       window.clearInterval(interval);
+      window.removeEventListener("online", retryOnOnline);
+      window.removeEventListener("offline", retryOnOffline);
+      unsubscribeConnection?.();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       void remove(reportRef).catch(() => undefined);
+      publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
     };
   }, [churchId, enabled, firebaseDb, outputId, sharedDataReady]);
 };
@@ -177,18 +267,41 @@ export const useRemoteMediaPreparationReadinessReports = ({
   outputId?: string;
 }) => {
   const { firebaseDb, churchId, sharedDataReady } = useContext(GlobalInfoContext) || {};
-  const [reports, setReports] = useState<MediaPreparationReadinessReport[]>([]);
+  const subscriptionKey = `${churchId ?? ""}/${outputId ?? ""}`;
+  const [reportState, setReportState] = useState<{ key: string; reports: MediaPreparationReadinessReport[] }>({ key: "", reports: [] });
   useEffect(() => {
-    setReports([]);
+    setReportState({ key: subscriptionKey, reports: [] });
     if (!enabled || !outputId || !firebaseDb || !churchId || !sharedDataReady) return;
     let active = true;
-    const unsubscribe = onValue(
-      ref(firebaseDb, getMediaPreparationReadinessPath(churchId, outputId)),
+    let unsubscribe: (() => void) | undefined;
+    let unsubscribeConnection: (() => void) | undefined;
+    let retryTimer: number | undefined;
+    let transientAttempt = 0;
+    const pruneTimer = window.setInterval(() => {
+      setReportState((current) => {
+        if (current.key !== subscriptionKey) return current;
+        const fresh = current.reports.filter((report) => Date.now() - report.reportedAt <= 24 * 60 * 60_000);
+        return fresh.length === current.reports.length ? current : { key: subscriptionKey, reports: fresh };
+      });
+    }, 60_000);
+    const path = getMediaPreparationReadinessPath(churchId, outputId);
+    const subscribeConnection = () => onValue(ref(firebaseDb, ".info/connected"), (snapshot) => {
+      if (!active) return;
+      publishReadinessLocalStatus({ outputId, churchId, state: snapshot.val() === true ? "connected" : "disconnected" });
+    });
+    const attach = () => {
+      if (!active) return;
+      publishReadinessLocalStatus({ outputId, churchId, state: "subscribing" });
+      unsubscribe = subscribeWithPermissionRetry(
+      firebaseDb,
+      path,
       (snapshot) => {
         if (!active) return;
+        transientAttempt = 0;
+        publishReadinessLocalStatus({ outputId, churchId, state: "reporting" });
         const value = snapshot.val();
         if (!value || typeof value !== "object") {
-          setReports([]);
+          setReportState({ key: subscriptionKey, reports: [] });
           return;
         }
         const nextReports: MediaPreparationReadinessReport[] = [];
@@ -204,18 +317,49 @@ export const useRemoteMediaPreparationReadinessReports = ({
             ) nextReports.push(candidate);
           });
         });
-        setReports(nextReports.sort((left, right) => right.reportedAt - left.reportedAt));
+        setReportState({ key: subscriptionKey, reports: nextReports.sort((left, right) => right.reportedAt - left.reportedAt) });
       },
-      () => {
-        if (active) setReports([]);
+      {
+        label: `media-preparation-readiness:${outputId}`,
+        onPermissionDenied: () => {
+          if (active) publishReadinessLocalStatus({ outputId, churchId, state: "permission-denied" });
+        },
+        onError: () => {
+          if (!active) return;
+          publishReadinessLocalStatus({ outputId, churchId, state: "temporarily-unavailable" });
+          const delays = [1000, 3000, 10000];
+          const delay = delays[transientAttempt];
+          if (delay === undefined || retryTimer !== undefined) return;
+          transientAttempt += 1;
+          retryTimer = window.setTimeout(() => {
+            retryTimer = undefined;
+            unsubscribe?.();
+            attach();
+          }, delay);
+        },
       },
-    );
+      );
+    };
+    const retryOnOnline = () => {
+      transientAttempt = 0;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+      unsubscribe?.();
+      attach();
+    };
+    attach();
+    unsubscribeConnection = subscribeConnection();
+    window.addEventListener("online", retryOnOnline);
     return () => {
       active = false;
-      unsubscribe();
+      window.removeEventListener("online", retryOnOnline);
+      unsubscribeConnection?.();
+      window.clearInterval(pruneTimer);
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      unsubscribe?.();
     };
-  }, [churchId, enabled, firebaseDb, outputId, sharedDataReady]);
-  return reports;
+  }, [churchId, enabled, firebaseDb, outputId, sharedDataReady, subscriptionKey]);
+  return reportState.key === subscriptionKey ? reportState.reports : [];
 };
 
 // A controller can have more than one output preview mounted, and an outline
@@ -408,88 +552,86 @@ export const usePublishMediaPreparationManifest = ({
       publishedAt,
     });
     const previousWrite = manifestWriteQueues.get(key) ?? Promise.resolve();
-    const write = previousWrite
-      .catch(() => undefined)
-      .then(async () => {
-        // A slower outline load may finish after a newer selection. It must
-        // not enter Firebase after that newer publication has been scheduled.
-        if (manifestPublicationGenerations.get(key) !== generation) return;
-        const result = await runTransaction(
-          ref(firebaseDb, path),
-          (current: unknown) => {
-            if (manifestPublicationGenerations.get(key) !== generation) {
-              return current;
-            }
-            const serverPrevious =
-              isMediaPreparationManifest(current) &&
-              current.outputId === outputId
-                ? current
-                : undefined;
-            const baseline =
-              serverPrevious ??
-              revisionBaseline;
-            const candidate = buildMediaPreparationManifest({
-              discovery,
-              outputId,
-              previous: baseline,
-              publishedAt,
-            });
-            if (
-              serverPrevious &&
-              getMediaPreparationManifestStructure(serverPrevious) ===
-                getMediaPreparationManifestStructure(candidate)
-            ) {
-              return serverPrevious;
-            }
-            return candidate;
-          },
-        );
+    let retryTimer: number | undefined;
+    let resolveScheduledRetry: (() => void) | undefined;
+    const retryDelays = [1000, 3000, 10000];
+    const publishAttempt = (attempt: number): Promise<void> => {
+      if (!active || manifestPublicationGenerations.get(key) !== generation) return Promise.resolve();
+      return runTransaction(
+        ref(firebaseDb, path),
+        (current: unknown) => {
+          if (manifestPublicationGenerations.get(key) !== generation) return current;
+          const serverPrevious = isMediaPreparationManifest(current) && current.outputId === outputId
+            ? current
+            : undefined;
+          const candidate = buildMediaPreparationManifest({
+            discovery,
+            outputId,
+            previous: serverPrevious ?? revisionBaseline,
+            publishedAt,
+          });
+          if (serverPrevious && getMediaPreparationManifestStructure(serverPrevious) === getMediaPreparationManifestStructure(candidate)) {
+            return serverPrevious;
+          }
+          return candidate;
+        },
+      ).then((result) => {
+        if (!active || manifestPublicationGenerations.get(key) !== generation) return;
         const committed = result.snapshot.val();
         if (!isMediaPreparationManifest(committed) || committed.outputId !== outputId) {
-          if (active) publishManifestStatus(churchId, {
-            outputId,
-            state: "failed",
-            desiredRevision: desiredManifest.revision,
-            publishedAt: Date.now(),
-            error: "Manifest transaction did not return a valid published revision",
-          });
-          return;
+          throw new Error("Manifest transaction did not return a valid published revision");
         }
         manifestDrafts.set(key, committed);
-        if (active) publishManifestStatus(churchId, {
+        publishManifestStatus(churchId, {
           outputId,
           state: "published",
           desiredRevision: committed.revision,
           publishedAt: Date.now(),
         });
-        if (manifestPublicationGenerations.get(key) !== generation) return;
         try {
-          localStorage.setItem(
-            key,
-            JSON.stringify(committed),
-          );
+          localStorage.setItem(key, JSON.stringify(committed));
         } catch {
           // Publishing remains successful even when this renderer cannot cache.
         }
-      });
-    manifestWriteQueues.set(key, write.then(() => undefined, () => undefined));
-    void write.catch((error) => {
-      if (manifestPublicationGenerations.get(key) === generation) {
-        manifestDrafts.delete(key);
-      }
-      if (active) {
+      }).catch((error) => {
+        if (!active || manifestPublicationGenerations.get(key) !== generation) return;
+        const delay = isFirebasePermissionDenied(error) ? undefined : retryDelays[attempt];
+        if (delay !== undefined) {
+          publishManifestStatus(churchId, {
+            outputId,
+            state: "retrying",
+            desiredRevision: desiredManifest.revision,
+            publishedAt: Date.now(),
+            error: `Temporary publish failure; retry ${attempt + 1}/${retryDelays.length}`,
+          });
+          return new Promise<void>((resolve) => {
+            resolveScheduledRetry = resolve;
+            retryTimer = window.setTimeout(() => {
+              retryTimer = undefined;
+              resolveScheduledRetry = undefined;
+              void publishAttempt(attempt + 1).then(resolve);
+            }, delay);
+          });
+        }
+        if (manifestPublicationGenerations.get(key) === generation) manifestDrafts.delete(key);
         publishManifestStatus(churchId, {
           outputId,
           state: "failed",
           desiredRevision: desiredManifest.revision,
           publishedAt: Date.now(),
-          error: "Unable to publish the video preparation manifest",
+          error: isFirebasePermissionDenied(error)
+            ? "Manifest publication is blocked by Firebase permissions"
+            : "Unable to publish the video preparation manifest after bounded retries",
         });
         console.error("Unable to publish media preparation manifest:", error);
-      }
-    });
+      });
+    };
+    const write = previousWrite.catch(() => undefined).then(() => publishAttempt(0));
+    manifestWriteQueues.set(key, write.then(() => undefined, () => undefined));
     return () => {
       active = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      resolveScheduledRetry?.();
     };
   }, [
     churchId,

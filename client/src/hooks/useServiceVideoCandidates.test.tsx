@@ -680,6 +680,66 @@ describe("useServiceVideoCandidates", () => {
     });
   });
 
+  it("does not spend scheduled inventory retries on incidental cache or replication refreshes", async () => {
+    jest.useFakeTimers();
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const second = item("second", "Second", [
+      slide("second-slide", [
+        { id: "second-video", mediaInfo: video("second-video", "https://cdn.example.com/second.mp4") },
+      ]),
+    ]);
+    const { result, updater, db, replaceDocs } = renderCandidates([first], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first", "second"] },
+    });
+    try {
+      await act(async () => { await Promise.resolve(); });
+      expect(result.current.discovery.inventoryState).toBe("incomplete");
+      const initialCalls = db.allDocs.mock.calls.length;
+      for (let index = 0; index < 4; index += 1) {
+        act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [] })));
+        await act(async () => { await Promise.resolve(); });
+      }
+      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 4);
+      replaceDocs([first, second]);
+      await act(async () => { await jest.advanceTimersByTimeAsync(500); });
+      await act(async () => { await Promise.resolve(); });
+
+      expect(result.current.discovery).toMatchObject({ inventoryState: "complete", outlineLoadState: "loaded" });
+      expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual([
+        "remote:first-video",
+        "remote:second-video",
+      ]);
+      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 5);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("clears the prior outline’s candidates immediately when the selected outline changes", async () => {
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const { result, rerender, setOutlineId, db } = renderCandidates([first], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first"], "outline-b": ["replicating"] },
+    });
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]));
+    db.allDocs.mockResolvedValueOnce({ rows: [{ key: "replicating", error: "not_found" }] } as never);
+
+    setOutlineId("outline-b");
+    rerender();
+    await waitFor(() => expect(result.current.discovery).toMatchObject({ targetOutlineId: "outline-b", inventoryState: "incomplete" }));
+    expect(result.current.candidates).toEqual([]);
+    expect(result.current.discovery.missingItemIds).toEqual(["replicating"]);
+  });
+
   it("reports a permanently missing replicated item without discarding discovered videos", async () => {
     jest.useFakeTimers();
     const first = item("first", "First", [

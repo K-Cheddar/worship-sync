@@ -1,5 +1,5 @@
 import { Activity, Copy, RotateCw } from "lucide-react";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import cn from "classnames";
 import Drawer from "../../../components/Drawer/Drawer";
@@ -16,10 +16,13 @@ import {
 import type { PreparedVideoMetrics } from "../../../types/electron";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import {
+  MEDIA_READINESS_STATUS_EVENT,
   readMediaPreparationPublicationStatus,
   useRemoteMediaPreparationReadinessReports,
   type MediaPreparationPublicationStatus,
+  type MediaReadinessLocalStatus,
 } from "../../../hooks/useMediaPreparationManifest";
+import type { MediaPreparationReadinessReport } from "../../../utils/mediaPreparationManifest";
 
 type ReceivedDiagnostics = ElectronMediaSurfacePoolDiagnostics & {
   receivedAt: number;
@@ -40,30 +43,32 @@ const formatMetric = (
     : `${value.value.toFixed(1)}%`;
 };
 
-const removeSensitiveQueryParameters = (value: string): string => {
+export const removeSensitiveQueryParameters = (value: string): string => {
   try {
     const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (/(token|key|secret|signature|credential|password|auth|session)/i.test(key)) {
-        url.searchParams.delete(key);
-      }
-    }
     url.username = "";
     url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/s--[^/]+--(?=\/|$)/gi, "/s--[redacted]--");
     return url.toString();
   } catch {
-    return value.replace(/([?&](?:[^=]*(?:token|key|secret|signature|credential|password|auth|session)[^=]*)=)[^&#\s]*/gi, "$1[redacted]");
+    return value.replace(/[?#].*$/, "");
   }
 };
 
-const sanitizeForCopy = (value: unknown, key = ""): unknown => {
-  if (/(token|secret|credential|password|authorization|cookie)/i.test(key)) {
+const secretField = /(?:^|[-_])(?:authorization|proxy-authorization|auth|cookie|set-cookie|token|secret|credential|password|signature|sig|key)(?:$|[-_])|(?:access|refresh|id|api|private|client)[-_]?(?:token|secret|key)|x[-_](?:amz|goog)[-_]/i;
+
+export const sanitizeForCopy = (value: unknown, key = ""): unknown => {
+  const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  if (normalizedKey !== "media-key" && secretField.test(normalizedKey)) {
     return "[redacted]";
   }
   if (typeof value === "string") {
-    return value.split(/(https?:\/\/[^\s"']+)/g).map((part) =>
-      /^https?:\/\//i.test(part) ? removeSensitiveQueryParameters(part) : part,
-    ).join("");
+    return value
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, removeSensitiveQueryParameters)
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+      .replace(/\b((?:access|refresh|id)?token|api[-_]?key|auth[-_]?key|key|sig(?:nature)?|secret|credential|password|cookie|x-amz-(?:credential|signature|security-token)|x-goog-(?:credential|signature|security-token))\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
   }
   if (Array.isArray(value)) return value.map((entry) => sanitizeForCopy(entry));
   if (!value || typeof value !== "object") return value;
@@ -122,6 +127,7 @@ const getActionIssues = (entry: ReceivedDiagnostics): string[] => {
 const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const [open, setOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Record<string, ReceivedDiagnostics>>({});
+  const [remoteReadinessReports, setRemoteReadinessReports] = useState<Record<string, MediaPreparationReadinessReport[]>>({});
   const [metrics, setMetrics] = useState<PreparedVideoMetrics>();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const displayOutputs = useSelector(selectDisplayOutputs);
@@ -180,6 +186,16 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
       : "Videos";
   const metricAvailable = metrics?.status === "available" && metrics.total;
   const { churchId } = useContext(GlobalInfoContext) || {};
+  const receiveRemoteReports = useCallback((outputId: string, reports: MediaPreparationReadinessReport[]) => {
+    setRemoteReadinessReports((current) => {
+      const previous = current[outputId] ?? [];
+      const unchanged = previous.length === reports.length && previous.every((report, index) => report === reports[index]);
+      return unchanged ? current : { ...current, [outputId]: reports };
+    });
+  }, []);
+  useEffect(() => {
+    if (!open) setRemoteReadinessReports({});
+  }, [open]);
   const electronMetricsLabel = !window.electronAPI
     ? "Unavailable — Electron only"
     : metricAvailable
@@ -196,6 +212,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
         generatedAt: new Date().toISOString(),
         appProcesses: metrics,
         outputs: entries,
+        remoteReadiness: remoteReadinessReports,
       }), null, 2));
       setCopyState("copied");
     } catch {
@@ -373,7 +390,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
           )}
 
           {displayOutputs.filter((output) => output.enabled).map((output) => (
-            <RemoteReadiness key={output.id} outputId={output.id} outputName={output.name} enabled={open} churchId={churchId} />
+            <RemoteReadiness key={output.id} outputId={output.id} outputName={output.name} enabled={open} churchId={churchId} onReports={receiveRemoteReports} />
           ))}
 
           <div className="flex items-center gap-3 border-t border-gray-700 pt-3">
@@ -410,89 +427,107 @@ const RemoteReadiness = ({
   outputName,
   enabled,
   churchId,
+  onReports,
 }: {
   outputId: string;
   outputName: string;
   enabled: boolean;
   churchId?: string;
+  onReports: (outputId: string, reports: MediaPreparationReadinessReport[]) => void;
 }) => {
   const reports = useRemoteMediaPreparationReadinessReports({ enabled, outputId });
+  const [now, setNow] = useState(Date.now());
+  const [reportingStatus, setReportingStatus] = useState<MediaReadinessLocalStatus["state"]>();
   const [publication, setPublication] = useState(() =>
     readMediaPreparationPublicationStatus(churchId, outputId),
   );
   useEffect(() => {
+    if (enabled) onReports(outputId, reports);
+  }, [enabled, onReports, outputId, reports]);
+  useEffect(() => {
     setPublication(readMediaPreparationPublicationStatus(churchId, outputId));
+    setReportingStatus(undefined);
     if (!enabled) return;
+    const tick = window.setInterval(() => setNow(Date.now()), 5000);
     const update = (event: Event) => {
       const status = (event as CustomEvent<Partial<MediaPreparationPublicationStatus>>).detail;
       if (
         status?.outputId === outputId &&
-        (status.state === "publishing" || status.state === "published" || status.state === "failed") &&
+        (status.state === "publishing" || status.state === "retrying" || status.state === "published" || status.state === "failed") &&
         typeof status.publishedAt === "number"
       ) {
         setPublication(status as MediaPreparationPublicationStatus);
       }
     };
+    const updateReadinessStatus = (event: Event) => {
+      const status = (event as CustomEvent<MediaReadinessLocalStatus>).detail;
+      if (status?.outputId === outputId && status.churchId === churchId) setReportingStatus(status.state);
+    };
     window.addEventListener("worship-sync-media-manifest-publish-status", update);
-    return () => window.removeEventListener("worship-sync-media-manifest-publish-status", update);
+    window.addEventListener(MEDIA_READINESS_STATUS_EVENT, updateReadinessStatus);
+    return () => {
+      window.clearInterval(tick);
+      window.removeEventListener("worship-sync-media-manifest-publish-status", update);
+      window.removeEventListener(MEDIA_READINESS_STATUS_EVENT, updateReadinessStatus);
+    };
   }, [churchId, enabled, outputId]);
 
   if (!enabled) return null;
-  const latest = reports[0];
-  const reportAge = latest ? Date.now() - latest.reportedAt : Number.POSITIVE_INFINITY;
-  const remoteState = reportAge < 45_000
-    ? "Connected"
-    : reportAge < 120_000
-      ? "Stale"
-      : "Disconnected";
-  const publicationAge = publication ? Date.now() - publication.publishedAt : Number.POSITIVE_INFINITY;
+  const publicationAge = publication ? now - publication.publishedAt : Number.POSITIVE_INFINITY;
   const currentPublication = publication && publicationAge < 5 * 60_000 ? publication : undefined;
-  const revisionReceived = Boolean(
-    latest &&
-    currentPublication?.desiredRevision != null &&
-    latest.manifestRevision === currentPublication.desiredRevision &&
-    latest.manifestReceivedAt != null,
-  );
-  const ready = Boolean(
-    latest && remoteState === "Connected" && revisionReceived && latest.source === "remote-manifest" && latest.finiteCandidateCount > 0 && latest.readyCount >= latest.finiteCandidateCount,
-  );
+  const reportsByDevice = new Map<string, MediaPreparationReadinessReport[]>();
+  reports.forEach((report) => {
+    reportsByDevice.set(report.deviceId, [...(reportsByDevice.get(report.deviceId) ?? []), report]);
+  });
+  const sortedDeviceIds = [...reportsByDevice.keys()].sort();
+  const deviceNumbers = new Map(sortedDeviceIds.map((deviceId, index) => [deviceId, index + 1]));
+  const sessionCards = [...reportsByDevice.entries()].flatMap(([deviceId, sessions]) => {
+    const sorted = sessions.sort((a, b) => b.reportedAt - a.reportedAt);
+    const activeSessions = sorted.filter((session) => now - session.reportedAt < 45_000);
+    const visibleSessions = activeSessions.length > 0 ? activeSessions : sorted.slice(0, 1);
+    return visibleSessions.map((report, index) => ({
+      report,
+      concurrentIndex: index + 1,
+      concurrentCount: activeSessions.length,
+      superseded: sorted.filter((session) => !visibleSessions.includes(session) && now - session.reportedAt >= 45_000),
+    }));
+  }).sort((a, b) => a.report.deviceId.localeCompare(b.report.deviceId) || a.report.sessionId.localeCompare(b.report.sessionId))
+    .map((card) => ({ ...card, deviceNumber: deviceNumbers.get(card.report.deviceId) ?? 0 }));
+  const publisherMessage = currentPublication?.state === "publishing"
+    ? `Publishing r${currentPublication.desiredRevision ?? "?"}`
+    : currentPublication?.state === "retrying"
+      ? `Retrying publish r${currentPublication.desiredRevision ?? "?"}`
+      : currentPublication?.state === "failed"
+        ? `Publish failed${currentPublication.error ? ` — ${currentPublication.error}` : ""}`
+        : currentPublication?.state === "published"
+          ? `Published r${currentPublication.desiredRevision ?? "?"}`
+          : "No recent publish result";
   return (
     <section className="rounded border border-gray-700 p-3" aria-label={`${outputName} remote readiness`}>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-semibold text-white">Remote device · {outputName}</h2>
-        <Status good={remoteState === "Connected"}>{latest ? remoteState : "No report"}</Status>
+        <h2 className="font-semibold text-white">Remote devices · {outputName}</h2>
+        <Status good={currentPublication?.state === "published"}>{publisherMessage}</Status>
       </div>
-      <div className="mt-2 space-y-1 text-xs text-gray-300">
-        <p>
-          Manifest: {currentPublication?.state === "publishing"
-            ? `Publishing r${currentPublication.desiredRevision ?? "?"}`
-            : currentPublication?.state === "failed"
-            ? `Publish failed${currentPublication.error ? ` — ${currentPublication.error}` : ""}`
-            : currentPublication?.state === "published"
-              ? `Published r${currentPublication.desiredRevision ?? "?"}`
-              : "No recent publish result"}
-          <span className="mx-2 text-gray-600">·</span>
-          {revisionReceived
-            ? `Received r${latest?.manifestRevision} at ${new Date(latest!.manifestReceivedAt!).toLocaleTimeString()}`
-            : latest?.manifestRevision != null
-              ? `Last received r${latest.manifestRevision}; latest receipt not confirmed`
-              : "No manifest received"}
-        </p>
-        {latest && (
-          <>
-            <p>
-              {latest.source === "remote-manifest" ? "Using received manifest candidates" : latest.source === "cached-manifest" ? "Using cached manifest candidates; live receipt pending" : latest.source === "browser-poster" ? "Using browser poster fallback" : "Using local fallback"}
-              <span className="mx-2 text-gray-600">·</span>
-              Videos {latest.readyCount} ready · {latest.preparingCount} preparing · {latest.pendingCacheCount} pending cache · {latest.failedCount} failed
-            </p>
-            {latest.errors.length > 0 && <p className="text-red-200">{latest.errors[0]}</p>}
-            <p className={ready ? "text-emerald-200" : "text-gray-400"}>
-              {ready ? "All finite received-manifest candidates are ready" : latest.source === "local-fallback" || latest.source === "browser-poster" ? "Local fallback readiness reported; manifest readiness is unconfirmed" : latest.source === "cached-manifest" ? "Cached manifest preparation reported; live receipt is unconfirmed" : "Video preparation is not complete"}
-              {latest.manifestReceivedAt ? ` · last report ${new Date(latest.reportedAt).toLocaleTimeString()}` : " · receipt time is not confirmed for this session"}
-            </p>
-          </>
-        )}
-        {!latest && <p className="text-gray-400">No authenticated readiness report has arrived from this output.</p>}
+      <p className="mt-1 text-xs text-gray-400">Publication is separate from each device’s receipt and preparation.</p>
+      {reportingStatus && <p className="mt-1 text-xs text-amber-200" role="status">Local diagnostics link: {reportingStatus === "permission-denied" ? "blocked by Firebase permissions" : reportingStatus === "temporarily-unavailable" ? "temporarily unable to update" : reportingStatus === "disconnected" ? "disconnected" : reportingStatus === "subscribing" ? "reconnecting" : reportingStatus === "connected" ? "connected to readiness feed" : "reporting"}</p>}
+      {sessionCards.length === 0 && <p className="mt-2 text-xs text-gray-400">No authenticated readiness report has arrived from this output.</p>}
+      <div className="mt-2 space-y-2">
+        {sessionCards.map(({ report: device, concurrentIndex, concurrentCount, superseded, deviceNumber }) => {
+          const age = Math.max(0, now - device.reportedAt);
+          const connection = age < 45_000 ? "Connected" : age < 120_000 ? "Stale" : "Disconnected";
+          const revisionReceived = Boolean(currentPublication?.desiredRevision != null && device.manifestRevision === currentPublication.desiredRevision && device.manifestReceivedAt != null);
+          const ready = connection === "Connected" && revisionReceived && device.source === "remote-manifest" && device.finiteCandidateCount > 0 && device.readyCount >= device.finiteCandidateCount && device.failedCount === 0 && device.pendingCacheCount === 0;
+          return (
+            <article key={`${device.deviceId}:${device.sessionId}`} role="group" className="rounded bg-gray-900/60 px-2 py-2 text-xs text-gray-300" aria-label={`Remote device ${deviceNumber}${concurrentCount > 1 ? `, window ${concurrentIndex}` : ""}`}>
+              <div className="flex items-center justify-between gap-2"><strong className="text-white">Device {deviceNumber}{concurrentCount > 1 ? ` · window ${concurrentIndex}` : ""}</strong><Status good={ready}>{ready ? "Ready" : connection}</Status></div>
+              <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : currentPublication?.desiredRevision != null ? ` · desired r${currentPublication.desiredRevision} not confirmed` : ""}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
+              <p title="Inventory is unique media in this device’s report. Finite ready/preparing/failed counts describe playable finite sources; pending cache and excluded sources are separate.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · {device.candidateCount} videos: {device.readyCount}/{device.finiteCandidateCount} finite ready · {device.preparingCount} preparing · {device.failedCount} failed · {device.pendingCacheCount} pending cache · {device.excludedCount ?? 0} excluded{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
+              {device.errors.length > 0 && <p className="mt-1 text-red-200">{device.errors[0]}</p>}
+              <p className="mt-1 text-gray-400">Last report {Math.floor(age / 1000)}s ago · {connection}</p>
+              {superseded.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-gray-400">{superseded.length} superseded session(s)</summary><ul className="mt-1 space-y-1">{superseded.map((old) => <li key={old.sessionId}>Previous window · r{old.manifestRevision ?? "—"} · report {new Date(old.reportedAt).toLocaleString()} · {old.readyCount} ready / {old.failedCount} failed</li>)}</ul></details>}
+            </article>
+          );
+        })}
       </div>
     </section>
   );

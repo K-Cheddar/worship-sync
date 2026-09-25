@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
+import { GlobalInfoContext } from "../context/globalInfo";
 import { useGlobalBroadcast } from "./useGlobalBroadcast";
 import type {
   DBItem,
@@ -540,6 +541,7 @@ export const useServiceVideoCandidates = ({
     | "effective mirrored output source";
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
+  const { churchId } = useContext(GlobalInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
   const [currentMediaDiscovery, setCurrentMediaDiscovery] = useState<{
     candidate?: ElectronMediaSurfaceCandidate;
@@ -560,6 +562,8 @@ export const useServiceVideoCandidates = ({
   >(undefined);
   const outlineRetryAttemptRef = useRef(0);
   const lastLoadTargetRef = useRef<string | undefined>(undefined);
+  const lastLoadDbRef = useRef<typeof db>(undefined);
+  const lastMissingItemIdsRef = useRef<string[]>([]);
   const [outlineLoad, setOutlineLoad] = useState<{
     targetOutlineId?: string | null;
     loadedOutlineId?: string;
@@ -596,14 +600,17 @@ export const useServiceVideoCandidates = ({
   }, [cacheRevision, currentItemId, currentMedia]);
 
   const loadServiceMedia = useCallback(async (isRetry = false) => {
-    const loadTarget = `${scope}:${outlineId === undefined ? "fallback" : outlineId ?? "none"}`;
-    if (!isRetry && retryTimerRef.current !== undefined) {
-      window.clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = undefined;
-    }
-    if (!isRetry && lastLoadTargetRef.current !== loadTarget) {
+    const loadTarget = `${churchId ?? "no-church"}:${scope}:${outlineId === undefined ? "fallback" : outlineId ?? "none"}`;
+    if (!isRetry && (lastLoadTargetRef.current !== loadTarget || lastLoadDbRef.current !== db)) {
       outlineRetryAttemptRef.current = 0;
+      lastMissingItemIdsRef.current = [];
       lastLoadTargetRef.current = loadTarget;
+      lastLoadDbRef.current = db;
+      // Outline and church identity changes must not briefly publish the old
+      // inventory while the replacement PouchDB read is still in flight.
+      serviceMediaRef.current = [];
+      setServiceMedia([]);
+      activeMediaTargetRef.current = undefined;
       if (retryTimerRef.current !== undefined) {
         window.clearTimeout(retryTimerRef.current);
         retryTimerRef.current = undefined;
@@ -624,6 +631,12 @@ export const useServiceVideoCandidates = ({
       }
     };
     if (!enabled || !db) {
+      outlineRetryAttemptRef.current = 0;
+      lastMissingItemIdsRef.current = [];
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
       activeListIdRef.current = undefined;
       serviceItemIdsRef.current = new Set();
       apply([]);
@@ -819,10 +832,20 @@ export const useServiceVideoCandidates = ({
         return;
       }
       if (missingItemIds.length > 0) {
-        const attempt = outlineRetryAttemptRef.current + 1;
-        outlineRetryAttemptRef.current = attempt;
-        const retryDelay = INVENTORY_RETRY_DELAYS_MS[Math.min(attempt - 1, INVENTORY_RETRY_DELAYS_MS.length - 1)];
-        if (attempt <= INVENTORY_RETRY_DELAYS_MS.length) {
+        const previousMissing = lastMissingItemIdsRef.current;
+        if (missingItemIds.length < previousMissing.length) {
+          // A newly replicated document is meaningful progress. Give the
+          // remaining missing rows a fresh bounded replication window.
+          outlineRetryAttemptRef.current = 0;
+          if (retryTimerRef.current !== undefined) {
+            window.clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = undefined;
+          }
+        }
+        lastMissingItemIdsRef.current = missingItemIds;
+        const attemptsFired = outlineRetryAttemptRef.current;
+        const retryDelay = INVENTORY_RETRY_DELAYS_MS[attemptsFired];
+        if (retryDelay !== undefined) {
           const retryAt = Date.now() + retryDelay;
           setOutlineLoad((current) => ({
             ...current,
@@ -833,13 +856,19 @@ export const useServiceVideoCandidates = ({
             missingItemIds,
             invalidItemIds: [],
             error: `${missingItemIds.length} service item${missingItemIds.length === 1 ? " is" : "s are"} not available from local replication yet`,
-            retryAttempt: attempt,
+            retryAttempt: attemptsFired + 1,
             retryAt,
           }));
-          retryTimerRef.current = window.setTimeout(() => {
-            retryTimerRef.current = undefined;
-            void loadServiceMediaRef.current?.(true);
-          }, retryDelay);
+          if (retryTimerRef.current === undefined) {
+            const retryTarget = loadTarget;
+            const retryDb = db;
+            retryTimerRef.current = window.setTimeout(() => {
+              retryTimerRef.current = undefined;
+              if (lastLoadTargetRef.current !== retryTarget || lastLoadDbRef.current !== retryDb) return;
+              outlineRetryAttemptRef.current += 1;
+              void loadServiceMediaRef.current?.(true);
+            }, retryDelay);
+          }
         } else {
           setOutlineLoad((current) => ({
             ...current,
@@ -849,7 +878,7 @@ export const useServiceVideoCandidates = ({
             inventoryState: "incomplete",
             missingItemIds,
             error: `${missingItemIds.length} service item${missingItemIds.length === 1 ? " is" : "s are"} still missing after retries`,
-            retryAttempt: attempt,
+            retryAttempt: attemptsFired,
             retryAt: undefined,
           }));
         }
@@ -868,6 +897,11 @@ export const useServiceVideoCandidates = ({
         missingItemIds: [],
         invalidItemIds: [],
       }));
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+      lastMissingItemIdsRef.current = [];
       outlineRetryAttemptRef.current = 0;
     } catch (error) {
       if (generation !== loadGenerationRef.current) return;
@@ -881,35 +915,40 @@ export const useServiceVideoCandidates = ({
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const attempt = outlineRetryAttemptRef.current + 1;
-      outlineRetryAttemptRef.current = attempt;
-      const retryDelay = CACHE_RETRY_DELAYS_MS[Math.min(attempt - 1, CACHE_RETRY_DELAYS_MS.length - 1)] ?? 1000;
-      if (attempt <= MAX_CACHE_ATTEMPTS) {
+      const attemptsFired = outlineRetryAttemptRef.current;
+      const retryDelay = INVENTORY_RETRY_DELAYS_MS[attemptsFired];
+      if (retryDelay !== undefined) {
         const retryAt = Date.now() + retryDelay;
         setOutlineLoad((current) => ({
           ...current,
           state: "retrying",
           inventoryState: scope === "service" ? "incomplete" : current.inventoryState,
           error: message,
-          retryAttempt: attempt,
+          retryAttempt: attemptsFired + 1,
           retryAt,
         }));
-        retryTimerRef.current = window.setTimeout(() => {
-          retryTimerRef.current = undefined;
-          void loadServiceMediaRef.current?.(true);
-        }, retryDelay);
+        if (retryTimerRef.current === undefined) {
+          const retryTarget = loadTarget;
+          const retryDb = db;
+          retryTimerRef.current = window.setTimeout(() => {
+            retryTimerRef.current = undefined;
+            if (lastLoadTargetRef.current !== retryTarget || lastLoadDbRef.current !== retryDb) return;
+            outlineRetryAttemptRef.current += 1;
+            void loadServiceMediaRef.current?.(true);
+          }, retryDelay);
+        }
       } else {
         setOutlineLoad((current) => ({
           ...current,
           state: "error",
           inventoryState: scope === "service" ? "incomplete" : current.inventoryState,
           error: message,
-          retryAttempt: attempt,
+          retryAttempt: attemptsFired,
           retryAt: undefined,
         }));
       }
     }
-  }, [currentItemId, db, enabled, outlineId, scope]);
+  }, [churchId, currentItemId, db, enabled, outlineId, scope]);
 
   loadServiceMediaRef.current = loadServiceMedia;
 

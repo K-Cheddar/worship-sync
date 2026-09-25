@@ -99,6 +99,20 @@ describe("subscribeWithPermissionRetry", () => {
     warnSpy.mockRestore();
   });
 
+  it("surfaces permission denial separately while retaining bounded reattachment", () => {
+    const onPermissionDenied = jest.fn();
+    const stop = subscribeWithPermissionRetry("db" as never, "path/a", jest.fn(), {
+      onPermissionDenied,
+    });
+    latest().error({ code: "PERMISSION_DENIED" });
+
+    expect(onPermissionDenied).toHaveBeenCalledTimes(1);
+    expect(listeners).toHaveLength(1);
+    jest.advanceTimersByTime(100);
+    expect(listeners).toHaveLength(2);
+    stop();
+  });
+
   it("correlates a stale listener with the current renderer auth generation", () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     setFirebaseDiagnosticContext({

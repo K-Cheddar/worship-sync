@@ -4,6 +4,7 @@ import {
   isTransportSafeMediaUrl,
   isMediaPreparationManifest,
   isMediaPreparationReadinessReport,
+  buildMediaPreparationReadinessCounts,
   mediaPreparationManifestToCandidates,
 } from "./mediaPreparationManifest";
 import type { ElectronMediaDiscovery } from "./electronMediaSurfaceDiagnostics";
@@ -78,8 +79,85 @@ describe("media preparation manifest", () => {
     expect(isMediaPreparationReadinessReport(report)).toBe(true);
     expect(isMediaPreparationReadinessReport({ ...report, source: "cached-manifest", manifestReceivedAt: null })).toBe(true);
     expect(isMediaPreparationReadinessReport({ ...report, readyCount: 5 })).toBe(false);
+    expect(isMediaPreparationReadinessReport({ ...report, excludedCount: 2 })).toBe(false);
+    expect(isMediaPreparationReadinessReport({ ...report, candidateCount: 50_001 })).toBe(false);
     expect(isMediaPreparationReadinessReport({ ...report, sessionId: "x".repeat(129) })).toBe(false);
     expect(isMediaPreparationReadinessReport({ ...report, errors: Array(9).fill("error") })).toBe(false);
+  });
+
+  it("keeps pending HLS failures reportable when no finite candidate exists", () => {
+    const counts = buildMediaPreparationReadinessCounts(
+      [{ mediaKey: "mux:hls", status: "pending-cache" }],
+      [{ mediaKey: "mux:hls", phase: "error" }],
+    );
+    expect(counts).toEqual({
+      candidateCount: 1,
+      finiteCandidateCount: 0,
+      pendingCacheCount: 1,
+      excludedCount: 0,
+      readyCount: 0,
+      preparingCount: 0,
+      failedCount: 0,
+      pendingCacheFailedCount: 1,
+      excludedFailedCount: 0,
+    });
+    expect(isMediaPreparationReadinessReport({
+      contract: "worshipsync.media-preparation-readiness",
+      version: 1,
+      outputId: "projector",
+      deviceId: "device-1",
+      sessionId: "window-1",
+      reportedAt: 100,
+      manifestRevision: 2,
+      manifestReceivedAt: 90,
+      source: "remote-manifest",
+      ...counts,
+      errors: ["Mux finite rendition failed"],
+    })).toBe(true);
+  });
+
+  it("partitions finite, pending and excluded candidate failures without invalidating mixed reports", () => {
+    const counts = buildMediaPreparationReadinessCounts(
+      [
+        { mediaKey: "finite:ready", status: "eligible" },
+        { mediaKey: "finite:failed", status: "eligible" },
+        { mediaKey: "mux:pending", status: "pending-cache" },
+        { mediaKey: "invalid", status: "excluded" },
+      ],
+      [
+        { mediaKey: "finite:ready", phase: "active-playing" },
+        { mediaKey: "finite:failed", phase: "error" },
+        { mediaKey: "mux:pending", phase: "error" },
+        { mediaKey: "invalid", phase: "error" },
+      ],
+    );
+    expect(counts).toMatchObject({
+      candidateCount: 4,
+      finiteCandidateCount: 2,
+      pendingCacheCount: 1,
+      excludedCount: 1,
+      readyCount: 1,
+      preparingCount: 0,
+      failedCount: 1,
+      pendingCacheFailedCount: 1,
+      excludedFailedCount: 1,
+    });
+    expect(counts.readyCount + counts.preparingCount + counts.failedCount).toBe(counts.finiteCandidateCount);
+  });
+
+  it("counts a playing identity once and keeps ready, preparing and failed finite states disjoint", () => {
+    const counts = buildMediaPreparationReadinessCounts(
+      ["playing", "ready", "preparing", "failed"].map((mediaKey) => ({ mediaKey, status: "eligible" as const })),
+      [
+        { mediaKey: "playing", phase: "active-playing" },
+        { mediaKey: "playing", phase: "ready-paused" },
+        { mediaKey: "playing", phase: "error" },
+        { mediaKey: "ready", phase: "ready-paused" },
+        { mediaKey: "preparing", phase: "preparing" },
+        { mediaKey: "failed", phase: "error" },
+      ],
+    );
+    expect(counts).toMatchObject({ readyCount: 2, preparingCount: 1, failedCount: 1, finiteCandidateCount: 4 });
   });
 
   it("accepts portable HTTP URLs without treating renderer checks as SSRF validation", () => {

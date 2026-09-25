@@ -40,6 +40,7 @@ import type {
   ElectronMediaDiscovery,
   ElectronMediaSurfaceCandidateDiagnostic,
 } from "../../utils/electronMediaSurfaceDiagnostics";
+import { buildMediaPreparationReadinessCounts } from "../../utils/mediaPreparationManifest";
 import {
   isMediaSurfaceVisible,
   isPreparedMediaSurfaceUsable,
@@ -572,6 +573,16 @@ const DisplayBoxTransitionStage = ({
     ),
     [lifecycleOutlineId, lifecycleRole, lifecycleRoute, preparedMediaStatuses],
   );
+  const readinessInventory = usingRemoteManifest
+    ? remoteManifestDiagnostics
+    : poolCandidateResult.discovery.items.flatMap((item) => item.videos);
+  const readinessCounts = buildMediaPreparationReadinessCounts(
+    readinessInventory,
+    remoteSurfaceStatuses,
+  );
+  const readinessErrors = remoteSurfaceStatuses
+    .filter((status) => status.phase === "error")
+    .map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]"));
   useReportRemoteMediaPreparationReadiness({
     enabled: sessionKind === "display" && Boolean(mediaPlayback?.outputId),
     outputId: mediaPlayback?.outputId,
@@ -580,17 +591,8 @@ const DisplayBoxTransitionStage = ({
     source: usingRemoteManifest
       ? remotePreparation.manifestReceivedAt ? "remote-manifest" : "cached-manifest"
       : window.electronAPI ? "local-fallback" : "browser-poster",
-    candidateCount: usingRemoteManifest ? remoteManifestDiagnostics.length : poolCandidates.length,
-    finiteCandidateCount: usingRemoteManifest
-      ? new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "eligible").map((entry) => entry.mediaKey)).size
-      : poolCandidateResult.discovery.finitePlayableSourceCount ?? 0,
-    pendingCacheCount: usingRemoteManifest
-      ? new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "pending-cache").map((entry) => entry.mediaKey)).size
-      : poolCandidateResult.discovery.pendingHlsCacheCount ?? 0,
-    readyCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "ready-paused" || status.phase === "active-playing").map((status) => status.mediaKey)).size,
-    preparingCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "preparing" || status.phase === "activation-requested").map((status) => status.mediaKey)).size,
-    failedCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "error").map((status) => status.mediaKey)).size,
-    errors: remoteSurfaceStatuses.filter((status) => status.phase === "error").map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]")),
+    ...readinessCounts,
+    errors: readinessErrors,
   });
 
   useLayoutEffect(() => {

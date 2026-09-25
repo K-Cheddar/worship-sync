@@ -104,6 +104,8 @@ export type SubscribeWithRetryOptions = {
   label?: string;
   /** Called for non-permission errors (permission_denied is retried instead). */
   onError?: (error: Error) => void;
+  /** Called on permission_denied while the listener is waiting to reattach. */
+  onPermissionDenied?: (error: Error) => void;
 };
 
 /**
@@ -122,7 +124,7 @@ export const subscribeWithPermissionRetry = (
   onData: (snapshot: DataSnapshot) => void,
   options: SubscribeWithRetryOptions = {}
 ): (() => void) => {
-  const { label, onError } = options;
+  const { label, onError, onPermissionDenied } = options;
   const listenerContext = getFirebaseDiagnosticContext();
   let cancelled = false;
   let unsubscribe: (() => void) | null = null;
@@ -178,6 +180,7 @@ export const subscribeWithPermissionRetry = (
       (error) => {
         if (cancelled) return;
         if (isFirebasePermissionDenied(error)) {
+          onPermissionDenied?.(error as Error);
           if (attempt === 0) {
             firstDeniedAt = Date.now();
             console.warn(
