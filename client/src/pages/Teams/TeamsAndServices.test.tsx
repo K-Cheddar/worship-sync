@@ -15,6 +15,7 @@ import {
   deleteTeamPosition,
   getServicePlanMicrophones,
   getTeamScheduleDetail,
+  getNotificationIntents,
   getTeamsBootstrap,
   listServicePlans,
   updateTeam,
@@ -26,6 +27,7 @@ import {
 } from "../../api/auth";
 import type { TeamSchedulePayload } from "../../api/auth";
 import type {
+  NotificationIntent,
   TeamRecord,
   TeamSchedule,
   TeamScheduleSummary,
@@ -82,6 +84,7 @@ jest.mock("../../api/auth", () => ({
   },
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
+  getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
   listServicePlans: jest.fn(),
   getServicePlanMicrophones: jest.fn(),
   saveServicePlanMicrophones: jest.fn(),
@@ -108,6 +111,7 @@ jest.mock("../../api/auth", () => ({
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
+const mockGetNotificationIntents = jest.mocked(getNotificationIntents);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockCreateTeamPosition = jest.mocked(createTeamPosition);
@@ -385,6 +389,12 @@ describe("Teams", () => {
       success: true,
       microphones: [],
       audiences: [],
+    });
+    mockGetNotificationIntents.mockResolvedValue({
+      success: true,
+      intents: [],
+      nextCursor: "",
+      limit: 20,
     });
   });
 
@@ -1951,6 +1961,89 @@ describe("Teams", () => {
     expect(
       screen.queryByRole("button", { name: /More schedule options/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the schedule available while Messages and Members open in drawers", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+    window.matchMedia = makeMatchMedia(true);
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    const scheduleCell = await screen.findByRole("button", { name: /Sunday Vocal/i });
+    expect(screen.queryByRole("heading", { name: "Schedule messages" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Messages/i }));
+    expect(await screen.findByText("No assignment messages for this schedule.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByText("No assignment messages for this schedule.")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Messages/i })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Sunday Vocal/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Members$/i }));
+    expect(await screen.findByRole("dialog", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Schedule messages" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
+    expect(scheduleCell).toBeInTheDocument();
+  });
+
+  it("shows unique message attention counts and delivery status in the toolbar", async () => {
+    const user = userEvent.setup();
+    const baseIntent: NotificationIntent = {
+      intentId: "intent-pending",
+      churchId: "church-1",
+      intentType: "assignment_notification",
+      sourceType: "team_schedule",
+      sourceId: "schedule-july",
+      sourceVersion: "version-1",
+      memberId: "member-avery",
+      occurrenceId: sundayOccurrenceId,
+      cellKey: "position-keys::0",
+      channel: "sms",
+      status: "ready",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      messagePreview: "You are scheduled.",
+      previewEligible: true,
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+    mockGetNotificationIntents.mockResolvedValue({
+      success: true,
+      intents: [
+        baseIntent,
+        {
+          ...baseIntent,
+          intentId: "intent-uncertain",
+          status: "unknown",
+          attemptStatus: "failed",
+          attemptOutcome: "unknown",
+        },
+        {
+          ...baseIntent,
+          intentId: "intent-delivered",
+          status: "sent",
+          attemptStatus: "delivered",
+        },
+      ],
+      nextCursor: "",
+      limit: 20,
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByText(/1 pending · 1 delivered · 1 failed/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Messages 2/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Messages/i }));
+    expect(await screen.findByText("Uncertain 1")).toBeInTheDocument();
+    expect(screen.getByText("Delivery: failed · Volunteer: waiting")).toBeInTheDocument();
+    expect(screen.getByText(/Provider outcome uncertain/)).toBeInTheDocument();
   });
 
   it("keeps the saved schedule name when a cached edit draft is blank", () => {
