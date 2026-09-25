@@ -233,6 +233,49 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(intent.batchId, batch.batchId);
 });
 
+test("forms with editable non-availability fields prepare form-response messages", async () => {
+  const h = createHarness();
+  const form = {
+    ...h.form,
+    enabledFields: ["firstName", "lastName", "email", "blockoutDates", "notes", "birthDate"],
+  };
+  h.storeFor("teamIntakeForms").set(form.formId, form);
+  const { res, batch } = await h.preview();
+  assert.equal(res.statusCode, 200);
+  assert.equal(batch.summary.eligible, 1);
+  assert.match(batch.recipients[0].message, /Please complete the October availability \(2026-10-01 through 2026-10-31\) form/);
+  assert.match(batch.recipients[0].message, /\/a\/secure-token/);
+  assert.match(batch.recipients[0].message, /Reply STOP to opt out/);
+  assert.doesNotMatch(batch.recipients[0].message, /submit your .*availability/);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("form reminders use reminder wording and remain scoped to the current form response", async () => {
+  const h = createHarness();
+  const form = {
+    ...h.form,
+    enabledFields: ["blockoutDates", "notes"],
+    availabilityOccurrences: [],
+  };
+  h.storeFor("teamIntakeForms").set(form.formId, form);
+  const { res, batch } = await h.preview({ intentType: "availability_reminder" });
+  assert.equal(res.statusCode, 200);
+  assert.equal(batch.reminderRound, 1);
+  assert.match(batch.recipients[0].message, /Reminder: Please complete the October availability .* form/);
+  assert.match(batch.recipients[0].message, /\/a\/secure-token/);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("batch preparation rejects forms without any editable personalized response fields before reserving a batch", async () => {
+  const h = createHarness();
+  h.storeFor("teamIntakeForms").set(h.form.formId, { ...h.form, enabledFields: ["firstName", "email"] });
+  const { res } = await h.preview();
+  assert.equal(res.statusCode, 409);
+  assert.match(res.payload.errorMessage, /no response fields for an existing volunteer/i);
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+  assert.equal(h.providerCalls, 0);
+});
+
 test("form history is newest-first, bounded, paginated, and redacts links on every row", async () => {
   const h = createHarness();
   const intents = h.storeFor("notificationIntents");

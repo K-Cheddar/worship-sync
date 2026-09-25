@@ -8009,6 +8009,40 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(reactivatedPreview.statusCode, 200);
 });
 
+test("notification requests accept personalized forms with blockout and notes fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_form_response_request");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Kevin", lastName: "Cheddar" }],
+  });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "September Schedule",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      responseDeadline: "2026-09-30",
+      teamIds: [teamId],
+      enabledFields: ["firstName", "lastName", "email", "blockoutDates", "notes", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  const prepared = await authHandlers.prepareAvailabilityNotificationRecipients({
+    churchId: context.churchId,
+    formId: form.payload.form.formId,
+    memberIds: [memberIds.Kevin],
+    purpose: "availability_request",
+    actorUid: "admin",
+  });
+  assert.equal(prepared.results.length, 1);
+  assert.ok(prepared.results[0].recipient.recipientId);
+  assert.match(prepared.results[0].publicUrl, /\/a\//);
+  assert.equal(prepared.results[0].eligible, false);
+  assert.equal(prepared.results[0].exclusionReason, "No valid mobile number.");
+});
+
 test("individual intake recipient creation requires Teams edit permission", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("individual_intake_permission");

@@ -58,13 +58,13 @@ test("renders the scoped form once the preview loads", async () => {
   });
 });
 
-test("falls back to default wording when no custom messages are set", async () => {
+test("uses general welcome wording when no service availability dates are configured", async () => {
   mockGetPreview.mockResolvedValue(preview as never);
   renderPage();
   await screen.findByText("Fall Volunteers");
 
   expect(
-    screen.getByText(/share the positions you can serve in/i),
+    screen.getByText(/complete the fields requested below/i),
   ).toBeInTheDocument();
   expect(
     screen.getByText(/check the positions you can serve in/i),
@@ -167,7 +167,7 @@ test("personalizes an individual request without re-entering identity", async ()
   expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
 
   await userEvent.click(
-    screen.getByRole("button", { name: /submit availability/i }),
+    screen.getByRole("button", { name: /submit response/i }),
   );
 
   await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
@@ -176,6 +176,25 @@ test("personalizes an individual request without re-entering identity", async ()
     expect.objectContaining({ firstName: "", lastName: "", email: "" }),
     { personalized: true },
   );
+});
+
+test("personalized non-availability form asks volunteers to complete the form", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    recipient: { firstName: "Kevin" },
+    form: {
+      ...preview.form,
+      enabledFields: ["firstName", "lastName", "email", "blockoutDates", "notes", "birthDate"],
+      availabilityOccurrences: [],
+    },
+  } as never);
+  renderPage("/a/tok_123");
+
+  expect(await screen.findByText("Team intake")).toBeInTheDocument();
+  expect(screen.getByText(/hi kevin\. please complete this form/i)).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: /blockout dates/i })).toBeInTheDocument();
+  expect(screen.getByLabelText("Notes:")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /submit response/i })).toBeInTheDocument();
 });
 
 test("renders only the fields selected by the form owner", async () => {

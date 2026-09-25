@@ -52,6 +52,7 @@ import {
   looksLikeTeamIntakeRecipientToken,
   resolveTeamIntakeRecipientTokenSecret,
 } from "./teamIntakeRecipientToken.js";
+import { hasPersonalizedIntakeResponseFields } from "./teamIntakeFields.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -6889,8 +6890,8 @@ export const createTeamsAuthHandlers = ({
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
     const enabledFields = normalizeTeamIntakeFields(undefined, form.enabledFields);
-    if (!enabledFields.includes("availability")) {
-      throw httpError(409, "This intake form does not collect service availability.");
+    if (!hasPersonalizedIntakeResponseFields(enabledFields, form.availabilityOccurrences)) {
+      throw httpError(409, "This intake form has no response fields for an existing volunteer.");
     }
     const [members, positions, teams, church] = await Promise.all([
       listTeamCollectionForChurch(COLLECTIONS.teamRosterMembers, "memberId", churchId),
@@ -6929,7 +6930,7 @@ export const createTeamsAuthHandlers = ({
         continue;
       }
       if (recipient?.respondedAt) {
-        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Availability response already received." });
+        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Form response already received." });
         continue;
       }
       if (purpose === "availability_reminder") {
@@ -6975,8 +6976,8 @@ export const createTeamsAuthHandlers = ({
     assertTeamIntakeFormResponseDeadline(form);
     if (recipient.revokedAt) throw httpError(409, "This intake request was revoked.");
     if (recipient.respondedAt) throw httpError(409, "This volunteer has already responded.");
-    if (!normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability")) {
-      throw httpError(409, "This intake form no longer collects service availability.");
+    if (!hasPersonalizedIntakeResponseFields(normalizeTeamIntakeFields(undefined, form.enabledFields), form.availabilityOccurrences)) {
+      throw httpError(409, "This intake form no longer has response fields for an existing volunteer.");
     }
     const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
     return {

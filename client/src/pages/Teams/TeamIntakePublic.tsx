@@ -180,6 +180,8 @@ const TeamIntakePublic = () => {
   /** The public form only renders fields selected by its owner. */
   const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
   const isPersonalized = Boolean(preview?.recipient);
+  const collectsAvailability = enabledFields.includes("availability") && Boolean(preview?.form.availabilityOccurrences?.length);
+  const personalizedSubmitLabel = collectsAvailability ? "Submit availability" : "Submit response";
 
   // Group positions under their team so submitters can skip teams that aren't
   // theirs. The server already scopes which teams appear.
@@ -257,7 +259,7 @@ const TeamIntakePublic = () => {
         <div className="mx-auto w-full max-w-4xl">
           <header className={boardHeaderClassName}>
             <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-300">
-              Team availability
+              {collectsAvailability ? "Team availability" : "Team intake"}
             </p>
             <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
               {churchLogoUrl ? (
@@ -283,7 +285,7 @@ const TeamIntakePublic = () => {
       <div className="mx-auto w-full max-w-4xl">
         <header className={boardHeaderClassName}>
           <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-300">
-            Team availability
+            {collectsAvailability ? "Team availability" : "Team intake"}
           </p>
           <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
             {churchLogoUrl ? (
@@ -299,12 +301,12 @@ const TeamIntakePublic = () => {
           </p>
           <p className="mt-2 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-stone-400">
             {isPersonalized
-              ? `Hi ${preview.recipient?.firstName || "there"}. Please submit your availability for this form.`
+              ? `Hi ${preview.recipient?.firstName || "there"}. ${collectsAvailability ? "Please submit your availability for this form." : "Please complete this form."}`
               : null}
             {isPersonalized ? "\n\n" : ""}
             {resolveIntakeCopy(
               preview.form.welcomeMessage,
-              DEFAULT_INTAKE_FORM_COPY.welcome,
+              collectsAvailability ? DEFAULT_INTAKE_FORM_COPY.welcome : "Complete the fields requested below.",
             )}
           </p>
         </header>
@@ -591,7 +593,7 @@ const TeamIntakePublic = () => {
               className="w-full justify-center gap-2 py-2 sm:w-48"
               onClick={() => void submit()}
             >
-              {isPersonalized ? "Submit availability" : "Submit form"}
+              {isPersonalized ? personalizedSubmitLabel : "Submit form"}
             </Button>
           </div>
         </section>

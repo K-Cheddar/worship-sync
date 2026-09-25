@@ -51,13 +51,17 @@ export const measureSmsMessage = (body) => {
   };
 };
 
-export const buildTeamIntakeSms = ({ churchName, formName, publicUrl }) => {
+export const buildTeamIntakeSms = ({ churchName, formName, publicUrl, intentType = "availability_request", collectsAvailability = false }) => {
   const safeChurchName =
     String(churchName || "WorshipSync").trim() || "WorshipSync";
   const safeFormName =
-    String(formName || "availability").trim() || "availability";
+    String(formName || "form").trim() || "form";
   const safePublicUrl = String(publicUrl || "").trim();
   if (!safePublicUrl) throw new Error("An intake URL is required for SMS.");
-  const body = `${safeChurchName}: Please submit your ${safeFormName} availability: ${safePublicUrl} Reply STOP to opt out.`;
+  const action = intentType === "availability_reminder" ? "Reminder: Please" : "Please";
+  const request = collectsAvailability
+    ? `submit your service availability for ${safeFormName}`
+    : `complete the ${safeFormName} form`;
+  const body = `${safeChurchName}: ${action} ${request}: ${safePublicUrl} Reply STOP to opt out.`;
   return { body, ...measureSmsMessage(body) };
 };

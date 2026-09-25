@@ -17,8 +17,8 @@ const memberName = (member: { firstName?: string; lastName?: string }) =>
   [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer";
 
 const intentLabel = (intent: NotificationIntent) => {
-  if (intent.intentType === "availability_request") return "Availability request";
-  if (intent.intentType === "availability_reminder") return `Availability reminder${intent.reminderRound ? ` · round ${intent.reminderRound}` : ""}`;
+  if (intent.intentType === "availability_request") return "Form response request";
+  if (intent.intentType === "availability_reminder") return `Form reminder${intent.reminderRound ? ` · round ${intent.reminderRound}` : ""}`;
   if (intent.intentType === "assignment_notification") return "Assignment notification";
   if (intent.intentType === "assignment_confirmation") return "Assignment response";
   if (intent.intentType === "schedule_change") return "Schedule change";
@@ -205,12 +205,12 @@ const TeamsMessagesPage = () => {
 
       <section className="space-y-4 rounded-lg border border-gray-700 bg-gray-900/60 p-4" aria-labelledby="availability-preview-heading">
         <div>
-          <h2 id="availability-preview-heading" className="font-semibold text-white">Availability SMS</h2>
+          <h2 id="availability-preview-heading" className="font-semibold text-white">Intake form SMS</h2>
           <p className="mt-1 text-sm text-gray-400">Requests use the selected intake form and each volunteer’s existing secure response link.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Select label="Message" value={intentType} onChange={(value) => setIntentType(value as typeof intentType)} options={[
-            { value: "availability_request", label: "Request availability" },
+            { value: "availability_request", label: "Request form responses" },
             { value: "availability_reminder", label: "Remind nonresponders" },
           ]} />
           <Select label="Intake form" value={formId} onChange={(value) => { setFormId(value); setSelectedMemberIds([]); setActiveBatch(null); }} options={forms.map((form) => ({
@@ -234,7 +234,7 @@ const TeamsMessagesPage = () => {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 id="batch-review-heading" className="font-semibold text-white">Selected batch review</h2>
-              <p className="text-sm text-gray-300">{activeBatch.intentType === "availability_reminder" ? `Reminder round ${activeBatch.reminderRound}` : "Initial availability request"} · {activeBatch.summary.selected} selected · {activeBatch.summary.eligible} eligible · {activeBatch.summary.awaitingDispatch} awaiting · {activeBatch.summary.alreadySent} already sent · {activeBatch.summary.excluded} excluded</p>
+              <p className="text-sm text-gray-300">{activeBatch.intentType === "availability_reminder" ? `Reminder round ${activeBatch.reminderRound}` : "Initial form request"} · {activeBatch.summary.selected} selected · {activeBatch.summary.eligible} eligible · {activeBatch.summary.awaitingDispatch} awaiting · {activeBatch.summary.alreadySent} already sent · {activeBatch.summary.excluded} excluded</p>
               <p className="text-sm text-gray-300">{activeBatch.summary.totalSegments} expected SMS segments · {activeBatch.status}</p>
             </div>
             {batchCanSend ? <Button disabled={sending || loading} onClick={() => setConfirmOpen(true)}>Review and send this batch</Button> : null}

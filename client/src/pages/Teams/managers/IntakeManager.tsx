@@ -706,7 +706,7 @@ const IntakeManager = ({
         return;
       }
       const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
-      if (!window.confirm(`Send one availability request SMS to ${recipientName} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
+      if (!window.confirm(`Send one intake form SMS to ${recipientName} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
       const response = await sendNotificationIntent(churchId, prepared.preview.intentId, prepared.preview.approvalVersion);
       if (prepared.recipient) onRecipientSaved(prepared.recipient);
       const attempt = response.attempt;

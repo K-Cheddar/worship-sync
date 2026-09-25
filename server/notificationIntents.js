@@ -4,6 +4,7 @@ import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { normalizeSmsDeliveryStatus } from "./smsDeliveryAttempts.js";
 import { deliveryKey as notificationDeliveryKey } from "./notificationLedger.js";
 import { buildTeamIntakeSms, measureSmsMessage } from "./smsMessage.js";
+import { hasPersonalizedIntakeResponseFields, intakeFormCollectsServiceAvailability } from "./teamIntakeFields.js";
 
 export const NOTIFICATION_INTENT_TYPES = Object.freeze([
   "availability_request",
@@ -210,6 +211,8 @@ export const createNotificationIntentHandlers = ({
           churchName,
           formName: `${normalize(form?.name) || "availability"}${dateRange ? ` (${dateRange})` : ""}`,
           publicUrl,
+          intentType,
+          collectsAvailability: intakeFormCollectsServiceAvailability(form?.enabledFields, form?.availabilityOccurrences),
         }).body;
       case "assignment_notification":
         return `${churchName}: You are assigned to ${normalize(positionName) || "a volunteer position"} for ${currentServiceName} on ${date}. Respond here: ${responseUrl}. Reply STOP to opt out.`;
@@ -334,7 +337,7 @@ export const createNotificationIntentHandlers = ({
       throw httpError(400, messages[finalEligibility.status]);
     }
     const currentMessage = intent.sourceType === "team_intake_recipient"
-      ? buildTeamIntakeSms({ churchName: church?.name, formName: `${form.name} (${form.startDate} through ${form.endDate})`, publicUrl: responseUrlOverride || sourceContext.publicUrl }).body
+      ? buildTeamIntakeSms({ churchName: church?.name, formName: `${form.name} (${form.startDate} through ${form.endDate})`, publicUrl: responseUrlOverride || sourceContext.publicUrl, intentType: intent.intentType, collectsAvailability: intakeFormCollectsServiceAvailability(form.enabledFields, form.availabilityOccurrences) }).body
       : messageFor({ intentType: intent.intentType, church, schedule, occurrence, ...sourceContext, responseUrl: responseUrlOverride || sourceContext.responseUrl });
     if (intent.sourceType === "team_schedule" && intent.sourceVersion && intent.sourceVersion !== normalize(schedule.updatedAt) && intent.intentType !== "assignment_notification") {
       throw httpError(409, "The schedule changed after this preview. Refresh the message preview.");
@@ -794,13 +797,15 @@ export const createNotificationIntentHandlers = ({
     const intentId = intentIdFor(hashValue, churchId, key);
     let intent = await getDoc(COLLECTIONS.notificationIntents, intentId);
     if (intent && ["sent", "sending", "unknown", "suppressed"].includes(intent.status)) {
-      throw httpError(409, "This availability request is already handled or has an uncertain provider outcome.");
+      throw httpError(409, "This form request is already handled or has an uncertain provider outcome.");
     }
     if (!intent) {
       const message = buildTeamIntakeSms({
         churchName: context.church?.name,
         formName: `${context.form.name} (${context.form.startDate} through ${context.form.endDate})`,
         publicUrl: context.publicUrl,
+        intentType: "availability_request",
+        collectsAvailability: intakeFormCollectsServiceAvailability(context.form.enabledFields, context.form.availabilityOccurrences),
       }).body;
       intent = createNotificationIntent({
         churchId, intentType: "availability_request", sourceType: "team_intake_recipient",
@@ -866,7 +871,7 @@ export const createNotificationIntentHandlers = ({
       const churchId = normalize(req.params.churchId);
       const admin = await requireTeamsEdit(req, churchId);
       if (req.body?.confirmed !== true || !normalize(req.body?.approvalVersion)) {
-        throw httpError(400, "Review and confirm this individual availability SMS before sending.");
+        throw httpError(400, "Review and confirm this individual intake form SMS before sending.");
       }
       const { intent } = await ensureTeamIntakeIntent({
         churchId, formId: normalize(req.params.formId), recipientId: normalize(req.params.recipientId), actorUid: admin.user.uid,
@@ -1148,6 +1153,9 @@ export const createNotificationIntentHandlers = ({
         if (!form || form.churchId !== churchId || form.archivedAt || !form.active || formResponseDeadlinePassed(form)) {
           throw httpError(409, "This intake form is closed or its response deadline has passed.");
         }
+        if (!hasPersonalizedIntakeResponseFields(form.enabledFields, form.availabilityOccurrences)) {
+          throw httpError(409, "This intake form has no response fields for an existing volunteer.");
+        }
         const round = intentType === "availability_reminder" ? Number(form.reminderRound || 0) + 1 : 0;
         const batch = createBatch(form, round);
         transaction.create(batchRef, batch);
@@ -1164,6 +1172,7 @@ export const createNotificationIntentHandlers = ({
       }
       const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
       if (!form || form.churchId !== churchId || form.archivedAt || !form.active || formResponseDeadlinePassed(form)) throw httpError(409, "This intake form is closed or its response deadline has passed.");
+      if (!hasPersonalizedIntakeResponseFields(form.enabledFields, form.availabilityOccurrences)) throw httpError(409, "This intake form has no response fields for an existing volunteer.");
       const round = intentType === "availability_reminder" ? Number(form.reminderRound || 0) + 1 : 0;
       const batch = createBatch(form, round);
       await setDoc(COLLECTIONS.notificationBatches, batchId, batch, { merge: false });
@@ -1179,7 +1188,7 @@ export const createNotificationIntentHandlers = ({
       const admin = await requireTeamsEdit(req, churchId);
       if (automaticSendsDisabled !== true) throw httpError(403, "Automatic notification sends are disabled by the server.");
       const intentType = normalize(req.body?.intentType);
-      if (!["availability_request", "availability_reminder"].includes(intentType)) throw httpError(400, "Choose an availability request or reminder.");
+      if (!["availability_request", "availability_reminder"].includes(intentType)) throw httpError(400, "Choose a form request or reminder.");
       const formId = normalize(req.body?.formId);
       const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))].slice(0, 500);
       const requestKey = normalize(req.body?.requestKey).slice(0, 120);
@@ -1266,6 +1275,8 @@ export const createNotificationIntentHandlers = ({
               churchName: result.churchName,
               formName: `${prepared.form.name} (${prepared.form.startDate} through ${prepared.form.endDate})`,
               publicUrl: result.publicUrl,
+              intentType,
+              collectsAvailability: intakeFormCollectsServiceAvailability(prepared.form.enabledFields, prepared.form.availabilityOccurrences),
             });
             const intent = createNotificationIntent({
               churchId, intentType, sourceType: "team_intake_recipient",
