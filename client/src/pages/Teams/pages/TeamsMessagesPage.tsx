@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox as UICheckbox } from "../../../components/ui/Checkbox";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
+import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import {
   dispatchAvailabilityNotificationBatch,
@@ -47,6 +49,8 @@ const TeamsMessagesPage = () => {
   const [intentType, setIntentType] = useState<Extract<NotificationIntentType, "availability_request" | "availability_reminder">>("availability_request");
   const [formId, setFormId] = useState("");
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [teamFilter, setTeamFilter] = useState("");
+  const [memberSearch, setMemberSearch] = useState("");
   const [activeBatch, setActiveBatch] = useState<NotificationBatch | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [intents, setIntents] = useState<NotificationIntent[]>([]);
@@ -61,6 +65,50 @@ const TeamsMessagesPage = () => {
     () => [...pageData.members].filter((member) => !member.archivedAt).sort((a, b) => memberName(a).localeCompare(memberName(b))),
     [pageData.members],
   );
+  const teamOptions = useMemo(() => [
+    { value: "", label: "All teams" },
+    ...pageData.teams.filter((team) => !team.archivedAt).map((team) => ({ value: team.teamId, label: team.name })),
+  ], [pageData.teams]);
+  const allRecipientRows = useMemo(() => {
+    const positionTeamById = new Map(pageData.positions.map((position) => [position.positionId, position.teamId]));
+    const selectedForm = forms.find((form) => form.formId === formId);
+    const formTeamIds = new Set(selectedForm?.teamIds || []);
+    return members.map((member) => {
+      const memberTeamIds = new Set([
+        ...Object.keys(member.teamMemberships || {}),
+        ...(member.positionIds || []).map((positionId) => positionTeamById.get(positionId)).filter((id): id is string => Boolean(id)),
+        ...pageData.teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId),
+      ]);
+      const recipient = pageData.intakeRecipients.find((item) => item.formId === formId && item.memberId === member.memberId);
+      const smsEligibility = pageData.smsEligibilityByMemberId?.[member.memberId] || {
+        status: member.phoneNumber ? "consent_needed" : "no_mobile",
+        eligible: false,
+      };
+      let reason = "";
+      if (!smsEligibility.eligible) {
+        reason = smsEligibility.status === "no_mobile" ? "No mobile number" : smsEligibility.status === "opted_out" ? "SMS opted out" : "SMS consent needed";
+      } else if (formTeamIds.size && ![...formTeamIds].some((id) => memberTeamIds.has(id))) {
+        reason = "Outside this form’s team scope";
+      } else if (intentType === "availability_reminder" && !recipient) {
+        reason = "No response link";
+      } else if (recipient?.revokedAt) {
+        reason = "Response link revoked";
+      } else if (recipient?.respondedAt) {
+        reason = "Already responded";
+      }
+      return { member, memberTeamIds, eligible: Boolean(formId) && !reason, reason };
+    });
+  }, [forms, formId, intentType, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
+  const query = memberSearch.trim().toLocaleLowerCase();
+  const recipientRows = allRecipientRows.filter(({ member, memberTeamIds }) =>
+      (!teamFilter || memberTeamIds.has(teamFilter)) &&
+      (!query || memberName(member).toLocaleLowerCase().includes(query)),
+    );
+  const visibleEligibleIds = recipientRows.filter((row) => row.eligible).map(({ member }) => member.memberId);
+  const selectedVisibleCount = visibleEligibleIds.filter((id) => selectedMemberIds.includes(id)).length;
+  const allVisibleSelected = visibleEligibleIds.length > 0 && selectedVisibleCount === visibleEligibleIds.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+  const selectedEligibleIds = allRecipientRows.filter(({ member, eligible }) => eligible && selectedMemberIds.includes(member.memberId)).map(({ member }) => member.memberId);
 
   useEffect(() => {
     let active = true;
@@ -110,8 +158,14 @@ const TeamsMessagesPage = () => {
     setSelectedMemberIds((current) => checked ? [...new Set([...current, memberId])] : current.filter((id) => id !== memberId));
   };
 
+  const toggleVisibleMembers = (checked: boolean) => {
+    setSelectedMemberIds((current) => checked
+      ? [...new Set([...current, ...visibleEligibleIds])]
+      : current.filter((id) => !visibleEligibleIds.includes(id)));
+  };
+
   const makePreview = async () => {
-    if (!formId || selectedMemberIds.length === 0 || loading || sending) return;
+    if (!formId || selectedEligibleIds.length === 0 || loading || sending) return;
     const ownerChurch = churchId;
     setError("");
     setNotice("");
@@ -123,7 +177,7 @@ const TeamsMessagesPage = () => {
       const response = await prepareAvailabilityNotificationBatch(ownerChurch, {
         intentType,
         formId,
-        memberIds: selectedMemberIds,
+        memberIds: selectedEligibleIds,
         requestKey: batchRequestKey,
       });
       if (churchIdRef.current !== ownerChurch) return;
@@ -203,12 +257,12 @@ const TeamsMessagesPage = () => {
         <p className="text-sm text-gray-300">Review the selected volunteers and message before every send. Scheduling events only create drafts.</p>
       </header>
 
-      <section className="space-y-4 rounded-lg border border-gray-700 bg-gray-900/60 p-4" aria-labelledby="availability-preview-heading">
+      <section className="space-y-5 rounded-xl border border-gray-700 bg-gray-900/40 p-4 shadow-sm sm:p-6" aria-labelledby="availability-preview-heading">
         <div>
           <h2 id="availability-preview-heading" className="font-semibold text-white">Intake form SMS</h2>
           <p className="mt-1 text-sm text-gray-400">Requests use the selected intake form and each volunteer’s existing secure response link.</p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Select label="Message" value={intentType} onChange={(value) => setIntentType(value as typeof intentType)} options={[
             { value: "availability_request", label: "Request form responses" },
             { value: "availability_reminder", label: "Remind nonresponders" },
@@ -218,12 +272,40 @@ const TeamsMessagesPage = () => {
             label: `${form.name} · ${form.startDate}–${form.endDate}${form.active ? "" : " · closed"}`,
           }))} />
         </div>
-        <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-gray-700 p-3">
-          {members.length ? members.map((member) => <Checkbox key={member.memberId} label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} />) : <p className="text-sm text-gray-400">No active volunteers are available.</p>}
+        <div className="space-y-3 border-t border-gray-700 pt-4" aria-labelledby="recipients-heading">
+          <div>
+            <h3 id="recipients-heading" className="font-semibold text-white">Recipients</h3>
+            <p className="mt-1 text-sm text-gray-400">Choose who should receive this message. Selections stay selected when you change filters.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label="Team" value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+            <Input label="Search volunteers" value={memberSearch} onChange={(value) => setMemberSearch(String(value))} placeholder="Search by name" />
+          </div>
+          <div className="max-h-80 touch-pan-y overflow-y-auto overscroll-contain rounded-lg border border-gray-700 bg-gray-950/50">
+            <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-gray-700 bg-gray-900 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <UICheckbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={!visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
+                <span className="text-sm text-gray-200">Select all {visibleEligibleIds.length} eligible shown</span>
+                <span className="text-xs text-gray-400">{recipientRows.length} shown</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 sm:justify-end">
+                <span className="text-sm text-gray-300" aria-live="polite">{selectedMemberIds.length} selected</span>
+                <Button variant="textLink" disabled={!selectedMemberIds.length} onClick={() => setSelectedMemberIds([])}>Clear</Button>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-800" role="list" aria-label="Volunteer recipients">
+              {recipientRows.length ? recipientRows.map(({ member, eligible, reason }) => (
+                <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem">
+                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={!eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
+                  {!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason || "Choose a form first"}</span> : null}
+                </div>
+              )) : <p className="p-4 text-sm text-gray-400">No volunteers match these filters.</p>}
+            </div>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" disabled={loading || sending || !formId || selectedMemberIds.length === 0} isLoading={loading} onClick={() => void makePreview()}>Prepare selected batch</Button>
-          <Button variant="textLink" disabled={loading || sending || !formId} onClick={() => { void refreshIntents().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh message history.")); }}>Refresh history</Button>
+        <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-gray-400">{!formId ? "Choose an intake form to review messages." : selectedEligibleIds.length ? `${selectedEligibleIds.length} eligible volunteer${selectedEligibleIds.length === 1 ? "" : "s"} selected.` : "Select at least one eligible volunteer to continue."}</p>
+          <Button disabled={loading || sending || !formId || selectedEligibleIds.length === 0} isLoading={loading} onClick={() => void makePreview()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button>
         </div>
         {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
         {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
@@ -262,7 +344,10 @@ const TeamsMessagesPage = () => {
       ) : null}
 
       <section className="space-y-3" aria-labelledby="preview-list-heading">
-        <h2 id="preview-list-heading" className="font-semibold text-white">Message history for this form</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="preview-list-heading" className="font-semibold text-white">{formId ? "Recent messages" : "Message history"}</h2>
+          {formId ? <Button variant="textLink" disabled={loading || sending} onClick={() => { void refreshIntents().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh message history.")); }}>Refresh</Button> : null}
+        </div>
         {!formId ? <p className="text-sm text-gray-400">Choose an intake form to load its bounded message history.</p> : null}
         {loading && !intents.length ? <p className="text-sm text-gray-400">Loading form message history…</p> : null}
         {formId && !intents.length && !loading ? <p className="rounded border border-gray-700 p-4 text-sm text-gray-400">No volunteer messages for this form yet.</p> : null}

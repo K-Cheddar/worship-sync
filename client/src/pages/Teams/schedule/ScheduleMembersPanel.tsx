@@ -323,6 +323,7 @@ const ScheduleMembersPanel = ({
 
   return (
     <aside
+      id="schedule-members-panel"
       data-schedule-members-panel
       className={cn(
         "relative flex min-h-0 shrink-0 flex-col self-stretch rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out",
@@ -331,24 +332,28 @@ const ScheduleMembersPanel = ({
       )}
       aria-label="Members"
     >
-      <Button
-        type="button"
-        variant="tertiary"
-        padding="p-0"
-        className={cn(
-          "absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
-          isAssignMode ? "border-orange-400/40" : "border-gray-700",
-        )}
-        aria-expanded={open}
-        aria-label={open ? "Hide members" : "Show members"}
-        onClick={() => onOpenChange(!open)}
-      >
-        {open ? (
-          <ChevronRight className="size-4 shrink-0" aria-hidden />
-        ) : (
-          <ChevronLeft className="size-4 shrink-0" aria-hidden />
-        )}
-      </Button>
+      {!drawer ? (
+        <Button
+          type="button"
+          variant="tertiary"
+          padding="p-0"
+          className={cn(
+            "absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
+            isAssignMode ? "border-orange-400/40" : "border-gray-700",
+          )}
+          aria-expanded={open}
+          aria-controls="schedule-members-panel"
+          aria-label={open ? "Hide members" : "Show members"}
+          title={open ? "Hide members" : "Show members"}
+          onClick={() => onOpenChange(!open)}
+        >
+          {open ? (
+            <ChevronRight className="size-4 shrink-0" aria-hidden />
+          ) : (
+            <ChevronLeft className="size-4 shrink-0" aria-hidden />
+          )}
+        </Button>
+      ) : null}
       {open ? (
         <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg p-3">
           {isAssignMode && slotContext ? (

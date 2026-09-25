@@ -6571,11 +6571,22 @@ export const authHandlers = {
           COLLECTIONS.churchMessagingConfigs,
           churchId,
         );
-        const delivery = await sendSmsConsentVerificationCode({
-          phoneNumber: parsed.phoneNumber,
-          code: challenge.code,
-          config: messagingConfig,
-        });
+        let delivery;
+        try {
+          delivery = await sendSmsConsentVerificationCode({
+            phoneNumber: parsed.phoneNumber,
+            code: challenge.code,
+            config: messagingConfig,
+          });
+        } catch (deliveryError) {
+          const message = deliveryError?.code === "sms_provider_not_configured"
+            ? "SMS verification is not configured for this church yet. Please contact your church administrator."
+            : "Could not send the verification text right now. Please try again later or contact your church administrator.";
+          return res.status(deliveryError?.statusCode || 503).json({
+            success: false,
+            errorMessage: message,
+          });
+        }
         await markSmsConsentChallengeSent({
           consentId,
           provider: delivery?.provider,

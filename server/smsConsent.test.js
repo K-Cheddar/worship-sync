@@ -27,10 +27,11 @@ const {
 const CHURCH_ID = "church_sms_consent_test";
 
 let sentCodes = new Map();
-setSmsConsentSenderForServerTests(({ phoneNumber, code }) => {
+const defaultSmsConsentSender = ({ phoneNumber, code }) => {
   sentCodes.set(phoneNumber, code);
   return { provider: "test", method: "sms_otp" };
-});
+};
+setSmsConsentSenderForServerTests(defaultSmsConsentSender);
 
 const createReq = ({ body = {}, ip = "127.0.0.1" } = {}) => ({
   body,
@@ -206,6 +207,34 @@ test("correct verification transitions pending consent to opted in", async (t) =
   assert.match(record?.consentedAt || "", /^20\d\d-/);
   assert.match(record?.verifiedAt || "", /^20\d\d-/);
   assert.equal(record?.verificationCodeHash, null);
+});
+
+test("reports missing SMS setup as a verification delivery failure and keeps consent pending", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("SMS consent persistence tests use the in-memory store only.");
+    return;
+  }
+  setSmsConsentSenderForServerTests(() => {
+    throw Object.assign(new Error("SMS messaging is not configured on this server."), {
+      code: "sms_provider_not_configured",
+      statusCode: 503,
+    });
+  });
+  t.after(() => setSmsConsentSenderForServerTests(defaultSmsConsentSender));
+
+  const phoneNumber = "+19545551244";
+  const response = createRes();
+  await authHandlers.submitSmsConsent(
+    createReq({ body: validBody(phoneNumber), ip: "sms-provider-config-failure-ip" }),
+    response,
+  );
+
+  assert.equal(response.statusCode, 503);
+  assert.match(response.payload.errorMessage, /verification is not configured/i);
+  assert.doesNotMatch(response.payload.errorMessage, /could not save/i);
+  const record = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  assert.equal(record.status, "pending");
+  assert.ok(record.verificationCodeHash);
 });
 
 test("Firestore verification commits invalid attempts and preserves the lockout", async (t) => {

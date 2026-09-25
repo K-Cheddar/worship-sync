@@ -4531,41 +4531,57 @@ const ScheduleTab = ({
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
-                        <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
-                        Team schedule
-                      </h2>
-                      {selectedSchedule && shouldOverlayMembers ? (
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          svg={Users}
-                          iconSize="sm"
-                          ref={membersDrawerTriggerRef}
-                          data-schedule-members-trigger
-                          aria-expanded={membersPanelOpen}
-                          onClick={() => {
-                            if (!membersPanelOpen) setScheduleMessagesOpen(false);
-                            setMembersPanelOpen((open) => !open);
-                          }}
-                        >
-                          Members
-                        </Button>
-                      ) : null}
-                    </div>
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div
+                    role="group"
+                    aria-label="Team schedule identity"
+                    className="flex min-w-0 flex-1 items-center gap-2"
+                  >
+                    <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
+                      <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
+                      <span className="truncate">Team schedule</span>
+                    </h2>
                     {/* The picker shows only the schedule name, and teams reuse the
                         same names — name the team the grid belongs to. */}
                     {selectedTeam ? (
-                      <span className="flex min-w-0 items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
+                      <span className="flex min-w-0 shrink items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
                         <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
                         <span className="truncate">{selectedTeam.name}</span>
                       </span>
                     ) : null}
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <div
+                    role="group"
+                    aria-label="Team schedule controls"
+                    className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  >
+                    {selectedSchedule && shouldOverlayMembers ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={Users}
+                        iconSize="sm"
+                        ref={membersDrawerTriggerRef}
+                        data-schedule-members-trigger
+                        aria-controls="schedule-members-panel"
+                        aria-expanded={membersPanelOpen}
+                        aria-pressed={membersPanelOpen}
+                        aria-label="Members"
+                        title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
+                        className={cn(
+                          "gap-1.5",
+                          membersPanelOpen
+                            ? "bg-gray-700 text-white"
+                            : "text-gray-300",
+                        )}
+                        onClick={() => {
+                          if (!membersPanelOpen) setScheduleMessagesOpen(false);
+                          setMembersPanelOpen((open) => !open);
+                        }}
+                      >
+                        <span className="hidden sm:inline">Members</span>
+                      </Button>
+                    ) : null}
                     {/* Desktop: Organize + Layout sit labeled in the toolbar.
                         Narrow: both move into the overflow menu to save space. */}
                     {!isNarrowViewport ? (

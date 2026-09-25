@@ -77,6 +77,7 @@ export const createTwilioSmsProvider = ({
   ) {
     const error = new Error("SMS messaging is not configured on this server.");
     error.statusCode = 503;
+    error.code = "sms_provider_not_configured";
     throw error;
   }
 

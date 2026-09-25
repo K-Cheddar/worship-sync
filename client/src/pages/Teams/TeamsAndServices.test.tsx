@@ -1978,7 +1978,12 @@ describe("Teams", () => {
 
     const scheduleCell = await screen.findByRole("button", { name: /Sunday Vocal/i });
     expect(screen.queryByRole("heading", { name: "Schedule messages" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Members$/i })).toBeInTheDocument();
+    const identity = screen.getByRole("group", { name: "Team schedule identity" });
+    const controls = screen.getByRole("group", { name: "Team schedule controls" });
+    expect(within(identity).getByRole("heading", { name: "Team schedule" })).toBeInTheDocument();
+    expect(within(identity).getByText("Main Team")).toBeInTheDocument();
+    expect(within(identity).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
+    expect(within(controls).getByRole("button", { name: "Members" })).toHaveAttribute("aria-expanded", "false");
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     await user.click(screen.getByRole("menuitem", { name: /Messages/i }));
     expect(await screen.findByText("No assignment messages for this schedule.")).toBeInTheDocument();
@@ -1989,7 +1994,10 @@ describe("Teams", () => {
     expect(screen.getByRole("button", { name: /More schedule options/i })).toHaveFocus();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /^Members$/i }));
+    const membersToggle = within(controls).getByRole("button", { name: "Members" });
+    expect(membersToggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(membersToggle);
+    expect(membersToggle).toHaveAttribute("aria-expanded", "true");
     const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
     expect(within(membersDrawer).getByPlaceholderText("Search members…")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Schedule messages" })).not.toBeInTheDocument();
@@ -2000,12 +2008,14 @@ describe("Teams", () => {
     expect(within(membersDrawer).getByRole("button", { name: /Highlight Morgan on the grid/i })).toBeInTheDocument();
     expect(within(membersDrawer).queryByRole("button", { name: /Highlight Avery on the grid/i })).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: /^Members$/i }));
+    expect(membersToggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(membersToggle);
     const reopenedMembersDrawer = await screen.findByRole("dialog", { name: "Members" });
     expect(within(reopenedMembersDrawer).getByPlaceholderText("Search members…")).toHaveValue("Morgan");
   });
 
-  it("shows Members inline on wide layouts without a Members toolbar button", async () => {
+  it("uses only the inline panel arrow to toggle Members on wide layouts", async () => {
+    const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -2013,8 +2023,21 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("complementary", { name: "Members" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Members$/i })).not.toBeInTheDocument();
+    const identity = screen.getByRole("group", { name: "Team schedule identity" });
+    const controls = screen.getByRole("group", { name: "Team schedule controls" });
+    expect(within(identity).getByRole("heading", { name: "Team schedule" })).toBeInTheDocument();
+    expect(within(identity).getByText("Main Team")).toBeInTheDocument();
+    expect(within(identity).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
+    expect(within(controls).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
+    const inlinePanel = screen.getByRole("complementary", { name: "Members" });
+    expect(inlinePanel).toBeInTheDocument();
+    const panelArrow = within(inlinePanel).getByRole("button", { name: "Hide members" });
+    expect(panelArrow).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(panelArrow);
+    expect(panelArrow).toHaveAttribute("aria-expanded", "false");
+    await user.click(within(inlinePanel).getByRole("button", { name: "Show members" }));
+    expect(panelArrow).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {
