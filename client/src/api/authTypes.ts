@@ -667,17 +667,59 @@ export type SmsDeliveryAttemptStatus =
   | "undelivered"
   | "failed";
 
+export type NotificationIntentType =
+  | "availability_request"
+  | "availability_reminder"
+  | "assignment_notification"
+  | "assignment_confirmation"
+  | "schedule_change"
+  | "replacement_request";
+
+export type NotificationIntentStatus =
+  | "preview"
+  | "ready"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "unknown"
+  | "suppressed";
+
+export type NotificationIntent = {
+  intentId: string;
+  churchId: string;
+  intentType: NotificationIntentType;
+  sourceType: "team_schedule";
+  sourceId: string;
+  sourceVersion: string;
+  memberId: string;
+  occurrenceId: string;
+  cellKey?: string;
+  idempotencyKey: string;
+  channel: "sms";
+  message: string;
+  status: NotificationIntentStatus;
+  attemptId?: string;
+  createdAt: string;
+  updatedAt: string;
+  sentAt?: string;
+  previewEligible?: boolean;
+  previewError?: string;
+  attemptStatus?: SmsDeliveryAttemptStatus;
+  attemptOutcome?: string;
+};
+
 export type SmsDeliveryAttempt = {
   attemptId: string;
   churchId: string;
-  recipientType: "team_intake";
+  recipientType: "team_intake" | "notification_intent";
   recipientId: string;
   /** Present on new attempts; legacy records are scoped by recipient lookup. */
   formId?: string;
   memberId: string;
   provider: string;
-  purpose: "initial" | "reminder";
+  purpose: "initial" | "reminder" | NotificationIntentType;
   status: SmsDeliveryAttemptStatus;
+  outcome?: "confirmed" | "unknown" | "not_sent";
   failureCode?: string;
   failureMessage?: string;
   createdAt: string;

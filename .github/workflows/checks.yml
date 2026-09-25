@@ -12,10 +12,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: npm run checks
+  client_tests:
+    name: Client Jest (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,14 +29,135 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            client/package-lock.json
+          cache-dependency-path: client/package-lock.json
 
-      - name: Install dependencies
-        run: |
-          npm ci
-          npm ci --prefix client
+      - name: Install client dependencies
+        run: npm ci --prefix client
 
-      - name: Run checks
-        run: npm run checks
+      - name: Restore Jest transform cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/jest-cache-${{ matrix.shard }}
+          key: ${{ runner.os }}-node24-jest-shard-${{ matrix.shard }}-${{ hashFiles('client/package-lock.json', 'client/jest.config.cjs', 'client/jestImportMetaTransform.cjs', 'client/tsconfig.jest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node24-jest-shard-${{ matrix.shard }}-
+
+      - name: Run client Jest shard
+        env:
+          CI_JEST_SHARD: ${{ matrix.shard }}
+          JEST_CACHE_DIRECTORY: ${{ runner.temp }}/jest-cache-${{ matrix.shard }}
+        run: >-
+          npm run test:coverage --prefix client --
+          --shard=${{ matrix.shard }}/4
+          --maxWorkers=2
+          --cacheDirectory="$JEST_CACHE_DIRECTORY"
+          --coverageDirectory=coverage/shard-${{ matrix.shard }}
+          --coverageReporters=json
+
+      - name: Upload client coverage artifact
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-coverage-shard-${{ matrix.shard }}
+          path: client/coverage/shard-${{ matrix.shard }}/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+
+  server_tests:
+    name: Server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Run server tests
+        run: npm run test:server
+
+  lint_typecheck:
+    name: Client ESLint and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        id: install_client
+        run: npm ci --prefix client
+
+      - name: Run ESLint
+        run: npm run lint:check --prefix client
+
+      - name: Run TypeScript check
+        if: always() && steps.install_client.outcome == 'success'
+        run: npm run type-check --prefix client
+
+  coverage:
+    name: Merge client coverage
+    if: always() && !cancelled()
+    needs: [client_tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/coverage-tools/package-lock.json
+
+      - name: Install coverage merge dependency
+        run: npm ci --prefix client/coverage-tools
+
+      - name: Download all client coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: client-coverage-shard-*
+          path: client/coverage-artifacts
+          merge-multiple: false
+
+      - name: Merge coverage and enforce global thresholds
+        working-directory: client
+        env:
+          NODE_PATH: ${{ github.workspace }}/client/coverage-tools/node_modules
+        run: node scripts/merge-jest-coverage.cjs
+
+  checks:
+    name: npm run checks
+    if: always()
+    needs: [client_tests, coverage, server_tests, lint_typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Verify every required check succeeded
+        env:
+          CHECK_RESULTS: ${{ toJSON(needs) }}
+        run: node .github/scripts/verify-checks-status.cjs

@@ -146,6 +146,7 @@ export const createTeamsAuthHandlers = ({
   requireTeamsViewSession,
   getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
+  saveNotificationEventIntents = async () => [],
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -7468,6 +7469,23 @@ export const createTeamsAuthHandlers = ({
           { sentAt, updatedAt: sentAt, updatedByUid: admin.user.uid },
           { merge: true },
         );
+        try {
+          await saveNotificationEventIntents({
+            churchId: req.params.churchId,
+            schedule: { ...schedule, sentAt, updatedAt: sentAt },
+            intentType: "assignment_notification",
+            entries: slots.map((slot) => ({
+              memberId: slot.member.memberId,
+              occurrenceId: slot.occurrenceId,
+              cellKey: slot.cellKey,
+            })),
+          });
+        } catch (error) {
+          console.error(
+            "Could not record schedule notification previews.",
+            error,
+          );
+        }
         await addSecurityEvent({
           type: "team_schedule_sent",
           churchId: req.params.churchId,
@@ -7597,6 +7615,20 @@ export const createTeamsAuthHandlers = ({
           targets,
           response,
         });
+        try {
+          await saveNotificationEventIntents({
+            churchId,
+            schedule,
+            intentType: response === "declined" ? "replacement_request" : "assignment_confirmation",
+            entries: targets.map((target) => ({
+              memberId,
+              occurrenceId: target.occurrenceId,
+              cellKey: target.cellKey,
+            })),
+          });
+        } catch (error) {
+          console.error("Could not record assignment response message previews", error);
+        }
         emitTeamsEvent(churchId, "schedule-updated", { schedule });
         // Owners learn about this without watching the grid. Coalesced, so a
         // burst of answers after a send arrives as one email.
@@ -9485,6 +9517,35 @@ export const createTeamsAuthHandlers = ({
         // Editing occurrences rewrites assignments wholesale, so answers about
         // slots that no longer exist have to go with them.
         const schedule = await syncScheduleResponsesToAssignments(saved);
+        const changedEntries = [];
+        for (const occurrenceId of new Set([
+          ...Object.keys(existing.assignments || {}),
+          ...Object.keys(schedule.assignments || {}),
+        ])) {
+          const beforeRow = existing.assignments?.[occurrenceId] || {};
+          const afterRow = schedule.assignments?.[occurrenceId] || {};
+          for (const cellKey of new Set([...Object.keys(beforeRow), ...Object.keys(afterRow)])) {
+            const beforeCell = beforeRow[cellKey];
+            const afterCell = afterRow[cellKey];
+            const beforeId = typeof beforeCell === "string" ? beforeCell : beforeCell?.primaryMemberId || "";
+            const afterId = typeof afterCell === "string" ? afterCell : afterCell?.primaryMemberId || "";
+            if (beforeId === afterId) continue;
+            if (afterId) changedEntries.push({ intentType: "schedule_change", memberId: afterId, occurrenceId, cellKey });
+            else if (beforeId) changedEntries.push({ intentType: "replacement_request", memberId: beforeId, occurrenceId, cellKey });
+          }
+        }
+        try {
+          for (const intentType of ["schedule_change", "replacement_request"]) {
+            await saveNotificationEventIntents({
+              churchId: req.params.churchId,
+              schedule,
+              intentType,
+              entries: changedEntries.filter((entry) => entry.intentType === intentType),
+            });
+          }
+        } catch (error) {
+          console.error("Could not record schedule change message previews", error);
+        }
         await addSecurityEvent({
           type: "team_schedule_updated",
           churchId: req.params.churchId,
@@ -10732,6 +10793,25 @@ export const createTeamsAuthHandlers = ({
           allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
           adminUserId: admin.user.uid,
         });
+        const changedOccurrenceId = String(req.body?.serviceId || "").trim();
+        const changedCellKey = String(req.body?.positionSlotKey || "").trim();
+        const previousCell = existing.assignments?.[changedOccurrenceId]?.[changedCellKey];
+        const previousMemberId = typeof previousCell === "string" ? previousCell : previousCell?.primaryMemberId || "";
+        const currentCell = schedule.assignments?.[changedOccurrenceId]?.[changedCellKey];
+        const currentMemberId = typeof currentCell === "string" ? currentCell : currentCell?.primaryMemberId || "";
+        const eventMemberId = currentMemberId || previousMemberId;
+        if (eventMemberId && currentMemberId !== previousMemberId) {
+          try {
+            await saveNotificationEventIntents({
+              churchId: req.params.churchId,
+              schedule,
+              intentType: currentMemberId ? "schedule_change" : "replacement_request",
+              entries: [{ memberId: eventMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
+            });
+          } catch (error) {
+            console.error("Could not record schedule change message preview", error);
+          }
+        }
         await addSecurityEvent({
           type: "team_schedule_assignment_updated",
           churchId: req.params.churchId,

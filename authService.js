@@ -95,6 +95,8 @@ import {
 } from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
+import { createNotificationIntentHandlers } from "./server/notificationIntents.js";
+import { createSmsInboundWebhookHandler, resolveTwilioInboundCallbackUrl } from "./server/smsInboundWebhook.js";
 import {
   getSmsProviderForConfig,
   normalizeTwilioStatus,
@@ -187,6 +189,8 @@ export const COLLECTIONS = {
   securityEvents: "securityEvents",
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
+  notificationIntents: "notificationIntents",
+  smsInboundCommands: "smsInboundCommands",
   smsConsents: "smsConsents",
   churchMessagingConfigs: "churchMessagingConfigs",
   smsDeliveryAttempts: "smsDeliveryAttempts",
@@ -542,6 +546,8 @@ const memoryState = {
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
+  notificationIntents: new Map(),
+  smsInboundCommands: new Map(),
   smsConsents: new Map(),
   churchMessagingConfigs: new Map(),
   smsDeliveryAttempts: new Map(),
@@ -610,6 +616,8 @@ const collectionMap = {
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
+  [COLLECTIONS.notificationIntents]: memoryState.notificationIntents,
+  [COLLECTIONS.smsInboundCommands]: memoryState.smsInboundCommands,
   [COLLECTIONS.smsConsents]: memoryState.smsConsents,
   [COLLECTIONS.churchMessagingConfigs]: memoryState.churchMessagingConfigs,
   [COLLECTIONS.smsDeliveryAttempts]: memoryState.smsDeliveryAttempts,
@@ -5269,6 +5277,8 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsViewSession,
   getSessionActorUid,
   requireFirestore,
+  saveNotificationEventIntents: (...args) =>
+    notificationIntentHandlers.saveEventIntents(...args),
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -5303,8 +5313,45 @@ const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   getCallbackUrl: (req) => resolveTwilioStatusCallbackUrl({ request: req }),
 });
 
+const smsInboundWebhookHandler = createSmsInboundWebhookHandler({
+  COLLECTIONS,
+  getDoc,
+  hashValue,
+  nowIso,
+  queryDocs,
+  requireFirestore,
+  setDoc,
+  validateSignature: validateTwilioWebhookSignature,
+  getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
+  getCallbackUrl: () => resolveTwilioInboundCallbackUrl(),
+});
+
+const notificationIntentHandlers = createNotificationIntentHandlers({
+  COLLECTIONS,
+  assertCsrf,
+  createId,
+  getDoc,
+  hashValue,
+  httpError,
+  nowIso,
+  queryDocs,
+  requireFirestore,
+  requireTeamsEdit: requireTeamsEditSession,
+  getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
+    getDoc(
+      COLLECTIONS.smsConsents,
+      smsConsentIdForChurchPhone(churchId, phoneNumber),
+    ),
+  smsProviderFactory: getSmsProviderForConfig,
+  validateTwilioStatusCallbackUrl: () =>
+    resolveTwilioStatusCallbackUrl(),
+  setDoc,
+});
+
 export const authHandlers = {
   handleSmsStatusWebhook: smsStatusWebhookHandler,
+  handleSmsInboundWebhook: smsInboundWebhookHandler,
+  ...notificationIntentHandlers,
   async getAuthMe(req, res) {
     try {
       const humanBootstrap = await resolveHumanBootstrap(req);

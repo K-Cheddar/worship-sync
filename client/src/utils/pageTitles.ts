@@ -37,6 +37,8 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname === "/my-schedule") return title("My Schedule");
   if (pathname.startsWith("/account")) return title("Account");
   if (pathname.startsWith("/teams-and-services")) {
+    if (pathname.startsWith("/teams-and-services/messages"))
+      return title("Messages");
     if (pathname.startsWith("/teams-and-services/schedules"))
       return title("Schedules");
     if (pathname.startsWith("/teams-and-services/members"))

@@ -35,6 +35,8 @@ import type {
   CurrentServiceWorkspaceSectionPatch,
   EmailCodeChallengeFields,
   MemberNotifications,
+  NotificationIntent,
+  NotificationIntentType,
   MemberPermissions,
   NotificationCategory,
   NotificationPreference,
@@ -1196,6 +1198,38 @@ export const getTeamsBootstrap = async (churchId: string) =>
   apiFetch<TeamsBootstrap>(
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
   );
+
+export const getNotificationIntents = async (churchId: string) =>
+  apiFetch<{ success: boolean; intents: NotificationIntent[] }>(
+    `api/churches/${churchId}/notification-intents`,
+  );
+
+export const previewAvailabilityNotifications = async (
+  churchId: string,
+  body: {
+    intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+    scheduleId: string;
+    memberIds: string[];
+  },
+) =>
+  apiFetch<{ success: boolean; intents: NotificationIntent[] }>(
+    `api/churches/${churchId}/notification-intents/preview`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const sendNotificationIntent = async (
+  churchId: string,
+  intentId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    intent?: NotificationIntent;
+    outcome?: "failed" | "unknown";
+    errorMessage?: string;
+  }>(`api/churches/${churchId}/notification-intents/${intentId}/send`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 
 export const getTeamIntakeSmsAttempts = async (
   churchId: string,

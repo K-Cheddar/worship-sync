@@ -21,7 +21,7 @@
     "cleanup:discussion-boards:dry-run": "node scripts/cleanup-discussion-boards.js --dry-run",
     "cleanup:chat-images": "node --import tsx scripts/cleanup-expired-chat-images.js",
     "cleanup:chat-images:dry-run": "node --import tsx scripts/cleanup-expired-chat-images.js --dry-run",
-    "checks": "npm run test:server && npm run test:coverage --prefix client && npm run lint:check --prefix client",
+    "checks": "npm run test:server && npm run test:coverage --prefix client && npm run lint:check --prefix client && npm run type-check --prefix client",
     "heroku-postbuild": "cd client && npm ci && npm run build:heroku",
     "client": "cd client && npm run dev",
     "server": "npx nodemon server.js",

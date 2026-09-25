@@ -1021,6 +1021,10 @@ app.post(
   "/api/webhooks/twilio/sms-status",
   authHandlers.handleSmsStatusWebhook,
 );
+app.post(
+  "/api/webhooks/twilio/sms-inbound",
+  authHandlers.handleSmsInboundWebhook,
+);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",
@@ -1387,6 +1391,18 @@ app.delete(
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
+);
+app.get(
+  "/api/churches/:churchId/notification-intents",
+  authHandlers.listIntents,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/preview",
+  authHandlers.previewAvailability,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/:intentId/send",
+  authHandlers.sendIntent,
 );
 app.get(
   "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",

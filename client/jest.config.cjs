@@ -65,10 +65,14 @@ module.exports = {
     "<rootDir>/src/components/ErrorBoundary/ErrorBoundary\\.tsx$",
     "<rootDir>/src/components/ColorField/ColorField\\.tsx$",
   ],
-  coverageThreshold: {
-    global: {
-      statements: 80,
-      lines: 80,
-    },
-  },
+  ...(process.env.CI_JEST_SHARD
+    ? {}
+    : {
+        coverageThreshold: {
+          global: {
+            statements: 80,
+            lines: 80,
+          },
+        },
+      }),
 };

@@ -6765,6 +6765,12 @@ test("an emailed token answers one assignment without any session", async (t) =>
   );
   assert.equal(saved.responses[occurrenceId][cellKey].response, "accepted");
   assert.equal(saved.responses[occurrenceId][cellKey].memberId, memberId);
+  const confirmationPreviews = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_confirmation" },
+  ]);
+  assert.equal(confirmationPreviews.length, 1);
+  assert.equal(confirmationPreviews[0].status, "preview");
 });
 
 test("a tampered or unsigned token is refused", async (t) => {
@@ -7062,6 +7068,12 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   assert.equal(first.payload.notified, 1);
   assert.ok(first.payload.sentAt, "sending records when it happened");
   assert.deepEqual(first.payload.unreachableMemberIds, []);
+  const assignmentMessagePreviews = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_notification" },
+  ]);
+  assert.equal(assignmentMessagePreviews.length, 1);
+  assert.equal(assignmentMessagePreviews[0].status, "preview");
 
   // Pressing send again must not re-mail anyone.
   const second = await callHandler(authHandlers.sendTeamSchedule, {
@@ -7071,6 +7083,11 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   assert.equal(second.statusCode, 200);
   assert.equal(second.payload.notified, 0);
   assert.equal(second.payload.alreadyNotified, 1);
+  const previewsAfterRepeat = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_notification" },
+  ]);
+  assert.equal(previewsAfterRepeat.length, 1);
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
