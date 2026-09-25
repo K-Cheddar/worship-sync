@@ -238,11 +238,13 @@ const PreparedVideoSurfaces = () => {
     void window.electronAPI?.isDev().then(setIsDevElectron);
     void refreshSources();
     void refreshMetrics();
+    const unsubscribe = window.electronAPI?.onPreparedVideoMetrics?.(setProcessMetric);
+    void window.electronAPI?.subscribePreparedVideoMetrics?.().catch(() => undefined);
+    return () => {
+      unsubscribe?.();
+      void window.electronAPI?.unsubscribePreparedVideoMetrics?.().catch(() => undefined);
+    };
   }, [refreshMetrics, refreshSources]);
-  useEffect(() => {
-    const id = window.setInterval(() => void refreshMetrics(), 2_000);
-    return () => window.clearInterval(id);
-  }, [refreshMetrics]);
 
   if (!window.electronAPI || isDevElectron === false) return <main className="p-8">Prepared-surface diagnostics are available only in Electron development mode.</main>;
   const chooseCount = (count: number) => setSelected(selectPreparedVideoSources(eligible, count).map((item) => item.source));

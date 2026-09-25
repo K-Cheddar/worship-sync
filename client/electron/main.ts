@@ -75,7 +75,10 @@ import {
 import { createLyricsImportService } from "../../lyricsImport.js";
 import {
   createUnavailablePreparedVideoMetrics,
+  getPreparedVideoMetricsForRenderer,
   normalizePreparedVideoMetrics,
+  PreparedVideoMetricsSampler,
+  type PreparedVideoMetricsResponse,
 } from "./preparedVideoMetrics";
 
 const { autoUpdater } = updaterPkg;
@@ -272,6 +275,66 @@ const assertMediaCacheIpcSender = (sender: WebContents): void => {
     throw new Error("This action is only available from a WorshipSync renderer.");
   }
 };
+
+const getPreparedVideoWindowLabels = () => {
+  const labelsByPid = new Map<number, string[]>();
+  const addWindowLabel = (window: BrowserWindow | null, label: string) => {
+    if (!window || window.isDestroyed()) return;
+    const pid = window.webContents.getOSProcessId();
+    if (!Number.isInteger(pid) || pid <= 0) return;
+    const labels = labelsByPid.get(pid) ?? [];
+    if (!labels.includes(label)) labels.push(label);
+    labelsByPid.set(pid, labels);
+  };
+  addWindowLabel(mainWindow, "Controller renderer");
+  addWindowLabel(localVideoCaptureHost, "Video capture utility renderer");
+  listDisplayWindowKeys().forEach((windowKey) => {
+    addWindowLabel(
+      getDisplayWindow(windowKey) as BrowserWindow | null,
+      `${windowKey === "projector" ? "Projector" : windowKey === "monitor" ? "Monitor" : windowKey} renderer`,
+    );
+  });
+  return labelsByPid;
+};
+
+let latestPreparedVideoMetrics: PreparedVideoMetricsResponse | undefined;
+const preparedVideoMetricsSampler = new PreparedVideoMetricsSampler<PreparedVideoMetricsResponse>(
+  () => {
+    try {
+      const metrics = app.getAppMetrics();
+      const result = normalizePreparedVideoMetrics({
+        rendererPid: mainWindow && !mainWindow.isDestroyed()
+          ? mainWindow.webContents.getOSProcessId()
+          : undefined,
+        metrics,
+        labelsByPid: getPreparedVideoWindowLabels(),
+        timestamp: Date.now(),
+      });
+      for (const metric of result.processes ?? []) {
+        if (metric.pid === process.pid && !metric.labels.includes("Main process")) {
+          metric.labels.push("Main process");
+        }
+        if (metric.processType.toLowerCase().includes("gpu")) metric.labels.push("GPU process");
+        if (metric.processType.toLowerCase().includes("utility")) metric.labels.push("Utility process");
+        if (metric.name?.toLowerCase().includes("video capture")) metric.labels.push("Video capture process");
+        if (metric.name && !metric.labels.includes(metric.name)) metric.labels.push(metric.name);
+        if (metric.serviceName && !metric.labels.includes(metric.serviceName)) metric.labels.push(metric.serviceName);
+      }
+      latestPreparedVideoMetrics = result;
+      return result;
+    } catch (error) {
+      const unavailable = createUnavailablePreparedVideoMetrics(
+        "metric_unsupported",
+        `Electron metrics unavailable: ${(error as Error).message}`,
+        Date.now(),
+      );
+      latestPreparedVideoMetrics = unavailable;
+      return unavailable;
+    }
+  },
+  4000,
+);
+const preparedVideoMetricSubscriptions = new Map<number, () => void>();
 
 const notifyDesktopAuthCallback = (
   payload: DesktopAuthCallbackPayload,
@@ -1092,22 +1155,40 @@ ipcMain.handle("is-dev", () => {
 });
 
 ipcMain.handle("get-prepared-video-metrics", (event) => {
-  if (!isDev) {
-    return createUnavailablePreparedVideoMetrics(
-      "metric_unsupported",
-      "prepared-video metrics are available only in development",
-    );
-  }
+  assertMediaCacheIpcSender(event.sender);
+  const snapshot = latestPreparedVideoMetrics ?? createUnavailablePreparedVideoMetrics(
+    "metric_unsupported",
+    "Open Video readiness to start process monitoring",
+  );
+  return getPreparedVideoMetricsForRenderer(snapshot, event.sender.getOSProcessId());
+});
 
-  try {
-    const rendererPid = event.sender.getOSProcessId();
-    const metrics = app.getAppMetrics();
-    const result = normalizePreparedVideoMetrics({ rendererPid, metrics });
-    return result;
-  } catch (error) {
-    const reason = `Electron metrics unavailable: ${(error as Error).message}`;
-    return createUnavailablePreparedVideoMetrics("metric_unsupported", reason);
-  }
+ipcMain.handle("subscribe-prepared-video-metrics", (event) => {
+  assertMediaCacheIpcSender(event.sender);
+  const sender = event.sender;
+  preparedVideoMetricSubscriptions.get(sender.id)?.();
+  const unsubscribe = preparedVideoMetricsSampler.subscribe((snapshot) => {
+    if (!sender.isDestroyed()) {
+      sender.send(
+        "prepared-video-metrics",
+        getPreparedVideoMetricsForRenderer(snapshot, sender.getOSProcessId()),
+      );
+    }
+  });
+  const cleanup = () => {
+    preparedVideoMetricSubscriptions.delete(sender.id);
+    unsubscribe();
+    sender.removeListener("destroyed", cleanup);
+  };
+  preparedVideoMetricSubscriptions.set(sender.id, cleanup);
+  sender.once("destroyed", cleanup);
+  return true;
+});
+
+ipcMain.handle("unsubscribe-prepared-video-metrics", (event) => {
+  assertMediaCacheIpcSender(event.sender);
+  preparedVideoMetricSubscriptions.get(event.sender.id)?.();
+  return true;
 });
 
 ipcMain.handle(

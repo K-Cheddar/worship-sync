@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PreparedVideoMetrics } from "../../types/electron";
 import {
   advancePreparedVideoSurface,
   beginPreparedVideoSurface,
@@ -78,7 +77,7 @@ type ElectronMediaSurfacePoolProps = {
   outputId?: string;
   windowRole?: string;
   transitionDurationMs?: number;
-  preparationSource?: "local-pouchdb" | "server-manifest";
+  preparationSource?: "local-pouchdb" | "server-manifest" | "cached-manifest" | "local-fallback";
   manifestRevision?: number;
   manifestOutlineId?: string | null;
   manifestOutlineName?: string;
@@ -354,6 +353,7 @@ const PreparedSurface = ({
   onPreparationFailure,
   onSurfaceElement,
   onDiagnosticChange,
+  retrySignal = 0,
   stageRect,
 }: {
   candidate: ElectronMediaSurfaceCandidate;
@@ -369,12 +369,14 @@ const PreparedSurface = ({
   onPreparationFailure?: (mediaKey: string, reason: string) => void;
   onSurfaceElement: (mediaKey: string, element: HTMLDivElement | null) => void;
   onDiagnosticChange?: (diagnostic: SurfaceDiagnostic) => void;
+  retrySignal?: number;
   stageRect?: SurfaceRect;
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(initialPreparedVideoSurfaceState);
   const [state, setState] = useState(initialPreparedVideoSurfaceState);
   const [framePresentedReady, setFramePresentedReady] = useState(false);
+  const [retrySequence, setRetrySequence] = useState(0);
   const [resolvedSource, setResolvedSource] = useState<string | undefined>(
     undefined,
   );
@@ -394,6 +396,8 @@ const PreparedSurface = ({
   const preparationStartedAtRef = useRef<number | undefined>(undefined);
   const playingGenerationRef = useRef<number | undefined>(undefined);
   const playbackAttemptRef = useRef(0);
+  const preparationRetryAttemptRef = useRef(0);
+  const preparationRetryTimerRef = useRef<number | undefined>(undefined);
   const playbackInFlightRef = useRef(false);
   const resetInFlightRef = useRef(false);
   const lastCueGenerationRef = useRef<number | undefined>(undefined);
@@ -424,6 +428,68 @@ const PreparedSurface = ({
   onPreparationFailureRef.current = onPreparationFailure;
   onDiagnosticChangeRef.current = onDiagnosticChange;
   onStatusChangeRef.current = onStatusChange;
+
+  const retryPreparation = useCallback(() => {
+    if (!mountedRef.current || viewRef.current) return;
+    if (preparationRetryTimerRef.current !== undefined) {
+      window.clearTimeout(preparationRetryTimerRef.current);
+      preparationRetryTimerRef.current = undefined;
+    }
+    frozenSourceRef.current = undefined;
+    preparedResolutionRef.current = undefined;
+    setResolvedSource(undefined);
+    setRetrySequence((sequence) => sequence + 1);
+  }, []);
+
+  const schedulePreparationRetry = useCallback(() => {
+    const retryDelaysMs = [1000, 3000, 8000];
+    const view = viewRef.current;
+    if (isHLSVideoSource(resolvedSourceRef.current ?? candidate.source)) return;
+    // A surface with a display view may be part of an outgoing or active
+    // transition. Keep its ownership stable and let the normal fallback paint.
+    if (view || preparationRetryAttemptRef.current >= retryDelaysMs.length) return;
+    preparationRetryAttemptRef.current += 1;
+    const delay = retryDelaysMs[preparationRetryAttemptRef.current - 1];
+    if (preparationRetryTimerRef.current !== undefined) {
+      window.clearTimeout(preparationRetryTimerRef.current);
+    }
+    preparationRetryTimerRef.current = window.setTimeout(() => {
+      preparationRetryTimerRef.current = undefined;
+      retryPreparation();
+    }, delay);
+  }, [candidate.source, retryPreparation]);
+
+  useEffect(() => {
+    preparationRetryAttemptRef.current = 0;
+    return () => {
+      if (preparationRetryTimerRef.current !== undefined) {
+        window.clearTimeout(preparationRetryTimerRef.current);
+        preparationRetryTimerRef.current = undefined;
+      }
+    };
+  }, [candidate.mediaKey, candidate.source, outlineId]);
+
+  useEffect(() => {
+    if (state.phase === "error" && !view) schedulePreparationRetry();
+  }, [schedulePreparationRetry, state.phase, view]);
+
+  useEffect(() => {
+    if (retrySignal > 0 && stateRef.current.phase === "error" && !view) {
+      preparationRetryAttemptRef.current = 0;
+      retryPreparation();
+    }
+  }, [retryPreparation, retrySignal, view]);
+
+  useEffect(() => {
+    const retryWhenVisible = () => {
+      if (document.visibilityState === "visible" && stateRef.current.phase === "error") {
+        preparationRetryAttemptRef.current = 0;
+        schedulePreparationRetry();
+      }
+    };
+    document.addEventListener("visibilitychange", retryWhenVisible);
+    return () => document.removeEventListener("visibilitychange", retryWhenVisible);
+  }, [schedulePreparationRetry]);
 
   useEffect(() => {
     if (
@@ -654,6 +720,11 @@ const PreparedSurface = ({
           performance.now() -
           (preparationStartedAtRef.current ?? performance.now()),
       });
+      preparationRetryAttemptRef.current = 0;
+      if (preparationRetryTimerRef.current !== undefined) {
+        window.clearTimeout(preparationRetryTimerRef.current);
+        preparationRetryTimerRef.current = undefined;
+      }
     } catch (error) {
       if (stateRef.current.generation !== loading.generation) return;
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
@@ -1048,6 +1119,8 @@ const PreparedSurface = ({
     candidate.sourceKind,
     isSameMediaCachePromotion,
     publishLifecycleStatus,
+    retrySequence,
+    schedulePreparationRetry,
   ]);
 
   useEffect(() => {
@@ -1440,9 +1513,11 @@ const ElectronMediaSurfacePool = ({
   const [diagnostics, setDiagnostics] = useState<
     Record<string, SurfaceDiagnostic>
   >({});
-  const [rendererMetrics, setRendererMetrics] = useState<
-    PreparedVideoMetrics | undefined
-  >(undefined);
+  const diagnosticsRef = useRef(diagnostics);
+  diagnosticsRef.current = diagnostics;
+  const [retrySignals, setRetrySignals] = useState<Record<string, number>>({});
+  const [detailedDiagnosticsRequested, setDetailedDiagnosticsRequested] = useState(false);
+  const detailRequestTimeoutRef = useRef<number | undefined>(undefined);
   const [mountedSurfaceKeys, setMountedSurfaceKeys] = useState<string[]>([]);
   const poolElementRef = useRef<HTMLDivElement>(null);
   const [stageRect, setStageRect] = useState<SurfaceRect | undefined>();
@@ -1631,34 +1706,75 @@ const ElectronMediaSurfacePool = ({
   }, [transitionComplete]);
 
   useEffect(() => {
-    const api = window.electronAPI as
-      | (NonNullable<typeof window.electronAPI> & {
-          getPreparedVideoMetrics?: () => Promise<PreparedVideoMetrics>;
-        })
-      | undefined;
-    const getMetrics = api?.getPreparedVideoMetrics;
-    if (!enabled || !api || !getMetrics) return;
-    let active = true;
-    const updateMetrics = async () => {
-      try {
-        const isDev = await api.isDev();
-        if (!isDev || !active) return;
-        const result = await getMetrics();
-        if (active && result) setRendererMetrics(result);
-      } catch {
-        // Metrics are development-only diagnostics and never affect playback.
-      }
-    };
-    void updateMetrics();
-    const intervalId = window.setInterval(() => void updateMetrics(), 2000);
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-    };
-  }, [enabled]);
-
-  useEffect(() => {
     if (!enabled || !windowRole) return;
+    if (!detailedDiagnosticsRequested) {
+      const currentCandidates = candidatesRef.current;
+      const compactSurfaces = currentCandidates
+        .filter((candidate) => {
+          const phase = diagnosticsRef.current[candidate.mediaKey]?.phase;
+          return phase === "error" || phase === "playing" || phase === "ready";
+        })
+        .map((candidate) => {
+          const diagnostic = diagnosticsRef.current[candidate.mediaKey];
+          return {
+            mediaKey: candidate.mediaKey,
+            source: "",
+            phase: diagnostic?.phase ?? ("idle" as const),
+            sourceKind: diagnostic?.sourceKind ?? ("remote" as const),
+            renderer: diagnostic?.renderer ?? rendererForWindowRole(windowRole),
+            error: diagnostic?.error,
+          };
+        });
+      const mountedPhases = currentCandidates
+        .filter((candidate) => mountedKeySet.has(candidate.mediaKey))
+        .map((candidate) => diagnosticsRef.current[candidate.mediaKey]?.phase ?? "idle");
+      const compactDiscovery = discovery
+        ? { ...discovery, items: [], missingItemIds: undefined, invalidItemIds: undefined }
+        : undefined;
+      const value = summarizeElectronMediaSurfaceDiagnostics({
+        outputId,
+        windowRole,
+        transitionDurationMs,
+        preparationSource,
+        manifestRevision,
+        manifestOutlineId,
+        manifestOutlineName,
+        manifestPublishedAt,
+        candidateCount: currentCandidates.length,
+        discoveredCount: discovery?.uniqueVideoInventoryCount ?? currentCandidates.length,
+        pendingCacheCount: discovery?.pendingHlsCacheCount ?? 0,
+        evictions: [],
+        surfaces: compactSurfaces,
+        renderPath: lastSendPath,
+        lastSendPath,
+        lastMediaKey,
+        posterShown,
+        discovery: compactDiscovery,
+        finiteVideoCount: discovery?.finitePlayableSourceCount ?? currentCandidates.length,
+        serviceItemCount: discovery?.itemCount,
+        currentItemId: discovery?.currentItemId,
+        currentItemReadyCount: currentCandidates.filter((candidate) =>
+          candidate.itemId === discovery?.currentItemId &&
+          ["ready", "playing"].includes(diagnosticsRef.current[candidate.mediaKey]?.phase ?? ""),
+        ).length,
+        poolCapacity,
+        surfaceCount: mountedKeySet.size,
+        readyCount: mountedPhases.filter((phase) => phase === "ready").length,
+        preparingCount: mountedPhases.filter((phase) => phase === "loading" || phase === "preparing").length,
+        playingCount: mountedPhases.filter((phase) => phase === "playing").length,
+        resettingCount: mountedPhases.filter((phase) => phase === "resetting").length,
+        errorCount: mountedPhases.filter((phase) => phase === "error").length,
+      });
+      latestDiagnosticsRef.current = value;
+      (window as Window & { __wsMediaSurfacePoolDiagnostics?: unknown }).__wsMediaSurfacePoolDiagnostics = value;
+      publishElectronMediaSurfaceDiagnostics(value);
+      return () => {
+        const target = window as Window & { __wsMediaSurfacePoolDiagnostics?: unknown };
+        if (target.__wsMediaSurfacePoolDiagnostics === value) {
+          delete target.__wsMediaSurfacePoolDiagnostics;
+        }
+      };
+    }
     const currentCandidates = candidatesRef.current;
     const details =
       candidateDiagnostics ??
@@ -1774,7 +1890,6 @@ const ElectronMediaSurfacePool = ({
       lastSendPath,
       lastMediaKey,
       posterShown,
-      rendererMetrics,
       discovery,
       finiteVideoCount:
         discovery?.uniqueFiniteVideoCount ??
@@ -1829,7 +1944,6 @@ const ElectronMediaSurfacePool = ({
     outputId,
     poolCapacity,
     posterShown,
-    rendererMetrics,
     transitionComplete,
     transitionStart,
     transitionDurationMs,
@@ -1840,6 +1954,7 @@ const ElectronMediaSurfacePool = ({
     manifestPublishedAt,
     windowRole,
     discovery,
+    detailedDiagnosticsRequested,
   ]);
 
   useEffect(() => {
@@ -1847,12 +1962,36 @@ const ElectronMediaSurfacePool = ({
     return subscribeToElectronMediaSurfaceDiagnostics(
       () => undefined,
       () => {
+        setDetailedDiagnosticsRequested(true);
+        if (detailRequestTimeoutRef.current) window.clearTimeout(detailRequestTimeoutRef.current);
+        detailRequestTimeoutRef.current = window.setTimeout(() => setDetailedDiagnosticsRequested(false), 12_000);
         if (latestDiagnosticsRef.current) {
           publishElectronMediaSurfaceDiagnostics(latestDiagnosticsRef.current);
         }
       },
+      (request) => {
+        if (request.outputId !== outputId) return;
+        const targets = request.mediaKeys.length > 0
+          ? request.mediaKeys
+          : candidates
+              .filter((candidate) => diagnosticsRef.current[candidate.mediaKey]?.phase === "error")
+              .map((candidate) => candidate.mediaKey);
+        setRetrySignals((current) => {
+          const next = { ...current };
+          targets.forEach((mediaKey) => { next[mediaKey] = (next[mediaKey] ?? 0) + 1; });
+          return next;
+        });
+      },
+      () => {
+        if (detailRequestTimeoutRef.current) window.clearTimeout(detailRequestTimeoutRef.current);
+        setDetailedDiagnosticsRequested(false);
+      },
     );
-  }, [enabled, windowRole]);
+  }, [candidates, enabled, outputId, windowRole]);
+
+  useEffect(() => () => {
+    if (detailRequestTimeoutRef.current) window.clearTimeout(detailRequestTimeoutRef.current);
+  }, []);
 
   if (!enabled) return null;
   return (
@@ -1877,6 +2016,7 @@ const ElectronMediaSurfacePool = ({
           onPreparationFailure={onPreparationFailure}
           onSurfaceElement={handleSurfaceElement}
           onDiagnosticChange={handleDiagnosticChange}
+          retrySignal={retrySignals[candidate.mediaKey] ?? 0}
           stageRect={stageRect}
         />
       ))}

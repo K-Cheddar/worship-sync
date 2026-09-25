@@ -526,15 +526,12 @@ describe("useServiceVideoCandidates", () => {
     });
 
     await waitFor(() => expect(result.current.candidates).toHaveLength(2));
-    const initialKeys = result.current.candidates.map(
-      (candidate) => candidate.mediaKey,
-    );
     setCurrentItem("item-2");
     rerender();
     await waitFor(() => expect(result.current.candidates).toHaveLength(2));
-    expect(
-      new Set(result.current.candidates.map((candidate) => candidate.mediaKey)),
-    ).toEqual(new Set(initialKeys));
+    expect(new Set(result.current.candidates.map((candidate) => candidate.mediaKey))).toEqual(
+      new Set(["remote:first", "remote:second"]),
+    );
     expect(result.current.candidates[0].mediaKey).toBe("remote:second");
   });
 
@@ -596,7 +593,7 @@ describe("useServiceVideoCandidates", () => {
     expect(db.get).not.toHaveBeenCalledWith("list-1");
   });
 
-  it("atomically replaces the prepared set when the selected outline changes", async () => {
+  it("does not retain the old outline's candidates while the selected outline retries", async () => {
     const first = item("first", "First", [
       slide("first-slide", [
         { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
@@ -617,7 +614,8 @@ describe("useServiceVideoCandidates", () => {
     setOutlineId("outline-b");
     rerender();
 
-    expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]);
+    expect(result.current.candidates).toEqual([]);
+    expect(result.current.discovery.targetOutlineId).toBe("outline-b");
     await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]));
     expect(result.current.discovery.loadedOutlineId).toBe("outline-b");
     expect(result.current.discovery.outlineLoadState).toBe("loaded");
@@ -648,7 +646,74 @@ describe("useServiceVideoCandidates", () => {
     await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]), { timeout: 2000 });
   });
 
-  it("skips headings, missing documents, and documents without slides when switching outlines", async () => {
+  it("retries incomplete allDocs results after a replicated service item becomes available", async () => {
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const second = item("second", "Second", [
+      slide("second-slide", [
+        { id: "second-video", mediaInfo: video("second-video", "https://cdn.example.com/second.mp4") },
+      ]),
+    ]);
+    const { result, rerender, setOutlineId, db } = renderCandidates([first, second], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first"], "outline-b": ["second"] },
+    });
+
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]));
+    db.allDocs.mockResolvedValueOnce({ rows: [{ key: "second", error: "not_found" }] } as never);
+    setOutlineId("outline-b");
+    rerender();
+
+    await waitFor(() => expect(result.current.discovery).toMatchObject({
+      targetOutlineId: "outline-b",
+      inventoryState: "incomplete",
+      outlineLoadState: "retrying",
+    }));
+    await waitFor(() => expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:second-video"]), { timeout: 2500 });
+    expect(result.current.discovery).toMatchObject({
+      inventoryState: "complete",
+      outlineLoadState: "loaded",
+      loadedOutlineId: "outline-b",
+    });
+  });
+
+  it("reports a permanently missing replicated item without discarding discovered videos", async () => {
+    jest.useFakeTimers();
+    const first = item("first", "First", [
+      slide("first-slide", [
+        { id: "first-video", mediaInfo: video("first-video", "https://cdn.example.com/first.mp4") },
+      ]),
+    ]);
+    const { result, db } = renderCandidates([first], {
+      outlineId: "outline-a",
+      outlineItems: { "outline-a": ["first", "lost"] },
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => key === "first"
+        ? { key, doc: first }
+        : { key, error: "not_found" }),
+    } as never));
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(20_000);
+      });
+      expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual(["remote:first-video"]);
+      expect(result.current.discovery).toMatchObject({
+        inventoryState: "incomplete",
+        outlineLoadState: "error",
+        missingItemIds: ["lost"],
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps usable media visible while reporting missing and invalid outline items", async () => {
     const first = item("first", "First", [
       slide("first-slide", [
         {
@@ -723,11 +788,13 @@ describe("useServiceVideoCandidates", () => {
     ]);
     expect(result.current.discovery).toMatchObject({
       itemCount: 2,
-      loadedOutlineId: "outline-b",
-      outlineLoadState: "loaded",
+      targetOutlineId: "outline-b",
+      loadedOutlineId: "outline-a",
+      outlineLoadState: "error",
+      inventoryState: "invalid",
       outlineRetryAttempt: 0,
     });
-    expect(result.current.discovery.outlineLoadError).toBeUndefined();
+    expect(result.current.discovery.outlineLoadError).toContain("invalid");
     expect(db.allDocs).toHaveBeenLastCalledWith({
       keys: ["second", "heading-b", "third", "legacy-b", "missing-b"],
       include_docs: true,

@@ -27,6 +27,7 @@ import { logVideoCue } from "../../utils/videoBackgroundPlayback";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import {
   useRemoteMediaPreparationManifest,
+  useReportRemoteMediaPreparationReadiness,
 } from "../../hooks/useMediaPreparationManifest";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
@@ -35,7 +36,10 @@ import {
   type ElectronMediaSurfaceCandidate,
   type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
-import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
+import type {
+  ElectronMediaDiscovery,
+  ElectronMediaSurfaceCandidateDiagnostic,
+} from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   isMediaSurfaceVisible,
   isPreparedMediaSurfaceUsable,
@@ -47,6 +51,8 @@ import {
   normalizeTransitionDurationMs,
 } from "../../utils/displaySettings";
 import { mediaPreparationManifestToCandidates } from "../../utils/mediaPreparationManifest";
+import { isHLSVideoSource } from "../../utils/isInstantVideoSource";
+import { isPlayableMediaSource } from "../../utils/mediaSource";
 
 type LaneId = "a" | "b";
 
@@ -479,6 +485,78 @@ const DisplayBoxTransitionStage = ({
     remotePreparation.manifest,
     sessionKind,
   ]);
+  const usingRemoteManifest = Boolean(
+    sessionKind === "display" && remotePreparation.manifest,
+  );
+  const remoteManifestDiagnostics = useMemo<ElectronMediaSurfaceCandidateDiagnostic[]>(
+    () => remoteManifestCandidates.map((candidate) => {
+      const pendingHls = isHLSVideoSource(candidate.source);
+      const eligible = isPlayableMediaSource(candidate.source) && !pendingHls;
+      return {
+        mediaKey: candidate.mediaKey,
+        originalSource: candidate.originalSource ?? candidate.source,
+        resolvedSource: candidate.source !== candidate.originalSource ? candidate.source : undefined,
+        sourceKind: candidate.sourceKind ?? "remote",
+        status: eligible ? "eligible" : pendingHls ? "pending-cache" : "excluded",
+        cacheStatus: eligible ? candidate.source !== candidate.originalSource ? "cached" : "not-required" : pendingHls ? "pending" : "not-cacheable",
+        eligible,
+        reason: eligible ? "candidate from received remote manifest" : pendingHls ? "waiting for a finite cached rendition" : "manifest source is not a playable finite video",
+        itemId: candidate.itemId,
+        itemName: candidate.itemName,
+        itemIndex: candidate.itemIndex,
+      };
+    }),
+    [remoteManifestCandidates],
+  );
+  const remoteManifestDiscovery = useMemo<ElectronMediaDiscovery | undefined>(() => {
+    const manifest = remotePreparation.manifest;
+    if (!usingRemoteManifest || !manifest) return undefined;
+    const diagnosticsByKey = new Map(remoteManifestDiagnostics.map((diagnostic) => [diagnostic.mediaKey, diagnostic]));
+    const items = manifest.items.map((item) => ({
+      itemId: item.itemId,
+      itemName: item.itemName,
+      itemIndex: item.itemIndex,
+      videos: item.media.map((media) => {
+        const diagnostic = diagnosticsByKey.get(media.mediaKey);
+        return {
+          mediaKey: media.mediaKey,
+          source: diagnostic?.resolvedSource ?? media.source.url,
+          originalSource: media.source.url,
+          resolvedSource: diagnostic?.resolvedSource,
+          sourceKind: diagnostic?.sourceKind ?? "remote",
+          status: diagnostic?.status ?? "excluded",
+          cacheStatus: diagnostic?.cacheStatus ?? "unavailable",
+        };
+      }),
+    }));
+    const inventoryKeys = new Set(items.flatMap((item) => item.videos.map((video) => video.mediaKey)));
+    const finiteKeys = new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "eligible").map((entry) => entry.mediaKey));
+    const pendingKeys = new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "pending-cache").map((entry) => entry.mediaKey));
+    const excludedKeys = new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "excluded").map((entry) => entry.mediaKey));
+    return {
+      renderer: "projector",
+      outputId: mediaPlayback?.outputId,
+      controllerProfileId: manifest.controllerProfileId,
+      controllerProfileName: manifest.controllerProfileName,
+      outlineScope: manifest.outlineScope,
+      outlineId: manifest.outlineId,
+      outlineName: manifest.outlineName,
+      targetOutlineId: manifest.outlineId,
+      targetOutlineName: manifest.outlineName,
+      loadedOutlineId: manifest.outlineId ?? undefined,
+      loadedOutlineName: manifest.outlineName,
+      outlineLoadState: "loaded",
+      inventoryState: "complete",
+      expectedItemCount: manifest.items.length,
+      itemCount: manifest.items.length,
+      uniqueVideoInventoryCount: inventoryKeys.size,
+      finitePlayableSourceCount: finiteKeys.size,
+      pendingHlsCacheCount: pendingKeys.size,
+      intentionallyExcludedVideoCount: excludedKeys.size,
+      uniqueFiniteVideoCount: finiteKeys.size,
+      items,
+    };
+  }, [mediaPlayback?.outputId, remoteManifestDiagnostics, remotePreparation.manifest, usingRemoteManifest]);
   const lifecycleRoute = mediaPlayback?.windowRole ?? "display-window";
   const lifecycleRole = mediaPlayback?.isEditor
     ? "editor-preview"
@@ -486,6 +564,34 @@ const DisplayBoxTransitionStage = ({
       ? "projector-preview"
       : "projector-output";
   const lifecycleOutlineId = mediaPlayback?.preparedMediaOutlineId;
+  const remoteSurfaceStatuses = useMemo(
+    () => Object.values(preparedMediaStatuses).filter((status) =>
+      status.route === lifecycleRoute &&
+      status.role === lifecycleRole &&
+      status.outlineId === lifecycleOutlineId,
+    ),
+    [lifecycleOutlineId, lifecycleRole, lifecycleRoute, preparedMediaStatuses],
+  );
+  useReportRemoteMediaPreparationReadiness({
+    enabled: sessionKind === "display" && Boolean(mediaPlayback?.outputId),
+    outputId: mediaPlayback?.outputId,
+    manifest: remotePreparation.manifest,
+    manifestReceivedAt: remotePreparation.manifestReceivedAt,
+    source: usingRemoteManifest
+      ? remotePreparation.manifestReceivedAt ? "remote-manifest" : "cached-manifest"
+      : window.electronAPI ? "local-fallback" : "browser-poster",
+    candidateCount: usingRemoteManifest ? remoteManifestDiagnostics.length : poolCandidates.length,
+    finiteCandidateCount: usingRemoteManifest
+      ? new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "eligible").map((entry) => entry.mediaKey)).size
+      : poolCandidateResult.discovery.finitePlayableSourceCount ?? 0,
+    pendingCacheCount: usingRemoteManifest
+      ? new Set(remoteManifestDiagnostics.filter((entry) => entry.status === "pending-cache").map((entry) => entry.mediaKey)).size
+      : poolCandidateResult.discovery.pendingHlsCacheCount ?? 0,
+    readyCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "ready-paused" || status.phase === "active-playing").map((status) => status.mediaKey)).size,
+    preparingCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "preparing" || status.phase === "activation-requested").map((status) => status.mediaKey)).size,
+    failedCount: new Set(remoteSurfaceStatuses.filter((status) => status.phase === "error").map((status) => status.mediaKey)).size,
+    errors: remoteSurfaceStatuses.filter((status) => status.phase === "error").map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]")),
+  });
 
   useLayoutEffect(() => {
     const currentStatuses = Object.values(preparedMediaStatusRef.current).filter(
@@ -1772,20 +1878,24 @@ const DisplayBoxTransitionStage = ({
         <ElectronMediaSurfacePool
           enabled={poolEnabled}
           candidates={poolCandidates}
-          candidateDiagnostics={poolCandidateResult.diagnostics}
+          candidateDiagnostics={usingRemoteManifest ? remoteManifestDiagnostics : poolCandidateResult.diagnostics}
           views={poolViews}
           onStatusChange={reportPreparedMediaStatus}
           route={lifecycleRoute}
           role={lifecycleRole}
           outlineId={lifecycleOutlineId}
           onSurfaceElement={reportPreparedMediaElement}
-          discovery={poolCandidateResult.discovery}
+          discovery={remoteManifestDiscovery ?? poolCandidateResult.discovery}
           poolCapacity={poolCandidateResult.poolCapacity}
           transitionDurationMs={normalizeTransitionDurationMs(
             transitionDurationMs,
           )}
           preparationSource={
-            sessionKind === "display" ? "server-manifest" : "local-pouchdb"
+            usingRemoteManifest
+              ? remotePreparation.manifestReceivedAt ? "server-manifest" : "cached-manifest"
+              : sessionKind === "display"
+                ? "local-fallback"
+                : "local-pouchdb"
           }
           manifestRevision={remotePreparation.manifest?.revision}
           manifestOutlineId={remotePreparation.manifest?.outlineId}

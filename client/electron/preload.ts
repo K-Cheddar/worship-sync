@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { WindowType } from "./windowState";
 import type { LocalAssetMetadata } from "./localAssetStore";
+import type { PreparedVideoMetrics } from "../src/types/electron";
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -148,6 +149,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   syncMediaCache: (mediaUrls: string[]) =>
     ipcRenderer.invoke("sync-media-cache", mediaUrls),
   getPreparedVideoMetrics: () => ipcRenderer.invoke("get-prepared-video-metrics"),
+  subscribePreparedVideoMetrics: () =>
+    ipcRenderer.invoke("subscribe-prepared-video-metrics"),
+  unsubscribePreparedVideoMetrics: () =>
+    ipcRenderer.invoke("unsubscribe-prepared-video-metrics"),
+  onPreparedVideoMetrics: (callback: (metrics: PreparedVideoMetrics) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, metrics: unknown) =>
+      callback(metrics as PreparedVideoMetrics);
+    ipcRenderer.on("prepared-video-metrics", listener);
+    return () => ipcRenderer.removeListener("prepared-video-metrics", listener);
+  },
 
   // App-managed local assets. Native paths stay inside the preload/main
   // boundary; renderers receive only metadata and a streamable protocol URL.

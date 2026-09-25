@@ -3,6 +3,7 @@ import {
   getMediaPreparationManifestStructure,
   isTransportSafeMediaUrl,
   isMediaPreparationManifest,
+  isMediaPreparationReadinessReport,
   mediaPreparationManifestToCandidates,
 } from "./mediaPreparationManifest";
 import type { ElectronMediaDiscovery } from "./electronMediaSurfaceDiagnostics";
@@ -55,6 +56,32 @@ const discovery = (overrides: Partial<ElectronMediaDiscovery> = {}) =>
   }) as ElectronMediaDiscovery;
 
 describe("media preparation manifest", () => {
+  it("validates bounded per-device readiness reports and distinct readiness counts", () => {
+    const report = {
+      contract: "worshipsync.media-preparation-readiness",
+      version: 1,
+      outputId: "projector",
+      deviceId: "device-1",
+      sessionId: "session-1",
+      reportedAt: 100,
+      manifestRevision: 2,
+      manifestReceivedAt: 90,
+      source: "remote-manifest",
+      candidateCount: 5,
+      finiteCandidateCount: 4,
+      pendingCacheCount: 1,
+      readyCount: 1,
+      preparingCount: 1,
+      failedCount: 1,
+      errors: ["one preparation failed"],
+    };
+    expect(isMediaPreparationReadinessReport(report)).toBe(true);
+    expect(isMediaPreparationReadinessReport({ ...report, source: "cached-manifest", manifestReceivedAt: null })).toBe(true);
+    expect(isMediaPreparationReadinessReport({ ...report, readyCount: 5 })).toBe(false);
+    expect(isMediaPreparationReadinessReport({ ...report, sessionId: "x".repeat(129) })).toBe(false);
+    expect(isMediaPreparationReadinessReport({ ...report, errors: Array(9).fill("error") })).toBe(false);
+  });
+
   it("accepts portable HTTP URLs without treating renderer checks as SSRF validation", () => {
     expect(isTransportSafeMediaUrl("media-cache://one.mp4")).toBe(false);
     expect(isTransportSafeMediaUrl("worshipsync-media://one.mp4")).toBe(false);

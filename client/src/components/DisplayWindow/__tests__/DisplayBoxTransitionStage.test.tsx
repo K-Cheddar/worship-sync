@@ -5,6 +5,7 @@ import DisplayBoxTransitionStage, {
   type LaneRenderMediaOptions,
 } from "../DisplayBoxTransitionStage";
 import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
+import { requestElectronMediaSurfaceDiagnostics } from "../../../utils/electronMediaSurfaceDiagnostics";
 
 let mockTimelineComplete: (() => void) | undefined;
 const mockTimelineCompletions: Array<() => void> = [];
@@ -277,7 +278,6 @@ describe("DisplayBoxTransitionStage", () => {
         renderLane={readyRenderLane()}
       />,
     );
-
     expect(screen.queryByTestId("electron-media-surface-pool")).not.toBeInTheDocument();
     expect(screen.getByTestId("lane-full-frame-media-mock")).toHaveAttribute(
       "data-media-id",
@@ -401,6 +401,7 @@ describe("DisplayBoxTransitionStage", () => {
         renderLane={readyRenderLane()}
       />,
     );
+    requestElectronMediaSurfaceDiagnostics();
 
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:pool-a")).toHaveAttribute(

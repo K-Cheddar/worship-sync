@@ -24,12 +24,28 @@ export type PreparedVideoMetrics = {
     | "available"
     | "ipc_unavailable"
     | "renderer_pid_not_matched"
-    | "metric_unsupported";
+    | "metric_unsupported"
+    | "stale";
+  timestamp?: number;
   rendererPid?: number;
   matchedPid?: number;
   processType?: string;
   memory: PreparedVideoMetricValue;
   cpu: PreparedVideoMetricValue;
+  total?: {
+    memory: PreparedVideoMetricValue;
+    cpu: PreparedVideoMetricValue;
+    processCount: number;
+  };
+  processes?: Array<{
+    pid: number;
+    processType: string;
+    name?: string;
+    serviceName?: string;
+    labels: string[];
+    memory: PreparedVideoMetricValue;
+    cpu: PreparedVideoMetricValue;
+  }>;
   reason?: string;
 };
 
@@ -199,8 +215,13 @@ export interface ElectronAPI {
   syncMediaCache: (
     mediaUrls: string[],
   ) => Promise<{ downloaded: number; cleaned: number }>;
-  /** Development-only renderer process metrics for prepared-video experiments. */
+  /** Timestamped app-process metrics, sampled once in main while subscribed. */
   getPreparedVideoMetrics?: () => Promise<PreparedVideoMetrics>;
+  subscribePreparedVideoMetrics?: () => Promise<boolean>;
+  unsubscribePreparedVideoMetrics?: () => Promise<boolean>;
+  onPreparedVideoMetrics?: (
+    callback: (metrics: PreparedVideoMetrics) => void,
+  ) => () => void;
 
   // App-managed local assets
   importLocalAsset: (

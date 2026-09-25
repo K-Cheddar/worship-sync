@@ -34,6 +34,58 @@ export type MediaPreparationManifest = {
   items: MediaPreparationManifestItem[];
 };
 
+export type MediaPreparationReadinessReport = {
+  contract: "worshipsync.media-preparation-readiness";
+  version: 1;
+  outputId: string;
+  deviceId: string;
+  sessionId: string;
+  reportedAt: number;
+  manifestRevision: number | null;
+  manifestReceivedAt: number | null;
+  source: "remote-manifest" | "cached-manifest" | "local-fallback" | "browser-poster";
+  candidateCount: number;
+  finiteCandidateCount: number;
+  pendingCacheCount: number;
+  readyCount: number;
+  preparingCount: number;
+  failedCount: number;
+  errors: string[];
+};
+
+export const isMediaPreparationReadinessReport = (
+  value: unknown,
+): value is MediaPreparationReadinessReport => {
+  if (!value || typeof value !== "object") return false;
+  const report = value as Partial<MediaPreparationReadinessReport>;
+  const count = (entry: unknown) => Number.isInteger(entry) && Number(entry) >= 0;
+  return (
+    report.contract === "worshipsync.media-preparation-readiness" &&
+    report.version === 1 &&
+    typeof report.outputId === "string" && report.outputId.length > 0 && report.outputId.length <= 128 &&
+    typeof report.deviceId === "string" && report.deviceId.length > 0 && report.deviceId.length <= 128 &&
+    typeof report.sessionId === "string" && report.sessionId.length > 0 && report.sessionId.length <= 128 &&
+    Number.isFinite(report.reportedAt) &&
+    (report.manifestRevision === null || count(report.manifestRevision)) &&
+    (report.manifestReceivedAt === null || Number.isFinite(report.manifestReceivedAt)) &&
+    (report.source === "remote-manifest" || report.source === "cached-manifest" || report.source === "local-fallback" || report.source === "browser-poster") &&
+    count(report.candidateCount) &&
+    count(report.finiteCandidateCount) &&
+    count(report.pendingCacheCount) &&
+    count(report.readyCount) &&
+    count(report.preparingCount) &&
+    count(report.failedCount) &&
+    Number(report.finiteCandidateCount) <= Number(report.candidateCount) &&
+    Number(report.pendingCacheCount) <= Number(report.candidateCount) &&
+    Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.finiteCandidateCount) &&
+    (report.source !== "remote-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt !== null)) &&
+    (report.source !== "cached-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt === null)) &&
+    Array.isArray(report.errors) &&
+    report.errors.length <= 8 &&
+    report.errors.every((error) => typeof error === "string" && error.length <= 180)
+  );
+};
+
 /**
  * This is a portability and serialization check, not the network security
  * boundary. Electron's main-process safeHttpGet performs DNS, address, and

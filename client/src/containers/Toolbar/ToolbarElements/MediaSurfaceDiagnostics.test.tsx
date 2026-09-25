@@ -75,8 +75,41 @@ describe("MediaSurfaceDiagnostics", () => {
 
     expect(screen.getByText("Main Projector")).toBeInTheDocument();
     expect(screen.getByText("Lobby")).toBeInTheDocument();
-    expect(screen.getAllByText("Last send path")).toHaveLength(2);
-    expect(screen.getByText("6")).toBeInTheDocument();
-    expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Distinct videos")).toHaveLength(2);
+    expect(screen.getAllByText("Selected surfaces")).toHaveLength(2);
+    expect(screen.getAllByText("Advanced diagnostics")).toHaveLength(2);
+    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps the operator view compact, exposes failures, and discloses detailed records only on demand", () => {
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: undefined });
+    renderDiagnostics();
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        diagnosticId: "device-session-projector",
+        outputId: "projector",
+        windowRole: "projector",
+        preparationSource: "local-pouchdb",
+        candidateCount: 1,
+        discoveredCount: 2,
+        surfaceCount: 1,
+        readyCount: 0,
+        preparingCount: 0,
+        playingCount: 0,
+        resettingCount: 0,
+        errorCount: 1,
+        evictions: [],
+        candidateDetails: [{ mediaKey: "remote:secret", resolvedSource: "https://cdn.example.test/video.mp4?token=private" }],
+        surfaces: [{ mediaKey: "remote:secret", source: "https://cdn.example.test/video.mp4?token=private", phase: "error", sourceKind: "remote", error: "decode failed" }],
+        discovery: { renderer: "projector", itemCount: 2, items: [], uniqueVideoInventoryCount: 2, finitePlayableSourceCount: 1, pendingHlsCacheCount: 0, intentionallyExcludedVideoCount: 0, outlineLoadState: "error", outlineLoadError: "One item is missing" },
+      },
+    })));
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+
+    expect(screen.getByLabelText("Computer health")).toHaveTextContent("Unavailable — Electron only");
+    expect(screen.getByRole("alert")).toHaveTextContent("decode failed");
+    expect(screen.getByRole("button", { name: "Retry preparation" })).toBeInTheDocument();
+    expect(screen.getByText("Candidate details (1)")).not.toBeVisible();
+    delete (window as { electronAPI?: unknown }).electronAPI;
   });
 });

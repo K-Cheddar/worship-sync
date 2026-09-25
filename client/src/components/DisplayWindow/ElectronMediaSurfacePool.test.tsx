@@ -9,6 +9,7 @@ import type {
   ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
 import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
+import { requestElectronMediaSurfaceDiagnostics } from "../../utils/electronMediaSurfaceDiagnostics";
 
 const candidate: ElectronMediaSurfaceCandidate = {
   mediaKey: "remote:clip",
@@ -209,6 +210,11 @@ describe("ElectronMediaSurfacePool", () => {
     expect(
       screen.getByTestId("electron-media-surface-video-remote:clip"),
     ).not.toHaveStyle({ visibility: "hidden" });
+    expect(
+      (window as Window & { __wsMediaSurfacePoolDiagnostics?: { candidateDetails?: unknown[] } })
+        .__wsMediaSurfacePoolDiagnostics?.candidateDetails,
+    ).toBeUndefined();
+    requestElectronMediaSurfaceDiagnostics();
     await waitFor(() => {
       expect(
         (
@@ -216,10 +222,11 @@ describe("ElectronMediaSurfacePool", () => {
             __wsMediaSurfacePoolDiagnostics?: {
               surfaceCount: number;
               readyCount: number;
+              candidateDetails?: unknown[];
             };
           }
         ).__wsMediaSurfacePoolDiagnostics,
-      ).toMatchObject({ surfaceCount: 1, readyCount: 1 });
+      ).toMatchObject({ surfaceCount: 1, readyCount: 1, candidateDetails: [expect.any(Object)] });
     });
     rerender(
       <ElectronMediaSurfacePool
@@ -576,6 +583,43 @@ describe("ElectronMediaSurfacePool", () => {
     expect(
       (HTMLMediaElement.prototype.play as jest.Mock).mock.calls.length,
     ).toBeGreaterThan(1);
+  });
+
+  it("recovers a failed unowned surface when a finite cache source becomes available", async () => {
+    let failFirstLoad = true;
+    Object.defineProperty(HTMLMediaElement.prototype, "load", {
+      configurable: true,
+      value: jest.fn(function load(this: HTMLMediaElement) {
+        const event = failFirstLoad ? "error" : "loadedmetadata";
+        failFirstLoad = false;
+        window.setTimeout(() => this.dispatchEvent(new Event(event)), 0);
+      }),
+    });
+    const failedCandidate = { mediaKey: "remote:recover", source: "media-cache://not-ready.mp4", sourceKind: "cache" as const };
+    const recoveredCandidate = { ...failedCandidate, source: "media-cache://ready.mp4" };
+    const onPreparationFailure = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[failedCandidate]}
+        views={[]}
+        onPreparationFailure={onPreparationFailure}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:recover")).toHaveAttribute("data-prepared-state", "error"));
+    expect(onPreparationFailure).toHaveBeenCalled();
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[recoveredCandidate]}
+        views={[]}
+        onPreparationFailure={onPreparationFailure}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:recover")).toHaveAttribute("data-prepared-state", "ready"));
+    expect(screen.getByTestId("electron-media-surface-video-remote:recover")).toHaveAttribute("src", "media-cache://ready.mp4");
   });
 
   it("returns a cancelled activation to ready-paused", async () => {
@@ -1353,7 +1397,7 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
-  it("releases a preparation attempt when seeked never arrives", async () => {
+  it("bounds recovery attempts when seeked never arrives", async () => {
     jest.useFakeTimers();
     let currentTime = 0;
     Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
@@ -1391,6 +1435,10 @@ describe("ElectronMediaSurfacePool", () => {
       jest.advanceTimersByTime(5000);
       await Promise.resolve();
     });
+    await act(async () => {
+      jest.advanceTimersByTime(30_000);
+      await Promise.resolve();
+    });
     expect(onPreparationFailure).toHaveBeenCalledWith(
       candidate.mediaKey,
       expect.stringContaining("preparation watchdog timeout"),
@@ -1399,6 +1447,8 @@ describe("ElectronMediaSurfacePool", () => {
       "data-prepared-state",
       "error",
     );
+    expect(onPreparationFailure.mock.calls.length).toBeGreaterThan(1);
+    expect(onPreparationFailure.mock.calls.length).toBeLessThanOrEqual(4);
     jest.useRealTimers();
   });
 });

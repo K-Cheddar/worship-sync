@@ -4,6 +4,7 @@ import { onValue, ref, runTransaction } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   useRemoteMediaPreparationManifest,
+  useRemoteMediaPreparationReadinessReports,
   usePublishMediaPreparationManifest,
 } from "./useMediaPreparationManifest";
 import {
@@ -14,6 +15,8 @@ import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagno
 
 jest.mock("firebase/database", () => ({
   onValue: jest.fn(),
+  onDisconnect: jest.fn(() => ({ remove: jest.fn().mockResolvedValue(undefined) })),
+  remove: jest.fn().mockResolvedValue(undefined),
   ref: jest.fn((_db: unknown, path: string) => ({ path })),
   runTransaction: jest.fn(),
 }));
@@ -84,6 +87,50 @@ describe("useRemoteMediaPreparationManifest", () => {
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
 
+  it("accepts only fresh readiness reports whose payload identity matches its output/device/session path", async () => {
+    const reportedAt = Date.now();
+    const validReport = {
+      contract: "worshipsync.media-preparation-readiness",
+      version: 1,
+      outputId: "projector",
+      deviceId: "device-1",
+      sessionId: "session-1",
+      reportedAt,
+      manifestRevision: 4,
+      manifestReceivedAt: reportedAt - 100,
+      source: "remote-manifest",
+      candidateCount: 2,
+      finiteCandidateCount: 2,
+      pendingCacheCount: 0,
+      readyCount: 1,
+      preparingCount: 1,
+      failedCount: 0,
+      errors: [],
+    };
+    onValueMock.mockImplementationOnce((_target: unknown, callback: (snapshot: { val: () => unknown }) => void) => {
+      callback({ val: () => ({
+        "device-1": {
+          "session-1": validReport,
+          "other-session": { ...validReport, sessionId: "session-1" },
+          "stale-session": { ...validReport, sessionId: "stale-session", reportedAt: reportedAt - 25 * 60 * 60_000 },
+        },
+      }) });
+      return jest.fn();
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider
+        value={{ firebaseDb: { name: "shared" }, churchId: "church-1", sharedDataReady: true } as never}
+      >{children}</GlobalInfoContext.Provider>
+    );
+    const { result } = renderHook(
+      () => useRemoteMediaPreparationReadinessReports({ enabled: true, outputId: "projector" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current).toHaveLength(1));
+    expect(result.current[0]).toMatchObject({ deviceId: "device-1", sessionId: "session-1", manifestRevision: 4 });
+  });
+
   it("receives a manifest without a controller database and warms only local cache state", async () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <GlobalInfoContext.Provider
@@ -121,7 +168,7 @@ describe("useRemoteMediaPreparationManifest", () => {
     );
   });
 
-  it("lets the live Firebase value replace a newer cached revision", async () => {
+  it("keeps a newer cached revision when an older live Firebase revision arrives", async () => {
     localStorage.setItem(
       "worshipsync:media-preparation:church-1:projector",
       JSON.stringify({ ...manifest, revision: 12 }),
@@ -156,14 +203,14 @@ describe("useRemoteMediaPreparationManifest", () => {
       { wrapper },
     );
 
-    await waitFor(() => expect(result.current.manifest?.revision).toBe(1));
+    await waitFor(() => expect(result.current.manifest?.revision).toBe(12));
     expect(
       JSON.parse(
         localStorage.getItem(
           "worshipsync:media-preparation:church-1:projector",
         ) ?? "null",
-      ).revision,
-    ).toBe(1);
+    ).revision,
+    ).toBe(12);
   });
 
   it("clears a cached manifest when Firebase authoritatively has no usable value", async () => {
@@ -394,6 +441,43 @@ describe("useRemoteMediaPreparationManifest", () => {
       { wrapper: makeWrapper("display") },
     );
     expect(runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("exposes the desired manifest revision while publishing and preserves failure results", async () => {
+    const discovery: ElectronMediaDiscovery = {
+      renderer: "projector",
+      outputId: "projector",
+      outlineId: "outline-1",
+      outlineLoadState: "loaded",
+      itemCount: 0,
+      uniqueFiniteVideoCount: 0,
+      items: [],
+    };
+    const statuses: Array<{ state: string; desiredRevision?: number }> = [];
+    const onStatus = (event: Event) => {
+      const status = (event as CustomEvent<{ state: string; desiredRevision?: number }>).detail;
+      statuses.push(status);
+    };
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    runTransactionMock.mockRejectedValueOnce(new Error("permission denied"));
+    window.addEventListener("worship-sync-media-manifest-publish-status", onStatus);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider
+        value={{ firebaseDb: { name: "shared" }, churchId: "church-publish", sharedDataReady: true, sessionKind: "controller" } as never}
+      >{children}</GlobalInfoContext.Provider>
+    );
+    const { unmount } = renderHook(
+      () => usePublishMediaPreparationManifest({ enabled: true, discovery, outputId: "projector" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(statuses.map((status) => status.state)).toEqual(expect.arrayContaining(["publishing", "failed"])));
+    expect(statuses.find((status) => status.state === "publishing")?.desiredRevision).toBe(1);
+    expect(statuses.find((status) => status.state === "failed")?.desiredRevision).toBe(1);
+    expect(localStorage.getItem("worshipsync:media-preparation-publication:church-publish:projector")).toContain('"state":"failed"');
+    window.removeEventListener("worship-sync-media-manifest-publish-status", onStatus);
+    consoleError.mockRestore();
+    unmount();
   });
 
   it("does not let an older queued outline load publish after a newer selection", async () => {
