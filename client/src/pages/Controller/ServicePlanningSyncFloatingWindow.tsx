@@ -67,6 +67,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { getServicePlanMicrophones } from "../../api/auth";
 import type { ServicePlanMicrophone } from "../../types/servicePlan";
 import { useControllerBasePath } from "../../context/activeController";
+import { useActiveControllerProfile } from "../../context/activeController";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
 import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
 import {
@@ -74,6 +75,8 @@ import {
   isControllerServicePlanUpcoming,
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
+import ControllerServicePlanView from "./ControllerServicePlanView";
+import { useServicePlanOutlinePush } from "../Services/useServicePlanOutlinePush";
 
 const MARGIN = 16;
 
@@ -319,8 +322,10 @@ const ServicePlanningSyncFloatingWindow = ({
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
+  const controllerProfile = useActiveControllerProfile();
   const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
+  const { pushPlanToOutline } = useServicePlanOutlinePush();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -329,12 +334,14 @@ const ServicePlanningSyncFloatingWindow = ({
   const [activePlanKey, setActivePlanKey] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   // Keeps the Controller's copy of the plan in step with the Services editor.
   const {
     savedPlans,
     selectedPlan,
+    selectedPlanDetails,
     selectedPlanKey,
     selectPlan,
     occurrence,
@@ -348,6 +355,8 @@ const ServicePlanningSyncFloatingWindow = ({
     refresh: refreshPlan,
     refreshPlans,
   } = useCurrentServicePlanSource();
+  const currentPlanRef = useRef(selectedPlanDetails);
+  currentPlanRef.current = selectedPlanDetails;
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
@@ -484,12 +493,42 @@ const ServicePlanningSyncFloatingWindow = ({
     !isContextChanging &&
     hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline =
-    !isContextChanging && Boolean(selectedList) && hasSyncableOutlineItems(preview);
+    !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
+      ? selectedPlanDetails.sections.length > 0
+      : hasSyncableOutlineItems(preview));
   const canSyncAny = allowOverlaySync
     ? canSyncOverlays || canSyncOutline
     : canSyncOutline;
 
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
+    if (mode !== "overlays" && isPlanSourced && selectedPlanDetails && canSyncOutline) {
+      if (isPushingSavedPlan || isContextChanging || !selectedList) return;
+      setIsPushingSavedPlan(true);
+      const sourcePlan = selectedPlanDetails;
+      void pushPlanToOutline(
+        sourcePlan,
+        () => currentPlanRef.current === sourcePlan,
+      )
+        .then((result) => {
+          const added = result.items.filter((item) => item.type !== "heading").length;
+          if (result.skippedTitles.length) {
+            showToast(`${added} item${added === 1 ? "" : "s"} added; review unresolved attachments in the service plan.`, "info");
+          } else if (added) {
+            showToast(`${added} item${added === 1 ? "" : "s"} added to the live outline.`, "success");
+          } else {
+            showToast("All attached content is already in the live outline.", "success");
+          }
+          if (mode === "both" && allowOverlaySync && canSyncOverlays) {
+            dispatch(setServicePlanningFloatingWindowDismissed(false));
+            dispatch(startServicePlanningSync({ mode: "overlays" }));
+          }
+        })
+        .catch((error: unknown) => {
+          showToast(error instanceof Error ? error.message : "Could not add plan content to the outline.", "error");
+        })
+        .finally(() => setIsPushingSavedPlan(false));
+      return;
+    }
     const effectiveMode = allowOverlaySync ? mode : "outline";
     const shouldSyncOverlays = effectiveMode !== "outline" && canSyncOverlays;
     const shouldSyncOutline = effectiveMode !== "overlays" && canSyncOutline;
@@ -503,7 +542,7 @@ const ServicePlanningSyncFloatingWindow = ({
           : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode: nextMode }));
-  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch]);
+  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch, isContextChanging, isPlanSourced, isPushingSavedPlan, pushPlanToOutline, selectedList, selectedPlanDetails, showToast]);
 
   const handleStopSync = useCallback(() => {
     dispatch(cancelServicePlanningSync());
@@ -638,10 +677,10 @@ const ServicePlanningSyncFloatingWindow = ({
     },
     {
       id: "sync-outline",
-      label: "Sync outline",
-      disabled: isSyncActive || !canSyncOutline,
+      label: isPushingSavedPlan ? "Importing…" : "Sync outline",
+      disabled: isSyncActive || isPushingSavedPlan || !canSyncOutline,
       renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>{isPushingSavedPlan ? "Importing…" : "Sync outline"}</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
@@ -670,7 +709,7 @@ const ServicePlanningSyncFloatingWindow = ({
     return allowOverlaySync
       ? items
       : items.filter((item) => item.id !== "sync-all" && item.id !== "sync-overlays");
-  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
+  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isPushingSavedPlan, isRefreshing, isSyncActive, isSyncStopping]);
 
 
 
@@ -1093,6 +1132,15 @@ const ServicePlanningSyncFloatingWindow = ({
         {!isLoading && preview ? (
           <div className="flex flex-col gap-2">
             {activeTab === "plan" ? (
+              isPlanSourced && selectedPlanDetails ? (
+                <ControllerServicePlanView
+                  key={`${churchId}:${controllerProfile.id}`}
+                  plan={selectedPlanDetails}
+                  churchId={churchId || ""}
+                  controllerProfileId={controllerProfile.id}
+                  activeItemTitle={isRunning ? sync.activeLabel : undefined}
+                />
+              ) : (
               <div className="flex flex-col gap-2 pr-1">
                 {Array.from(lineItemsBySection.entries()).map(([sectionName, items]) => (
                   <div
@@ -1408,6 +1456,7 @@ const ServicePlanningSyncFloatingWindow = ({
                   </div>
                 ))}
               </div>
+              )
             ) : (
               <div className="flex flex-col gap-2 pr-1">
                 <p className="text-xs text-zinc-400">Only teams that have at least one assignment will be shown.</p>

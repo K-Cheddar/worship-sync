@@ -66,6 +66,10 @@ export function normalizeOverlayForSync(
     updatedAt: overlay.updatedAt,
     createdBy: overlay.createdBy,
     updatedBy: overlay.updatedBy,
+    servicePlanSource: overlay.servicePlanSource,
+    servicePlanBaseline: overlay.servicePlanBaseline,
+    servicePlanOverrides: overlay.servicePlanOverrides,
+    servicePlanReviewRequired: overlay.servicePlanReviewRequired,
   };
 }
 

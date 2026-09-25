@@ -121,8 +121,8 @@ export type ServicePlanSourceLedByAssignment = {
  * lyrics attached to the plan now so nothing is lost waiting on that step.
  */
 export type ServicePlanSongReference =
-  | { kind: "library"; songId: string; songName: string; key?: string }
-  | { kind: "pending"; title: string; lyricsText: string; key?: string };
+  | { id?: string; kind: "library"; songId: string; songName: string; key?: string }
+  | { id?: string; kind: "pending"; title: string; lyricsText: string; key?: string };
 
 /**
  * A scripture passage attached to an element. Stored as a parsed reference
@@ -131,6 +131,8 @@ export type ServicePlanSongReference =
  * the Controller's import uses), so the plan stays a light planning document.
  */
 export type ServicePlanScriptureReference = {
+  /** Stable identity for this occurrence, including intentional repetitions. */
+  id?: string;
   /** Display label, e.g. "John 3:16-18 (NIV)". */
   label: string;
   book: string;
@@ -221,6 +223,8 @@ export type ServicePlanElement = {
   scriptureRefs?: ServicePlanScriptureReference[];
   /** New extensible attachments. Legacy song/scripture fields remain readable. */
   resources?: ServicePlanContentResource[];
+  /** Ordered attachment occurrence ids. Older plans without this field retain their legacy ordering. */
+  contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
   /**
@@ -320,13 +324,14 @@ export const getServicePlanElementContentResources = (
     | "songRefs"
     | "scriptureRef"
     | "scriptureRefs"
+    | "contentOrder"
 >,
 ): ServicePlanContentResource[] => {
   const resources = [...(element.resources || [])];
   const legacyResources: ServicePlanContentResource[] = [];
   getServicePlanElementSongRefs(element).forEach((songRef, index) => {
     legacyResources.push({
-      id: `legacy-song-${index}-${songRef.kind}`,
+      id: songRef.id || `legacy-song-${index}-${songRef.kind}`,
       type: "song",
       title: songRef.kind === "pending" ? songRef.title : songRef.songName,
       data: { songRef },
@@ -334,7 +339,7 @@ export const getServicePlanElementContentResources = (
   });
   getServicePlanElementScriptureRefs(element).forEach((scripture, index) => {
     legacyResources.push({
-      id: `legacy-scripture-${index}`,
+      id: scripture.id || `legacy-scripture-${index}`,
       type: "scripture",
       title: scripture.label,
       data: { scripture },
@@ -360,7 +365,29 @@ export const getServicePlanElementContentResources = (
     }
     return true;
   });
-  return [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  if (!element.contentOrder?.length) return allResources;
+  const byId = new Map(allResources.map((resource) => [resource.id, resource]));
+  const ordered = element.contentOrder.flatMap((id) => {
+    const resource = byId.get(id);
+    if (!resource) return [];
+    byId.delete(id);
+    return [resource];
+  });
+  return [...ordered, ...byId.values()];
+};
+
+/** Keep existing attachment order while appending newly-added occurrences in operator order. */
+export const getNextServicePlanContentOrder = (
+  current: Pick<ServicePlanElement, "resources" | "songRef" | "songRefs" | "scriptureRef" | "scriptureRefs" | "contentOrder">,
+  next: Pick<ServicePlanElement, "resources" | "songRef" | "songRefs" | "scriptureRef" | "scriptureRefs" | "contentOrder">,
+): string[] => {
+  const nextResources = getServicePlanElementContentResources(next);
+  const available = new Set(nextResources.map((resource) => resource.id));
+  const currentOrder = getServicePlanElementContentResources(current).map((resource) => resource.id);
+  const retained = currentOrder.filter((id) => available.has(id));
+  const retainedSet = new Set(retained);
+  return [...retained, ...nextResources.map((resource) => resource.id).filter((id) => !retainedSet.has(id))];
 };
 
 /**

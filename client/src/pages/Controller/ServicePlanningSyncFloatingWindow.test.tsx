@@ -27,6 +27,9 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
 }));
+jest.mock("../Services/useServicePlanOutlinePush", () => ({
+  useServicePlanOutlinePush: () => ({ pushPlanToOutline: jest.fn() }),
+}));
 // Covered by useCurrentServicePlanSource.test.tsx. Stubbed here so these tests
 // stay about the window itself and don't need Teams state in the store.
 const mockPlanSource = {
@@ -43,6 +46,7 @@ const mockPlanSource = {
     name: string;
     date: string;
   },
+  selectedPlanDetails: null as any,
   selectedPlanKey: null as string | null,
   selectPlan: jest.fn(),
   occurrences: [] as Array<{

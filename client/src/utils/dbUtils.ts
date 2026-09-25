@@ -459,6 +459,9 @@ export const creditInfoFromDoc = (doc: DBCredit): CreditsInfo => ({
   heading: doc.heading,
   text: doc.text,
   hidden: doc.hidden,
+  generatedBaselineText: doc.generatedBaselineText,
+  generatedSource: doc.generatedSource,
+  generatedTextOverridden: doc.generatedTextOverridden,
 });
 
 export const getCreditsByIds = async (
@@ -582,6 +585,9 @@ export const putCreditDoc = async (
     existing.heading = credit.heading;
     existing.text = credit.text;
     existing.hidden = credit.hidden;
+    existing.generatedBaselineText = credit.generatedBaselineText;
+    existing.generatedSource = credit.generatedSource;
+    existing.generatedTextOverridden = credit.generatedTextOverridden;
     existing.updatedAt = new Date().toISOString();
     const result = await db.put(existing);
     return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };

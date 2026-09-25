@@ -1,5 +1,6 @@
 import type { OverlayInfo } from "../../types";
 import { normalizeElementTypeForMatch } from "./normalizeElementForMatch";
+import type { ServicePlanOverlaySource } from "./servicePlanningOverlayClone";
 
 const MIN_SCORE = 25;
 const isParticipantOverlay = (overlay: OverlayInfo): boolean =>
@@ -75,21 +76,33 @@ export const findOverlayForServicePlanningCandidate = (
   targetEvent: string | undefined,
   list: OverlayInfo[],
   excludeIds?: ReadonlySet<string>,
+  source?: ServicePlanOverlaySource,
 ): OverlayInfo | null => {
-  const pool =
+  let pool =
     excludeIds?.size && excludeIds.size > 0
       ? list.filter((o) => !excludeIds.has(o.id) && isParticipantOverlay(o))
       : list.filter(isParticipantOverlay);
   if (pool.length === 0) return null;
 
+  if (source) {
+    const associated = pool.find((overlay) =>
+      overlay.servicePlanSource?.planKey === source.planKey
+      && overlay.servicePlanSource.elementId === source.elementId
+      && overlay.servicePlanSource.candidateId === source.candidateId,
+    );
+    if (associated) return associated;
+    // A saved overlay already owned by another service occurrence cannot be
+    // silently reassigned through a title match.
+    pool = pool.filter((overlay) => !overlay.servicePlanSource);
+  }
+
   if (targetEvent?.trim()) {
     const te = targetEvent.toLowerCase().replace(/\s+/g, " ").trim();
-    return (
-      pool.find(
+    const exactMatches = pool.filter(
         (o) =>
           (o.event || "").toLowerCase().replace(/\s+/g, " ").trim() === te,
-      ) ?? null
-    );
+      );
+    return exactMatches.length === 1 ? exactMatches[0] : null;
   }
 
   return findBestOverlayMatch(planningElementType, pool)?.overlay ?? null;

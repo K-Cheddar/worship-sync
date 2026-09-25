@@ -195,6 +195,7 @@ const PublicResourceReferences = ({
     ...((resource.type === "text" || resource.type === "generic") && resource.detail
       ? { textContent: resource.detail }
       : {}),
+    ...(resource.richTextContent ? { richTextContent: resource.richTextContent } : {}),
   });
 
   return (

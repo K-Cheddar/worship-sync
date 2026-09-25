@@ -86,7 +86,7 @@ const ServicePlanCustomDocumentPicker = ({
     // A service-plan element or church can change while Pouch creation is
     // pending. Keep the durable library item, but never attach it to a stale plan.
     if (!canAttachCreatedDocumentRef.current) return;
-    onSelectDocument(document);
+    onSelectDocument({ ...document, listId: document.listId || document._id });
     resetAndClose();
   };
 

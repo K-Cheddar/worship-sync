@@ -3,6 +3,78 @@ import type { ServicePlanningFieldPatch } from "./mapServicePlanningToOverlays";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
 
+export type ServicePlanOverlaySource = {
+  planKey: string;
+  elementId: string;
+  candidateId: string;
+};
+
+type SyncedOverlayField = "name" | "title" | "event";
+
+/** Merge source values independently so one edited field does not freeze the others. */
+export const mergeServicePlanOverlayFields = (
+  existing: OverlayInfo,
+  patch: ServicePlanningFieldPatch,
+  source?: ServicePlanOverlaySource,
+): OverlayInfo => {
+  const fields: SyncedOverlayField[] = ["name", "title", "event"];
+  const baseline = { ...(existing.servicePlanBaseline || {}) };
+  const overrides = { ...(existing.servicePlanOverrides || {}) };
+  const next: OverlayInfo = { ...existing };
+
+  fields.forEach((field) => {
+    const importedValue = patch[field];
+    if (importedValue === undefined) return;
+    const currentValue = existing[field] || "";
+    const hasPriorBaseline = existing.servicePlanBaseline?.[field] !== undefined;
+    const isOverride = Boolean(overrides[field])
+      || !hasPriorBaseline
+      || currentValue !== (existing.servicePlanBaseline?.[field] || "");
+    if (isOverride) {
+      overrides[field] = true;
+    } else {
+      next[field] = importedValue;
+      delete overrides[field];
+    }
+    baseline[field] = importedValue;
+  });
+
+  return {
+    ...next,
+    servicePlanSource: source || existing.servicePlanSource,
+    servicePlanBaseline: baseline,
+    servicePlanOverrides: overrides,
+    // Existing overlays predate field provenance. Preserve their values and
+    // make the association visible for deliberate review instead of guessing.
+    servicePlanReviewRequired: existing.servicePlanReviewRequired || !existing.servicePlanBaseline,
+  };
+};
+
+export const trackServicePlanOverlayEdit = (
+  existing: OverlayInfo,
+  incoming: Partial<OverlayInfo>,
+): OverlayInfo => {
+  if (!existing.servicePlanSource || !existing.servicePlanBaseline) {
+    return { ...existing, ...incoming };
+  }
+  const next = { ...existing, ...incoming };
+  const overrides = { ...(existing.servicePlanOverrides || {}) };
+  (["name", "title", "event"] as const).forEach((field) => {
+    if (!(field in incoming)) return;
+    if ((next[field] || "") === (existing.servicePlanBaseline?.[field] || "")) {
+      delete overrides[field];
+    } else {
+      overrides[field] = true;
+    }
+  });
+  return {
+    ...next,
+    servicePlanOverrides: overrides,
+    servicePlanReviewRequired: existing.servicePlanReviewRequired
+      && Object.values(overrides).some(Boolean),
+  };
+};
+
 export const DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION = 7;
 
 /** Participant overlay with the same event label as the sync target. */
@@ -26,6 +98,7 @@ export const buildClonedParticipantOverlay = (
   newId: string,
   formatting: OverlayFormatting =
     template.formatting || getDefaultFormatting("participant"),
+  source?: ServicePlanOverlaySource,
 ): OverlayInfo => {
   const next: OverlayInfo = {
     ...template,
@@ -35,6 +108,18 @@ export const buildClonedParticipantOverlay = (
     event: patch.event ?? template.event,
     duration: template.duration ?? DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
     formatting,
+    ...(source
+      ? {
+          servicePlanSource: source,
+          servicePlanBaseline: {
+            name: patch.name ?? "",
+            title: patch.title ?? "",
+            event: patch.event ?? template.event ?? "",
+          },
+          servicePlanOverrides: {},
+          servicePlanReviewRequired: false,
+        }
+      : {}),
   };
   next.heading = "";
   next.subHeading = "";
@@ -48,6 +133,7 @@ export const buildNewParticipantOverlay = (
   patch: ServicePlanningFieldPatch,
   newId: string,
   formatting: OverlayFormatting = getDefaultFormatting("participant"),
+  source?: ServicePlanOverlaySource,
 ): OverlayInfo => ({
   id: newId,
   type: "participant",
@@ -61,6 +147,18 @@ export const buildNewParticipantOverlay = (
   description: "",
   imageUrl: "",
   formatting,
+  ...(source
+    ? {
+        servicePlanSource: source,
+        servicePlanBaseline: {
+          name: patch.name ?? "",
+          title: patch.title ?? "",
+          event: patch.event ?? "",
+        },
+        servicePlanOverrides: {},
+        servicePlanReviewRequired: false,
+      }
+    : {}),
 });
 
 type PouchLike = {
@@ -91,6 +189,10 @@ export const persistNewParticipantOverlayClone = async (
         name: patch.name ?? "",
         title: patch.title ?? "",
         event: patch.event ?? (rest as OverlayInfo).event,
+        servicePlanSource: fallback.servicePlanSource,
+        servicePlanBaseline: fallback.servicePlanBaseline,
+        servicePlanOverrides: fallback.servicePlanOverrides,
+        servicePlanReviewRequired: fallback.servicePlanReviewRequired,
         duration:
           (rest as OverlayInfo).duration ??
           DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,

@@ -74,6 +74,7 @@ export type PublicServiceFlowResource = {
   title: string;
   url?: string;
   detail?: string;
+  richTextContent?: ServiceFlowRichText;
 };
 
 export type PublicServiceFlowSection = {

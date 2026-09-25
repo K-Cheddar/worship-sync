@@ -632,6 +632,17 @@ export type OverlayInfo = {
   updatedAt?: string;
   createdBy?: string;
   updatedBy?: string;
+  /** Provenance for overlays generated from a saved WorshipSync plan. */
+  servicePlanSource?: {
+    planKey: string;
+    elementId: string;
+    candidateId: string;
+  };
+  /** Last synchronized values, used to detect independent operator overrides. */
+  servicePlanBaseline?: Partial<Record<"name" | "title" | "event", string>>;
+  servicePlanOverrides?: Partial<Record<"name" | "title" | "event", boolean>>;
+  /** Legacy overlay association must be reviewed before replacing its fields. */
+  servicePlanReviewRequired?: boolean;
 };
 
 export type DBOverlay = OverlayInfo & {
@@ -675,6 +686,11 @@ export type CreditsInfo = {
   heading: string;
   id: string;
   hidden?: boolean;
+  /** Last value committed by credit generation; retained for safe regeneration. */
+  generatedBaselineText?: string;
+  generatedSource?: string;
+  /** Set when an operator edits generated text away from its baseline. */
+  generatedTextOverridden?: boolean;
 };
 
 export type DisplayType =

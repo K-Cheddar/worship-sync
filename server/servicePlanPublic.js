@@ -318,6 +318,33 @@ const publicResourceDetail = (resource) => {
   return undefined;
 };
 
+/** Preserve supported resource-note formatting for the shared preview renderer. */
+const publicResourceRichText = (resource) => {
+  const raw = resource?.type === "text"
+    ? resource.data?.text
+    : resource?.type === "generic"
+      ? resource.data?.notes
+      : undefined;
+  if (typeof raw === "string") {
+    const blocks = raw.replace(/\r\n?/g, "\n").split("\n").map((line) => {
+      const marker = line.match(/^(\s*)([-*•]|(\d+)[.)])\s+(.*)$/);
+      if (!marker) return { type: "paragraph", spans: line ? [{ text: line }] : [] };
+      const indent = Math.min(4, Math.floor(marker[1].length / 2));
+      const ordered = Boolean(marker[3]);
+      const start = ordered ? Number(marker[3]) : undefined;
+      return {
+        type: "list-item",
+        ...(ordered ? { listStyle: "ordered" } : {}),
+        ...(indent ? { indent } : {}),
+        ...(start && start !== 1 ? { listStart: start } : {}),
+        spans: marker[4] ? [{ text: marker[4] }] : [],
+      };
+    });
+    return normalizeRichTextDocument({ blocks });
+  }
+  return normalizeRichTextDocument(raw);
+};
+
 /** Expose only the display fields needed by the public resource rows. */
 const publicResources = (element) => {
   const resources = Array.isArray(element?.resources) ? element.resources : [];
@@ -369,11 +396,13 @@ const publicResources = (element) => {
         ? new URL(safeUrl).hostname.replace(/^www\./i, "")
         : "Untitled resource";
     const detail = publicResourceDetail(resource);
+    const richTextContent = publicResourceRichText(resource);
     return {
       type,
       title,
       ...(safeUrl ? { url: safeUrl } : {}),
       ...(detail ? { detail } : {}),
+      ...(richTextContent.blocks.length ? { richTextContent } : {}),
     };
   });
 };

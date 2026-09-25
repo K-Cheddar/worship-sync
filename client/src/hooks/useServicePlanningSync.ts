@@ -19,6 +19,7 @@ import {
 import {
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
+  mergeServicePlanOverlayFields,
   findParticipantTemplateForSync,
   persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
@@ -179,7 +180,7 @@ export const useServicePlanningSync = () => {
             continue;
           }
 
-          const next: Partial<OverlayInfo> = { ...cand.patch };
+          const next = mergeServicePlanOverlayFields(target, cand.patch);
           if (db) {
             try {
               dispatch(setOverlayHasPendingUpdate(false));
@@ -188,7 +189,6 @@ export const useServicePlanningSync = () => {
                 setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
               );
               const persisted = await persistExistingOverlayDoc(db, {
-                ...target,
                 ...next,
               });
               applyPersistedOverlayUpdate(persisted, { select: true });
@@ -202,7 +202,7 @@ export const useServicePlanningSync = () => {
               setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
             );
             applyPersistedOverlayUpdate(
-              { ...target, ...next },
+              next,
               { select: true },
             );
           }

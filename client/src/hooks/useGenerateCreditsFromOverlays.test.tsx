@@ -126,6 +126,8 @@ const teamsBootstrap = {
 describe("useGenerateCreditsFromOverlays", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
+    (putCreditDoc as jest.Mock).mockClear();
+    (broadcastCreditsUpdate as jest.Mock).mockClear();
     (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
     (putCreditDoc as jest.Mock).mockImplementation(async () => ({
       _id: "doc",
@@ -138,7 +140,7 @@ describe("useGenerateCreditsFromOverlays", () => {
       {
         id: "c1",
         heading: "Camera Operators",
-        text: "Old",
+        text: "",
         hidden: false,
       },
     ];
@@ -186,8 +188,9 @@ describe("useGenerateCreditsFromOverlays", () => {
         creditId: "c1",
         creditHeading: "Camera Operators",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
-        previousText: "Old",
+        previousText: "",
         nextText: "Alice Jones\nBob Smith",
+        manualOverride: false,
       },
     ]);
     expect(mockDispatch).toHaveBeenCalledWith(
@@ -197,7 +200,7 @@ describe("useGenerateCreditsFromOverlays", () => {
       }),
     );
     const updateAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCredit",
+      (c) => c[0]?.type === "credits/updateCreditFromGeneration",
     );
     expect(updateAction).toBeDefined();
     expect(updateAction![0].payload.text).toBe("Alice Jones\nBob Smith");
@@ -242,7 +245,7 @@ describe("useGenerateCreditsFromOverlays", () => {
     });
 
     const updateAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCredit",
+      (c) => c[0]?.type === "credits/updateCreditFromGeneration",
     );
     expect(updateAction![0].payload.text.trim()).toBe("Host Name");
   });
@@ -278,7 +281,7 @@ describe("useGenerateCreditsFromOverlays", () => {
     });
 
     const updateAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCredit",
+      (c) => c[0]?.type === "credits/updateCreditFromGeneration",
     );
     expect(updateAction![0].payload.text.trim()).toBe("Dr. Greg Baldeo");
   });
@@ -394,10 +397,55 @@ describe("useGenerateCreditsFromOverlays", () => {
       expect(result.current.isGenerating).toBe(false);
     });
     const updateAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCredit",
+      (c) => c[0]?.type === "credits/updateCreditFromGeneration",
     );
     expect(updateAction![0].payload.text.trim()).toBe("Welcome Host");
 
     consoleSpy.mockRestore();
+  });
+
+  it("preserves a manually edited credit during regeneration", async () => {
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Corrected by operator",
+      hidden: false,
+    }];
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    const report = mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits");
+    expect(report?.[0].payload.items[0]).toEqual(expect.objectContaining({
+      previousText: "Corrected by operator",
+      nextText: "Welcome Host",
+      manualOverride: true,
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: { creditId: "c1", status: "preserved" },
+    }));
+    expect(putCreditDoc).not.toHaveBeenCalled();
+  });
+
+  it("does not split an intentional comma or ampersand in an overlay display name", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [{
+      id: "o1",
+      type: "participant",
+      name: "Family, Friends & Neighbors",
+      event: "Welcome",
+    }];
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const updateAction = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(updateAction?.[0].payload.text).toBe("Family, Friends & Neighbors");
   });
 });

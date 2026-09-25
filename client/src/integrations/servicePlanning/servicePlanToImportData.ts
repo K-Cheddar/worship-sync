@@ -41,7 +41,7 @@ import {
   getServicePlanResourceText,
 } from "../../pages/Services/servicePlanResources";
 
-const elementToRow = (element: ServicePlanElement): EventData => {
+const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): EventData => {
   const title = richTextToPlainText(element.title).trim();
   const assigneeNames = getServicePlanElementAssigneeNames(element);
   const notes = element.notes
@@ -120,6 +120,7 @@ const elementToRow = (element: ServicePlanElement): EventData => {
   const sourceLedByRaw = element.sourceLedByRaw?.trim() || "";
 
   const base: EventData = {
+    ...(sourcePlanKey ? { sourcePlanKey, sourcePlanElementId: element.id } : {}),
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
     ledBy: assigneeNames.join(", ") || sourceLedByRaw,
@@ -150,16 +151,17 @@ const elementToRow = (element: ServicePlanElement): EventData => {
   };
 };
 
-const sectionToRows = (section: ServicePlanSection) => ({
+const sectionToRows = (section: ServicePlanSection, sourcePlanKey?: string) => ({
   sectionName: section.name,
-  rows: section.elements.map(elementToRow),
+  rows: section.elements.map((element) => elementToRow(element, sourcePlanKey)),
 });
 
 export const servicePlanToImportData = (
-  plan: Pick<ServicePlan, "name" | "sections">,
+  plan: Pick<ServicePlan, "name" | "sections"> & Partial<Pick<ServicePlan, "planKey">>,
 ): ServicePlanningImportData => ({
   planLabel: plan.name?.trim() || "Service plan",
-  sections: plan.sections.map(sectionToRows),
+  ...(plan.planKey ? { sourcePlanKey: plan.planKey } : {}),
+  sections: plan.sections.map((section) => sectionToRows(section, plan.planKey)),
   // A saved plan carries no scraped roster. The Controller supplies assignments
   // from the Teams schedule instead — see servicePlanTeamAssignments.ts.
   teamAssignments: [],

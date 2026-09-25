@@ -2,6 +2,9 @@ import { getApiBasePath } from "../../utils/environment";
 
 export interface EventData {
   elementType: string;
+  /** Stable source identity present only on saved WorshipSync plans. */
+  sourcePlanKey?: string;
+  sourcePlanElementId?: string;
   /**
    * Attached content title when the source exposes it separately from the
    * service moment. `title` remains the legacy source-column fallback.
@@ -89,6 +92,7 @@ export interface ServicePlanningTeamAssignment {
 
 export interface ServicePlanningImportData {
   planLabel: string;
+  sourcePlanKey?: string;
   sections: ServicePlanningSection[];
   teamAssignments: ServicePlanningTeamAssignment[];
 }

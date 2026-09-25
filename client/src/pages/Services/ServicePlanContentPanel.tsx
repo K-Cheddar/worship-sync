@@ -43,6 +43,7 @@ import {
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
   getServicePlanCustomDocumentId,
+  getNextServicePlanContentOrder,
   type ServicePlanContentResource,
   type ServicePlanElement,
   type ServicePlanScriptureReference,
@@ -74,6 +75,7 @@ import {
   isServicePlanChurchResourceReference,
 } from "./servicePlanResources";
 import type { ChurchResource } from "../../types/churchResource";
+import generateRandomId from "../../utils/generateRandomId";
 
 type ResourceEditorMode = "url" | "text" | "generic";
 const EMPTY_SERVICE_PLAN_RESOURCES: ServicePlanContentResource[] = [];
@@ -228,12 +230,24 @@ const ServicePlanContentPanel = ({
         .some((value) => value.toLowerCase().includes(query)),
     );
   }, [churchResourceSearch, churchResources]);
+  const updateContent = (changes: Partial<ServicePlanElement>) => {
+    const nextElement = { ...element, ...changes };
+    return onUpdate({
+      ...changes,
+      contentOrder: getNextServicePlanContentOrder(element, nextElement),
+    });
+  };
   const updateSongs = (next: ServicePlanSongReference[]) =>
-    onUpdate({ songRef: undefined, songRefs: next });
+    updateContent({
+      songRef: undefined,
+      songRefs: next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
+    });
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
-    onUpdate({ scriptureRef: undefined, scriptureRefs: next });
-  const updateResources = (next: ServicePlanContentResource[]) =>
-    onUpdate({ resources: next });
+    updateContent({
+      scriptureRef: undefined,
+      scriptureRefs: next.map((scriptureRef) => scriptureRef.id ? scriptureRef : { ...scriptureRef, id: generateRandomId() }),
+    });
+  const updateResources = (next: ServicePlanContentResource[]) => updateContent({ resources: next });
 
   const loadChurchResources = async () => {
     const requestId = ++churchResourcePickerRequestRef.current;

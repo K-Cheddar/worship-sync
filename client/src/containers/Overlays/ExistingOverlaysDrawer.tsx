@@ -108,6 +108,10 @@ async function createOverlayCopyInDb(
 ): Promise<{ normalized: OverlayInfo; newDoc: DBOverlay } | null> {
   const newId = generateRandomId();
   const { _id: _omitId, _rev: _omitRev, ...rest } = overlay;
+  delete rest.servicePlanSource;
+  delete rest.servicePlanBaseline;
+  delete rest.servicePlanOverrides;
+  delete rest.servicePlanReviewRequired;
   const doc = {
     _id: `overlay-${newId}`,
     ...rest,
@@ -118,7 +122,7 @@ async function createOverlayCopyInDb(
       doc as PouchDB.Core.PutDocument<DBOverlay>
     );
     const newDoc = { ...doc, _rev: result.rev } as DBOverlay;
-    const normalized = { ...toOverlayInfo(overlay), id: newId };
+    const normalized = { ...toOverlayInfo(doc as DBOverlay), id: newId };
     return { normalized, newDoc };
   } catch (e) {
     console.error("Failed to create overlay copy", e);

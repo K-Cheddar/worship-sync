@@ -414,10 +414,29 @@ export const creditsSlice = createSlice({
     updateCredit: (state, action: PayloadAction<CreditsInfo>) => {
       state.list = state.list.map((credit) => {
         if (credit.id === action.payload.id) {
-          return { ...action.payload };
+          const next = { ...action.payload };
+          if (credit.generatedBaselineText !== undefined) {
+            next.generatedBaselineText = credit.generatedBaselineText;
+            next.generatedSource = credit.generatedSource;
+            next.generatedTextOverridden = next.text !== credit.generatedBaselineText;
+          }
+          return next;
         }
         return credit;
       });
+    },
+    updateCreditFromGeneration: (
+      state,
+      action: PayloadAction<CreditsInfo & { generatedSource: string }>,
+    ) => {
+      state.list = state.list.map((credit) => credit.id === action.payload.id
+        ? {
+            ...action.payload,
+            generatedBaselineText: action.payload.text,
+            generatedSource: action.payload.generatedSource,
+            generatedTextOverridden: false,
+          }
+        : credit);
     },
     updateInitialList: (state) => {
       state.initialList = state.list.map((credit) => credit.id);
@@ -477,6 +496,7 @@ export const {
   syncVisibleCreditsMirrorAndHistory,
   deleteCredit,
   updateCredit,
+  updateCreditFromGeneration,
   initiateCreditsList,
   initiateCreditsHistory,
   deleteCreditsHistoryEntry,

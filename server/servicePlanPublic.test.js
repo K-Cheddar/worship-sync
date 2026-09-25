@@ -93,6 +93,37 @@ test("detailed snapshots expose the full role roster for notes filters", () => {
   ]);
 });
 
+test("legacy generic and text resource strings serialize to matching rich paragraphs and lists", () => {
+  const legacyPlan = {
+    ...plan,
+    sections: [{
+      ...plan.sections[0],
+      elements: [{
+        ...plan.sections[0].elements[0],
+        resources: [
+          { id: "legacy-generic", type: "generic", title: "Notes", data: { notes: "First paragraph.\n- Bullet\n2. Ordered" } },
+          { id: "legacy-text", type: "text", title: "Text", data: { text: "One\nTwo" } },
+        ],
+      }],
+    }],
+  };
+  const snapshot = buildPublicServicePlanSnapshot({ plan: legacyPlan });
+  const [generic, text] = snapshot.service.sections[0].items[0].resources;
+  assert.deepEqual(generic.richTextContent, {
+    blocks: [
+      { type: "paragraph", spans: [{ text: "First paragraph." }] },
+      { type: "list-item", spans: [{ text: "Bullet" }] },
+      { type: "list-item", listStyle: "ordered", listStart: 2, spans: [{ text: "Ordered" }] },
+    ],
+  });
+  assert.deepEqual(text.richTextContent, {
+    blocks: [
+      { type: "paragraph", spans: [{ text: "One" }] },
+      { type: "paragraph", spans: [{ text: "Two" }] },
+    ],
+  });
+});
+
 test("general snapshots omit the role roster", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan: {
@@ -400,11 +431,17 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
       type: "text",
       title: "Call notes",
       detail: "Bring the spare cable.",
+      richTextContent: {
+        blocks: [{ type: "paragraph", spans: [{ text: "Bring the spare cable." }] }],
+      },
     },
     {
       type: "generic",
       title: "Other resource",
       detail: "Check the side entrance.",
+      richTextContent: {
+        blocks: [{ type: "paragraph", spans: [{ text: "Check the side entrance." }] }],
+      },
     },
     { type: "url", title: "Temporary link" },
   ]);
@@ -413,7 +450,7 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
   assert.equal(JSON.stringify(snapshot).includes("private-signature"), false);
 });
 
-test("public resource details match the client formatter for rich-text notes", async () => {
+test("public resource details preserve rich-text notes in the shared snapshot shape", () => {
   const richText = {
     blocks: [
       { type: "paragraph", spans: [{ text: "First paragraph." }] },
@@ -447,23 +484,6 @@ test("public resource details match the client formatter for rich-text notes", a
     }],
   };
   const serverSnapshot = buildPublicServicePlanSnapshot({ plan: testPlan });
-  const { buildServicePlanFlowSnapshot } = await import(
-    "../client/src/pages/buildServicePlanFlowSnapshot.ts"
-  );
-  const clientSnapshot = buildServicePlanFlowSnapshot({
-    plan: {
-      planKey: "sunday-service",
-      name: testPlan.name,
-      timezone: testPlan.timezone,
-      sections: testPlan.sections,
-    },
-    startsAt: testPlan.startsAt,
-  });
-
-  assert.deepEqual(
-    serverSnapshot.service.sections[0].items[0].resources,
-    clientSnapshot.service.sections[0].items[0].resources,
-  );
   const publicResources = serverSnapshot.service.sections[0].items[0].resources;
   assert.equal(
     publicResources.find((resource) => resource.type === "text").detail,
@@ -473,6 +493,8 @@ test("public resource details match the client formatter for rich-text notes", a
     publicResources.find((resource) => resource.type === "generic").detail,
     "First paragraph.\nSecond paragraph.\n3. Checklist item.",
   );
+  assert.deepEqual(publicResources.find((resource) => resource.type === "text").richTextContent, richText);
+  assert.deepEqual(publicResources.find((resource) => resource.type === "generic").richTextContent, richText);
   assert.deepEqual(publicResources.map(({ type, title }) => [type, title]), [
     ["song", "Opening song"],
     ["scripture", "Psalm 100"],

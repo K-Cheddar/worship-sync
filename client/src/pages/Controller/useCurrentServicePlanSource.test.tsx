@@ -37,6 +37,7 @@ const mockListServicePlans = jest.fn();
 const mockLoadPlanPreview = jest.fn();
 const mockPersistItemListServicePlanBinding = jest.fn();
 let mockLiveHandler: ((event: unknown) => void) | null = null;
+let mockServicePlanningEnabled = true;
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
@@ -53,7 +54,7 @@ jest.mock("../../utils/itemListImports", () => ({
 jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: () => ({
     loadPlanPreview: mockLoadPlanPreview,
-    isServicePlanningEnabled: true,
+    isServicePlanningEnabled: mockServicePlanningEnabled,
   }),
 }));
 
@@ -274,6 +275,7 @@ const setVisibility = (visibility: DocumentVisibilityState) => {
 
 describe("useCurrentServicePlanSource", () => {
   beforeEach(() => {
+    mockServicePlanningEnabled = true;
     jest.clearAllMocks();
     dispatchedTypes.length = 0;
     latestResult = null;
@@ -300,6 +302,19 @@ describe("useCurrentServicePlanSource", () => {
       assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
     });
     mockLoadPlanPreview.mockResolvedValue(outlineFixture);
+  });
+
+  it("loads native saved plans when the external Service Planning integration is disabled", async () => {
+    mockServicePlanningEnabled = false;
+    mockListServicePlans.mockResolvedValue({ servicePlans: [planFixture] });
+    mockGetServicePlan.mockResolvedValue({ servicePlan: planFixture });
+    mockGetServicePlanAssignments.mockResolvedValue({ assignments: [] });
+    mockLoadPlanPreview.mockResolvedValue({ source: "servicePlanning", sections: [] });
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanDetails?.planKey).toBe(planFixture.planKey));
+    expect(mockListServicePlans).toHaveBeenCalledWith("church-1");
   });
 
   afterEach(() => {

@@ -125,6 +125,35 @@ describe("buildTeamScheduleCreditEntries", () => {
     ]);
   });
 
+  it("uses the explicitly selected future service when another occurrence is in progress", () => {
+    const { entries } = buildTeamScheduleCreditEntries({
+      teams,
+      positions,
+      members,
+      servicePlanKey: "service-2@2026-07-04",
+      now: new Date("2026-07-04T11:30:00.000Z"),
+      schedules: [
+        schedule("2026-07-04T10:00:00.000Z", {
+          "occ-1": { "camera::0": { primaryMemberId: "m1" } },
+        }),
+        schedule("2026-07-04T13:00:00.000Z", {
+          "occ-next": { "camera::0": { primaryMemberId: "m2" } },
+        }, {
+          scheduleId: "schedule-2",
+          occurrences: [{
+            occurrenceId: "occ-next",
+            serviceId: "service-2",
+            name: "Afternoon Worship",
+            startsAt: "2026-07-04T13:00:00.000Z",
+          }],
+        }),
+      ],
+    });
+
+    expect(entries[0]?.names).toBe("Bob Smith");
+    expect(entries[0]?.sourceLabel).toContain("Afternoon Worship");
+  });
+
   it("rolls to the next upcoming occurrence after the three-hour window", () => {
     const { entries } = buildTeamScheduleCreditEntries({
       teams,

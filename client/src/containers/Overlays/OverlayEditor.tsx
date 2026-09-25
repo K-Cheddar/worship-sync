@@ -458,6 +458,39 @@ const OverlayEditor = ({
         )}
         onBlurCapture={handleSectionBlur}
       >
+        {draft.type === "participant" && draft.servicePlanBaseline && (
+          draft.servicePlanReviewRequired
+          || Object.values(draft.servicePlanOverrides || {}).some(Boolean)
+        ) ? (
+          <aside className="rounded border border-amber-500/40 bg-amber-950/20 p-2 text-xs text-amber-100" aria-label="Service plan overlay differences">
+            <p className="mb-1 font-semibold">
+              {draft.servicePlanReviewRequired ? "Review this existing overlay" : "Operator edits preserved"}
+            </p>
+            <p className="mb-2 text-amber-100/80">
+              Plan sync keeps these values until you choose a plan value.
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {(["name", "title", "event"] as const)
+                .filter((field) => draft.servicePlanReviewRequired || draft.servicePlanOverrides?.[field])
+                .map((field) => (
+                  <div key={field} className="flex w-full flex-wrap items-center justify-between gap-2 rounded bg-black/20 px-2 py-1">
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="capitalize">{field}</span>: {draft[field] || "(empty)"} <span className="text-amber-300">→ {draft.servicePlanBaseline?.[field] || "(empty)"}</span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      className="min-h-7 px-2 py-1 text-[11px]"
+                      disabled={isDisabled}
+                      onClick={() => patchDraft({ [field]: draft.servicePlanBaseline?.[field] || "" })}
+                    >
+                      Use plan {field}
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          </aside>
+        ) : null}
         {draft.type === "participant" && (
           <>
             <HistorySuggestField

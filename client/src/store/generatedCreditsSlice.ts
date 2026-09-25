@@ -5,6 +5,7 @@ export type GeneratedCreditItemStatus =
   | "updating"
   | "updated"
   | "current"
+  | "preserved"
   | "missed"
   | "error";
 
@@ -16,6 +17,7 @@ export type GeneratedCreditItem = {
   nextText: string;
   status: GeneratedCreditItemStatus;
   error?: string;
+  manualOverride?: boolean;
 };
 
 export type GeneratedCreditsState = {
@@ -89,7 +91,7 @@ export const generatedCreditsSlice = createSlice({
       state,
       action: PayloadAction<{
         creditId: string;
-        status: Extract<GeneratedCreditItemStatus, "updated" | "current">;
+        status: Extract<GeneratedCreditItemStatus, "updated" | "current" | "preserved">;
       }>,
     ) => {
       const item = state.items.find((entry) => entry.creditId === action.payload.creditId);

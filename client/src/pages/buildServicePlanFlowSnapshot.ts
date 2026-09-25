@@ -5,6 +5,8 @@ import {
 } from "../types/servicePlan";
 import {
   normalizeRichTextDocument,
+  isRichTextEmpty,
+  multilineTextToRichText,
   richTextToFormattedPlainText,
   richTextToPlainText,
 } from "../types/richText";
@@ -14,6 +16,7 @@ import {
   getPublicServicePlanResourceTitle,
   getSafePublicServicePlanResourceUrl,
   getServicePlanResourceNotes,
+  getServicePlanResourceRichNotes,
   getServicePlanResourceText,
 } from "./Services/servicePlanResources";
 
@@ -36,17 +39,27 @@ const getPublicResourceDetail = (
   return detail.trim() || undefined;
 };
 
+const getPublicResourceRichText = (
+  resource: ReturnType<typeof getServicePlanElementContentResources>[number],
+) => resource.type === "text"
+  ? getServicePlanResourceText(resource)
+  : resource.type === "generic"
+    ? getServicePlanResourceRichNotes(resource)
+    : multilineTextToRichText("");
+
 const getPublicResources = (
   element: Parameters<typeof getServicePlanElementContentResources>[0],
 ) =>
   getServicePlanElementContentResources(element).map((resource) => {
     const detail = getPublicResourceDetail(resource);
+    const richTextContent = getPublicResourceRichText(resource);
     const url = getSafePublicServicePlanResourceUrl(resource);
     return {
       type: resource.type,
       title: getPublicServicePlanResourceTitle(resource),
       ...(url ? { url } : {}),
       ...(detail ? { detail } : {}),
+      ...(!isRichTextEmpty(richTextContent) ? { richTextContent } : {}),
     };
   });
 
