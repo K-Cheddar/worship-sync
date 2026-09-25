@@ -52,6 +52,7 @@ export type MenuItemType = {
   subItems?: MenuSubItemType[];
   variant?: "default" | "destructive";
   disabled?: boolean;
+  "aria-expanded"?: React.AriaAttributes["aria-expanded"];
 };
 
 export type Box = {

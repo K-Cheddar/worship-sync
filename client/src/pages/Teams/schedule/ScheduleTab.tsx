@@ -734,7 +734,7 @@ const ScheduleTab = ({
   const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
   const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
-  const scheduleMessagesTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
   const wasMembersDrawerOpenRef = useRef(false);
@@ -891,7 +891,7 @@ const ScheduleTab = ({
     if (scheduleMessagesOpen) {
       wasScheduleMessagesOpenRef.current = true;
     } else if (wasScheduleMessagesOpenRef.current) {
-      scheduleMessagesTriggerRef.current?.focus();
+      scheduleActionsTriggerRef.current?.focus();
       wasScheduleMessagesOpenRef.current = false;
     }
   }, [scheduleMessagesOpen]);
@@ -1395,6 +1395,7 @@ const ScheduleTab = ({
       if (!(target instanceof Element)) return;
       if (target.closest("[data-schedule-assignment-menu]")) return;
       if (target.closest("[data-schedule-members-panel]")) return;
+      if (target.closest("[data-schedule-members-trigger]")) return;
       if (target.closest("[data-schedule-cell-trigger]")) return;
       clearActiveSlot();
     };
@@ -4356,13 +4357,13 @@ const ScheduleTab = ({
                 </div>
               ) : null}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
-                <div className="flex flex-wrap items-end gap-2">
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
                   {/* Narrowing the picker to one team is remembered per church,
                       so an operator who only runs Praise Team doesn't scroll
                       past every other team's months on each visit. */}
                   {activeTeams.length > 1 ? (
                     <Select
-                      className="min-w-40"
+                      className="w-full sm:min-w-40 sm:w-auto"
                       label="Filter schedules by team"
                       hideLabel
                       value={scheduleTeamFilter || ""}
@@ -4371,7 +4372,7 @@ const ScheduleTab = ({
                     />
                   ) : null}
                   <Select
-                    className="min-w-48"
+                    className="w-full sm:min-w-48 sm:w-auto"
                     label="Open schedule"
                     hideLabel
                     // Bind to the record, not the hydrated schedule, so the name
@@ -4460,54 +4461,35 @@ const ScheduleTab = ({
                       </PopoverContent>
                     </Popover>
                   ) : null}
-                  {canEdit && selectedSchedule && shouldOverlayMembers ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      svg={Users}
-                      iconSize="sm"
-                      ref={membersDrawerTriggerRef}
-                      aria-expanded={membersPanelOpen}
-                      onClick={() => {
-                        if (!membersPanelOpen) setScheduleMessagesOpen(false);
-                        setMembersPanelOpen((open) => !open);
-                      }}
-                    >
-                      Members
-                    </Button>
-                  ) : null}
-                  {canEdit && selectedSchedule ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        svg={MessageSquareText}
-                        iconSize="sm"
-                        ref={scheduleMessagesTriggerRef}
-                        aria-expanded={scheduleMessagesOpen}
-                        onClick={() => {
-                          if (shouldOverlayMembers) setMembersPanelOpen(false);
-                          setScheduleMessagesOpen(true);
-                        }}
-                      >
-                        Messages
-                        {scheduleMessagesRequiringAttention > 0 ? (
-                          <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
-                            {scheduleMessagesRequiringAttention}
-                          </span>
-                        ) : null}
-                      </Button>
-                      {scheduleNotificationIntents.length > 0 ? (
-                        <span className="hidden max-w-56 truncate text-xs text-gray-400 sm:inline">
-                          {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
                   {canEdit && selectedSchedule ? (
                     <Menu
                       align="end"
                       menuItems={[
+                        {
+                          element: (
+                            <span className="flex min-w-0 flex-col gap-0.5">
+                              <span className="flex items-center gap-2">
+                                <MessageSquareText className="h-4 w-4" aria-hidden />
+                                Messages
+                                {scheduleMessagesRequiringAttention > 0 ? (
+                                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
+                                    {scheduleMessagesRequiringAttention}
+                                  </span>
+                                ) : null}
+                              </span>
+                              {scheduleNotificationIntents.length > 0 ? (
+                                <span className="pl-6 text-xs text-gray-400">
+                                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
+                                </span>
+                              ) : null}
+                            </span>
+                          ),
+                          onClick: () => {
+                            if (shouldOverlayMembers) setMembersPanelOpen(false);
+                            setScheduleMessagesOpen(true);
+                          },
+                          "aria-expanded": scheduleMessagesOpen,
+                        },
                         {
                           element: (
                             <span className="flex items-center gap-2">
@@ -4532,6 +4514,7 @@ const ScheduleTab = ({
                           variant="tertiary"
                           svg={MoreHorizontal}
                           iconSize="sm"
+                          ref={scheduleActionsTriggerRef}
                           aria-label="More schedule options"
                         />
                       }
@@ -4550,10 +4533,29 @@ const ScheduleTab = ({
               <div className="shrink-0">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
-                      <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
-                      Team schedule
-                    </h2>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
+                        <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
+                        Team schedule
+                      </h2>
+                      {selectedSchedule && shouldOverlayMembers ? (
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={Users}
+                          iconSize="sm"
+                          ref={membersDrawerTriggerRef}
+                          data-schedule-members-trigger
+                          aria-expanded={membersPanelOpen}
+                          onClick={() => {
+                            if (!membersPanelOpen) setScheduleMessagesOpen(false);
+                            setMembersPanelOpen((open) => !open);
+                          }}
+                        >
+                          Members
+                        </Button>
+                      ) : null}
+                    </div>
                     {/* The picker shows only the schedule name, and teams reuse the
                         same names — name the team the grid belongs to. */}
                     {selectedTeam ? (

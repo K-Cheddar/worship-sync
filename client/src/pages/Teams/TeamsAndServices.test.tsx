@@ -18,6 +18,7 @@ import {
   getNotificationIntents,
   getTeamsBootstrap,
   listServicePlans,
+  sendTeamSchedule,
   updateTeam,
   updateTeamPosition,
   updateTeamSchedule,
@@ -84,6 +85,7 @@ jest.mock("../../api/auth", () => ({
   },
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
+  sendTeamSchedule: jest.fn(),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
   listServicePlans: jest.fn(),
   getServicePlanMicrophones: jest.fn(),
@@ -112,6 +114,7 @@ jest.mock("../../api/auth", () => ({
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
 const mockGetNotificationIntents = jest.mocked(getNotificationIntents);
+const mockSendTeamSchedule = jest.mocked(sendTeamSchedule);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockCreateTeamPosition = jest.mocked(createTeamPosition);
@@ -1963,7 +1966,7 @@ describe("Teams", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the schedule available while Messages and Members open in drawers", async () => {
+  it("keeps Messages in schedule overflow and opens Members beside the workspace on narrow layouts", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
@@ -1975,20 +1978,90 @@ describe("Teams", () => {
 
     const scheduleCell = await screen.findByRole("button", { name: /Sunday Vocal/i });
     expect(screen.queryByRole("heading", { name: "Schedule messages" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Messages/i }));
+    expect(screen.getByRole("button", { name: /^Members$/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Messages/i }));
     expect(await screen.findByText("No assignment messages for this schedule.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByText("No assignment messages for this schedule.")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /Messages/i })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /More schedule options/i })).toHaveFocus();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^Members$/i }));
-    expect(await screen.findByRole("dialog", { name: "Members" })).toBeInTheDocument();
+    const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(within(membersDrawer).getByPlaceholderText("Search members…")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Schedule messages" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
     expect(scheduleCell).toBeInTheDocument();
+
+    await user.type(within(membersDrawer).getByPlaceholderText("Search members…"), "Morgan");
+    expect(within(membersDrawer).getByRole("button", { name: /Highlight Morgan on the grid/i })).toBeInTheDocument();
+    expect(within(membersDrawer).queryByRole("button", { name: /Highlight Avery on the grid/i })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /^Members$/i }));
+    const reopenedMembersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(within(reopenedMembersDrawer).getByPlaceholderText("Search members…")).toHaveValue("Morgan");
+  });
+
+  it("shows Members inline on wide layouts without a Members toolbar button", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByRole("complementary", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Members$/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps New schedule and Send schedule actions available with send confirmation", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByRole("button", { name: /New schedule/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Send schedule/i }));
+    expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockSendTeamSchedule).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /New schedule/i }));
+    expect(await screen.findByRole("textbox", { name: /^Name:?$/i })).toBeInTheDocument();
+  });
+
+  it("opens Members in assignment mode when a schedule slot is active", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {
+              [sundayOccurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-avery" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    window.matchMedia = makeMatchMedia(true);
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Avery/i, "Find a sub");
+    await user.click(screen.getByRole("button", { name: /^Members$/i }));
+
+    const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(within(membersDrawer).getByText("Assigning")).toBeInTheDocument();
+    expect(within(membersDrawer).getByText(/Vocal.*Jul 5, 2026/i)).toBeInTheDocument();
   });
 
   it("shows unique message attention counts and delivery status in the toolbar", async () => {
@@ -2038,9 +2111,9 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByText(/1 pending · 1 delivered · 1 failed/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Messages 2/i })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Messages/i }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    expect(screen.getByRole("menuitem", { name: /Messages 2.*1 pending · 1 delivered · 1 failed/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /Messages/i }));
     expect(await screen.findByText("Uncertain 1")).toBeInTheDocument();
     expect(screen.getByText("Delivery: failed · Volunteer: waiting")).toBeInTheDocument();
     expect(screen.getByText(/Provider outcome uncertain/)).toBeInTheDocument();
