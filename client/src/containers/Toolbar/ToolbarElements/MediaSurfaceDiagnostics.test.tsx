@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import { useRemoteMediaPreparationReadinessReports } from "../../../hooks/useMediaPreparationManifest";
+import { readMediaPreparationPublicationStatus, useRemoteMediaPreparationManifest, useRemoteMediaPreparationReadinessReports } from "../../../hooks/useMediaPreparationManifest";
 import type { MediaPreparationReadinessReport } from "../../../utils/mediaPreparationManifest";
 import MediaSurfaceDiagnostics from "./MediaSurfaceDiagnostics";
 import displayOutputsReducer from "../../../store/displayOutputsSlice";
@@ -9,12 +9,16 @@ import type { DisplayOutput } from "../../../utils/displayOutputs";
 import { sanitizeForCopy } from "./MediaSurfaceDiagnostics";
 
 jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
+  MEDIA_PREPARATION_PUBLISHER_SESSION_ID: "publisher-current",
   MEDIA_READINESS_STATUS_EVENT: "worship-sync-media-readiness-status",
   readMediaPreparationPublicationStatus: jest.fn(() => undefined),
+  useRemoteMediaPreparationManifest: jest.fn(() => ({ manifest: undefined, cacheMap: {}, manifestReceivedAt: undefined })),
   useRemoteMediaPreparationReadinessReports: jest.fn(() => []),
 }));
 
 const mockUseReadinessReports = jest.mocked(useRemoteMediaPreparationReadinessReports);
+const mockUseManifest = jest.mocked(useRemoteMediaPreparationManifest);
+const mockReadPublication = jest.mocked(readMediaPreparationPublicationStatus);
 
 const renderDiagnostics = () => {
   const list: DisplayOutput[] = [
@@ -53,6 +57,8 @@ const renderDiagnostics = () => {
 
 beforeEach(() => {
   mockUseReadinessReports.mockReturnValue([]);
+  mockUseManifest.mockReturnValue({ manifest: undefined, cacheMap: {}, manifestReceivedAt: undefined });
+  mockReadPublication.mockReturnValue(undefined);
 });
 
 const publish = (outputId: string, readyCount: number, candidateCount: number) => {
@@ -136,6 +142,8 @@ describe("MediaSurfaceDiagnostics", () => {
       deviceId: "device-abc123", sessionId: "window-000001", reportedAt: now,
       manifestRevision: 3, manifestReceivedAt: now - 1000, source: "remote-manifest",
       candidateCount: 2, finiteCandidateCount: 2, pendingCacheCount: 0,
+      selectedCandidateCount: 2, selectedFiniteCandidateCount: 2, selectedPendingCacheCount: 0, selectedExcludedCount: 0,
+      selectedFiniteInventoryCount: 2, deferredFiniteCount: 0, mountedSurfaceCount: 2,
       readyCount: 2, preparingCount: 0, failedCount: 0, errors: [],
       ...overrides,
     });
@@ -146,10 +154,11 @@ describe("MediaSurfaceDiagnostics", () => {
       makeReport({ deviceId: "device-old777", sessionId: "window-000004", reportedAt: now - 200_000 }),
     ];
     mockUseReadinessReports.mockImplementation(({ outputId }) => outputId === "projector" ? reports : []);
+    mockUseManifest.mockReturnValue({ manifest: { revision: 3 } as never, cacheMap: {}, manifestReceivedAt: now - 20_000_000 });
     renderDiagnostics();
     fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
     act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-manifest-publish-status", {
-      detail: { outputId: "projector", state: "published", desiredRevision: 3, publishedAt: now },
+      detail: { outputId: "projector", state: "published", desiredRevision: 3, publishedAt: now - 7 * 60 * 60_000, publisherSessionId: "publisher-current" },
     })));
 
     const card = (name: string) => screen.getByRole("group", { name });
@@ -158,7 +167,7 @@ describe("MediaSurfaceDiagnostics", () => {
     const other = card("Remote device 2");
     const offline = card("Remote device 3");
     expect(healthy).toHaveTextContent("r3 · matches desired revision");
-    expect(healthy).toHaveTextContent("2 videos: 2/2 finite ready · 0 preparing · 0 failed");
+    expect(healthy).toHaveTextContent("selected 2/2 finite ready · 0 preparing · 0 failed");
     expect(healthy).toHaveTextContent("Ready");
     expect(failing).toHaveTextContent("desired r3 not confirmed");
     expect(failing).toHaveTextContent("decode failed");
@@ -167,6 +176,40 @@ describe("MediaSurfaceDiagnostics", () => {
     act(() => { jest.advanceTimersByTime(50_000); });
     expect(card("Remote device 1")).toHaveTextContent("Stale");
     jest.useRealTimers();
+  });
+
+  it("keeps an unchanged publication current for hours and rejects stale prior-renderer status", () => {
+    const now = Date.now();
+    const report: MediaPreparationReadinessReport = {
+      contract: "worshipsync.media-preparation-readiness", version: 1, outputId: "projector",
+      deviceId: "device-long-running", sessionId: "window-current", reportedAt: now,
+      manifestRevision: 8, manifestReceivedAt: now - 60_000, source: "remote-manifest",
+      candidateCount: 1, finiteCandidateCount: 1, pendingCacheCount: 0, readyCount: 1,
+      preparingCount: 0, failedCount: 0, selectedCandidateCount: 1, selectedFiniteCandidateCount: 1,
+      selectedPendingCacheCount: 0, selectedExcludedCount: 0, selectedFiniteInventoryCount: 1,
+      deferredFiniteCount: 0, mountedSurfaceCount: 1, errors: [],
+    };
+    mockUseReadinessReports.mockImplementation(({ outputId }) => outputId === "projector" ? [report] : []);
+    mockUseManifest.mockReturnValue({ manifest: { revision: 8 } as never, cacheMap: {}, manifestReceivedAt: now - 10_000 });
+    mockReadPublication.mockReturnValue({
+      outputId: "projector", state: "published", desiredRevision: 8,
+      publishedAt: now - 7 * 60 * 60_000, publisherSessionId: "publisher-current",
+    });
+    const { unmount } = renderDiagnostics();
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+    const card = screen.getByRole("group", { name: "Remote device 1" });
+    expect(card).toHaveTextContent("Ready");
+    unmount();
+    cleanup();
+
+    mockReadPublication.mockReturnValue({
+      outputId: "projector", state: "published", desiredRevision: 8,
+      publishedAt: now, publisherSessionId: "previous-renderer-session",
+    });
+    renderDiagnostics();
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+    expect(screen.getByRole("group", { name: "Remote device 1" })).not.toHaveTextContent("Ready");
+    expect(screen.getAllByText("Firebase has r8; current publish result unavailable")).toHaveLength(2);
   });
 
   it("removes every signed URL query and nested credential from copied reports", async () => {

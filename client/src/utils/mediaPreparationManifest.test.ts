@@ -90,7 +90,7 @@ describe("media preparation manifest", () => {
       [{ mediaKey: "mux:hls", status: "pending-cache" }],
       [{ mediaKey: "mux:hls", phase: "error" }],
     );
-    expect(counts).toEqual({
+    expect(counts).toMatchObject({
       candidateCount: 1,
       finiteCandidateCount: 0,
       pendingCacheCount: 1,
@@ -100,6 +100,8 @@ describe("media preparation manifest", () => {
       failedCount: 0,
       pendingCacheFailedCount: 1,
       excludedFailedCount: 0,
+      selectedCandidateCount: 1,
+      selectedPendingCacheCount: 1,
     });
     expect(isMediaPreparationReadinessReport({
       contract: "worshipsync.media-preparation-readiness",
@@ -158,6 +160,37 @@ describe("media preparation manifest", () => {
       ],
     );
     expect(counts).toMatchObject({ readyCount: 2, preparingCount: 1, failedCount: 1, finiteCandidateCount: 4 });
+  });
+
+  it("separates complete inventory from a changing bounded selection, duplicates, and protected transition media", () => {
+    const inventory = Array.from({ length: 30 }, (_, index) => ({
+      mediaKey: `finite:${index}`,
+      status: "eligible" as const,
+    }));
+    const selected = [...inventory.slice(0, 24), { mediaKey: "finite:0", status: "eligible" as const }];
+    const ready = selected.map(({ mediaKey }) => ({ mediaKey, phase: "ready-paused" }));
+    const underBudget = buildMediaPreparationReadinessCounts(inventory.slice(0, 10), [], inventory.slice(0, 8), 8);
+    const exactlyBudget = buildMediaPreparationReadinessCounts(inventory.slice(0, 24), [], inventory.slice(0, 24), 24);
+    const overBudget = buildMediaPreparationReadinessCounts(
+      inventory,
+      [...ready, { mediaKey: "protected:current", phase: "active-playing" }, { mediaKey: "protected:outgoing", phase: "ready-paused" }],
+      [...selected, { mediaKey: "protected:current", status: "eligible" }, { mediaKey: "protected:outgoing", status: "eligible" }],
+      26,
+    );
+    expect(underBudget).toMatchObject({ candidateCount: 10, selectedCandidateCount: 8, deferredFiniteCount: 2 });
+    expect(exactlyBudget).toMatchObject({ candidateCount: 24, selectedCandidateCount: 24, deferredFiniteCount: 0 });
+    expect(overBudget).toMatchObject({
+      candidateCount: 30,
+      finiteCandidateCount: 30,
+      selectedCandidateCount: 26,
+      selectedFiniteCandidateCount: 26,
+      selectedFiniteInventoryCount: 24,
+      deferredFiniteCount: 6,
+      mountedSurfaceCount: 26,
+      readyCount: 26,
+    });
+    const movedSelection = buildMediaPreparationReadinessCounts(inventory, [], inventory.slice(6, 30), 24);
+    expect(movedSelection).toMatchObject({ selectedCandidateCount: 24, deferredFiniteCount: 6, readyCount: 0 });
   });
 
   it("accepts portable HTTP URLs without treating renderer checks as SSRF validation", () => {

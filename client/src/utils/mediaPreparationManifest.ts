@@ -46,17 +46,29 @@ export type MediaPreparationReadinessReport = {
   source: "remote-manifest" | "cached-manifest" | "local-fallback" | "browser-poster";
   /** Unique media identities in this report's inventory population. */
   candidateCount: number;
-  /** Unique finite playable sources; readiness states below partition only this population. */
+  /** Unique finite playable identities in the full inventory. */
   finiteCandidateCount: number;
   /** Unique HLS/non-finite sources waiting for a finite local cache rendition. */
   pendingCacheCount: number;
-  /** Failures are partitioned by source population; finite counts below only describe finite playable sources. */
+  /** For new reports, ready/preparing/failed partition selected finite candidates; legacy v1 reports retain their original interpretation. */
   excludedCount?: number;
   readyCount: number;
   preparingCount: number;
   failedCount: number;
+  /** Pending/excluded failures are from selected candidates only. */
   pendingCacheFailedCount?: number;
   excludedFailedCount?: number;
+  /** Effective bounded pool selection, including protected transition candidates. */
+  selectedCandidateCount?: number;
+  selectedFiniteCandidateCount?: number;
+  selectedPendingCacheCount?: number;
+  selectedExcludedCount?: number;
+  /** Selected finite identities that belong to the inventory; protected extras are separate. */
+  selectedFiniteInventoryCount?: number;
+  /** Inventory finite identities omitted by the bounded pool. */
+  deferredFiniteCount?: number;
+  /** Number of preparation surfaces actually mounted for the selected set. */
+  mountedSurfaceCount?: number;
   errors: string[];
 };
 
@@ -67,6 +79,8 @@ export type ReadinessSurfacePhase = "ready-paused" | "active-playing" | "prepari
 export const buildMediaPreparationReadinessCounts = (
   candidates: Array<{ mediaKey: string; status: ReadinessCandidateState }>,
   surfaces: Array<{ mediaKey: string; phase: ReadinessSurfacePhase }>,
+  selectedCandidates: Array<{ mediaKey: string; status: ReadinessCandidateState }> = candidates,
+  mountedSurfaceCount?: number,
 ) => {
   const byKey = new Map<string, ReadinessCandidateState>();
   const priority: Record<ReadinessCandidateState, number> = { excluded: 0, "pending-cache": 1, eligible: 2 };
@@ -77,9 +91,17 @@ export const buildMediaPreparationReadinessCounts = (
   const finite = new Set([...byKey].filter(([, status]) => status === "eligible").map(([key]) => key));
   const pending = new Set([...byKey].filter(([, status]) => status === "pending-cache").map(([key]) => key));
   const excluded = new Set([...byKey].filter(([, status]) => status === "excluded").map(([key]) => key));
+  const selectedByKey = new Map<string, ReadinessCandidateState>();
+  selectedCandidates.forEach(({ mediaKey, status }) => {
+    const current = selectedByKey.get(mediaKey);
+    if (!current || priority[status] > priority[current]) selectedByKey.set(mediaKey, status);
+  });
+  const selectedFinite = new Set([...selectedByKey].filter(([, status]) => status === "eligible").map(([key]) => key));
+  const selectedPending = new Set([...selectedByKey].filter(([, status]) => status === "pending-cache").map(([key]) => key));
+  const selectedExcluded = new Set([...selectedByKey].filter(([, status]) => status === "excluded").map(([key]) => key));
   const stateByKey = new Map<string, "ready" | "preparing" | "failed">();
   surfaces.forEach(({ mediaKey, phase }) => {
-    if (!finite.has(mediaKey) && !pending.has(mediaKey) && !excluded.has(mediaKey)) return;
+    if (!finite.has(mediaKey) && !pending.has(mediaKey) && !excluded.has(mediaKey) && !selectedByKey.has(mediaKey)) return;
     const next = phase === "ready-paused" || phase === "active-playing"
       ? "ready"
       : phase === "preparing" || phase === "activation-requested"
@@ -91,16 +113,27 @@ export const buildMediaPreparationReadinessCounts = (
     }
   });
   const failed = new Set([...stateByKey].filter(([, state]) => state === "failed").map(([key]) => key));
+  const selectedReadyCount = [...stateByKey].filter(([key, state]) => selectedFinite.has(key) && state === "ready").length;
+  const selectedPreparingCount = [...stateByKey].filter(([key, state]) => selectedFinite.has(key) && state === "preparing").length;
+  const selectedFailedCount = [...stateByKey].filter(([key, state]) => selectedFinite.has(key) && state === "failed").length;
+  const selectedFiniteInventoryCount = [...selectedFinite].filter((key) => finite.has(key)).length;
   return {
     candidateCount: byKey.size,
     finiteCandidateCount: finite.size,
     pendingCacheCount: pending.size,
     excludedCount: excluded.size,
-    readyCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "ready").length,
-    preparingCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "preparing").length,
-    failedCount: [...stateByKey].filter(([key, state]) => finite.has(key) && state === "failed").length,
-    pendingCacheFailedCount: [...failed].filter((key) => pending.has(key)).length,
-    excludedFailedCount: [...failed].filter((key) => excluded.has(key)).length,
+    selectedCandidateCount: selectedByKey.size,
+    selectedFiniteCandidateCount: selectedFinite.size,
+    selectedPendingCacheCount: selectedPending.size,
+    selectedExcludedCount: selectedExcluded.size,
+    selectedFiniteInventoryCount,
+    deferredFiniteCount: Math.max(0, finite.size - selectedFiniteInventoryCount),
+    mountedSurfaceCount: Math.max(0, Math.min(selectedByKey.size, Math.floor(mountedSurfaceCount ?? selectedFinite.size))),
+    readyCount: selectedReadyCount,
+    preparingCount: selectedPreparingCount,
+    failedCount: selectedFailedCount,
+    pendingCacheFailedCount: [...failed].filter((key) => selectedPending.has(key)).length,
+    excludedFailedCount: [...failed].filter((key) => selectedExcluded.has(key)).length,
   };
 };
 
@@ -110,6 +143,23 @@ export const isMediaPreparationReadinessReport = (
   if (!value || typeof value !== "object") return false;
   const report = value as Partial<MediaPreparationReadinessReport>;
   const count = (entry: unknown) => Number.isInteger(entry) && Number(entry) >= 0 && Number(entry) <= 50_000;
+  const selectedFields = [
+    report.selectedCandidateCount, report.selectedFiniteCandidateCount,
+    report.selectedPendingCacheCount, report.selectedExcludedCount,
+    report.selectedFiniteInventoryCount, report.deferredFiniteCount,
+    report.mountedSurfaceCount,
+  ];
+  const hasSelection = selectedFields.some((entry) => entry !== undefined);
+  const validSelection = !hasSelection || (
+    selectedFields.every(count) &&
+    Number(report.selectedFiniteCandidateCount) + Number(report.selectedPendingCacheCount) + Number(report.selectedExcludedCount) === Number(report.selectedCandidateCount) &&
+    Number(report.selectedFiniteInventoryCount) <= Number(report.finiteCandidateCount) &&
+    Number(report.selectedFiniteInventoryCount) + Number(report.deferredFiniteCount) === Number(report.finiteCandidateCount) &&
+    Number(report.mountedSurfaceCount) <= Number(report.selectedCandidateCount) &&
+    Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.selectedFiniteCandidateCount) &&
+    Number(report.pendingCacheFailedCount ?? 0) <= Number(report.selectedPendingCacheCount) &&
+    Number(report.excludedFailedCount ?? 0) <= Number(report.selectedExcludedCount)
+  );
   return (
     report.contract === "worshipsync.media-preparation-readiness" &&
     report.version === 1 &&
@@ -133,9 +183,14 @@ export const isMediaPreparationReadinessReport = (
     Number(report.pendingCacheCount) <= Number(report.candidateCount) &&
     Number(report.excludedCount ?? 0) <= Number(report.candidateCount) &&
     Number(report.finiteCandidateCount) + Number(report.pendingCacheCount) + Number(report.excludedCount ?? 0) <= Number(report.candidateCount) &&
-    Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.finiteCandidateCount) &&
-    Number(report.pendingCacheFailedCount ?? 0) <= Number(report.pendingCacheCount) &&
-    Number(report.excludedFailedCount ?? 0) <= Number(report.excludedCount ?? 0) &&
+    (hasSelection || Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.finiteCandidateCount)) &&
+    validSelection &&
+    (hasSelection
+      ? Number(report.pendingCacheFailedCount ?? 0) <= Number(report.selectedPendingCacheCount)
+      : Number(report.pendingCacheFailedCount ?? 0) <= Number(report.pendingCacheCount)) &&
+    (hasSelection
+      ? Number(report.excludedFailedCount ?? 0) <= Number(report.selectedExcludedCount)
+      : Number(report.excludedFailedCount ?? 0) <= Number(report.excludedCount ?? 0)) &&
     (report.source !== "remote-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt !== null)) &&
     (report.source !== "cached-manifest" || (report.manifestRevision !== null && report.manifestReceivedAt === null)) &&
     Array.isArray(report.errors) &&

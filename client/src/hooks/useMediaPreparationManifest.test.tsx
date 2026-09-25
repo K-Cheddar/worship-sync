@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { onValue, ref, runTransaction, set } from "firebase/database";
+import { onDisconnect, onValue, ref, runTransaction, set } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   useRemoteMediaPreparationManifest,
@@ -19,7 +19,7 @@ import type { ElectronMediaDiscovery } from "../utils/electronMediaSurfaceDiagno
 
 jest.mock("firebase/database", () => ({
   onValue: jest.fn(),
-  onDisconnect: jest.fn(() => ({ remove: jest.fn().mockResolvedValue(undefined) })),
+  onDisconnect: jest.fn(() => ({ remove: jest.fn().mockResolvedValue(undefined), cancel: jest.fn().mockResolvedValue(undefined) })),
   remove: jest.fn().mockResolvedValue(undefined),
   set: jest.fn(),
   ref: jest.fn((_db: unknown, path: string) => ({ path })),
@@ -30,6 +30,7 @@ const onValueMock = jest.mocked(onValue) as jest.Mock;
 const refMock = jest.mocked(ref);
 const runTransactionMock = jest.mocked(runTransaction) as jest.Mock;
 const setMock = jest.mocked(set) as jest.Mock;
+const onDisconnectMock = jest.mocked(onDisconnect) as jest.Mock;
 
 const manifest: MediaPreparationManifest = {
   contract: "worshipsync.media-preparation",
@@ -64,6 +65,8 @@ describe("useRemoteMediaPreparationManifest", () => {
     refMock.mockClear();
     runTransactionMock.mockReset();
     setMock.mockReset();
+    onDisconnectMock.mockReset();
+    onDisconnectMock.mockImplementation(() => ({ remove: jest.fn().mockResolvedValue(undefined), cancel: jest.fn().mockResolvedValue(undefined) }) as never);
     runTransactionMock.mockImplementation(
       async (_target: unknown, update: (current: unknown) => unknown) => {
         const value = update(undefined);
@@ -310,12 +313,109 @@ describe("useRemoteMediaPreparationManifest", () => {
       expect(setMock).toHaveBeenCalledTimes(2);
       const serialized = setMock.mock.calls[1][1];
       expect(isMediaPreparationReadinessReport(serialized)).toBe(true);
-      expect(serialized).toMatchObject({ finiteCandidateCount: 0, pendingCacheCount: 1, pendingCacheFailedCount: 1, errors: ["Mux finite rendition failed"] });
+      expect(serialized).toMatchObject({ finiteCandidateCount: 0, pendingCacheCount: 1, pendingCacheFailedCount: 1, selectedCandidateCount: 1, selectedFiniteCandidateCount: 0, selectedPendingCacheCount: 1, mountedSurfaceCount: 0, errors: ["Mux finite rendition failed"] });
       expect(statusEvents).toContain("temporarily-unavailable");
       expect(statusEvents).toContain("reporting");
     } finally {
       view.unmount();
       window.removeEventListener(MEDIA_READINESS_STATUS_EVENT, onStatus);
+      jest.useRealTimers();
+    }
+  });
+
+  it("serializes the effective selected pool separately from a larger remote inventory", async () => {
+    const inventory = Array.from({ length: 30 }, (_, index) => ({ mediaKey: `remote:${index}`, status: "eligible" as const }));
+    const selected = [...inventory.slice(0, 24), { mediaKey: "protected:current", status: "eligible" as const }, { mediaKey: "protected:outgoing", status: "eligible" as const }];
+    const surfaces = selected.map(({ mediaKey }) => ({ mediaKey, phase: "ready-paused" }));
+    const counts = buildMediaPreparationReadinessCounts(inventory, surfaces, selected, 26);
+    setMock.mockResolvedValue(undefined);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId: "church-pool-report", sharedDataReady: true } as never}>{children}</GlobalInfoContext.Provider>
+    );
+    const view = renderHook(() => useReportRemoteMediaPreparationReadiness({
+      enabled: true, outputId: "projector", source: "remote-manifest", manifest, manifestReceivedAt: Date.now(), ...counts, errors: [],
+    }), { wrapper });
+    try {
+      await waitFor(() => expect(setMock).toHaveBeenCalled());
+      const serialized = setMock.mock.calls.at(-1)?.[1];
+      expect(isMediaPreparationReadinessReport(serialized)).toBe(true);
+      expect(serialized).toMatchObject({
+        candidateCount: 30, finiteCandidateCount: 30, selectedCandidateCount: 26,
+        selectedFiniteCandidateCount: 26, selectedFiniteInventoryCount: 24,
+        deferredFiniteCount: 6, mountedSurfaceCount: 26, readyCount: 26,
+      });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("re-registers the session-leaf disconnect cleanup after every Firebase reconnection", async () => {
+    jest.useFakeTimers();
+    let connectedCallback: ((snapshot: { val: () => unknown }) => void) | undefined;
+    onDisconnectMock.mockClear();
+    onValueMock.mockImplementation((target: { path?: string }, callback: (snapshot: { val: () => unknown }) => void) => {
+      if (target.path === ".info/connected") {
+        connectedCallback = callback;
+        callback({ val: () => true });
+      }
+      return jest.fn();
+    });
+    setMock.mockResolvedValue(undefined);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId: "church-reconnect", sharedDataReady: true } as never}>{children}</GlobalInfoContext.Provider>
+    );
+    const view = renderHook(() => useReportRemoteMediaPreparationReadiness({
+      enabled: true, outputId: "projector", source: "browser-poster", candidateCount: 0,
+      finiteCandidateCount: 0, pendingCacheCount: 0, readyCount: 0, preparingCount: 0, failedCount: 0, errors: [],
+    }), { wrapper });
+    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(onDisconnectMock).toHaveBeenCalledTimes(1);
+      expect(setMock).toHaveBeenCalledTimes(1);
+      act(() => connectedCallback?.({ val: () => false }));
+      act(() => connectedCallback?.({ val: () => true }));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(onDisconnectMock).toHaveBeenCalledTimes(2);
+      act(() => connectedCallback?.({ val: () => false }));
+      act(() => connectedCallback?.({ val: () => true }));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(onDisconnectMock).toHaveBeenCalledTimes(3);
+      expect(onDisconnectMock.mock.calls.map(([target]) => target)).toEqual([onDisconnectMock.mock.calls[0][0], onDisconnectMock.mock.calls[0][0], onDisconnectMock.mock.calls[0][0]]);
+    } finally {
+      view.unmount();
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it("waits for disconnect cleanup registration and retries a transient registration failure", async () => {
+    jest.useFakeTimers();
+    onDisconnectMock.mockClear();
+    onDisconnectMock.mockImplementationOnce(() => ({
+      remove: jest.fn().mockRejectedValue(new Error("network unavailable")),
+      cancel: jest.fn().mockResolvedValue(undefined),
+    }) as never);
+    onValueMock.mockImplementation((target: { path?: string }, callback: (snapshot: { val: () => unknown }) => void) => {
+      if (target.path === ".info/connected") callback({ val: () => true });
+      return jest.fn();
+    });
+    setMock.mockResolvedValue(undefined);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId: "church-on-disconnect-retry", sharedDataReady: true } as never}>{children}</GlobalInfoContext.Provider>
+    );
+    const view = renderHook(() => useReportRemoteMediaPreparationReadiness({
+      enabled: true, outputId: "projector", source: "browser-poster", candidateCount: 0,
+      finiteCandidateCount: 0, pendingCacheCount: 0, readyCount: 0, preparingCount: 0, failedCount: 0, errors: [],
+    }), { wrapper });
+    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(setMock).not.toHaveBeenCalled();
+      await act(async () => { await jest.advanceTimersByTimeAsync(1000); });
+      expect(onDisconnectMock).toHaveBeenCalledTimes(2);
+      expect(setMock).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      jest.clearAllTimers();
       jest.useRealTimers();
     }
   });
@@ -753,6 +853,61 @@ describe("useRemoteMediaPreparationManifest", () => {
     } finally {
       view.unmount();
       window.removeEventListener("worship-sync-media-manifest-publish-status", onStatus);
+      jest.useRealTimers();
+    }
+  });
+
+  it("retries publication after a long outage without replaying an obsolete outline", async () => {
+    jest.useFakeTimers();
+    let connectedCallback: ((snapshot: { val: () => unknown }) => void) | undefined;
+    let connectionValue = true;
+    onValueMock.mockImplementation((target: { path?: string }, callback: (snapshot: { val: () => unknown }) => void) => {
+      if (target.path === ".info/connected") {
+        connectedCallback = callback;
+        callback({ val: () => connectionValue });
+      }
+      return jest.fn();
+    });
+    runTransactionMock.mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockImplementation(async (_target: unknown, update: (current: unknown) => unknown) => {
+        const value = update(undefined);
+        return { snapshot: { val: () => value } };
+      });
+    const makeDiscovery = (outlineId: string): ElectronMediaDiscovery => ({
+      renderer: "projector", outputId: "projector", outlineId, outlineLoadState: "loaded", itemCount: 0, uniqueFiniteVideoCount: 0, items: [],
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId: "church-long-outage", sharedDataReady: true, sessionKind: "controller" } as never}>{children}</GlobalInfoContext.Provider>
+    );
+    const view = renderHook(({ discovery }: { discovery: ElectronMediaDiscovery }) => usePublishMediaPreparationManifest({ enabled: true, discovery, outputId: "projector" }), {
+      initialProps: { discovery: makeDiscovery("outline-old") }, wrapper,
+    });
+    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(14_000); });
+      expect(runTransactionMock).toHaveBeenCalledTimes(4);
+      connectionValue = false;
+      act(() => connectedCallback?.({ val: () => false }));
+      view.rerender({ discovery: makeDiscovery("outline-current") });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(60 * 60_000); });
+      expect(runTransactionMock).toHaveBeenCalledTimes(4);
+      connectionValue = true;
+      act(() => connectedCallback?.({ val: () => true }));
+      connectionValue = false;
+      act(() => connectedCallback?.({ val: () => false }));
+      connectionValue = true;
+      act(() => connectedCallback?.({ val: () => true }));
+      await act(async () => { await jest.advanceTimersByTimeAsync(1000); });
+      expect(runTransactionMock).toHaveBeenCalledTimes(5);
+      const recoveryUpdate = runTransactionMock.mock.calls[4][1] as (current: unknown) => MediaPreparationManifest;
+      expect(recoveryUpdate(undefined).outlineId).toBe("outline-current");
+    } finally {
+      view.unmount();
+      jest.clearAllTimers();
       jest.useRealTimers();
     }
   });

@@ -17,7 +17,9 @@ import type { PreparedVideoMetrics } from "../../../types/electron";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import {
   MEDIA_READINESS_STATUS_EVENT,
+  MEDIA_PREPARATION_PUBLISHER_SESSION_ID,
   readMediaPreparationPublicationStatus,
+  useRemoteMediaPreparationManifest,
   useRemoteMediaPreparationReadinessReports,
   type MediaPreparationPublicationStatus,
   type MediaReadinessLocalStatus,
@@ -435,6 +437,7 @@ const RemoteReadiness = ({
   churchId?: string;
   onReports: (outputId: string, reports: MediaPreparationReadinessReport[]) => void;
 }) => {
+  const authoritativeManifest = useRemoteMediaPreparationManifest({ enabled, outputId, useCachedManifest: false, warmCache: false });
   const reports = useRemoteMediaPreparationReadinessReports({ enabled, outputId });
   const [now, setNow] = useState(Date.now());
   const [reportingStatus, setReportingStatus] = useState<MediaReadinessLocalStatus["state"]>();
@@ -453,6 +456,7 @@ const RemoteReadiness = ({
       const status = (event as CustomEvent<Partial<MediaPreparationPublicationStatus>>).detail;
       if (
         status?.outputId === outputId &&
+        status.churchId === churchId &&
         (status.state === "publishing" || status.state === "retrying" || status.state === "published" || status.state === "failed") &&
         typeof status.publishedAt === "number"
       ) {
@@ -473,8 +477,7 @@ const RemoteReadiness = ({
   }, [churchId, enabled, outputId]);
 
   if (!enabled) return null;
-  const publicationAge = publication ? now - publication.publishedAt : Number.POSITIVE_INFINITY;
-  const currentPublication = publication && publicationAge < 5 * 60_000 ? publication : undefined;
+  const currentPublication = publication?.publisherSessionId === MEDIA_PREPARATION_PUBLISHER_SESSION_ID ? publication : undefined;
   const reportsByDevice = new Map<string, MediaPreparationReadinessReport[]>();
   reports.forEach((report) => {
     reportsByDevice.set(report.deviceId, [...(reportsByDevice.get(report.deviceId) ?? []), report]);
@@ -493,6 +496,9 @@ const RemoteReadiness = ({
     }));
   }).sort((a, b) => a.report.deviceId.localeCompare(b.report.deviceId) || a.report.sessionId.localeCompare(b.report.sessionId))
     .map((card) => ({ ...card, deviceNumber: deviceNumbers.get(card.report.deviceId) ?? 0 }));
+  const desiredRevision = currentPublication?.desiredRevision;
+  const authoritativeRevision = authoritativeManifest.manifest?.revision;
+  const confirmedPublication = currentPublication?.state === "published" && authoritativeRevision === currentPublication.desiredRevision;
   const publisherMessage = currentPublication?.state === "publishing"
     ? `Publishing r${currentPublication.desiredRevision ?? "?"}`
     : currentPublication?.state === "retrying"
@@ -500,13 +506,15 @@ const RemoteReadiness = ({
       : currentPublication?.state === "failed"
         ? `Publish failed${currentPublication.error ? ` — ${currentPublication.error}` : ""}`
         : currentPublication?.state === "published"
-          ? `Published r${currentPublication.desiredRevision ?? "?"}`
-          : "No recent publish result";
+          ? confirmedPublication ? `Published r${currentPublication.desiredRevision ?? "?"}` : `Publish r${currentPublication.desiredRevision ?? "?"} not confirmed by Firebase`
+          : authoritativeRevision != null
+            ? `Firebase has r${authoritativeRevision}; current publish result unavailable`
+            : "No current publish result";
   return (
     <section className="rounded border border-gray-700 p-3" aria-label={`${outputName} remote readiness`}>
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-semibold text-white">Remote devices · {outputName}</h2>
-        <Status good={currentPublication?.state === "published"}>{publisherMessage}</Status>
+        <Status good={confirmedPublication}>{publisherMessage}</Status>
       </div>
       <p className="mt-1 text-xs text-gray-400">Publication is separate from each device’s receipt and preparation.</p>
       {reportingStatus && <p className="mt-1 text-xs text-amber-200" role="status">Local diagnostics link: {reportingStatus === "permission-denied" ? "blocked by Firebase permissions" : reportingStatus === "temporarily-unavailable" ? "temporarily unable to update" : reportingStatus === "disconnected" ? "disconnected" : reportingStatus === "subscribing" ? "reconnecting" : reportingStatus === "connected" ? "connected to readiness feed" : "reporting"}</p>}
@@ -515,13 +523,17 @@ const RemoteReadiness = ({
         {sessionCards.map(({ report: device, concurrentIndex, concurrentCount, superseded, deviceNumber }) => {
           const age = Math.max(0, now - device.reportedAt);
           const connection = age < 45_000 ? "Connected" : age < 120_000 ? "Stale" : "Disconnected";
-          const revisionReceived = Boolean(currentPublication?.desiredRevision != null && device.manifestRevision === currentPublication.desiredRevision && device.manifestReceivedAt != null);
-          const ready = connection === "Connected" && revisionReceived && device.source === "remote-manifest" && device.finiteCandidateCount > 0 && device.readyCount >= device.finiteCandidateCount && device.failedCount === 0 && device.pendingCacheCount === 0;
+          const revisionReceived = Boolean(desiredRevision != null && device.manifestRevision === desiredRevision && device.manifestReceivedAt != null);
+          const hasSelectedCounts = device.selectedCandidateCount !== undefined;
+          const selectedFiniteCount = device.selectedFiniteCandidateCount ?? 0;
+          const selectedPendingCount = device.selectedPendingCacheCount ?? 0;
+          const selectedReady = hasSelectedCounts && selectedFiniteCount > 0 && device.readyCount === selectedFiniteCount && device.preparingCount === 0 && device.failedCount === 0 && selectedPendingCount === 0 && (device.pendingCacheFailedCount ?? 0) === 0 && (device.excludedFailedCount ?? 0) === 0;
+          const ready = connection === "Connected" && confirmedPublication && revisionReceived && device.source === "remote-manifest" && selectedReady;
           return (
             <article key={`${device.deviceId}:${device.sessionId}`} role="group" className="rounded bg-gray-900/60 px-2 py-2 text-xs text-gray-300" aria-label={`Remote device ${deviceNumber}${concurrentCount > 1 ? `, window ${concurrentIndex}` : ""}`}>
               <div className="flex items-center justify-between gap-2"><strong className="text-white">Device {deviceNumber}{concurrentCount > 1 ? ` · window ${concurrentIndex}` : ""}</strong><Status good={ready}>{ready ? "Ready" : connection}</Status></div>
-              <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : currentPublication?.desiredRevision != null ? ` · desired r${currentPublication.desiredRevision} not confirmed` : ""}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
-              <p title="Inventory is unique media in this device’s report. Finite ready/preparing/failed counts describe playable finite sources; pending cache and excluded sources are separate.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · {device.candidateCount} videos: {device.readyCount}/{device.finiteCandidateCount} finite ready · {device.preparingCount} preparing · {device.failedCount} failed · {device.pendingCacheCount} pending cache · {device.excludedCount ?? 0} excluded{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
+              <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : desiredRevision != null ? ` · desired r${desiredRevision} not confirmed` : " · controller publication unknown"}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
+              <p title="Inventory is unique media in the received manifest. Selected counts describe the actual bounded preparation pool, including protected transition media; deferred finite videos are outside that pool.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · inventory {device.candidateCount} ({device.finiteCandidateCount} finite, {device.pendingCacheCount} pending cache, {device.excludedCount ?? 0} excluded) · {hasSelectedCounts ? `selected ${device.readyCount}/${selectedFiniteCount} finite ready · ${device.preparingCount} preparing · ${device.failedCount} failed · ${selectedPendingCount} pending cache · ${device.deferredFiniteCount ?? 0} deferred · ${device.mountedSurfaceCount ?? 0} mounted` : "selected preparation counts unavailable (older report)"}{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
               {device.errors.length > 0 && <p className="mt-1 text-red-200">{device.errors[0]}</p>}
               <p className="mt-1 text-gray-400">Last report {Math.floor(age / 1000)}s ago · {connection}</p>
               {superseded.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-gray-400">{superseded.length} superseded session(s)</summary><ul className="mt-1 space-y-1">{superseded.map((old) => <li key={old.sessionId}>Previous window · r{old.manifestRevision ?? "—"} · report {new Date(old.reportedAt).toLocaleString()} · {old.readyCount} ready / {old.failedCount} failed</li>)}</ul></details>}

@@ -26,9 +26,15 @@ Configure the project's existing authorization claims and role model so that:
 - Validation requires the readiness contract `worshipsync.media-preparation-readiness`,
   version `1`, path-matching output/device/session IDs, finite timestamps,
   nonnegative integer counts no greater than `50000`, category totals that do
-  not exceed `candidateCount`, finite readiness totals that do not exceed
-  `finiteCandidateCount`, and at most eight error strings of at most 180
-  characters each.
+  not exceed `candidateCount`, and at most eight error strings of at most 180
+  characters each. Legacy v1 reports may omit selected-pool fields. When present,
+  require all selected fields together: selected finite + pending + excluded
+  equals `selectedCandidateCount`; selected finite inventory + deferred finite
+  equals inventory `finiteCandidateCount`; mounted surfaces do not exceed
+  selected candidates; and selected ready + preparing + failed do not exceed
+  `selectedFiniteCandidateCount`. Protected current/transition candidates can
+  make selected counts exceed inventory counts, so do not require selected
+  candidates to be a subset of inventory.
 - `onDisconnect().remove()` and explicit removal are allowed only at the
   authorized session leaf. Session data must not be writable by other display
   sessions.
@@ -66,3 +72,18 @@ own manifest publication.
 Until these steps pass against the deployed rules or the configured emulator,
 the UI's receipt/readiness feedback is best-effort and must not be treated as a
 security or delivery guarantee.
+
+## Repository configuration checked
+
+`firebase.json` configures only Firestore (`firestore.rules` and
+`firestore.indexes.json`); this checkout has no `database.rules.json`, RTDB
+emulator configuration, or RTDB deployment target. The client builds the
+church/output path with `getChurchDataPath` in
+`client/src/hooks/useMediaPreparationManifest.ts` and uses the existing
+authenticated Firebase Realtime Database instance from `GlobalInfoContext`.
+No verified RTDB custom-claim names or deployed rule source are available in
+this repository. The deployed project must be inspected by its Firebase
+administrator and these rules must be written against the project's existing
+controller authorization and paired-display identity model. Do not copy claim
+names from an example or infer authorization from the client path. Deployment,
+emulator validation, and live allow/deny checks are not verified here.

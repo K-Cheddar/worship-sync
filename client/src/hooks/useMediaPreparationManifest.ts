@@ -41,11 +41,18 @@ const getStorageKey = (churchId: string, outputId: string) =>
 
 export type MediaPreparationPublicationStatus = {
   outputId: string;
+  churchId?: string;
   state: "publishing" | "retrying" | "published" | "failed";
   desiredRevision?: number;
   publishedAt: number;
   error?: string;
+  /** Renderer-local publisher identity; persisted values from older sessions are not current proof. */
+  publisherSessionId?: string;
 };
+
+export const MEDIA_PREPARATION_PUBLISHER_SESSION_ID = typeof crypto !== "undefined" && crypto.randomUUID
+  ? crypto.randomUUID()
+  : `publisher_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 
 const getPublicationStatusKey = (churchId: string, outputId: string) =>
   `worshipsync:media-preparation-publication:${churchId}:${outputId}`;
@@ -71,15 +78,16 @@ const publishManifestStatus = (
   churchId: string,
   status: MediaPreparationPublicationStatus,
 ) => {
+  const scopedStatus = { ...status, churchId, publisherSessionId: MEDIA_PREPARATION_PUBLISHER_SESSION_ID };
   try {
     localStorage.setItem(
       getPublicationStatusKey(churchId, status.outputId),
-      JSON.stringify(status),
+      JSON.stringify(scopedStatus),
     );
   } catch {
     // Diagnostics remain optional if browser storage is unavailable.
   }
-  window.dispatchEvent(new CustomEvent("worship-sync-media-manifest-publish-status", { detail: status }));
+  window.dispatchEvent(new CustomEvent("worship-sync-media-manifest-publish-status", { detail: scopedStatus }));
 };
 
 export const getMediaPreparationReadinessPath = (
@@ -111,6 +119,13 @@ export const useReportRemoteMediaPreparationReadiness = ({
   failedCount,
   pendingCacheFailedCount,
   excludedFailedCount,
+  selectedCandidateCount,
+  selectedFiniteCandidateCount,
+  selectedPendingCacheCount,
+  selectedExcludedCount,
+  selectedFiniteInventoryCount,
+  deferredFiniteCount,
+  mountedSurfaceCount,
   errors,
 }: Omit<MediaPreparationReadinessReport, "contract" | "version" | "outputId" | "deviceId" | "sessionId" | "reportedAt" | "manifestRevision" | "manifestReceivedAt"> & {
   enabled: boolean;
@@ -140,6 +155,15 @@ export const useReportRemoteMediaPreparationReadiness = ({
         failedCount,
         pendingCacheFailedCount,
         excludedFailedCount,
+        ...(selectedCandidateCount !== undefined && {
+          selectedCandidateCount,
+          selectedFiniteCandidateCount,
+          selectedPendingCacheCount,
+          selectedExcludedCount,
+          selectedFiniteInventoryCount,
+          deferredFiniteCount,
+          mountedSurfaceCount,
+        }),
         errors: errors.slice(0, 8).map((error) => error.slice(0, 180)),
       }
     : undefined;
@@ -154,18 +178,66 @@ export const useReportRemoteMediaPreparationReadiness = ({
     let retryExhausted = false;
     let retryAttempt = 0;
     let retryTimer: number | undefined;
+    let connectionRetryTimer: number | undefined;
     let lastSignature = "";
     let failedSignature = "";
     let lastWriteAt = 0;
     let connectionState: boolean | undefined;
+    let connectionEpoch = 0;
+    let registeredEpoch = -1;
+    let registrationInFlight = false;
+    let registrationAttempt = 0;
+    let registrationPermissionBlocked = false;
+    let disconnectOperation: ReturnType<typeof onDisconnect> | undefined;
     const reportRef = ref(
       firebaseDb,
       `${getMediaPreparationReadinessPath(churchId, outputId)}/${encodeURIComponent(getOrCreateDeviceId())}/${encodeURIComponent(mediaPreparationSessionId)}`,
     );
-    void onDisconnect(reportRef).remove().catch(() => undefined);
+    const registerDisconnectCleanup = async (epoch: number) => {
+      if (!active || !connectionState || registrationInFlight || registrationPermissionBlocked) return;
+      registrationInFlight = true;
+      const operation = onDisconnect(reportRef);
+      disconnectOperation = operation;
+      try {
+        await operation.remove();
+        if (!active) {
+          await operation.cancel().catch(() => undefined);
+          return;
+        }
+        if (epoch !== connectionEpoch || !connectionState) {
+          await operation.cancel().catch(() => undefined);
+          return;
+        }
+        registeredEpoch = epoch;
+        registrationAttempt = 0;
+        publishIfChanged();
+      } catch (error) {
+        if (!active || epoch !== connectionEpoch) return;
+        if (isFirebasePermissionDenied(error)) {
+          registrationPermissionBlocked = true;
+          publishReadinessLocalStatus({ outputId, churchId, state: "permission-denied" });
+          return;
+        }
+        publishReadinessLocalStatus({ outputId, churchId, state: "temporarily-unavailable" });
+        const delays = [1000, 3000, 10000];
+        const delay = delays[registrationAttempt];
+        if (delay !== undefined && connectionRetryTimer === undefined) {
+          registrationAttempt += 1;
+          connectionRetryTimer = window.setTimeout(() => {
+            connectionRetryTimer = undefined;
+            void registerDisconnectCleanup(connectionEpoch);
+          }, delay);
+        }
+      } finally {
+        registrationInFlight = false;
+        if (active && connectionState && registeredEpoch !== connectionEpoch && !registrationPermissionBlocked && connectionRetryTimer === undefined && registrationAttempt === 0) {
+          void registerDisconnectCleanup(connectionEpoch);
+        }
+      }
+    };
     const publishIfChanged = () => {
       const latest = latestReportRef.current;
-      if (!active || !latest || writeInFlight || permissionBlocked) return;
+      if (!active || !latest || writeInFlight || permissionBlocked || connectionState !== true || registeredEpoch !== connectionEpoch) return;
       const signature = JSON.stringify({ ...latest, reportedAt: undefined });
       if (retryExhausted && signature !== failedSignature) {
         retryExhausted = false;
@@ -218,21 +290,37 @@ export const useReportRemoteMediaPreparationReadiness = ({
       if (!active) return;
       const connected = snapshot.val() === true;
       if (!connected) {
+        if (connectionState !== false) connectionEpoch += 1;
         connectionState = false;
+        registeredEpoch = -1;
+        registrationPermissionBlocked = false;
+        registrationAttempt = 0;
+        if (connectionRetryTimer !== undefined) window.clearTimeout(connectionRetryTimer);
+        connectionRetryTimer = undefined;
         publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
         return;
       }
+      const newConnection = connectionState !== true;
       const reconnected = connectionState === false;
       connectionState = true;
+      if (newConnection) {
+        connectionEpoch += 1;
+        registeredEpoch = -1;
+        registrationPermissionBlocked = false;
+        registrationAttempt = 0;
+      }
       if (reconnected) {
         retryExhausted = false;
         failedSignature = "";
       }
-      permissionBlocked = false;
-      retryAttempt = 0;
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-      retryTimer = undefined;
-      publishIfChanged();
+      if (reconnected) {
+        permissionBlocked = false;
+        retryAttempt = 0;
+        if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      if (registeredEpoch === connectionEpoch) publishIfChanged();
+      else void registerDisconnectCleanup(connectionEpoch);
     });
     const retryOnOffline = () => publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
     const retryOnOnline = () => {
@@ -253,7 +341,8 @@ export const useReportRemoteMediaPreparationReadiness = ({
       window.removeEventListener("offline", retryOnOffline);
       unsubscribeConnection?.();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-      void remove(reportRef).catch(() => undefined);
+      if (connectionRetryTimer !== undefined) window.clearTimeout(connectionRetryTimer);
+      void disconnectOperation?.cancel().catch(() => undefined).finally(() => remove(reportRef).catch(() => undefined));
       publishReadinessLocalStatus({ outputId, churchId, state: "disconnected" });
     };
   }, [churchId, enabled, firebaseDb, outputId, sharedDataReady]);
@@ -389,9 +478,13 @@ const readCachedManifest = (
 export const useRemoteMediaPreparationManifest = ({
   enabled,
   outputId,
+  useCachedManifest = true,
+  warmCache = true,
 }: {
   enabled: boolean;
   outputId?: string;
+  useCachedManifest?: boolean;
+  warmCache?: boolean;
 }) => {
   const { firebaseDb, churchId, sharedDataReady } =
     useContext(GlobalInfoContext) || {};
@@ -401,7 +494,7 @@ export const useRemoteMediaPreparationManifest = ({
   const manifestRef = useRef<MediaPreparationManifest | undefined>(undefined);
 
   useEffect(() => {
-    const cachedManifest = readCachedManifest(churchId, outputId);
+    const cachedManifest = useCachedManifest ? readCachedManifest(churchId, outputId) : undefined;
     manifestRef.current = cachedManifest;
     setManifest(cachedManifest);
     setManifestReceivedAt(undefined);
@@ -453,10 +546,10 @@ export const useRemoteMediaPreparationManifest = ({
       active = false;
       unsubscribe();
     };
-  }, [churchId, enabled, firebaseDb, outputId, sharedDataReady]);
+  }, [churchId, enabled, firebaseDb, outputId, sharedDataReady, useCachedManifest]);
 
   useEffect(() => {
-    if (!enabled || !manifest || !window.electronAPI?.ensureMediaCached) return;
+    if (!warmCache || !enabled || !manifest || !window.electronAPI?.ensureMediaCached) return;
     let active = true;
     const sources = [...new Set(manifest.items.flatMap((item) =>
       item.media.map((media) => media.source.url),
@@ -495,7 +588,7 @@ export const useRemoteMediaPreparationManifest = ({
       timers.forEach((timer) => window.clearTimeout(timer));
       timers.clear();
     };
-  }, [enabled, manifest]);
+  }, [enabled, manifest, warmCache]);
 
   return { manifest, cacheMap, manifestReceivedAt };
 };
@@ -551,12 +644,25 @@ export const usePublishMediaPreparationManifest = ({
       desiredRevision: desiredManifest.revision,
       publishedAt,
     });
-    const previousWrite = manifestWriteQueues.get(key) ?? Promise.resolve();
     let retryTimer: number | undefined;
     let resolveScheduledRetry: (() => void) | undefined;
+    let reconnectTimer: number | undefined;
+    let connectionState: boolean | undefined;
+    let permissionBlocked = false;
+    let unsubscribeConnection: (() => void) | undefined;
     const retryDelays = [1000, 3000, 10000];
     const publishAttempt = (attempt: number): Promise<void> => {
       if (!active || manifestPublicationGenerations.get(key) !== generation) return Promise.resolve();
+      if (connectionState === false) {
+        publishManifestStatus(churchId, {
+          outputId,
+          state: "retrying",
+          desiredRevision: desiredManifest.revision,
+          publishedAt: Date.now(),
+          error: "Offline; publication will resume after reconnection",
+        });
+        return Promise.resolve();
+      }
       return runTransaction(
         ref(firebaseDb, path),
         (current: unknown) => {
@@ -595,8 +701,19 @@ export const usePublishMediaPreparationManifest = ({
         }
       }).catch((error) => {
         if (!active || manifestPublicationGenerations.get(key) !== generation) return;
+        if (isFirebasePermissionDenied(error)) permissionBlocked = true;
+        if (connectionState === false && !permissionBlocked) {
+          publishManifestStatus(churchId, {
+            outputId,
+            state: "retrying",
+            desiredRevision: desiredManifest.revision,
+            publishedAt: Date.now(),
+            error: "Offline; publication will resume after reconnection",
+          });
+          return;
+        }
         const delay = isFirebasePermissionDenied(error) ? undefined : retryDelays[attempt];
-        if (delay !== undefined) {
+        if (delay !== undefined && connectionState !== false) {
           publishManifestStatus(churchId, {
             outputId,
             state: "retrying",
@@ -626,10 +743,47 @@ export const usePublishMediaPreparationManifest = ({
         console.error("Unable to publish media preparation manifest:", error);
       });
     };
-    const write = previousWrite.catch(() => undefined).then(() => publishAttempt(0));
-    manifestWriteQueues.set(key, write.then(() => undefined, () => undefined));
+    const queueCycle = (attempt = 0) => {
+      const previous = manifestWriteQueues.get(key) ?? Promise.resolve();
+      const write = previous.catch(() => undefined).then(() => publishAttempt(attempt));
+      manifestWriteQueues.set(key, write.then(() => undefined, () => undefined));
+      return write;
+    };
+    unsubscribeConnection = onValue(ref(firebaseDb, ".info/connected"), (snapshot) => {
+      if (!active) return;
+      const connected = snapshot.val() === true;
+      const reconnected = connectionState === false && connected;
+      connectionState = connected;
+      if (!connected) {
+        if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+        if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+        retryTimer = undefined;
+        resolveScheduledRetry?.();
+        resolveScheduledRetry = undefined;
+        return;
+      }
+      if (reconnected && !permissionBlocked && manifestPublicationGenerations.get(key) === generation) {
+        publishManifestStatus(churchId, {
+          outputId,
+          state: "retrying",
+          desiredRevision: desiredManifest.revision,
+          publishedAt: Date.now(),
+          error: "Connection restored; confirming the desired manifest",
+        });
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = undefined;
+          if (active && connectionState === true && !permissionBlocked && manifestPublicationGenerations.get(key) === generation) {
+            void queueCycle(0);
+          }
+        }, 1000);
+      }
+    });
+    void queueCycle(0);
     return () => {
       active = false;
+      unsubscribeConnection?.();
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       resolveScheduledRetry?.();
     };

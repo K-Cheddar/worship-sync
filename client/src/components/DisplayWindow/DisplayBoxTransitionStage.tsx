@@ -579,9 +579,21 @@ const DisplayBoxTransitionStage = ({
   const readinessCounts = buildMediaPreparationReadinessCounts(
     readinessInventory,
     remoteSurfaceStatuses,
+    (poolEnabled ? poolCandidates : []).map((candidate) => ({
+      mediaKey: candidate.mediaKey,
+      status: isPlayableMediaSource(candidate.source) && !isHLSVideoSource(candidate.source)
+        ? "eligible" as const
+        : isHLSVideoSource(candidate.source)
+          ? "pending-cache" as const
+          : "excluded" as const,
+    })),
+    poolEnabled
+      ? poolCandidates.filter((candidate) => isPlayableMediaSource(candidate.source) && !isHLSVideoSource(candidate.source)).length
+      : 0,
   );
+  const selectedPoolMediaKeys = new Set((poolEnabled ? poolCandidates : []).map((candidate) => candidate.mediaKey));
   const readinessErrors = remoteSurfaceStatuses
-    .filter((status) => status.phase === "error")
+    .filter((status) => status.phase === "error" && selectedPoolMediaKeys.has(status.mediaKey))
     .map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]"));
   useReportRemoteMediaPreparationReadiness({
     enabled: sessionKind === "display" && Boolean(mediaPlayback?.outputId),
