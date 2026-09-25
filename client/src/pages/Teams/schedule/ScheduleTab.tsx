@@ -719,6 +719,7 @@ const ScheduleTab = ({
   );
   const [autoFilling, setAutoFilling] = useState(false);
   const [scheduleNotificationIntents, setScheduleNotificationIntents] = useState<NotificationIntent[]>([]);
+  const [scheduleNotificationNextCursor, setScheduleNotificationNextCursor] = useState("");
   const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
   const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
   const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
@@ -726,14 +727,29 @@ const ScheduleTab = ({
   useEffect(() => {
     let active = true;
     setScheduleNotificationIntents([]);
+    setScheduleNotificationNextCursor("");
     if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
     setLoadingScheduleNotifications(true);
     void getNotificationIntents(churchId, { scheduleId: selectedScheduleId })
-      .then((response) => { if (active) setScheduleNotificationIntents(response.intents || []); })
+      .then((response) => { if (active) { setScheduleNotificationIntents(response.intents || []); setScheduleNotificationNextCursor(response.nextCursor || ""); } })
       .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
       .finally(() => { if (active) setLoadingScheduleNotifications(false); });
     return () => { active = false; };
   }, [canEdit, churchId, selectedSchedule?.assignments, selectedSchedule?.responses, selectedScheduleId, showToast]);
+
+  const loadOlderScheduleNotifications = async () => {
+    if (!scheduleNotificationNextCursor || loadingScheduleNotifications || !selectedScheduleId) return;
+    setLoadingScheduleNotifications(true);
+    try {
+      const response = await getNotificationIntents(churchId, { scheduleId: selectedScheduleId, cursor: scheduleNotificationNextCursor });
+      setScheduleNotificationIntents((current) => [...current, ...(response.intents || [])]);
+      setScheduleNotificationNextCursor(response.nextCursor || "");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not load older schedule message history.");
+    } finally {
+      setLoadingScheduleNotifications(false);
+    }
+  };
 
   const scheduleNotificationCounts = useMemo(() => {
     const responded = scheduleNotificationIntents.filter((intent) => {
@@ -758,16 +774,24 @@ const ScheduleTab = ({
     setSendingNotificationIntentId(intent.intentId);
     try {
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
-      if (!window.confirm(`Send one SMS for this schedule item?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"} · ${preview.preview.maskedPhoneNumber}`)) return;
-      await sendNotificationIntent(churchId, intent.intentId);
+      if (!preview.preview.eligible) {
+        showToast("This volunteer is no longer eligible for SMS. Review the current assignment and consent.", "error");
+        return;
+      }
+      const memberName = data.members.find((member) => member.memberId === intent.memberId);
+      const recipient = memberName ? `${memberName.firstName} ${memberName.lastName}`.trim() : "this volunteer";
+      if (!window.confirm(`Send one SMS to ${recipient} at ${preview.preview.phoneNumberSnapshot}?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"}.`)) return;
+      const result = await sendNotificationIntent(churchId, intent.intentId, preview.preview.approvalVersion);
       const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
       setScheduleNotificationIntents(latest.intents || []);
-      showToast("SMS accepted by the provider.", "success");
+      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
         const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
         setScheduleNotificationIntents(latest.intents || []);
+        setScheduleNotificationNextCursor(latest.nextCursor || "");
       } catch { /* Keep the last known queue visible. */ }
     } finally {
       setSendingNotificationIntentId("");
@@ -782,6 +806,7 @@ const ScheduleTab = ({
       await resolveReplacementNotificationIntent(churchId, intent.intentId);
       const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
       setScheduleNotificationIntents(latest.intents || []);
+      setScheduleNotificationNextCursor(latest.nextCursor || "");
       showToast("Invitation closed. The schedule remains unchanged.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
@@ -3201,6 +3226,7 @@ const ScheduleTab = ({
       });
       const response = await getNotificationIntents(churchId, { scheduleId: selectedSchedule.scheduleId });
       setScheduleNotificationIntents(response.intents || []);
+      setScheduleNotificationNextCursor(response.nextCursor || "");
       setScheduleMessagesOpen(true);
       showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
     } catch (error) {
@@ -5084,6 +5110,7 @@ const ScheduleTab = ({
                         </Button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400" aria-label="Schedule message and response counts">
+                        <span>Counts for {scheduleNotificationIntents.length} loaded messages</span>
                         <span>Requested {scheduleNotificationCounts.requested}</span>
                         <span>Provider accepted {scheduleNotificationCounts.accepted}</span>
                         <span>Delivered {scheduleNotificationCounts.delivered}</span>
@@ -5136,6 +5163,11 @@ const ScheduleTab = ({
                               </article>
                             );
                           })}
+                          {scheduleNotificationNextCursor ? (
+                            <Button variant="secondary" disabled={loadingScheduleNotifications || Boolean(sendingNotificationIntentId)} isLoading={loadingScheduleNotifications} onClick={() => void loadOlderScheduleNotifications()}>
+                              Load older message history
+                            </Button>
+                          ) : null}
                         </div>
                       ) : null}
                     </section>

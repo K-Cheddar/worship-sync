@@ -62,6 +62,7 @@ import type {
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
+  SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
   TeamSchedule,
@@ -1203,19 +1204,41 @@ export const getTeamsBootstrap = async (churchId: string) =>
 
 export const getNotificationIntents = async (
   churchId: string,
-  filter: { formId?: string; scheduleId?: string } = {},
-) =>
-  apiFetch<{ success: boolean; intents: NotificationIntent[] }>(
-    `api/churches/${churchId}/notification-intents${filter.formId ? `?formId=${encodeURIComponent(filter.formId)}` : filter.scheduleId ? `?scheduleId=${encodeURIComponent(filter.scheduleId)}` : ""}`,
+  filter: { formId?: string; scheduleId?: string; limit?: number; cursor?: string } = {},
+) => {
+  const query = new URLSearchParams();
+  if (filter.formId) query.set("formId", filter.formId);
+  if (filter.scheduleId) query.set("scheduleId", filter.scheduleId);
+  if (filter.limit) query.set("limit", String(filter.limit));
+  if (filter.cursor) query.set("cursor", filter.cursor);
+  return apiFetch<{ success: boolean; intents: NotificationIntent[]; nextCursor: string; limit: number }>(
+    `api/churches/${churchId}/notification-intents${query.size ? `?${query.toString()}` : ""}`,
   );
+};
 
 export const getNotificationIntentPreview = async (
   churchId: string,
   intentId: string,
 ) => apiFetch<{
   success: boolean;
-  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
-}>(`api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/preview`);
+  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
+}>(`api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/preview`, {
+  method: "POST",
+  body: JSON.stringify({}),
+});
+
+export const prepareTeamIntakeRecipientSms = async (
+  churchId: string,
+  formId: string,
+  recipientId: string,
+) => apiFetch<{
+  success: boolean;
+  recipient: TeamIntakeRecipient;
+  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
+}>(`api/churches/${churchId}/team-intake/forms/${encodeURIComponent(formId)}/recipients/${encodeURIComponent(recipientId)}/sms-preview`, {
+  method: "POST",
+  body: JSON.stringify({}),
+});
 
 export const prepareReplacementNotificationIntent = async (
   churchId: string,
@@ -1257,23 +1280,26 @@ export const getAvailabilityNotificationBatch = async (
 export const dispatchAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
+  approvalVersion: string,
 ) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
   `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
-  { method: "POST", body: JSON.stringify({ confirmed: true }) },
+  { method: "POST", body: JSON.stringify({ confirmed: true, approvalVersion }) },
 );
 
 export const sendNotificationIntent = async (
   churchId: string,
   intentId: string,
+  approvalVersion: string,
 ) =>
   apiFetch<{
     success: boolean;
     intent?: NotificationIntent;
+    attempt?: SmsDeliveryAttempt;
     outcome?: "failed" | "unknown";
     errorMessage?: string;
   }>(`api/churches/${churchId}/notification-intents/${intentId}/send`, {
     method: "POST",
-    body: JSON.stringify({ confirmed: true }),
+    body: JSON.stringify({ confirmed: true, approvalVersion }),
   });
 
 export const getTeamIntakeSmsAttempts = async (
@@ -1378,6 +1404,7 @@ export const revokeTeamIntakeRecipient = async (
 export const sendTeamIntakeRecipientSms = async (
   churchId: string,
   recipientId: string,
+  approvalVersion: string,
 ) =>
   apiFetch<{
     success: boolean;
@@ -1391,7 +1418,7 @@ export const sendTeamIntakeRecipientSms = async (
     };
 }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
     method: "POST",
-    body: JSON.stringify({ confirmed: true }),
+    body: JSON.stringify({ confirmed: true, approvalVersion }),
   });
 
 export const applyTeamIntakeSubmission = async (

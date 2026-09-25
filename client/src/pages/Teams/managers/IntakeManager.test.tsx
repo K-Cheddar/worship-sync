@@ -13,7 +13,8 @@ import type {
 } from "../../../api/authTypes";
 
 const mockGetRecipientLink = jest.fn();
-const mockSendSms = jest.fn();
+const mockPrepareSms = jest.fn();
+const mockSendIntent = jest.fn();
 
 jest.mock("../../../api/auth", () => ({
   applyTeamIntakeSubmission: jest.fn(),
@@ -25,9 +26,10 @@ jest.mock("../../../api/auth", () => ({
     attempts: [],
   }),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [] }),
+  prepareTeamIntakeRecipientSms: (...args: unknown[]) => mockPrepareSms(...args),
+  sendNotificationIntent: (...args: unknown[]) => mockSendIntent(...args),
   getTeamIntakeRecipientLink: (...args: unknown[]) => mockGetRecipientLink(...args),
   revokeTeamIntakeRecipient: jest.fn(),
-  sendTeamIntakeRecipientSms: (...args: unknown[]) => mockSendSms(...args),
   updateTeamIntakeForm: jest.fn(),
 }));
 
@@ -134,13 +136,27 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   });
   await user.click(copyButtons.at(-1)!);
   await waitFor(() => expect(mockGetRecipientLink).toHaveBeenCalledTimes(1));
-  expect(mockSendSms).not.toHaveBeenCalled();
+  expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
 test("prevents duplicate SMS activation while the send is pending and updates the attempt", async () => {
   const user = userEvent.setup();
   let resolveSend!: (value: unknown) => void;
-  mockSendSms.mockImplementation(
+  mockPrepareSms.mockResolvedValue({
+    success: true,
+    recipient,
+    preview: {
+      intentId: "intent-1",
+      message: "First Church: respond at https://example.test/a/secure-token. Reply STOP to opt out.",
+      approvalVersion: "review-v1",
+      eligible: true,
+      eligibilityStatus: "enabled",
+      characterCount: 92,
+      segmentCount: 1,
+      maskedPhoneNumber: "••• ••• 1234",
+    },
+  });
+  mockSendIntent.mockImplementation(
     () =>
       new Promise((resolve) => {
         resolveSend = resolve;
@@ -155,12 +171,12 @@ test("prevents duplicate SMS activation while the send is pending and updates th
   await user.click(sendButton);
   expect(window.confirm).toHaveBeenCalledTimes(1);
   await user.click(sendButton);
-  expect(mockSendSms).toHaveBeenCalledTimes(1);
+  expect(mockPrepareSms).toHaveBeenCalledWith("church-1", form.formId, recipient.recipientId);
+  expect(mockSendIntent).toHaveBeenCalledWith("church-1", "intent-1", "review-v1");
   expect(sendButton).toBeDisabled();
 
   resolveSend({
     success: true,
-    recipient,
     attempt: {
       attemptId: "attempt-1",
       churchId: "church-1",
@@ -173,7 +189,6 @@ test("prevents duplicate SMS activation while the send is pending and updates th
       createdAt: "2026-09-23T00:00:00.000Z",
       updatedAt: "2026-09-23T00:00:00.000Z",
     },
-    message: { characterCount: 120, segmentCount: 1 },
   });
   await waitFor(() => expect(onSmsDeliveryAttemptSaved).toHaveBeenCalledTimes(1));
 });

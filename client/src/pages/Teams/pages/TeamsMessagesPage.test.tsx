@@ -34,14 +34,16 @@ const batch: NotificationBatch = {
   status: "prepared",
   selectedMemberIds: ["member_1"],
   intentIds: ["intent_1"],
+  approvalVersion: "batch-review-v1",
   recipients: [{
     memberId: "member_1", memberName: "Rae Rivera", recipientId: "recipient_1",
     maskedPhoneNumber: "••• ••• 0123", eligibilityStatus: "", eligible: true,
     intentId: "intent_1", status: "preview", segmentCount: 2,
+    approvalVersion: "intent-review-v1",
     message: "Church: please respond at https://example.test/a/private-token. Reply STOP to opt out.",
   }],
   summary: {
-    requested: 1, eligible: 1, excluded: 0, totalSegments: 2,
+    requested: 1, selected: 1, eligible: 1, awaitingDispatch: 1, alreadySent: 0, excluded: 0, totalSegments: 2,
     sent: 0, delivered: 0, failed: 0, uncertain: 0, responded: 0,
     waiting: 0, optedOut: 0,
   },
@@ -59,7 +61,7 @@ beforeEach(() => {
       members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1" }],
     },
   } as unknown as ReturnType<typeof useTeamsPage>);
-  mockGetIntents.mockResolvedValue({ success: true, intents: [] });
+  mockGetIntents.mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
   mockGetBatch.mockResolvedValue({ success: true, batch });
   mockPrepare.mockResolvedValue({ success: true, batch });
   mockDispatch.mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1 } } });
@@ -86,5 +88,5 @@ test("only sends after confirmation and dispatches the explicitly prepared batch
   expect(screen.getByText(/Send exactly 1 selected messages/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Confirm and send selected batch" }));
-  await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1"));
+  await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
 });

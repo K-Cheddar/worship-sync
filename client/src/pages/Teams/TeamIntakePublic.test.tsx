@@ -141,6 +141,14 @@ test("submits the entered availability for the form token", async () => {
   expect(await screen.findByText(/thanks, pat/i)).toBeInTheDocument();
 });
 
+test("opens a personalized /a/:token request without an authenticated app session", async () => {
+  mockGetPreview.mockResolvedValue(preview as never);
+  renderPage("/a/recipient-token");
+
+  expect(await screen.findByText("Fall Volunteers")).toBeInTheDocument();
+  expect(mockGetPreview).toHaveBeenCalledWith("recipient-token", { personalized: true });
+});
+
 test("personalizes an individual request without re-entering identity", async () => {
   mockGetPreview.mockResolvedValue({
     ...preview,

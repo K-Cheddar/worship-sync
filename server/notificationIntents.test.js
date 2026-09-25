@@ -8,7 +8,7 @@ import {
 } from "./notificationIntents.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 
-const createHarness = ({ providerSend, firestore = false, requireTeamsEdit } = {}) => {
+const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, validateReplacementCandidate } = {}) => {
   const collections = new Map();
   const storeFor = (collection) => {
     if (!collections.has(collection)) collections.set(collection, new Map());
@@ -46,6 +46,7 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit } = {
   storeFor("teamIntakeRecipients").set(recipient.recipientId, recipient);
   storeFor("teamRosterMembers").set(member.memberId, member);
   storeFor("teamRosterMembers").set("member_b", { memberId: "member_b", churchId, firstName: "Casey", lastName: "Candidate", phoneNumber });
+  storeFor("teamPositions").set("position", { positionId: "position", churchId, name: "Worship" });
   storeFor("churchMessagingConfigs").set(churchId, config);
   storeFor("smsConsents").set(smsConsentIdForChurchPhone(churchId, phoneNumber), {
     consentId: smsConsentIdForChurchPhone(churchId, phoneNumber), churchId, phoneNumber,
@@ -89,15 +90,17 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit } = {
       teamIntakeRecipients: "teamIntakeRecipients",
       notificationDeliveries: "notificationDeliveries",
       teamSchedules: "teamSchedules", teamRosterMembers: "teamRosterMembers", churches: "churches",
-      churchMessagingConfigs: "churchMessagingConfigs", smsConsents: "smsConsents",
+    churchMessagingConfigs: "churchMessagingConfigs", smsConsents: "smsConsents",
+    teamPositions: "teamPositions",
     },
     assertCsrf: async () => undefined,
     createId: (prefix) => `${prefix}_${++nextId}`,
     getDoc: async (collection, id) => storeFor(collection).get(id) || null,
+    deleteDoc: async (collection, id) => storeFor(collection).delete(id),
     hashValue,
     httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
     nowIso,
-    queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => item[filter.field] === filter.value)),
+    queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
     requireFirestore: () => firestore ? db : null,
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
     getSmsConsentForChurchPhone: async (id, phone) => id === churchId && phone === phoneNumber
@@ -151,13 +154,18 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit } = {
       positionName: "Worship",
       responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
     }),
-    validateReplacementCandidate: async ({ churchId: targetChurchId, scheduleId, occurrenceId, cellKey, memberId }) => {
+    validateReplacementCandidate: validateReplacementCandidate || (async ({ churchId: targetChurchId, scheduleId, occurrenceId, cellKey, memberId }) => {
       const candidate = storeFor("teamRosterMembers").get(memberId);
-      if (targetChurchId !== churchId || scheduleId !== schedule.scheduleId || !candidate) {
+      const currentSchedule = storeFor("teamSchedules").get(scheduleId);
+      if (targetChurchId !== churchId || scheduleId !== schedule.scheduleId || !currentSchedule || !candidate || candidate.archivedAt || candidate.serviceAvailability?.[occurrenceId] === "unavailable") {
         throw Object.assign(new Error("Candidate is not eligible for this church schedule."), { statusCode: 409 });
       }
-      return { schedule, member: candidate, occurrence: schedule.occurrences[0], church: storeFor("churches").get(churchId), position: { name: "Worship" }, holderId: "" };
-    },
+      const cell = currentSchedule.assignments?.[occurrenceId]?.[cellKey];
+      const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+      const response = currentSchedule.responses?.[occurrenceId]?.[cellKey]?.response;
+      if ((holderId && response !== "declined") || memberId === holderId) throw Object.assign(new Error("Replacement candidate is not eligible."), { statusCode: 409 });
+      return { schedule: currentSchedule, member: candidate, occurrence: currentSchedule.occurrences.find((item) => item.occurrenceId === occurrenceId), church: storeFor("churches").get(churchId), position: { name: "Worship" }, holderId };
+    }),
     smsProviderFactory: () => provider,
     validateTwilioStatusCallbackUrl: () => "https://example.test/status",
     setDoc: async (collection, id, data, { merge = false } = {}) => {
@@ -182,12 +190,14 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit } = {
   };
   const send = async (intentId, targetChurchId = churchId) => {
     const res = makeResponse();
-    await handler.sendIntent({ params: { churchId: targetChurchId, intentId }, body: { confirmed: true } }, res);
+    const intent = storeFor("notificationIntents").get(intentId);
+    await handler.sendIntent({ params: { churchId: targetChurchId, intentId }, body: { confirmed: true, approvalVersion: intent?.approvalSnapshot?.approvalVersion || "" } }, res);
     return res;
   };
   const dispatch = async (batchId, confirmed = true) => {
     const res = makeResponse();
-    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed } }, res);
+    const batch = storeFor("notificationBatches").get(batchId);
+    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
     return res;
   };
   return { collections, storeFor, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
@@ -223,6 +233,45 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(intent.batchId, batch.batchId);
 });
 
+test("form history is newest-first, bounded, paginated, and redacts links on every row", async () => {
+  const h = createHarness();
+  const intents = h.storeFor("notificationIntents");
+  for (let index = 0; index < 265; index += 1) {
+    const id = `history_${String(index).padStart(3, "0")}`;
+    intents.set(id, {
+      intentId: id, churchId: h.churchId, intentType: "availability_request",
+      sourceType: "team_intake_recipient", sourceId: h.recipient.recipientId,
+      formId: h.form.formId, recipientId: h.recipient.recipientId, memberId: h.member.memberId,
+      idempotencyKey: id, status: index === 264 ? "failed" : "preview",
+      message: `First Church: respond at https://example.test/a/private-${index}. Reply STOP.`,
+      responseUrl: `https://example.test/a/private-${index}`,
+      createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+      updatedAt: new Date().toISOString(),
+      failureMessage: "Provider error contains no public details.",
+    });
+  }
+  const loadPage = async (cursor = "") => {
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.listIntents({ params: { churchId: h.churchId }, query: { formId: h.form.formId, limit: "100", ...(cursor ? { cursor } : {}) } }, res);
+    return res.payload;
+  };
+  const pages = [];
+  let cursor = "";
+  do {
+    const page = await loadPage(cursor);
+    pages.push(page);
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.deepEqual(pages.map((page) => page.intents.length), [100, 100, 65]);
+  const all = pages.flatMap((page) => page.intents);
+  assert.equal(new Set(all.map((intent) => intent.intentId)).size, 265);
+  assert.equal(all[0].intentId, "history_264");
+  assert.doesNotMatch(JSON.stringify(all), /private-\d+/);
+  assert.equal(all[0].message, undefined);
+  assert.equal(all[0].responseUrl, undefined);
+  assert.equal(all[0].approvalSnapshot, undefined);
+});
+
 test("a response after reminder preparation blocks dispatch and keeps request history", async () => {
   const h = createHarness();
   const { batch, intent } = await h.preview({ intentType: "availability_reminder" });
@@ -249,6 +298,24 @@ test("bulk dispatch requires confirmation, sends exactly one selected batch, and
   assert.equal(h.providerCalls, 1);
   assert.equal(h.storeFor("smsDeliveryAttempts").size, 1);
   assert.equal(h.storeFor("notificationIntents").size, 1);
+  const completed = results.find((result) => result.statusCode === 200).payload.batch;
+  assert.equal(completed.summary.sent, 1);
+  assert.equal(completed.summary.alreadySent, 1);
+  assert.equal(completed.summary.awaitingDispatch, 0);
+});
+
+test("a newly prepared batch supersedes its prior draft and cannot dispatch through the old batch identity", async () => {
+  const h = createHarness();
+  const oldBatch = (await h.preview()).batch;
+  const newBatch = (await h.preview()).batch;
+  assert.notEqual(oldBatch.batchId, newBatch.batchId);
+  assert.equal(h.storeFor("notificationBatches").get(oldBatch.batchId).status, "superseded");
+  const staleDispatch = await h.dispatch(oldBatch.batchId);
+  assert.equal(staleDispatch.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+  const currentDispatch = await h.dispatch(newBatch.batchId);
+  assert.equal(currentDispatch.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
 });
 
 test("a concurrent approval makes one provider call and stores one attempt", async () => {
@@ -262,6 +329,44 @@ test("a concurrent approval makes one provider call and stores one attempt", asy
   assert.equal(h.providerCalls, 1);
   assert.equal(h.storeFor("smsDeliveryAttempts").size, 1);
   assert.equal(h.storeFor("notificationDeliveries").size, 1);
+});
+
+test("an approved message version is fixed and source or phone changes require a new preview", async () => {
+  const h = createHarness();
+  const { intent } = await h.preview();
+  const firstVersion = intent.approvalSnapshot.approvalVersion;
+  h.storeFor("churches").set(h.churchId, { churchId: h.churchId, name: "Changed Church" });
+  const stale = await h.send(intent.intentId);
+  assert.equal(stale.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+  assert.equal(h.storeFor("notificationIntents").get(intent.intentId).approvalSnapshot, null);
+
+  const previewRes = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+  await h.handler.getIntentPreview({ params: { churchId: h.churchId, intentId: intent.intentId }, body: {} }, previewRes);
+  assert.equal(previewRes.statusCode, 200);
+  assert.notEqual(previewRes.payload.preview.approvalVersion, firstVersion);
+  assert.match(previewRes.payload.preview.message, /Changed Church/);
+
+  h.storeFor("teamRosterMembers").set(h.member.memberId, { ...h.member, phoneNumber: "+14155550199" });
+  const phoneChanged = await h.send(intent.intentId);
+  assert.equal(phoneChanged.statusCode, 400);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("manual send responses and history projections never return private message or token fields", async () => {
+  const h = createHarness();
+  const { intent } = await h.preview();
+  const sent = await h.send(intent.intentId);
+  assert.equal(sent.statusCode, 200);
+  assert.equal(sent.payload.intent.message, undefined);
+  assert.equal(sent.payload.intent.responseUrl, undefined);
+  assert.doesNotMatch(JSON.stringify(sent.payload), /secure-token/);
+
+  const history = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+  await h.handler.listIntents({ params: { churchId: h.churchId }, query: { formId: h.form.formId } }, history);
+  assert.equal(history.payload.intents[0].message, undefined);
+  assert.equal(history.payload.intents[0].responseUrl, undefined);
+  assert.doesNotMatch(JSON.stringify(history.payload), /secure-token/);
 });
 
 test("Firestore transaction claims prevent concurrent sends across requests", async () => {
@@ -287,11 +392,12 @@ test("opt-out and changed source records block dispatch after preview", async ()
   assert.equal(optedOut.statusCode, 400);
   assert.equal(h.providerCalls, 0);
 
-  const second = await h.preview({ intentType: "availability_reminder" });
-  h.storeFor("teamIntakeForms").set(h.form.formId, { ...h.form, active: false });
-  const changed = await h.send(second.intent.intentId);
+  const changedSource = createHarness();
+  const { intent: second } = await changedSource.preview({ intentType: "availability_reminder" });
+  changedSource.storeFor("teamIntakeForms").set(changedSource.form.formId, { ...changedSource.form, active: false });
+  const changed = await changedSource.send(second.intentId);
   assert.equal(changed.statusCode, 409);
-  assert.equal(h.providerCalls, 0);
+  assert.equal(changedSource.providerCalls, 0);
 });
 
 test("permission is checked again immediately before the provider send", async () => {
@@ -343,6 +449,7 @@ test("interrupted bulk dispatch marks in-flight attempts uncertain and can resum
   h.storeFor("notificationBatches").set("batch_interrupted", {
     batchId: "batch_interrupted", churchId: h.churchId, formId: h.form.formId,
     intentType: "availability_request", status: "dispatching", dispatchStartedAt: "2020-01-01T00:00:00.000Z",
+    reviewVersion: "review-interrupted",
     intentIds: [intent.intentId], selectedMemberIds: [h.member.memberId],
     recipients: [{ memberId: h.member.memberId, memberName: "Rae Rivera", intentId: intent.intentId, status: "sending" }],
   });
@@ -382,6 +489,15 @@ test("shared intents cover every requested volunteer notification event", () => 
   }
 });
 
+test("notification intent creation retains the original declining assignment holder", () => {
+  const intent = createNotificationIntent({
+    churchId: "church_a", intentType: "replacement_request", sourceType: "team_schedule",
+    sourceId: "schedule_a", memberId: "replacement_member", originalMemberId: "declining_member",
+    idempotencyKey: "replacement|one", message: "Preview only", now: "now",
+  });
+  assert.equal(intent.originalMemberId, "declining_member");
+});
+
 test("replacement invitations are manually prepared, specific, and limited to one candidate per vacancy", async () => {
   const h = createHarness();
   const invoke = async (memberId) => {
@@ -411,4 +527,75 @@ test("replacement invitations are manually prepared, specific, and limited to on
   assert.equal(nextCandidate.statusCode, 200, nextCandidate.payload?.errorMessage);
   assert.equal(h.schedule.assignments.occ_1, undefined, "preparing an invite never assigns the candidate");
   assert.equal(h.providerCalls, 0);
+});
+
+test("declined assignments retain their holder, reject self-invites, and recheck vacancy and candidate state at send", async () => {
+  const prepare = async (h, memberId) => {
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.prepareReplacementInvitation({ params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId } }, res);
+    return res;
+  };
+  const declinedSchedule = (h) => h.storeFor("teamSchedules").set(h.schedule.scheduleId, {
+    ...h.schedule,
+    assignments: { occ_1: { "position::0": { primaryMemberId: h.member.memberId } } },
+    responses: { occ_1: { "position::0": { memberId: h.member.memberId, response: "declined" } } },
+  });
+
+  const h = createHarness();
+  declinedSchedule(h);
+  const selfInvite = await prepare(h, h.member.memberId);
+  assert.equal(selfInvite.statusCode, 409);
+  const invitation = await prepare(h, "member_b");
+  assert.equal(invitation.statusCode, 200, invitation.payload?.errorMessage);
+  const saved = h.storeFor("notificationIntents").get(invitation.payload.intent.intentId);
+  assert.equal(saved.originalMemberId, h.member.memberId);
+  assert.equal((await h.send(saved.intentId)).statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+
+  for (const changedSchedule of [
+    (current, candidateId) => ({ ...current, assignments: { occ_1: { "position::0": { primaryMemberId: candidateId } } } }),
+    (current) => ({ ...current, responses: { occ_1: { "position::0": { memberId: current.assignments.occ_1["position::0"].primaryMemberId, response: "accepted" } } } }),
+  ]) {
+    const changed = createHarness();
+    declinedSchedule(changed);
+    const draft = await prepare(changed, "member_b");
+    assert.equal(draft.statusCode, 200);
+    const source = changed.storeFor("teamSchedules").get(changed.schedule.scheduleId);
+    changed.storeFor("teamSchedules").set(changed.schedule.scheduleId, changedSchedule(source, "member_b"));
+    const result = await changed.send(draft.payload.intent.intentId);
+    assert.equal(result.statusCode, 409);
+    assert.equal(changed.providerCalls, 0);
+  }
+
+  const unavailable = createHarness();
+  declinedSchedule(unavailable);
+  const draft = await prepare(unavailable, "member_b");
+  assert.equal(draft.statusCode, 200);
+  unavailable.storeFor("teamRosterMembers").set("member_b", { ...unavailable.storeFor("teamRosterMembers").get("member_b"), serviceAvailability: { occ_1: "unavailable" } });
+  assert.equal((await unavailable.send(draft.payload.intent.intentId)).statusCode, 409);
+  assert.equal(unavailable.providerCalls, 0);
+});
+
+test("concurrent replacement preparation claims one vacancy and failed preparation releases its claim", async () => {
+  const invoke = async (h, memberId) => {
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.prepareReplacementInvitation({ params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId } }, res);
+    return res;
+  };
+  const h = createHarness();
+  const outcomes = await Promise.all([invoke(h, h.member.memberId), invoke(h, "member_b")]);
+  assert.deepEqual(outcomes.map((item) => item.statusCode).sort(), [200, 409]);
+  assert.equal(h.storeFor("notificationIntents").size, 1);
+
+  let candidateChecks = 0;
+  const interrupted = createHarness({ validateReplacementCandidate: async () => {
+    candidateChecks += 1;
+    if (candidateChecks === 2) throw Object.assign(new Error("Eligibility changed during preview."), { statusCode: 409 });
+    return { schedule: interrupted.schedule, member: interrupted.member, occurrence: interrupted.schedule.occurrences[0], church: { churchId: interrupted.churchId, name: "First Church" }, position: { name: "Worship" }, holderId: "" };
+  } });
+  const failed = await invoke(interrupted, interrupted.member.memberId);
+  assert.equal(failed.statusCode, 409);
+  const claim = [...interrupted.storeFor("notificationBatches").values()][0];
+  assert.equal(claim.status, "released");
+  assert.equal(interrupted.storeFor("notificationIntents").size, 0);
 });

@@ -113,8 +113,51 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "formId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "sourceId", "order": "ASCENDING" },
         { "fieldPath": "sourceType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "sourceType", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "batchId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "smsDeliveryAttempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "batchId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "smsDeliveryAttempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "notificationIntentId", "order": "ASCENDING" }
       ]
     },
     {

@@ -139,6 +139,7 @@ export const createTeamsAuthHandlers = ({
   requireFirestore,
   saveNotificationEventIntents = async () => [],
   sendTeamIntakeNotificationIntent = null,
+  prepareTeamIntakeNotificationIntent = null,
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -7022,13 +7023,13 @@ export const createTeamsAuthHandlers = ({
     ], { limit: 250 });
     const now = nowIso();
     for (const intent of intents) {
-      if (intent.intentType !== "replacement_request" || intent.occurrenceId !== occurrenceId || intent.cellKey !== cellKey || intent.replacementResolvedAt || intent.status === "unknown") continue;
+      if (intent.intentType !== "replacement_request" || intent.occurrenceId !== occurrenceId || intent.cellKey !== cellKey || intent.replacementResolvedAt) continue;
       await setDoc(COLLECTIONS.notificationIntents, intent.intentId || intent.id, {
         replacementResolvedAt: now,
         replacementResolvedBy: "schedule_assignment",
         updatedAt: now,
       }, { merge: true });
-      const claimId = hashValue(`${churchId}|replacement-vacancy|${scheduleId}|${occurrenceId}|${cellKey}|${String(intent.sourceVersion || "").trim()}`);
+      const claimId = hashValue(`${churchId}|replacement-vacancy|${scheduleId}|${occurrenceId}|${cellKey}`);
       await setDoc(COLLECTIONS.notificationBatches, claimId, { releasedAt: now, status: "released" }, { merge: true });
     }
   };
@@ -7039,6 +7040,7 @@ export const createTeamsAuthHandlers = ({
     occurrenceId,
     cellKey,
     memberId,
+    originalMemberId = "",
   }) => {
     const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
     if (!schedule || schedule.churchId !== churchId || schedule.archivedAt) {
@@ -7053,10 +7055,13 @@ export const createTeamsAuthHandlers = ({
     if (holderId && response !== "declined") {
       throw httpError(409, "Replacement invitations are available only for a vacant or declined assignment.");
     }
+    if (memberId === holderId || (originalMemberId && memberId === originalMemberId)) {
+      throw httpError(400, "The volunteer who declined cannot receive the replacement invitation.");
+    }
     const churchTeam = await getDoc(COLLECTIONS.teams, schedule.teamId);
     const position = await getDoc(COLLECTIONS.teamPositions, positionId);
     const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
-    if (!churchTeam || churchTeam.churchId !== churchId || !position || position.churchId !== churchId || !member || member.churchId !== churchId) {
+    if (!churchTeam || churchTeam.churchId !== churchId || !position || position.churchId !== churchId || !member || member.churchId !== churchId || member.archivedAt) {
       throw httpError(404, "Replacement candidate or schedule position not found in this church.");
     }
     if (member.serviceAvailability?.[occurrenceId] === "unavailable") {
@@ -8862,6 +8867,19 @@ export const createTeamsAuthHandlers = ({
         return await sendTeamIntakeNotificationIntent(req, res);
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not send the individual intake SMS.");
+      }
+    },
+
+    async prepareTeamIntakeRecipientSms(req, res) {
+      try {
+        await assertCsrf(req);
+        await requireTeamsEdit(req, req.params.churchId);
+        if (typeof prepareTeamIntakeNotificationIntent !== "function") {
+          throw httpError(503, "The shared volunteer message preview is unavailable.");
+        }
+        return await prepareTeamIntakeNotificationIntent(req, res);
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not prepare the individual intake SMS.");
       }
     },
 

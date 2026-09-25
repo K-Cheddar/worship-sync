@@ -700,11 +700,10 @@ export type NotificationIntent = {
   reminderRound?: number;
   occurrenceId: string;
   cellKey?: string;
-  idempotencyKey: string;
+  idempotencyKey?: string;
   channel: "sms";
   message?: string;
   messagePreview?: string;
-  responseUrl?: string;
   status: NotificationIntentStatus;
   attemptId?: string;
   createdAt: string;
@@ -715,7 +714,12 @@ export type NotificationIntent = {
   attemptStatus?: SmsDeliveryAttemptStatus;
   attemptOutcome?: string;
   respondedAt?: string;
+  responded?: boolean;
   replacementResolvedAt?: string;
+  approvalVersion?: string;
+  segmentCount?: number;
+  maskedPhoneNumber?: string;
+  phoneNumberSnapshot?: string;
 };
 
 export type NotificationBatchRecipient = {
@@ -733,6 +737,8 @@ export type NotificationBatchRecipient = {
   attemptOutcome?: string;
   segmentCount: number;
   message?: string;
+  approvalVersion?: string;
+  phoneNumberSnapshot?: string;
 };
 
 export type NotificationBatch = {
@@ -741,13 +747,17 @@ export type NotificationBatch = {
   formId: string;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
   reminderRound: number;
-  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent";
+  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
   intentIds: string[];
+  approvalVersion: string;
   summary: {
     requested: number;
+    selected: number;
     eligible: number;
+    awaitingDispatch: number;
+    alreadySent: number;
     excluded: number;
     totalSegments: number;
     sent: number;

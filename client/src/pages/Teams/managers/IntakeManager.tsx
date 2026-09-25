@@ -23,8 +23,9 @@ import {
   getNotificationIntents,
   getTeamIntakeRecipientLink,
   getTeamIntakeFormLink,
+  prepareTeamIntakeRecipientSms,
   revokeTeamIntakeRecipient,
-  sendTeamIntakeRecipientSms,
+  sendNotificationIntent,
   updateTeamIntakeForm,
   type TeamIntakeFormPayload,
 } from "../../../api/auth";
@@ -596,16 +597,16 @@ const IntakeManager = ({
 
   const intakeMessageCounts = useMemo(() => ({
     requested: selectedFormRecipients.length,
-    accepted: formNotificationIntents.filter((intent) => ["sent", "accepted", "delivered"].includes(intent.attemptStatus || intent.status)).length,
-    delivered: formNotificationIntents.filter((intent) => intent.attemptStatus === "delivered").length,
-    failed: formNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
-    uncertain: formNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
+    accepted: smsDeliveryAttempts.filter((attempt) => ["accepted", "sent", "delivered"].includes(attempt.status)).length,
+    delivered: smsDeliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
+    failed: smsDeliveryAttempts.filter((attempt) => ["failed", "undelivered"].includes(attempt.status)).length,
+    uncertain: smsDeliveryAttempts.filter((attempt) => attempt.outcome === "unknown").length,
     responded: selectedFormRecipients.filter((recipient) => Boolean(recipient.respondedAt)).length,
     waiting: selectedFormRecipients.filter((recipient) => !recipient.respondedAt && !recipient.revokedAt).length,
     optedOut: selectedFormRecipients.filter((recipient) =>
       smsEligibilityByMemberId?.[recipient.memberId]?.status === "opted_out",
     ).length,
-  }), [formNotificationIntents, selectedFormRecipients, smsEligibilityByMemberId]);
+  }), [selectedFormRecipients, smsDeliveryAttempts, smsEligibilityByMemberId]);
 
   const applicableMembers = useMemo(() => {
     if (!activeSelectedForm) return [];
@@ -693,22 +694,29 @@ const IntakeManager = ({
 
   const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
     if (!canEdit || recipientActionKey || recipient.revokedAt) return;
-    if (!window.confirm(`Send one availability request SMS to ${memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null)}? The server will recheck the current request, phone number, church scope, and SMS consent.`)) return;
     setRecipientActionKey(`${recipient.recipientId}:sms`);
     try {
-      const response = await sendTeamIntakeRecipientSms(
+      const prepared = await prepareTeamIntakeRecipientSms(
         churchId,
+        activeSelectedFormId,
         recipient.recipientId,
       );
-      if (response.recipient) onRecipientSaved(response.recipient);
+      if (!prepared.preview.eligible) {
+        showToast("This volunteer is not currently eligible for SMS. Check the phone number and church consent.", "error");
+        return;
+      }
+      const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
+      if (!window.confirm(`Send one availability request SMS to ${recipientName} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
+      const response = await sendNotificationIntent(churchId, prepared.preview.intentId, prepared.preview.approvalVersion);
+      if (prepared.recipient) onRecipientSaved(prepared.recipient);
+      const attempt = response.attempt;
+      if (!attempt) throw new Error(response.errorMessage || "The provider outcome is uncertain. Refresh delivery history before trying again.");
       setSmsDeliveryAttempts((current) => [
-        ...current.filter(
-          (attempt) => attempt.attemptId !== response.attempt.attemptId,
-        ),
-        response.attempt,
+        ...current.filter((currentAttempt) => currentAttempt.attemptId !== attempt.attemptId),
+        attempt,
       ]);
-      onSmsDeliveryAttemptSaved?.(response.attempt);
-      showToast("SMS sent.", "success");
+      onSmsDeliveryAttemptSaved?.(attempt);
+      showToast("SMS accepted by the provider.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this SMS.");
     } finally {

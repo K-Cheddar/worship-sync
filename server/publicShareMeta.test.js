@@ -61,11 +61,23 @@ test("matchPublicShareRoute recognizes each public share path", () => {
     param: "sched-tok",
   });
 
+  assert.deepEqual(matchPublicShareRoute("/a/private-recipient-token"), {
+    kind: "team-intake-recipient",
+    canonicalPath: "/a/private-recipient-token",
+    hashTarget: "/#/a/private-recipient-token",
+    param: "private-recipient-token",
+  });
+
   assert.deepEqual(matchPublicShareRoute("/teams/intake/form-tok"), {
     kind: "team-intake",
     canonicalPath: "/teams/intake/form-tok",
     hashTarget: "/#/teams/intake/form-tok",
     param: "form-tok",
+  });
+  assert.deepEqual(matchPublicShareRoute("/teams/intake"), {
+    kind: "team-intake",
+    canonicalPath: "/teams/intake",
+    hashTarget: "/#/teams/intake",
   });
 
   assert.deepEqual(matchPublicShareRoute("/boards/sunday"), {
@@ -87,6 +99,9 @@ test("matchPublicShareRoute ignores reserved board operator paths", () => {
   assert.equal(matchPublicShareRoute("/boards/controller"), null);
   assert.equal(matchPublicShareRoute("/boards/display"), null);
   assert.equal(matchPublicShareRoute("/home"), null);
+  assert.equal(matchPublicShareRoute("/a"), null);
+  assert.equal(matchPublicShareRoute("/a/token/extra"), null);
+  assert.equal(matchPublicShareRoute("/teams/intake/token/extra"), null);
 });
 
 test("SMS opt-in route matching stays aligned between server and client", () => {
@@ -101,6 +116,17 @@ test("SMS opt-in route matching stays aligned between server and client", () => 
 
   assert.equal(matchPublicShareRoute("/sms-opt-in/demo/extra"), null);
   assert.equal(isPublicSharePathname("/sms-opt-in/demo/extra"), false);
+});
+
+test("recipient intake links choose the public shell and expose generic crawler metadata", () => {
+  const token = "private-recipient-token";
+  const route = matchPublicShareRoute(`/a/${token}`);
+  assert.equal(isPublicSharePathname(`/a/${token}`), true);
+  assert.equal(route?.kind, "team-intake-recipient");
+  const meta = resolvePublicShareMeta("team-intake-recipient");
+  assert.equal(meta.title, "Availability request | WorshipSync");
+  assert.doesNotMatch(meta.description, new RegExp(token));
+  assert.doesNotMatch(meta.description, /recipient|Kevin|Cheddar/i);
 });
 
 test("resolvePublicShareMeta uses route defaults and allows overrides", () => {

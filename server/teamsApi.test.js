@@ -15,6 +15,7 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
 import {
@@ -7825,6 +7826,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.ok(!link.payload.publicUrl.includes("Kevin"));
   assert.ok(!link.payload.publicUrl.includes(recipient.recipientId));
   const token = link.payload.publicUrl.split("/a/")[1];
+  assert.equal(isPublicSharePathname(`/a/${token}`), true);
   assert.match(token, /^r_[A-Za-z0-9_-]{24}$/);
   assert.equal(token.length, 26);
   const storedRecipient = await getDoc(
@@ -8127,6 +8129,10 @@ test("individual intake SMS records one shared notification attempt and blocks d
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
+  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
+    context,
+    params: { formId, recipientId },
+  });
   const fake = createFakeSmsProvider({
     response: { providerMessageId: "SM_first", status: "queued" },
   });
@@ -8139,10 +8145,13 @@ test("individual intake SMS records one shared notification attempt and blocks d
     });
     assert.equal(unconfirmed.statusCode, 400);
     assert.equal(fake.calls.length, 0, "an individual send requires explicit operator confirmation");
+    const preview = await previewSms();
+    assert.equal(preview.statusCode, 200);
+    assert.equal(preview.payload.preview.eligible, true);
     const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
-      params: { recipientId },
-      body: { confirmed: true },
+      params: { formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
     assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
     assert.equal(first.payload.attempt.status, "accepted");
@@ -8162,8 +8171,8 @@ test("individual intake SMS records one shared notification attempt and blocks d
     };
     const second = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
-      params: { recipientId },
-      body: { confirmed: true },
+      params: { formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
     assert.equal(second.statusCode, 409);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -8217,13 +8226,22 @@ test("individual intake SMS records provider failure and blocks missing consent,
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
-  const noConsent = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
-    body: { confirmed: true },
+    params: { formId: form.payload.form.formId, recipientId },
   });
-  assert.equal(noConsent.statusCode, 400);
-  assert.match(noConsent.payload.errorMessage, /consent/i);
+  await setDoc("churchMessagingConfigs", context.churchId, {
+    churchId: context.churchId,
+    provider: "twilio",
+    providerAccountId: "AC_test",
+    messagingServiceId: "MG_test",
+    registrationStatus: "approved",
+    enabled: true,
+  }, { merge: false });
+  const noConsent = await previewSms();
+  assert.equal(noConsent.statusCode, 200);
+  assert.equal(noConsent.payload.preview.eligible, false);
+  assert.equal(noConsent.payload.preview.eligibilityStatus, "consent_needed");
 
   await seedSmsConsentForServerTests({
     churchId: context.churchId,
@@ -8236,6 +8254,8 @@ test("individual intake SMS records provider failure and blocks missing consent,
     {
       churchId: context.churchId,
       provider: "twilio",
+      providerAccountId: "AC_test",
+      messagingServiceId: "MG_test",
       registrationStatus: "approved",
       enabled: true,
     },
@@ -8250,10 +8270,11 @@ test("individual intake SMS records provider failure and blocks missing consent,
   });
   setSmsProviderForServerTests(failingProvider);
   try {
+    const preview = await previewSms();
     const failed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
-      params: { recipientId },
-      body: { confirmed: true },
+      params: { formId: form.payload.form.formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
     assert.equal(failed.statusCode, 502);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -8265,6 +8286,9 @@ test("individual intake SMS records provider failure and blocks missing consent,
     setSmsProviderForServerTests(null);
   }
 
+  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
+  const beforeDisabled = await previewSms();
+
   await setDoc(
     "churchMessagingConfigs",
     context.churchId,
@@ -8273,21 +8297,24 @@ test("individual intake SMS records provider failure and blocks missing consent,
   );
   const disabled = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
-    body: { confirmed: true },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeDisabled.payload.preview.approvalVersion },
   });
   assert.equal(disabled.statusCode, 503);
 
+  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
   await setDoc(
     "teamIntakeForms",
     form.payload.form.formId,
-    { active: false },
+    { active: true },
     { merge: true },
   );
+  const beforeClosed = await previewSms();
+  await setDoc("teamIntakeForms", form.payload.form.formId, { active: false }, { merge: true });
   const closed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
-    body: { confirmed: true },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(closed.statusCode, 400);
   assert.match(closed.payload.errorMessage, /closed/i);
@@ -8299,8 +8326,8 @@ test("individual intake SMS records provider failure and blocks missing consent,
   assert.equal(revoked.statusCode, 200);
   const revokedSend = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
-    body: { confirmed: true },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(revokedSend.statusCode, 404);
 });

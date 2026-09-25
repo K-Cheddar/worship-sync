@@ -5284,6 +5284,8 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
     notificationIntentHandlers.saveEventIntents(...args),
   sendTeamIntakeNotificationIntent: (...args) =>
     notificationIntentHandlers.sendTeamIntakeIntent(...args),
+  prepareTeamIntakeNotificationIntent: (...args) =>
+    notificationIntentHandlers.prepareTeamIntakeIntent(...args),
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -5335,6 +5337,7 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   COLLECTIONS,
   assertCsrf,
   createId,
+  deleteDoc,
   getDoc,
   hashValue,
   httpError,

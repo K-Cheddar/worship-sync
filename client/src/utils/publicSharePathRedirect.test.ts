@@ -13,6 +13,7 @@ describe("isPublicSharePathname", () => {
     expect(isPublicSharePathname("/teams/schedule/tok")).toBe(true);
     expect(isPublicSharePathname("/teams/intake")).toBe(true);
     expect(isPublicSharePathname("/teams/intake/tok")).toBe(true);
+    expect(isPublicSharePathname("/a/recipient-token")).toBe(true);
     expect(isPublicSharePathname("/boards/sunday")).toBe(true);
     expect(isPublicSharePathname("/boards/present/sunday")).toBe(true);
   });
@@ -23,5 +24,7 @@ describe("isPublicSharePathname", () => {
     expect(isPublicSharePathname("/home")).toBe(false);
     expect(isPublicSharePathname("/")).toBe(false);
     expect(isPublicSharePathname("/sms-opt-in/demo/extra")).toBe(false);
+    expect(isPublicSharePathname("/a")).toBe(false);
+    expect(isPublicSharePathname("/a/token/extra")).toBe(false);
   });
 });

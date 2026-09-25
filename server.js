@@ -1396,7 +1396,7 @@ app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );
-app.get(
+app.post(
   "/api/churches/:churchId/notification-intents/:intentId/preview",
   authHandlers.getIntentPreview,
 );
@@ -1447,6 +1447,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-intake/recipients/:recipientId/link",
   authHandlers.getTeamIntakeRecipientLink,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId/recipients/:recipientId/sms-preview",
+  authHandlers.prepareTeamIntakeRecipientSms,
 );
 app.post(
   "/api/churches/:churchId/team-intake/recipients/:recipientId/sms",
