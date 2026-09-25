@@ -11,6 +11,9 @@ import { formatUsPhoneInput } from "../utils/phoneNumber";
 export const SMS_CONSENT_TEXT =
   "I agree to receive SMS messages from my church through WorshipSync about volunteer availability, scheduling, assignments, and related reminders. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. Consent is optional and is not required to use WorshipSync.";
 
+const SMS_OPTIONAL_DESCRIPTION =
+  "Your church may use WorshipSync to send volunteer availability requests, scheduling information, assignment updates, and related reminders by text. SMS is optional. You can use WorshipSync and participate in church scheduling without receiving text messages.";
+
 const isValidUsPhone = (value: string) => {
   const input = value.trim();
   if (!input || !/^\+?[\d\s().-]+$/.test(input)) return false;
@@ -36,10 +39,11 @@ const SmsOptIn = () => {
   const [verificationError, setVerificationError] = useState("");
   const [verificationPending, setVerificationPending] = useState(false);
   const [didOptIn, setDidOptIn] = useState(false);
+  const [didDecline, setDidDecline] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isSubmitting || didOptIn) return;
+    if (isSubmitting || didOptIn || didDecline) return;
 
     const nextPhoneError = isValidUsPhone(phoneNumber)
       ? ""
@@ -73,7 +77,7 @@ const SmsOptIn = () => {
 
   const handleVerify = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isVerifying || didOptIn) return;
+    if (isVerifying || didOptIn || didDecline) return;
     setVerificationError("");
     if (!/^\d{6}$/.test(verificationCode.trim())) {
       setVerificationError("Enter the 6-digit verification code we sent you.");
@@ -102,6 +106,11 @@ const SmsOptIn = () => {
     }
   };
 
+  const handleDecline = () => {
+    if (isSubmitting || verificationPending || didOptIn) return;
+    setDidDecline(true);
+  };
+
   return (
     <AuthScreenMain>
       <div className="flex w-full max-w-md flex-col items-center gap-6">
@@ -117,8 +126,13 @@ const SmsOptIn = () => {
 
           <div className="space-y-2 text-center">
             <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-              SMS Messaging
+              Optional SMS updates
             </h1>
+            {churchId ? (
+              <p className="text-sm leading-relaxed text-gray-300">
+                {SMS_OPTIONAL_DESCRIPTION}
+              </p>
+            ) : null}
             {!churchId ? (
               <p className="text-sm text-gray-300">
                 Open the SMS opt-in link provided by your church to continue.
@@ -133,6 +147,25 @@ const SmsOptIn = () => {
                 You can reply STOP to any WorshipSync SMS message at any time
                 to unsubscribe.
               </p>
+            </div>
+          ) : didDecline ? (
+            <div className="mt-6 space-y-4 rounded-xl border border-gray-600 bg-gray-900/60 px-4 py-5 text-left" role="status">
+              <div className="space-y-2">
+                <p className="text-base font-medium text-white">SMS not enabled</p>
+                <p className="text-sm leading-relaxed text-gray-300">
+                  You have not been subscribed to text messages. SMS is optional
+                  and is not required to use WorshipSync or participate in your
+                  church&apos;s volunteer scheduling. You may opt in later.
+                </p>
+              </div>
+              <Button
+                component="link"
+                to="/"
+                variant="secondary"
+                className="w-full cursor-pointer justify-center"
+              >
+                Continue to WorshipSync
+              </Button>
             </div>
           ) : verificationPending ? (
             <form className="mt-6 flex w-full flex-col gap-4" onSubmit={handleVerify} noValidate>
@@ -217,15 +250,26 @@ const SmsOptIn = () => {
                 </p>
               ) : null}
 
-              <Button
-                type="submit"
-                variant="primary"
-                className="w-full cursor-pointer justify-center"
-                isLoading={isSubmitting}
-                disabled={isSubmitting || !phoneNumber.trim() || !consent}
-              >
-                Agree &amp; continue
-              </Button>
+              <div className="flex flex-col gap-3 border-t border-gray-700 pt-4">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="w-full cursor-pointer justify-center"
+                  isLoading={isSubmitting}
+                  disabled={isSubmitting || !isValidUsPhone(phoneNumber) || !consent}
+                >
+                  Opt in to SMS
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full cursor-pointer justify-center whitespace-normal text-center"
+                  disabled={isSubmitting}
+                  onClick={handleDecline}
+                >
+                  No thanks — continue without SMS
+                </Button>
+              </div>
             </form>
           )}
         </div>
