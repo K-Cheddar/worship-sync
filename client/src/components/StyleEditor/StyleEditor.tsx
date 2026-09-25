@@ -20,7 +20,7 @@ const POSITION_OPTIONS: {
       label: "Left",
       Illustration: ({ className }) => (
         <div
-          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          className={cn("relative w-full max-w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
           aria-hidden
         >
           <div className="absolute left-0.5 bottom-0.5 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
@@ -32,7 +32,7 @@ const POSITION_OPTIONS: {
       label: "Center",
       Illustration: ({ className }) => (
         <div
-          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          className={cn("relative w-full max-w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
           aria-hidden
         >
           <div className="absolute left-1/2 bottom-0.5 -translate-x-1/2 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
@@ -44,7 +44,7 @@ const POSITION_OPTIONS: {
       label: "Right",
       Illustration: ({ className }) => (
         <div
-          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          className={cn("relative w-full max-w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
           aria-hidden
         >
           <div className="absolute right-0.5 bottom-0.5 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
@@ -129,12 +129,13 @@ export const ParticipantPositionControl: React.FC<ParticipantPositionControlProp
   };
 
   const controls = (
-    <div className={cn("flex flex-wrap gap-3", inline && "flex-1 justify-center")}>
+    <div className={cn("flex flex-wrap gap-3", inline && "min-w-0 flex-1 flex-nowrap justify-center gap-2")}>
         {POSITION_OPTIONS.map(({ value, label, Illustration }) => (
           <label
             key={value}
             className={cn(
-              "flex flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 p-2 transition-colors",
+              "flex min-w-0 flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 p-2 transition-colors",
+              inline && "max-w-[76px] flex-1 basis-0",
               participantPosition === value
                 ? "border-cyan-500 bg-cyan-500/10"
                 : "border-gray-600 hover:border-gray-500"
@@ -157,7 +158,7 @@ export const ParticipantPositionControl: React.FC<ParticipantPositionControlProp
 
   if (inline) {
     return (
-      <div className="flex w-full items-center gap-2">
+      <div className="flex w-full min-w-0 items-center gap-2">
         <h3 className="w-20 shrink-0 text-sm font-medium text-white">Position:</h3>
         {controls}
       </div>
