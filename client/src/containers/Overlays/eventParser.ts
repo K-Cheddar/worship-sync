@@ -25,6 +25,8 @@ export interface EventData {
    * display data only; `sourceLedByRaw` retains the original source text.
    */
   assigneeNames?: string[];
+  /** Stable saved-plan assignee identities, aligned with assigneeNames. */
+  assigneeRefs?: Array<{ id: string; memberId?: string; name: string }>;
   /** 24-hour HH:mm schedule time when the printout provides one. */
   startTime?: string;
   /** Supports source durations such as 1m 30s without rounding them away. */

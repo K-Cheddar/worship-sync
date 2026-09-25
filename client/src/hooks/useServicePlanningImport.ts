@@ -53,6 +53,7 @@ import {
 } from "../utils/servicePlanningOutlineImport";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import { getBibleImportDisplayName } from "../utils/servicePlanningBibleImport";
+import { createDefaultChurchIntegrations } from "../types/integrations";
 import type { ServicePlanningSyncItem } from "../store/servicePlanningImportSlice";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import {
@@ -216,14 +217,11 @@ export const useServicePlanningImport = () => {
       plan: Pick<ServicePlan, "name" | "sections" | "sourceImport"> & Partial<Pick<ServicePlan, "planKey">>,
       teamAssignments: ServicePlanningTeamAssignment[],
     ): Promise<ServiceOutline> => {
-      if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
-        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
-      }
-      const sp = churchIntegrations.servicePlanning;
-      if (!sp.enabled) {
-        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
-      }
-
+      // A saved WorshipSync plan is native data. Build its controller model
+      // even when the optional URL importer is disabled or its settings have
+      // not loaded yet. Existing mapping rules are still honored when present.
+      const sp = churchIntegrations?.servicePlanning
+        ?? createDefaultChurchIntegrations().servicePlanning;
       const importData = servicePlanToImportData(plan);
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
@@ -249,7 +247,7 @@ export const useServicePlanningImport = () => {
         preview,
       };
     },
-    [churchIntegrations, churchIntegrationsStatus, store],
+    [churchIntegrations, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
@@ -305,7 +303,7 @@ export const useServicePlanningImport = () => {
               ? {
                   planKey: block.source.sourcePlanKey,
                   elementId: block.source.sourcePlanElementId,
-                  candidateId: `${block.source.sourcePlanElementId}:${cand.personIndex}`,
+                  candidateId: `${block.source.sourcePlanElementId}:${cand.sourceIdentity || cand.personIndex}`,
                 }
               : undefined,
           );
@@ -313,7 +311,7 @@ export const useServicePlanningImport = () => {
             ? {
                 planKey: block.source.sourcePlanKey,
                 elementId: block.source.sourcePlanElementId,
-                candidateId: `${block.source.sourcePlanElementId}:${cand.personIndex}`,
+                candidateId: `${block.source.sourcePlanElementId}:${cand.sourceIdentity || cand.personIndex}`,
               }
             : undefined;
 

@@ -43,7 +43,7 @@ describe("servicePlanToImportData", () => {
         element({
           sourceLedByRaw: "Dana R.",
           assignees: [
-            { id: "a1", name: "Dana Robinson" },
+            { id: "a1", memberId: "member-1", name: "Dana Robinson" },
             { id: "a2", name: "Morgan Lee" },
             { id: "a3", name: "Taylor Smith" },
           ],
@@ -55,6 +55,11 @@ describe("servicePlanToImportData", () => {
       ledBy: "Dana Robinson, Morgan Lee, Taylor Smith",
       sourceLedByRaw: "Dana R.",
       assigneeNames: ["Dana Robinson", "Morgan Lee", "Taylor Smith"],
+      assigneeRefs: [
+        { id: "a1", memberId: "member-1", name: "Dana Robinson" },
+        { id: "a2", name: "Morgan Lee" },
+        { id: "a3", name: "Taylor Smith" },
+      ],
     });
   });
 

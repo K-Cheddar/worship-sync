@@ -86,12 +86,12 @@ const ControllerServicePlanView = ({
   plan,
   churchId,
   controllerProfileId,
-  activeItemTitle,
+  activeItemId,
 }: {
   plan: ServicePlan;
   churchId: string;
   controllerProfileId: string;
-  activeItemTitle?: string;
+  activeItemId?: string;
 }) => {
   const preferenceKey = `worship-sync:service-plan-operator:${churchId}:${controllerProfileId}`;
   const [preference, setPreference] = useState(() => readPreference(preferenceKey));
@@ -121,7 +121,13 @@ const ControllerServicePlanView = ({
     )),
     ...roles.map((role) => role.teamName),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [plan, roles]);
-  const visibleRoles = roles.filter((role) => !preference.teamName || role.teamName === preference.teamName);
+  const effectivePreference = {
+    teamName: teams.includes(preference.teamName) ? preference.teamName : "",
+    positionIds: preference.positionIds.filter((id) => roles.some((role) =>
+      role.positionId === id && (!preference.teamName || role.teamName === preference.teamName),
+    )),
+  };
+  const visibleRoles = roles.filter((role) => !effectivePreference.teamName || role.teamName === effectivePreference.teamName);
   const microphoneById = useMemo(() => new Map(microphones.map((microphone) => [microphone.id, microphone])), [microphones]);
 
   const updatePreference = (next: Preference) => {
@@ -137,20 +143,23 @@ const ControllerServicePlanView = ({
       const assignmentAudiences = legacyAssignment.audiences || [];
       if (assignmentAudiences.length) {
         const isVisible = assignmentAudiences.some((audience) =>
-          (!preference.teamName || audience.teamName === preference.teamName)
-          && (!preference.positionIds.length || preference.positionIds.includes(audience.positionId)),
+          (!effectivePreference.teamName || audience.teamName === effectivePreference.teamName)
+          && (!effectivePreference.positionIds.length || effectivePreference.positionIds.includes(audience.positionId)),
         );
         if (!isVisible) return [];
-      } else if (preference.teamName || preference.positionIds.length) {
-        return [];
       }
-    } else if (preference.teamName || preference.positionIds.length) {
-      // Current per-person microphone assignments have no role association in
-      // the saved plan shape. Show them in the unfiltered view; never guess a
-      // role relationship when the operator has narrowed the audience.
-      return [];
     }
+    // Modern assignee-held microphones have no role association in the saved
+    // plan shape. Keep the cue visible with an explicit label instead of
+    // silently hiding every assignment under a team/role filter.
     return [microphone];
+  });
+  const hasUnscopedMicrophoneAssignment = (
+    microphoneIds: string[],
+    element: ServicePlan["sections"][number]["elements"][number],
+  ) => microphoneIds.some((id) => {
+    const legacyAssignment = element.microphoneAssignments?.find((assignment) => assignment.microphoneId === id);
+    return !legacyAssignment?.audiences?.length;
   });
 
   return (
@@ -160,8 +169,8 @@ const ControllerServicePlanView = ({
           Notes for team
           <select
             aria-label="Filter service plan notes by team"
-            value={preference.teamName}
-            onChange={(event) => updatePreference({ ...preference, teamName: event.target.value })}
+            value={effectivePreference.teamName}
+            onChange={(event) => updatePreference({ ...effectivePreference, teamName: event.target.value })}
             className="h-8 rounded border border-zinc-600 bg-zinc-900 px-2 text-xs text-white"
           >
             <option value="">All teams</option>
@@ -174,12 +183,12 @@ const ControllerServicePlanView = ({
             <label key={role.positionId} className="inline-flex items-center gap-1">
               <input
                 type="checkbox"
-                checked={preference.positionIds.includes(role.positionId)}
+                checked={effectivePreference.positionIds.includes(role.positionId)}
                 onChange={(event) => updatePreference({
-                  ...preference,
+                  ...effectivePreference,
                   positionIds: event.target.checked
-                    ? [...preference.positionIds, role.positionId]
-                    : preference.positionIds.filter((id) => id !== role.positionId),
+                    ? [...effectivePreference.positionIds, role.positionId]
+                    : effectivePreference.positionIds.filter((id) => id !== role.positionId),
                 })}
               />
               {role.label}
@@ -196,8 +205,8 @@ const ControllerServicePlanView = ({
             {section.elements.map((element) => {
               const title = richTextToPlainText(element.title).trim() || "Untitled item";
               const assignees = getServicePlanElementAssignees(element).filter((assignee) => assignee.name?.trim());
-              const notes = visibleNotes(element.teamNotes || [], preference, roles);
-              const isLive = Boolean(activeItemTitle && activeItemTitle.trim().toLocaleLowerCase() === title.toLocaleLowerCase());
+              const notes = visibleNotes(element.teamNotes || [], effectivePreference, roles);
+              const isLive = activeItemId === element.id;
               return (
                 <li key={element.id} className={`flex flex-col gap-1.5 px-2.5 py-2 ${isLive ? "border-l-2 border-emerald-400 bg-emerald-500/10" : ""}`}>
                   <div className="flex flex-wrap items-baseline gap-x-2 text-[11px] text-zinc-400">
@@ -222,6 +231,7 @@ const ControllerServicePlanView = ({
                       <div key={`${element.id}:${assignee.id}`} className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>
                         {assignedMicrophones.map((microphone) => <ServicePlanMicrophoneChip key={microphone.id} microphone={microphone} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}
+                        {(effectivePreference.teamName || effectivePreference.positionIds.length) && hasUnscopedMicrophoneAssignment(assignee.microphoneIds || [], element) ? <span className="text-[10px] text-zinc-500">Role not specified</span> : null}
                       </div>
                     ) : null;
                   })}

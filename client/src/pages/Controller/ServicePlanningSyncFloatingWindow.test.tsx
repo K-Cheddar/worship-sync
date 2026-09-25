@@ -123,6 +123,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     } as any);
     mockPlanSource.savedPlans = [];
     mockPlanSource.selectedPlan = null;
+    mockPlanSource.selectedPlanDetails = null;
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
@@ -251,6 +252,33 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByText("Keep the lights low.")).toBeInTheDocument();
     expect(screen.getByText("Media Team:")).toBeInTheDocument();
     expect(screen.getByText("mic-orange")).toBeInTheDocument();
+  });
+
+  it("renders a native saved plan when no legacy import preview exists", async () => {
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-1",
+          type: "free",
+          title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+        }],
+      }],
+    };
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(await screen.findByText("Welcome")).toBeInTheDocument();
   });
 
   // Regression: the menu was portaled, which escapes the floating window's

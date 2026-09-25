@@ -36,6 +36,9 @@ import type {
 
 const OVERLAY_PATCH_FIELDS = ["name", "title", "event"] as const;
 
+const candidateSourceId = (elementId: string, sourceIdentity?: string, personIndex = 0) =>
+  `${elementId}:${sourceIdentity || personIndex}`;
+
 /** Normalize an overlay event for exact-duplicate comparison. */
 export const normalizeOverlayEvent = (event?: string): string =>
   (event || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -240,7 +243,7 @@ export const buildServicePlanningPreview = ({
           sourcePlanKey: block.source.sourcePlanKey,
           sourcePlanElementId: block.source.sourcePlanElementId,
           sourceCandidateId: block.source.sourcePlanElementId
-            ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
+            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
             : undefined,
           sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
@@ -261,7 +264,7 @@ export const buildServicePlanningPreview = ({
           ? {
               planKey: block.source.sourcePlanKey,
               elementId: block.source.sourcePlanElementId,
-              candidateId: `${block.source.sourcePlanElementId}:${candidate.personIndex}`,
+              candidateId: candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex),
             } satisfies ServicePlanOverlaySource
           : undefined,
       );
@@ -280,7 +283,7 @@ export const buildServicePlanningPreview = ({
             sourcePlanKey: block.source.sourcePlanKey,
             sourcePlanElementId: block.source.sourcePlanElementId,
             sourceCandidateId: block.source.sourcePlanElementId
-              ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
+              ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
               : undefined,
             sourceValues: { ...candidate.patch },
             rawNameToken: candidate.rawNameToken,
@@ -307,7 +310,7 @@ export const buildServicePlanningPreview = ({
           sourcePlanKey: block.source.sourcePlanKey,
           sourcePlanElementId: block.source.sourcePlanElementId,
           sourceCandidateId: block.source.sourcePlanElementId
-            ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
+            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
             : undefined,
           sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
@@ -364,7 +367,7 @@ export const buildServicePlanningPreview = ({
         sourcePlanKey: block.source.sourcePlanKey,
         sourcePlanElementId: block.source.sourcePlanElementId,
         sourceCandidateId: block.source.sourcePlanElementId
-          ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
+          ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
           : undefined,
         sourceValues: { ...candidate.patch },
         rawNameToken: candidate.rawNameToken,

@@ -44,6 +44,13 @@ import {
 const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): EventData => {
   const title = richTextToPlainText(element.title).trim();
   const assigneeNames = getServicePlanElementAssigneeNames(element);
+  const assigneeRefs = getServicePlanElementAssignees(element)
+    .filter((assignee) => Boolean(assignee.name?.trim()))
+    .map((assignee) => ({
+      id: assignee.id,
+      ...(assignee.memberId ? { memberId: assignee.memberId } : {}),
+      name: assignee.name!.trim(),
+    }));
   const notes = element.notes
     ? richTextToFormattedPlainText(element.notes).trim()
     : "";
@@ -125,6 +132,7 @@ const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): Even
     title,
     ledBy: assigneeNames.join(", ") || sourceLedByRaw,
     ...(assigneeNames.length ? { assigneeNames } : {}),
+    ...(assigneeRefs.length ? { assigneeRefs } : {}),
     ...(contentTitle ? { contentTitle } : {}),
     ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(element.sourceLedByAssignments?.length

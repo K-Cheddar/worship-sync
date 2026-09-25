@@ -374,6 +374,23 @@ const ServicePlanningSyncFloatingWindow = ({
   const selectedList = useSelector(
     (s: RootState) => s.undoable?.present?.itemLists?.selectedList,
   );
+  const activeItemListId = useSelector(
+    (s: RootState) => s.undoable?.present?.itemList?.selectedItemListId,
+  );
+  const activePlanElementId = useMemo(() => {
+    if (!isPlanSourced || !selectedPlanDetails || !activeItemListId) return undefined;
+    for (const section of selectedPlanDetails.sections) {
+      for (const element of section.elements) {
+        const pushedIds = element.pushedOutlineListIds?.length
+          ? element.pushedOutlineListIds
+          : element.pushedOutlineListId ? [element.pushedOutlineListId] : [];
+        if (pushedIds.includes(activeItemListId) || activeItemListId.startsWith(`${element.id}::attachment:`)) {
+          return element.id;
+        }
+      }
+    }
+    return undefined;
+  }, [activeItemListId, isPlanSourced, selectedPlanDetails]);
   const targetOutlineLoading = useSelector(
     (s: RootState) => s.undoable?.present?.itemList?.isLoading ?? false,
   );
@@ -1129,7 +1146,7 @@ const ServicePlanningSyncFloatingWindow = ({
           </div>
         ) : null}
 
-        {!isLoading && preview ? (
+        {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
             {activeTab === "plan" ? (
               isPlanSourced && selectedPlanDetails ? (
@@ -1138,7 +1155,7 @@ const ServicePlanningSyncFloatingWindow = ({
                   plan={selectedPlanDetails}
                   churchId={churchId || ""}
                   controllerProfileId={controllerProfile.id}
-                  activeItemTitle={isRunning ? sync.activeLabel : undefined}
+                  activeItemId={activePlanElementId}
                 />
               ) : (
               <div className="flex flex-col gap-2 pr-1">
@@ -1508,7 +1525,7 @@ const ServicePlanningSyncFloatingWindow = ({
           </div>
         ) : null}
 
-        {(!preview || isLoading) && !isFailed ? (
+        {((!preview && !(isPlanSourced && selectedPlanDetails)) || isLoading) && !isFailed ? (
           <div
             className="flex items-center gap-2 text-zinc-400"
             role={isLoading ? "status" : undefined}
