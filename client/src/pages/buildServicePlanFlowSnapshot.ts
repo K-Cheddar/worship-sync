@@ -13,7 +13,7 @@ import { resolvePlanTimelineStartMs } from "./Services/servicePlanTimingUtils";
 import {
   getPublicServicePlanResourceTitle,
   getSafePublicServicePlanResourceUrl,
-  getServicePlanResourceDataString,
+  getServicePlanResourceNotes,
   getServicePlanResourceText,
 } from "./Services/servicePlanResources";
 
@@ -24,27 +24,31 @@ export type ServicePlanFlowSnapshotOptions = {
   serverNowMs?: number;
 };
 
-const getPublicResourceDetail = (resource: ReturnType<typeof getServicePlanElementContentResources>[number]) => {
-  const detail = resource.type === "text"
-    ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
-    : resource.type === "generic"
-      ? getServicePlanResourceDataString(resource, "notes")
-      : "";
+const getPublicResourceDetail = (
+  resource: ReturnType<typeof getServicePlanElementContentResources>[number],
+) => {
+  const detail =
+    resource.type === "text"
+      ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
+      : resource.type === "generic"
+        ? getServicePlanResourceNotes(resource)
+        : "";
   return detail.trim() || undefined;
 };
 
-const getPublicResources = (element: Parameters<typeof getServicePlanElementContentResources>[0]) =>
-  getServicePlanElementContentResources(element)
-    .map((resource) => {
-      const detail = getPublicResourceDetail(resource);
-      const url = getSafePublicServicePlanResourceUrl(resource);
-      return {
-        type: resource.type,
-        title: getPublicServicePlanResourceTitle(resource),
-        ...(url ? { url } : {}),
-        ...(detail ? { detail } : {}),
-      };
-    });
+const getPublicResources = (
+  element: Parameters<typeof getServicePlanElementContentResources>[0],
+) =>
+  getServicePlanElementContentResources(element).map((resource) => {
+    const detail = getPublicResourceDetail(resource);
+    const url = getSafePublicServicePlanResourceUrl(resource);
+    return {
+      type: resource.type,
+      title: getPublicServicePlanResourceTitle(resource),
+      ...(url ? { url } : {}),
+      ...(detail ? { detail } : {}),
+    };
+  });
 
 /**
  * Adapts an authenticated, already-sanitized ServicePlan to the shared public
@@ -64,12 +68,17 @@ export const buildServicePlanFlowSnapshot = ({
     plan.sections,
   );
   const itemIds = new Set(
-    plan.sections.flatMap((section) => section.elements.map((element) => element.id)),
+    plan.sections.flatMap((section) =>
+      section.elements.map((element) => element.id),
+    ),
   );
   const live =
     plan.publicLive?.mode === "manual" &&
     itemIds.has(plan.publicLive.currentElementId)
-      ? { mode: "manual" as const, currentItemId: plan.publicLive.currentElementId }
+      ? {
+          mode: "manual" as const,
+          currentItemId: plan.publicLive.currentElementId,
+        }
       : plan.publicLive?.mode === "anchored" &&
           itemIds.has(plan.publicLive.currentElementId) &&
           Number.isFinite(Date.parse(plan.publicLive.startedAt))
@@ -109,14 +118,22 @@ export const buildServicePlanFlowSnapshot = ({
                   teamNotes: element.teamNotes.map((teamNote) => ({
                     label: teamNote.label,
                     notes: normalizeRichTextDocument(teamNote.note),
-                    ...(teamNote.scope === "role" ? { scope: "role" as const } : {}),
-                    ...(teamNote.positionId ? { positionId: teamNote.positionId } : {}),
+                    ...(teamNote.scope === "role"
+                      ? { scope: "role" as const }
+                      : {}),
+                    ...(teamNote.positionId
+                      ? { positionId: teamNote.positionId }
+                      : {}),
                     ...(teamNote.positionIds?.length
                       ? { positionIds: teamNote.positionIds }
                       : {}),
                     ...(teamNote.teamId ? { teamId: teamNote.teamId } : {}),
-                    ...(teamNote.teamName ? { teamName: teamNote.teamName } : {}),
-                    ...(teamNote.teamIds?.length ? { teamIds: teamNote.teamIds } : {}),
+                    ...(teamNote.teamName
+                      ? { teamName: teamNote.teamName }
+                      : {}),
+                    ...(teamNote.teamIds?.length
+                      ? { teamIds: teamNote.teamIds }
+                      : {}),
                     ...(teamNote.teamNames?.length
                       ? { teamNames: teamNote.teamNames }
                       : {}),

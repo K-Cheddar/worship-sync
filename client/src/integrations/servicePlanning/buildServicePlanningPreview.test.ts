@@ -120,6 +120,43 @@ describe("buildServicePlanningPreview song matching", () => {
   });
 });
 
+describe("buildServicePlanningPreview line item details", () => {
+  it("passes plan timing, notes, resources, and microphone assignments into its display model", () => {
+    const { lineItems } = buildPreview(
+      {
+        ...baseRow,
+        startTime: "10:59",
+        durationMinutes: 1.5,
+        note: "Play the intro first.",
+        teamNotes: [{ teamName: "Media Team", note: "Check playback." }],
+        contentResources: [
+          {
+            id: "resource-1",
+            type: "url",
+            title: "Dropbox video",
+            url: "https://example.com/video",
+          },
+        ],
+        microphoneAssignments: [
+          { assigneeName: "Mikaela Cox", microphoneIds: ["mic-orange"] },
+        ],
+      },
+      [],
+    );
+
+    expect(lineItems[0]).toMatchObject({
+      startTime: "10:59",
+      durationMinutes: 1.5,
+      note: "Play the intro first.",
+      teamNotes: [{ teamName: "Media Team", note: "Check playback." }],
+      contentResources: [{ title: "Dropbox video", url: "https://example.com/video" }],
+      microphoneAssignments: [
+        { assigneeName: "Mikaela Cox", microphoneIds: ["mic-orange"] },
+      ],
+    });
+  });
+});
+
 describe("buildServicePlanningPreview scripture matching", () => {
   const psalm = {
     label: "Psalms 90:1-2 NLT",

@@ -697,12 +697,20 @@ const CurrentServiceWorkspace = () => {
     ? controllerOutputs[primaryLiveOutput.index]
     : null;
   const liveOutputInfo = primaryLiveOutput?.output ?? null;
+  const monitorOutputIndex = controllerOutputs.findIndex(
+    (output) => output.type === "monitor",
+  );
+  const monitorOutputInfo =
+    monitorOutputIndex >= 0 ? selectedOutputInfos[monitorOutputIndex] : null;
   const liveItemSource = useMemo(
     () =>
       liveOutputInfo
-        ? resolveLiveItemSource(liveOutputInfo, { name: "", itemId: "", listId: "" })
+        ? resolveLiveItemSource(
+            liveOutputInfo,
+            monitorOutputInfo ?? { name: "", itemId: "", listId: "" },
+          )
         : { name: "", itemId: "", listId: "" },
-    [liveOutputInfo],
+    [liveOutputInfo, monitorOutputInfo],
   );
   const liveSlideProgress = useMemo(
     () => formatLiveSlideProgress(liveOutputInfo),

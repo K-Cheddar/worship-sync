@@ -29,10 +29,17 @@ import type {
 } from "../../types/servicePlan";
 import {
   getServicePlanElementAssigneeNames,
+  getServicePlanElementAssignees,
+  getServicePlanElementContentResources,
   getServicePlanCustomDocumentId,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
+import {
+  getServicePlanResourceDisplayLabel,
+  getServicePlanResourceNotes,
+  getServicePlanResourceText,
+} from "../../pages/Services/servicePlanResources";
 
 const elementToRow = (element: ServicePlanElement): EventData => {
   const title = richTextToPlainText(element.title).trim();
@@ -78,6 +85,28 @@ const elementToRow = (element: ServicePlanElement): EventData => {
       title: resource.title,
     }))
     .filter((reference) => Boolean(reference.documentId));
+  const contentResources = getServicePlanElementContentResources(element)
+    .filter((resource) => !["song", "scripture", "custom-document"].includes(resource.type))
+    .map((resource) => {
+      const detail = resource.type === "text"
+        ? richTextToFormattedPlainText(getServicePlanResourceText(resource))
+        : resource.type === "generic"
+          ? getServicePlanResourceNotes(resource)
+          : "";
+      return {
+        id: resource.id,
+        type: resource.type,
+        title: getServicePlanResourceDisplayLabel(resource),
+        ...(resource.url?.trim() ? { url: resource.url.trim() } : {}),
+        ...(detail.trim() ? { detail: detail.trim() } : {}),
+      };
+    });
+  const microphoneAssignments = getServicePlanElementAssignees(element)
+    .filter((assignee) => assignee.microphoneIds?.length)
+    .map((assignee) => ({
+      ...(assignee.name?.trim() ? { assigneeName: assignee.name.trim() } : {}),
+      microphoneIds: [...(assignee.microphoneIds || [])],
+    }));
 
   const contentTitle =
     element.sourceContentTitleRaw?.trim() ||
@@ -102,6 +131,8 @@ const elementToRow = (element: ServicePlanElement): EventData => {
       : {}),
     ...(element.startTime ? { startTime: element.startTime } : {}),
     ...(typeof durationMinutes === "number" ? { durationMinutes } : {}),
+    ...(contentResources.length ? { contentResources } : {}),
+    ...(microphoneAssignments.length ? { microphoneAssignments } : {}),
     ...(notes ? { note: notes } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
     ...(scriptureRefs.length ? { scriptureRefs } : {}),

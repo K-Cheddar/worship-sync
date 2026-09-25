@@ -89,6 +89,56 @@ describe("servicePlanToImportData", () => {
     });
   });
 
+  it("preserves the saved plan's operational details for the Controller preview", () => {
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          title: plainTextToRichText("Pathfinder Welcome Video"),
+          startTime: "10:59",
+          durationSeconds: 90,
+          notes: plainTextToRichText("Play the intro before the welcome."),
+          teamNotes: [
+            { id: "note-1", label: "Media Team", note: plainTextToRichText("Check playback."), scope: "team" },
+            { id: "note-2", label: "Sound", note: plainTextToRichText("Keep the music low."), scope: "role" },
+          ],
+          resources: [
+            {
+              id: "resource-1",
+              type: "url",
+              title: "Dropbox video",
+              url: "https://example.com/video?token=private",
+            },
+          ],
+          assignees: [
+            { id: "assignee-1", name: "Mikaela Cox", microphoneIds: ["mic-orange"] },
+            { id: "assignee-2", microphoneIds: ["mic-lead"] },
+          ],
+        }),
+      ]),
+    );
+
+    expect(sections[0].rows[0]).toMatchObject({
+      startTime: "10:59",
+      durationMinutes: 1.5,
+      note: "Play the intro before the welcome.",
+      teamNotes: [
+        { teamName: "Media Team", note: "Check playback." },
+      ],
+      contentResources: [
+        {
+          id: "resource-1",
+          type: "url",
+          title: "Dropbox video",
+          url: "https://example.com/video?token=private",
+        },
+      ],
+      microphoneAssignments: [
+        { assigneeName: "Mikaela Cox", microphoneIds: ["mic-orange"] },
+        { microphoneIds: ["mic-lead"] },
+      ],
+    });
+  });
+
   it("falls back to the element's own type and assignment when hand-created", () => {
     const { sections } = servicePlanToImportData(
       planWith([

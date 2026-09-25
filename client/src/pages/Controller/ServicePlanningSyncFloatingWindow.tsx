@@ -64,7 +64,11 @@ import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../compone
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { getServicePlanMicrophones } from "../../api/auth";
+import type { ServicePlanMicrophone } from "../../types/servicePlan";
 import { useControllerBasePath } from "../../context/activeController";
+import { formatServicePlanDuration } from "../Services/servicePlanDuration";
+import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
 import {
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
@@ -74,6 +78,25 @@ import {
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+
+const formatPreviewStartTime = (value: string) => {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return value;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return value;
+  const period = hours >= 12 ? "PM" : "AM";
+  return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${period}`;
+};
+
+const isPreviewHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 const StatusBadge = ({
   className,
@@ -296,7 +319,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
-  const { churchBranding } = useContext(GlobalInfoContext) || {};
+  const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -307,6 +330,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   // Keeps the Controller's copy of the plan in step with the Services editor.
   const {
     savedPlans,
@@ -354,6 +378,24 @@ const ServicePlanningSyncFloatingWindow = ({
     (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
   );
   const prevRestoreIdRef = useRef(floatingWindowRestoreId);
+  useEffect(() => {
+    if (!churchId) {
+      setMicrophones([]);
+      return;
+    }
+    let cancelled = false;
+    getServicePlanMicrophones(churchId)
+      .then(({ microphones: result }) => {
+        if (!cancelled) setMicrophones(result);
+      })
+      .catch(() => {
+        if (!cancelled) setMicrophones([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId]);
+
   useEffect(() => {
     if (floatingWindowRestoreId !== prevRestoreIdRef.current) {
       prevRestoreIdRef.current = floatingWindowRestoreId;
@@ -1163,6 +1205,14 @@ const ServicePlanningSyncFloatingWindow = ({
                             className="flex flex-col gap-1.5 px-2.5 py-2"
                           >
                             <div className="flex flex-col gap-1.5">
+                              {item.startTime || (item.durationMinutes ?? 0) > 0 ? (
+                                <div className="flex flex-wrap gap-x-3 text-[11px] text-zinc-400">
+                                  {item.startTime ? <span>{formatPreviewStartTime(item.startTime)}</span> : null}
+                                  {(item.durationMinutes ?? 0) > 0 ? (
+                                    <span>{formatServicePlanDuration({ durationMinutes: item.durationMinutes })}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <div className="flex items-start gap-2">
                                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                                   {item.outlineItemType === "song" && (
@@ -1228,6 +1278,36 @@ const ServicePlanningSyncFloatingWindow = ({
                                 </div>
                               ) : null}
 
+                              {item.contentResources?.length ? (
+                                <div className="flex flex-col gap-1 border-l border-blue-500/40 pl-2 text-xs text-blue-100">
+                                  {item.contentResources.map((resource) => {
+                                    const content = (
+                                      <>
+                                        <span className="text-zinc-500">{getServicePlanResourceTypeLabel(resource.type)}:</span>{" "}
+                                        <span className="wrap-break-word">{resource.title}</span>
+                                      </>
+                                    );
+                                    return (
+                                      <div key={resource.id} className="flex flex-col gap-0.5">
+                                        {resource.url && isPreviewHttpUrl(resource.url) ? (
+                                          <a
+                                            href={resource.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="wrap-break-word underline decoration-blue-400/40 underline-offset-2 hover:text-blue-200"
+                                          >
+                                            {content}
+                                          </a>
+                                        ) : <div>{content}</div>}
+                                        {resource.detail ? (
+                                          <div className="whitespace-pre-wrap wrap-break-word text-zinc-300">{resource.detail}</div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+
                               {(item.assigneeNames?.length || item.ledBy) && (
                                 <div className="flex flex-wrap gap-x-1.5 text-xs text-zinc-400">
                                   <span>{item.assigneeNames?.length ? "Assigned:" : "Led by:"}</span>
@@ -1236,6 +1316,44 @@ const ServicePlanningSyncFloatingWindow = ({
                                   </span>
                                 </div>
                               )}
+                              {item.microphoneAssignments?.length ? (
+                                <div className="flex flex-col gap-1 text-xs text-zinc-400">
+                                  {item.microphoneAssignments.map((assignment, assignmentIndex) => (
+                                    <div key={`${assignment.assigneeName || "unassigned"}-${assignmentIndex}`} className="flex flex-wrap items-center gap-1.5">
+                                      <span>{assignment.assigneeName || "Unassigned"}</span>
+                                      {assignment.microphoneIds.map((microphoneId) => {
+                                        const microphone = microphones.find((candidate) => candidate.id === microphoneId);
+                                        const label = microphone
+                                          ? `${microphone.name}${microphone.type ? ` · ${microphone.type}` : ""}`
+                                          : microphoneId;
+                                        return (
+                                          <span
+                                            key={microphoneId}
+                                            className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/70 px-1.5 py-0.5"
+                                          >
+                                            {microphone ? <span className="size-2 rounded-full" style={{ backgroundColor: microphone.color }} aria-hidden /> : null}
+                                            {label}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {item.note ? (
+                                <div className="whitespace-pre-wrap wrap-break-word rounded bg-zinc-900/70 px-2 py-1.5 text-xs text-zinc-300">
+                                  <span className="mr-1 text-zinc-500">Notes</span>{item.note}
+                                </div>
+                              ) : null}
+                              {item.teamNotes?.length ? (
+                                <div className="flex flex-col gap-1">
+                                  {item.teamNotes.map((teamNote, noteIndex) => (
+                                    <div key={`${teamNote.teamName}-${noteIndex}`} className="whitespace-pre-wrap wrap-break-word text-xs text-zinc-400">
+                                      <span className="text-zinc-500">{teamNote.teamName}:</span>{" "}{teamNote.note}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
 
                               {!hideOutlineActions &&
                                 item.outlineItemType === "bible" &&

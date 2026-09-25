@@ -128,11 +128,17 @@ export const CurrentServiceWorkspaceSettingsPanel = ({
       const selected = new Set(draftRef.current.outputPreviewIds);
       if (checked) selected.add(outputId);
       else selected.delete(outputId);
+      const availableOutputIds = new Set(outputs.map((output) => output.id));
       const nextDraft = {
         ...draftRef.current,
-        outputPreviewIds: outputs
-          .map((output) => output.id)
-          .filter((id) => selected.has(id)),
+        outputPreviewIds: [
+          ...outputs
+            .map((output) => output.id)
+            .filter((id) => selected.has(id)),
+          ...draftRef.current.outputPreviewIds.filter(
+            (id) => !availableOutputIds.has(id),
+          ),
+        ],
       };
       draftRef.current = nextDraft;
       setDraft(nextDraft);

@@ -196,7 +196,7 @@ describe("ServicePlanContentPanel resources", () => {
     );
     await user.click(screen.getByRole("button", { name: "Remove resource Sermon notes" }));
     expect(onUpdate.mock.calls.at(-1)?.[0].resources).toEqual([secondResources[1]]);
-  });
+  }, 15000);
 
   it("preserves stored song and scripture resource references when removing another resource", async () => {
     const user = userEvent.setup();

@@ -427,6 +427,18 @@ export const buildServicePlanningPreview = ({
           ? { ledByAssignments: row.ledByAssignments }
           : {}),
         ...(row.assigneeNames?.length ? { assigneeNames: row.assigneeNames } : {}),
+        ...(row.startTime ? { startTime: row.startTime } : {}),
+        ...(typeof row.durationMinutes === "number"
+          ? { durationMinutes: row.durationMinutes }
+          : {}),
+        ...(row.note ? { note: row.note } : {}),
+        ...(row.teamNotes?.length ? { teamNotes: row.teamNotes } : {}),
+        ...(row.contentResources?.length
+          ? { contentResources: row.contentResources }
+          : {}),
+        ...(row.microphoneAssignments?.length
+          ? { microphoneAssignments: row.microphoneAssignments }
+          : {}),
         ...(row.songRefs?.length
           ? {
               attachedSongs: row.songRefs.map((song) => ({

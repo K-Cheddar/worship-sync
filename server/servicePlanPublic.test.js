@@ -413,7 +413,7 @@ test("public service plan snapshot exposes sanitized non-song resources", () => 
   assert.equal(JSON.stringify(snapshot).includes("private-signature"), false);
 });
 
-test("public text resource details match the client formatter for rich-text notes", async () => {
+test("public resource details match the client formatter for rich-text notes", async () => {
   const richText = {
     blocks: [
       { type: "paragraph", spans: [{ text: "First paragraph." }] },
@@ -438,6 +438,7 @@ test("public text resource details match the client formatter for rich-text note
           { id: "song-duplicate", type: "song", title: "Opening song", data: { songId: "private-song" } },
           { id: "scripture-duplicate", type: "scripture", title: "Psalm 100", data: { label: "Psalm 100" } },
           { id: "notes", type: "text", title: "Service notes", data: { text: richText, internal: "private note metadata" } },
+          { id: "generic", type: "generic", title: "Other resource", data: { notes: richText, internal: "private resource metadata" } },
           { id: "safe-link", type: "url", title: "Schedule", url: "https://example.com/schedule" },
           { id: "unsafe-link", type: "url", title: "Private link", url: "https://example.com/private?token=private-token" },
           { id: "document", type: "custom-document", title: "Welcome slides", data: { customDocumentId: "private-document-id" } },
@@ -468,15 +469,21 @@ test("public text resource details match the client formatter for rich-text note
     publicResources.find((resource) => resource.type === "text").detail,
     "First paragraph.\nSecond paragraph.\n3. Checklist item.",
   );
+  assert.equal(
+    publicResources.find((resource) => resource.type === "generic").detail,
+    "First paragraph.\nSecond paragraph.\n3. Checklist item.",
+  );
   assert.deepEqual(publicResources.map(({ type, title }) => [type, title]), [
     ["song", "Opening song"],
     ["scripture", "Psalm 100"],
     ["text", "Service notes"],
+    ["generic", "Other resource"],
     ["url", "Schedule"],
     ["url", "Private link"],
     ["custom-document", "Welcome slides"],
   ]);
   assert.equal(JSON.stringify(serverSnapshot).includes("private note metadata"), false);
+  assert.equal(JSON.stringify(serverSnapshot).includes("private resource metadata"), false);
   assert.equal(JSON.stringify(serverSnapshot).includes("private-token"), false);
   assert.equal(JSON.stringify(serverSnapshot).includes("private-document-id"), false);
 });

@@ -115,6 +115,35 @@ describe("CurrentServiceWorkspaceSettingsPanel", () => {
     );
   });
 
+  it("preserves selected previews for outputs that are currently disabled", async () => {
+    const user = userEvent.setup();
+    const configuration = {
+      ...createDefaultCurrentServiceWorkspace(),
+      outputPreviewIds: ["projector", "retired"],
+    };
+    mockUpdateCurrentServiceWorkspace.mockResolvedValue({
+      success: true,
+      currentServiceWorkspace: configuration,
+    });
+    render(
+      <CurrentServiceWorkspaceSettingsPanel
+        churchId="church-1"
+        configuration={configuration}
+        configurationStatus="ready"
+      />,
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: "TV One" }));
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() =>
+      expect(mockUpdateCurrentServiceWorkspace).toHaveBeenCalledWith(
+        "church-1",
+        { outputPreviewIds: ["projector", "tv-one", "retired"] },
+      ),
+    );
+  });
+
   it("merges remote changes without discarding a dirty local field", async () => {
     const user = userEvent.setup();
     const configuration = createDefaultCurrentServiceWorkspace();

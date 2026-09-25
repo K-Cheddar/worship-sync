@@ -129,13 +129,13 @@ export const ParticipantPositionControl: React.FC<ParticipantPositionControlProp
   };
 
   const controls = (
-    <div className={cn("flex w-full min-w-0 flex-nowrap items-start gap-2", inline && "flex-1 justify-center")}>
+    <div className={cn("flex w-full min-w-0 flex-nowrap items-start gap-2", inline && "flex-1 justify-center gap-2")}>
         {POSITION_OPTIONS.map(({ value, label, Illustration }) => (
           <label
             key={value}
             className={cn(
               "flex min-w-0 flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 transition-colors",
-              inline ? "flex-1 p-1" : "shrink-0 p-2",
+              inline ? "max-w-[76px] flex-1 basis-0 p-1" : "shrink-0 p-2",
               participantPosition === value
                 ? "border-cyan-500 bg-cyan-500/10"
                 : "border-gray-600 hover:border-gray-500"
