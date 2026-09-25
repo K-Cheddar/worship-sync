@@ -24,6 +24,7 @@ jest.mock("../../../api/auth", () => ({
     success: true,
     attempts: [],
   }),
+  getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [] }),
   getTeamIntakeRecipientLink: (...args: unknown[]) => mockGetRecipientLink(...args),
   revokeTeamIntakeRecipient: jest.fn(),
   sendTeamIntakeRecipientSms: (...args: unknown[]) => mockSendSms(...args),
@@ -114,6 +115,7 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 test("shows the consent reason and keeps Copy link available when SMS is ineligible", async () => {
@@ -151,6 +153,7 @@ test("prevents duplicate SMS activation while the send is pending and updates th
 
   const sendButton = screen.getByRole("button", { name: "Send SMS" });
   await user.click(sendButton);
+  expect(window.confirm).toHaveBeenCalledTimes(1);
   await user.click(sendButton);
   expect(mockSendSms).toHaveBeenCalledTimes(1);
   expect(sendButton).toBeDisabled();

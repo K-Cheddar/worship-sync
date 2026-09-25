@@ -67,6 +67,11 @@ import {
   updateTeamScheduleAssignmentSwap,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
+  getNotificationIntents,
+  getNotificationIntentPreview,
+  prepareReplacementNotificationIntent,
+  resolveReplacementNotificationIntent,
+  sendNotificationIntent,
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
@@ -113,6 +118,7 @@ import {
   type TeamScheduleGuest,
   type TeamScheduleOccurrence,
   type TeamScheduleShadowKind,
+  type NotificationIntent,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -712,6 +718,77 @@ const ScheduleTab = ({
     () => new Set(),
   );
   const [autoFilling, setAutoFilling] = useState(false);
+  const [scheduleNotificationIntents, setScheduleNotificationIntents] = useState<NotificationIntent[]>([]);
+  const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
+  const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
+  const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
+  const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setScheduleNotificationIntents([]);
+    if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
+    setLoadingScheduleNotifications(true);
+    void getNotificationIntents(churchId, { scheduleId: selectedScheduleId })
+      .then((response) => { if (active) setScheduleNotificationIntents(response.intents || []); })
+      .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
+      .finally(() => { if (active) setLoadingScheduleNotifications(false); });
+    return () => { active = false; };
+  }, [canEdit, churchId, selectedSchedule?.assignments, selectedSchedule?.responses, selectedScheduleId, showToast]);
+
+  const scheduleNotificationCounts = useMemo(() => {
+    const responded = scheduleNotificationIntents.filter((intent) => {
+      if (intent.intentType === "replacement_request") return Boolean(intent.replacementResolvedAt);
+      const response = selectedSchedule?.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
+      return response?.memberId === intent.memberId && ["accepted", "declined"].includes(response.response);
+    }).length;
+    return {
+      requested: scheduleNotificationIntents.length,
+      accepted: scheduleNotificationIntents.filter((intent) => ["accepted", "sent", "delivered"].includes(intent.attemptStatus || "")).length,
+      delivered: scheduleNotificationIntents.filter((intent) => intent.attemptStatus === "delivered").length,
+      failed: scheduleNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
+      uncertain: scheduleNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
+      responded,
+      waiting: scheduleNotificationIntents.length - responded,
+      optedOut: scheduleNotificationIntents.filter((intent) => intent.previewError?.toLowerCase().includes("opted out")).length,
+    };
+  }, [scheduleNotificationIntents, selectedSchedule?.responses]);
+
+  const handleSendScheduleIntent = async (intent: NotificationIntent) => {
+    if (!canEdit || sendingNotificationIntentId) return;
+    setSendingNotificationIntentId(intent.intentId);
+    try {
+      const preview = await getNotificationIntentPreview(churchId, intent.intentId);
+      if (!window.confirm(`Send one SMS for this schedule item?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"} · ${preview.preview.maskedPhoneNumber}`)) return;
+      await sendNotificationIntent(churchId, intent.intentId);
+      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+      setScheduleNotificationIntents(latest.intents || []);
+      showToast("SMS accepted by the provider.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this schedule message.");
+      try {
+        const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+        setScheduleNotificationIntents(latest.intents || []);
+      } catch { /* Keep the last known queue visible. */ }
+    } finally {
+      setSendingNotificationIntentId("");
+    }
+  };
+
+  const handleResolveReplacementIntent = async (intent: NotificationIntent) => {
+    if (!canEdit || intent.replacementResolvedAt || ["sending", "unknown"].includes(intent.status)) return;
+    if (!window.confirm("Close this replacement invitation and allow the administrator to choose another candidate? The schedule assignment will not change.")) return;
+    setSendingNotificationIntentId(intent.intentId);
+    try {
+      await resolveReplacementNotificationIntent(churchId, intent.intentId);
+      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+      setScheduleNotificationIntents(latest.intents || []);
+      showToast("Invitation closed. The schedule remains unchanged.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
+    } finally {
+      setSendingNotificationIntentId("");
+    }
+  };
   const [autoFillConfirmOpen, setAutoFillConfirmOpen] = useState(false);
   // Auto-fill applies an optimistic batch before its one network save settles.
   // Keep navigation protected for that entire interval so leaving cannot strand
@@ -2772,6 +2849,7 @@ const ScheduleTab = ({
     const assignmentCell =
       selectedSchedule?.assignments?.[activeSlot.occurrenceId]?.[activeSlot.columnKey];
     const primaryMemberId = getCellPrimaryMemberId(assignmentCell);
+    const response = selectedSchedule?.responses?.[activeSlot.occurrenceId]?.[activeSlot.columnKey]?.response;
     const primaryMember = scheduleDisplayMembers.find(
       (item) => item.memberId === primaryMemberId,
     );
@@ -2795,6 +2873,7 @@ const ScheduleTab = ({
         : "Empty",
       positionId: column.positionId,
       currentPrimaryMemberId: primaryMemberId,
+      isVacantOrDeclined: !primaryMemberId || response === "declined",
       currentAssigneeIsGuest: Boolean(primaryMember?.scheduleGuest),
       hasCurrentAssignee: Boolean(primaryMemberId),
       currentShadows,
@@ -2808,6 +2887,7 @@ const ScheduleTab = ({
     scheduleOccurrences,
     scheduleDisplayMembers,
     selectedSchedule?.assignments,
+    selectedSchedule?.responses,
   ]);
 
   const activeSlotRecommendationStats = useMemo(() => {
@@ -3093,6 +3173,41 @@ const ScheduleTab = ({
       sourceServiceId: moveSource?.serviceId,
       sourcePositionSlotKey: moveSource?.positionSlotKey,
     });
+  };
+
+  const handlePrepareReplacementInvite = async (memberId: string) => {
+    if (!canEdit || !activeSlot || !activeSlotMeta || !selectedSchedule || preparingReplacementMemberId) return;
+    if (!activeSlotMeta.isVacantOrDeclined) {
+      showToast("Replacement invitations are available for empty or declined slots.", "warning");
+      return;
+    }
+    const issue = activeSlotGetIssue(memberId);
+    const warning = activeSlotGetWarning(memberId);
+    const assignedElsewhere = getActiveSlotMoveSource(memberId);
+    const crossTeamWarning = getCrossTeamConflictWarning(memberId, activeSlot.occurrenceId);
+    const hardWarnings = ["Marked this service unavailable on intake", "Blocked out", "Unavailable this week of the month"];
+    if (issue || assignedElsewhere || crossTeamWarning || hardWarnings.some((value) => warning.includes(value))) {
+      showToast(issue || (assignedElsewhere ? "This volunteer is already assigned to another position in this service." : crossTeamWarning || warning), "warning");
+      return;
+    }
+    setPreparingReplacementMemberId(memberId);
+    showToast("Preparing a replacement invitation for review…", "neutral");
+    try {
+      await prepareReplacementNotificationIntent(churchId, {
+        scheduleId: selectedSchedule.scheduleId,
+        occurrenceId: activeSlot.occurrenceId,
+        cellKey: activeSlot.columnKey,
+        memberId,
+      });
+      const response = await getNotificationIntents(churchId, { scheduleId: selectedSchedule.scheduleId });
+      setScheduleNotificationIntents(response.intents || []);
+      setScheduleMessagesOpen(true);
+      showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not prepare this replacement invitation.");
+    } finally {
+      setPreparingReplacementMemberId("");
+    }
   };
 
   const activeSlotGetIssue = useCallback(
@@ -4957,6 +5072,74 @@ const ScheduleTab = ({
                       )}
                     </div>
                   </div>
+                  {canEdit && selectedSchedule ? (
+                    <section className="mb-3 rounded-md border border-gray-700 bg-gray-950/60 p-3" aria-labelledby="schedule-message-status-heading">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h2 id="schedule-message-status-heading" className="text-sm font-semibold text-gray-100">Schedule messages</h2>
+                          <p className="text-xs text-gray-400">Assignment SMS stays in draft until you review and send each message.</p>
+                        </div>
+                        <Button variant="secondary" disabled={loadingScheduleNotifications} onClick={() => setScheduleMessagesOpen((open) => !open)}>
+                          {loadingScheduleNotifications ? "Loading…" : scheduleMessagesOpen ? "Hide messages" : `View messages (${scheduleNotificationIntents.length})`}
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400" aria-label="Schedule message and response counts">
+                        <span>Requested {scheduleNotificationCounts.requested}</span>
+                        <span>Provider accepted {scheduleNotificationCounts.accepted}</span>
+                        <span>Delivered {scheduleNotificationCounts.delivered}</span>
+                        <span>Failed {scheduleNotificationCounts.failed}</span>
+                        <span>Uncertain {scheduleNotificationCounts.uncertain}</span>
+                        <span>Responded {scheduleNotificationCounts.responded}</span>
+                        <span>Waiting {scheduleNotificationCounts.waiting}</span>
+                        <span>Opted out {scheduleNotificationCounts.optedOut}</span>
+                      </div>
+                      {scheduleMessagesOpen ? (
+                        <div className="mt-3 space-y-2">
+                          {scheduleNotificationIntents.length === 0 ? (
+                            <p className="text-sm text-gray-400">No assignment message drafts for this schedule.</p>
+                          ) : scheduleNotificationIntents.map((intent) => {
+                            const member = data.members.find((item) => item.memberId === intent.memberId);
+                            const responseRecord = selectedSchedule.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
+                            const assignmentResponse = intent.intentType === "replacement_request"
+                              ? intent.replacementResolvedAt ? "invitation closed" : "awaiting manual follow-up"
+                              : responseRecord?.memberId === intent.memberId ? responseRecord.response : "waiting";
+                            const label = intent.intentType === "assignment_notification"
+                              ? "Assignment notification"
+                              : intent.intentType === "assignment_confirmation"
+                                ? "Assignment response"
+                                : intent.intentType === "schedule_change"
+                                  ? "Schedule change"
+                                  : "Replacement invitation";
+                            const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
+                            return (
+                              <article key={intent.intentId} className="rounded border border-gray-700 px-3 py-2">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm text-gray-100">{label} · {member ? scheduleMemberName(member, duplicateScheduleFirstNames) : "Roster member"}</p>
+                                    <p className="text-xs text-gray-400">Delivery: {intent.attemptStatus || intent.status} · Volunteer: {assignmentResponse || "waiting"}</p>
+                                  </div>
+                                  {actionable ? (
+                                    <Button variant="secondary" disabled={Boolean(sendingNotificationIntentId)} isLoading={sendingNotificationIntentId === intent.intentId} onClick={() => void handleSendScheduleIntent(intent)}>
+                                      Send one SMS
+                                    </Button>
+                                  ) : null}
+                                  {intent.intentType === "replacement_request" && !intent.replacementResolvedAt && !["sending", "unknown"].includes(intent.status) ? (
+                                    <Button variant="textLink" disabled={Boolean(sendingNotificationIntentId)} isLoading={sendingNotificationIntentId === intent.intentId} onClick={() => void handleResolveReplacementIntent(intent)}>
+                                      Close invitation
+                                    </Button>
+                                  ) : null}
+                                </div>
+                                {intent.replacementResolvedAt ? <p className="mt-1 text-xs text-gray-400">Invitation closed · delivery history retained</p> : null}
+                                {intent.messagePreview ? <p className="mt-2 break-words text-xs text-gray-300">{intent.messagePreview}</p> : null}
+                                {intent.previewError ? <p className="mt-1 text-xs text-amber-200">{intent.previewError}</p> : null}
+                                {intent.attemptOutcome === "unknown" ? <p className="mt-1 text-xs text-amber-200">Provider outcome uncertain. Check SMS delivery history before any further action.</p> : null}
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
                   <ScheduleAssignmentPicker
                     open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
                     anchorEl={pickerAnchorEl}
@@ -4980,6 +5163,8 @@ const ScheduleTab = ({
                     }
                     getWarning={activeSlotGetWarning}
                     onSelectMember={handleActiveSlotMemberSelect}
+                    onPrepareReplacementInvite={activeSlotMeta?.isVacantOrDeclined ? handlePrepareReplacementInvite : undefined}
+                    preparingReplacementMemberId={preparingReplacementMemberId}
                     onAssignmentAction={handleActiveSlotAssignmentAction}
                     swapRecommendations={activeSlotSwapRecommendations}
                     onApplySwapRecommendation={(recommendation) =>

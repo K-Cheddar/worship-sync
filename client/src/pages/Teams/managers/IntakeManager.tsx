@@ -20,6 +20,7 @@ import {
   createTeamIntakeRecipients,
   createTeamIntakeForm,
   getTeamIntakeSmsAttempts,
+  getNotificationIntents,
   getTeamIntakeRecipientLink,
   getTeamIntakeFormLink,
   revokeTeamIntakeRecipient,
@@ -36,6 +37,7 @@ import type {
   TeamRosterMember,
   TeamService,
   SmsDeliveryAttempt,
+  NotificationIntent,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -178,6 +180,7 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
   name: "",
   startDate: "",
   endDate: "",
+  responseDeadline: "",
   availabilityServices: [],
   availabilityOccurrences: [],
   teamIds: [],
@@ -218,6 +221,7 @@ const IntakeManager = ({
   const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
     SmsDeliveryAttempt[]
   >(initialSmsDeliveryAttempts);
+  const [formNotificationIntents, setFormNotificationIntents] = useState<NotificationIntent[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -303,6 +307,7 @@ const IntakeManager = ({
       name: form.name,
       startDate: form.startDate,
       endDate: form.endDate,
+      responseDeadline: form.responseDeadline || form.endDate,
       availabilityServices: form.availabilityServices || [],
       availabilityOccurrences: form.availabilityOccurrences || [],
       teamIds: form.teamIds || [],
@@ -437,6 +442,7 @@ const IntakeManager = ({
         : [];
     return {
       ...draft,
+      responseDeadline: draft.responseDeadline || draft.endDate,
       availabilityOccurrences,
     };
   };
@@ -508,6 +514,7 @@ const IntakeManager = ({
     if (!churchId || !activeSelectedFormId) return;
     let cancelled = false;
     setSmsDeliveryAttempts([]);
+    setFormNotificationIntents([]);
     void getTeamIntakeSmsAttempts(churchId, activeSelectedFormId)
       .then((response) => {
         if (!cancelled) setSmsDeliveryAttempts(response.attempts || []);
@@ -519,6 +526,15 @@ const IntakeManager = ({
             error,
             "Could not load SMS delivery history.",
           );
+        }
+      });
+    void getNotificationIntents(churchId, { formId: activeSelectedFormId })
+      .then((response) => {
+        if (!cancelled) setFormNotificationIntents(response.intents || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showApiErrorToast(showToast, error, "Could not load intake message status.");
         }
       });
     return () => {
@@ -567,6 +583,29 @@ const IntakeManager = ({
     });
     return latest;
   }, [smsDeliveryAttempts]);
+
+  const notificationIntentsByRecipientId = useMemo(() => {
+    const grouped = new Map<string, NotificationIntent[]>();
+    formNotificationIntents.forEach((intent) => {
+      if (!intent.recipientId) return;
+      grouped.set(intent.recipientId, [...(grouped.get(intent.recipientId) || []), intent]);
+    });
+    grouped.forEach((items) => items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    return grouped;
+  }, [formNotificationIntents]);
+
+  const intakeMessageCounts = useMemo(() => ({
+    requested: selectedFormRecipients.length,
+    accepted: formNotificationIntents.filter((intent) => ["sent", "accepted", "delivered"].includes(intent.attemptStatus || intent.status)).length,
+    delivered: formNotificationIntents.filter((intent) => intent.attemptStatus === "delivered").length,
+    failed: formNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
+    uncertain: formNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
+    responded: selectedFormRecipients.filter((recipient) => Boolean(recipient.respondedAt)).length,
+    waiting: selectedFormRecipients.filter((recipient) => !recipient.respondedAt && !recipient.revokedAt).length,
+    optedOut: selectedFormRecipients.filter((recipient) =>
+      smsEligibilityByMemberId?.[recipient.memberId]?.status === "opted_out",
+    ).length,
+  }), [formNotificationIntents, selectedFormRecipients, smsEligibilityByMemberId]);
 
   const applicableMembers = useMemo(() => {
     if (!activeSelectedForm) return [];
@@ -654,13 +693,14 @@ const IntakeManager = ({
 
   const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
     if (!canEdit || recipientActionKey || recipient.revokedAt) return;
+    if (!window.confirm(`Send one availability request SMS to ${memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null)}? The server will recheck the current request, phone number, church scope, and SMS consent.`)) return;
     setRecipientActionKey(`${recipient.recipientId}:sms`);
     try {
       const response = await sendTeamIntakeRecipientSms(
         churchId,
         recipient.recipientId,
       );
-      onRecipientSaved(response.recipient);
+      if (response.recipient) onRecipientSaved(response.recipient);
       setSmsDeliveryAttempts((current) => [
         ...current.filter(
           (attempt) => attempt.attemptId !== response.attempt.attemptId,
@@ -1218,6 +1258,14 @@ const IntakeManager = ({
           updateDraftDates({ startDate, endDate })
         }
       />
+      <Input
+        label="Response deadline"
+        type="date"
+        value={draft.responseDeadline || draft.endDate}
+        onChange={(responseDeadline) =>
+          setDraft((current) => ({ ...current, responseDeadline: String(responseDeadline) }))
+        }
+      />
       <Checkbox
         label="Open for submissions"
         checked={draft.active}
@@ -1432,6 +1480,16 @@ const IntakeManager = ({
             {recipientMemberIds.size === 1 ? "" : "s"}
           </Button>
         </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400" aria-label="Intake message and response counts">
+          <span>Requested <strong className="text-gray-200">{intakeMessageCounts.requested}</strong></span>
+          <span>Provider accepted <strong className="text-gray-200">{intakeMessageCounts.accepted}</strong></span>
+          <span>Delivered <strong className="text-gray-200">{intakeMessageCounts.delivered}</strong></span>
+          <span>Failed <strong className="text-gray-200">{intakeMessageCounts.failed}</strong></span>
+          <span>Uncertain <strong className="text-gray-200">{intakeMessageCounts.uncertain}</strong></span>
+          <span>Responded <strong className="text-gray-200">{intakeMessageCounts.responded}</strong></span>
+          <span>Waiting <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
+          <span>Opted out <strong className="text-gray-200">{intakeMessageCounts.optedOut}</strong></span>
+        </div>
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <Input
             label="Search members"
@@ -1471,6 +1529,13 @@ const IntakeManager = ({
               const latestSmsAttempt = recipient
                 ? latestSmsAttemptByRecipientId.get(recipient.recipientId)
                 : undefined;
+              const recipientIntents = recipient
+                ? notificationIntentsByRecipientId.get(recipient.recipientId) || []
+                : [];
+              const reminderCount = recipientIntents.filter(
+                (intent) => intent.intentType === "availability_reminder",
+              ).length;
+              const latestIntent = recipientIntents[0];
               const smsStatus = recipient?.respondedAt
                 ? "Responded"
                 : smsEligibility.status === "no_mobile"
@@ -1481,9 +1546,11 @@ const IntakeManager = ({
                       ? "SMS opted out"
                       : latestSmsAttempt?.status === "delivered"
                         ? "Delivered"
-                        : latestSmsAttempt?.status === "failed" ||
+                      : latestSmsAttempt?.status === "failed" ||
                             latestSmsAttempt?.status === "undelivered"
                           ? "Failed"
+                          : latestSmsAttempt?.outcome === "unknown"
+                            ? "Delivery uncertain"
                           : latestSmsAttempt?.status === "pending"
                             ? "Sending"
                             : latestSmsAttempt
@@ -1523,6 +1590,14 @@ const IntakeManager = ({
                     </span>
                     {recipient?.linkCopiedAt ? (
                       <span className="text-gray-500">Link requested</span>
+                    ) : null}
+                    {reminderCount > 0 ? (
+                      <span className="text-gray-400">
+                        {reminderCount} reminder{reminderCount === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                    {latestIntent?.status === "unknown" ? (
+                      <span className="text-amber-200">Delivery uncertain</span>
                     ) : null}
                     <span
                       className={cn(

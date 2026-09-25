@@ -1396,13 +1396,33 @@ app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );
-app.post(
-  "/api/churches/:churchId/notification-intents/preview",
-  authHandlers.previewAvailability,
+app.get(
+  "/api/churches/:churchId/notification-intents/:intentId/preview",
+  authHandlers.getIntentPreview,
 );
 app.post(
   "/api/churches/:churchId/notification-intents/:intentId/send",
   authHandlers.sendIntent,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/prepare",
+  authHandlers.prepareAvailabilityBatch,
+);
+app.get(
+  "/api/churches/:churchId/notification-batches/:batchId",
+  authHandlers.getAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/:batchId/dispatch",
+  authHandlers.dispatchAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/replacement-invitation",
+  authHandlers.prepareReplacementInvitation,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/:intentId/resolve-replacement",
+  authHandlers.resolveReplacementInvitation,
 );
 app.get(
   "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",

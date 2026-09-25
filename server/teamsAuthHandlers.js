@@ -43,16 +43,7 @@ import {
   resolveMemberAddress,
 } from "./notificationRecipients.js";
 import { normalizeUsPhoneNumber } from "./phoneNumber.js";
-import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
-import { buildTeamIntakeSms } from "./smsMessage.js";
-import {
-  getSmsProviderForConfig,
-} from "./smsProvider.js";
-import {
-  normalizeSmsDeliveryStatus,
-} from "./smsDeliveryAttempts.js";
-import { resolveTwilioStatusCallbackUrl } from "./smsProvider.js";
 import {
   createTeamIntakeRecipientToken,
   decryptTeamIntakeRecipientToken,
@@ -147,13 +138,13 @@ export const createTeamsAuthHandlers = ({
   getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
   saveNotificationEventIntents = async () => [],
+  sendTeamIntakeNotificationIntent = null,
   setDoc,
   updateDocFields,
   updateDocMapKeys,
   getUserByUid,
   getChurchById,
   getSmsConsentForChurchPhone = async () => null,
-  smsProviderFactory = getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail,
   emailDeliveryConfigured = false,
@@ -4479,6 +4470,10 @@ export const createTeamsAuthHandlers = ({
       body?.enabledFields,
       existing?.enabledFields,
     );
+    const responseDeadline = assertPlainDate(
+      body?.responseDeadline ?? existing?.responseDeadline ?? endDate,
+      "Response deadline",
+    );
     // Optional public-form copy overrides. Empty means "use the built-in
     // default" on the public form, so we store "" rather than a placeholder.
     const normalizeMessage = (key) =>
@@ -4489,6 +4484,7 @@ export const createTeamsAuthHandlers = ({
       name,
       startDate,
       endDate,
+      responseDeadline,
       availabilityServices,
       availabilityOccurrences,
       teamIds,
@@ -4944,6 +4940,13 @@ export const createTeamsAuthHandlers = ({
   const assertTeamIntakeFormIsOpen = (form) => {
     if (!form.active) {
       throw httpError(400, "This form is closed.");
+    }
+  };
+
+  const assertTeamIntakeFormResponseDeadline = (form) => {
+    const responseDeadline = String(form?.responseDeadline || form?.endDate || "").trim();
+    if (responseDeadline && responseDeadline < new Date().toISOString().slice(0, 10)) {
+      throw httpError(409, "The response deadline for this form has passed.");
     }
   };
 
@@ -6779,7 +6782,336 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
+  const teamIntakeNotificationRecipientQueues = new Map();
+  const withTeamIntakeRecipientLock = (recipientId, task) => {
+    const previous =
+      teamIntakeNotificationRecipientQueues.get(recipientId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    teamIntakeNotificationRecipientQueues.set(recipientId, settled);
+    void settled.finally(() => {
+      if (teamIntakeNotificationRecipientQueues.get(recipientId) === settled) {
+        teamIntakeNotificationRecipientQueues.delete(recipientId);
+      }
+    });
+    return run;
+  };
+
+  const ensureTeamIntakeNotificationRecipient = async ({
+    form,
+    member,
+    actorUid,
+  }) => {
+    const recipientId = createTeamIntakeRecipientId(form.formId, member.memberId);
+    const db = requireFirestore?.();
+    const buildOrReuse = (existing, transaction = null, recipientRef = null) => {
+      if (existing?.revokedAt) return { recipient: existing, token: "", reason: "revoked" };
+      if (existing?.respondedAt) return { recipient: existing, token: "", reason: "responded" };
+      const existingToken = decryptTeamIntakeRecipientToken(
+        existing?.recipientTokenCiphertext,
+        teamIntakeRecipientTokenSecret,
+      );
+      const canReuseToken = Boolean(
+        existingToken && looksLikeTeamIntakeRecipientToken(existingToken) &&
+        hashTeamIntakeRecipientToken(existingToken, teamIntakeRecipientTokenSecret) === existing?.recipientTokenHash,
+      );
+      const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+      const now = nowIso();
+      const recipient = {
+        ...(existing || {}),
+        recipientId,
+        churchId: form.churchId,
+        formId: form.formId,
+        memberId: member.memberId,
+        createdAt: existing?.createdAt || now,
+        ...(existing?.createdByUid ? {} : { createdByUid: actorUid }),
+        ...(!canReuseToken ? {
+          recipientTokenHash: hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret),
+          recipientTokenCiphertext: encryptTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret),
+          tokenIssuedAt: now,
+        } : {}),
+        revokedAt: null,
+        updatedAt: now,
+        updatedByUid: actorUid,
+      };
+      if (transaction && recipientRef) {
+        transaction.set(recipientRef, recipient, { merge: Boolean(existing) });
+      }
+      return { recipient, token, reason: "" };
+    };
+
+    if (db) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamIntakeRecipients).doc(recipientId);
+        const snapshot = await transaction.get(ref);
+        const existing = snapshot.exists
+          ? { recipientId: snapshot.id, ...snapshot.data() }
+          : null;
+        return buildOrReuse(existing, transaction, ref);
+      });
+    }
+    return withTeamIntakeRecipientLock(recipientId, async () => {
+      const existing = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+      const result = buildOrReuse(existing);
+      if (!existing && !result.reason) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, result.recipient, { merge: false });
+      } else if (existing && !result.reason && result.recipient.recipientTokenHash !== existing.recipientTokenHash) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, result.recipient, { merge: true });
+      }
+      return result;
+    });
+  };
+
+  const assertMemberWithinIntakeFormScope = ({ form, member, positions, teams }) => {
+    const formTeamIds = new Set(normalizeIdArray(form.teamIds));
+    if (formTeamIds.size === 0) return true;
+    const positionTeamById = new Map(positions.map((position) => [position.positionId, position.teamId]));
+    const memberTeamIds = new Set([
+      ...Object.keys(member.teamMemberships || {}),
+      ...(member.positionIds || []).map((positionId) => positionTeamById.get(positionId)).filter(Boolean),
+      ...teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId),
+    ]);
+    return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
+  };
+
+  const prepareAvailabilityNotificationRecipients = async ({
+    churchId,
+    formId,
+    memberIds,
+    purpose,
+    actorUid,
+  }) => {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (!form || form.churchId !== churchId || form.archivedAt) {
+      throw httpError(404, "Intake form not found.");
+    }
+    assertTeamIntakeFormIsOpen(form);
+    assertTeamIntakeFormResponseDeadline(form);
+    const enabledFields = normalizeTeamIntakeFields(undefined, form.enabledFields);
+    if (!enabledFields.includes("availability")) {
+      throw httpError(409, "This intake form does not collect service availability.");
+    }
+    const [members, positions, teams, church] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teamRosterMembers, "memberId", churchId),
+      listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId),
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
+      getChurchById(churchId),
+    ]);
+    const results = [];
+    for (const memberId of [...new Set(memberIds)].slice(0, 500)) {
+      const member = members.find((item) => item.memberId === memberId);
+      if (!member || member.archivedAt) {
+        results.push({ memberId, eligible: false, exclusionReason: "Volunteer is no longer active on this roster." });
+        continue;
+      }
+      if (!assertMemberWithinIntakeFormScope({ form, member, positions, teams })) {
+        results.push({ memberId, eligible: false, exclusionReason: "Volunteer is outside this form's team scope." });
+        continue;
+      }
+      const recipientId = createTeamIntakeRecipientId(formId, memberId);
+      let recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+      let token = "";
+      if (purpose === "availability_request") {
+        const ensured = await ensureTeamIntakeNotificationRecipient({ form, member, actorUid });
+        recipient = ensured.recipient;
+        token = ensured.token;
+        if (ensured.reason) {
+          results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: ensured.reason });
+          continue;
+        }
+      } else if (!recipient) {
+        results.push({ memberId, recipientId, eligible: false, exclusionReason: "No individual intake request exists." });
+        continue;
+      }
+      if (recipient?.revokedAt) {
+        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Request was revoked." });
+        continue;
+      }
+      if (recipient?.respondedAt) {
+        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Availability response already received." });
+        continue;
+      }
+      if (purpose === "availability_reminder") {
+        const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
+        recipient = ensured.recipient;
+        token = ensured.token;
+      }
+      const preliminary = resolveSmsMemberEligibility({ member, churchId, consent: null });
+      const consent = preliminary.phoneNumber
+        ? await getSmsConsentForChurchPhone(churchId, preliminary.phoneNumber)
+        : null;
+      const eligibility = resolveSmsMemberEligibility({ member, churchId, consent });
+      const publicUrl = token ? buildTeamIntakeRecipientPublicUrl(token) : "";
+      results.push({
+        memberId,
+        recipientId,
+        recipient,
+        member,
+        form: { formId, ...form },
+        churchName: church?.name || "WorshipSync",
+        publicUrl,
+        phoneNumber: eligibility.phoneNumber,
+        maskedPhoneNumber: eligibility.phoneNumber ? `••• ••• ${eligibility.phoneNumber.slice(-4)}` : "",
+        eligibilityStatus: eligibility.status,
+        eligible: eligibility.eligible,
+        exclusionReason: eligibility.eligible ? "" : ({
+          no_mobile: "No valid mobile number.",
+          consent_needed: "SMS consent is needed.",
+          opted_out: "This phone number opted out.",
+        })[eligibility.status],
+      });
+    }
+    return { form: { formId, ...form }, results };
+  };
+
+  const resolveAvailabilityNotificationContext = async (intent, actorUid = "") => {
+    const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, intent.recipientId || intent.sourceId);
+    if (!recipient || recipient.churchId !== intent.churchId || (intent.formId && recipient.formId !== intent.formId)) {
+      throw httpError(409, "The individual intake request is no longer available.");
+    }
+    const { form, member } = await getTeamIntakeRecipientContext(recipient);
+    assertTeamIntakeFormIsOpen(form);
+    assertTeamIntakeFormResponseDeadline(form);
+    if (recipient.revokedAt) throw httpError(409, "This intake request was revoked.");
+    if (recipient.respondedAt) throw httpError(409, "This volunteer has already responded.");
+    if (!normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability")) {
+      throw httpError(409, "This intake form no longer collects service availability.");
+    }
+    const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
+    return {
+      form,
+      recipient,
+      member,
+      church: await getChurchById(intent.churchId),
+      publicUrl: buildTeamIntakeRecipientPublicUrl(ensured.token),
+    };
+  };
+
+  const resolveScheduleNotificationContext = async (intent) => {
+    const schedule = await getDoc(COLLECTIONS.teamSchedules, intent.sourceId);
+    if (!schedule || schedule.churchId !== intent.churchId || schedule.archivedAt) {
+      throw httpError(409, "The source schedule is no longer available.");
+    }
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+    const occurrence = (schedule.occurrences || []).find((item) => item.occurrenceId === intent.occurrenceId);
+    const positionId = String(intent.cellKey || "").split(SCHEDULE_SLOT_KEY_SEPARATOR)[0];
+    const [position, church] = await Promise.all([
+      positionId ? getDoc(COLLECTIONS.teamPositions, positionId) : null,
+      getChurchById(intent.churchId),
+    ]);
+    return {
+      schedule,
+      member,
+      occurrence,
+      church,
+      serviceName: occurrence?.name || "service",
+      positionName: position?.name || "volunteer position",
+      responseUrl: buildAssignmentResponseUrl({
+        churchId: intent.churchId,
+        scheduleId: intent.sourceId,
+        memberId: intent.memberId,
+      }),
+    };
+  };
+
+  const closeResolvedReplacementInvitations = async ({ churchId, scheduleId, occurrenceId, cellKey }) => {
+    const intents = await queryDocs(COLLECTIONS.notificationIntents, [
+      { field: "churchId", value: churchId },
+      { field: "sourceId", value: scheduleId },
+      { field: "sourceType", value: "team_schedule" },
+    ], { limit: 250 });
+    const now = nowIso();
+    for (const intent of intents) {
+      if (intent.intentType !== "replacement_request" || intent.occurrenceId !== occurrenceId || intent.cellKey !== cellKey || intent.replacementResolvedAt || intent.status === "unknown") continue;
+      await setDoc(COLLECTIONS.notificationIntents, intent.intentId || intent.id, {
+        replacementResolvedAt: now,
+        replacementResolvedBy: "schedule_assignment",
+        updatedAt: now,
+      }, { merge: true });
+      const claimId = hashValue(`${churchId}|replacement-vacancy|${scheduleId}|${occurrenceId}|${cellKey}|${String(intent.sourceVersion || "").trim()}`);
+      await setDoc(COLLECTIONS.notificationBatches, claimId, { releasedAt: now, status: "released" }, { merge: true });
+    }
+  };
+
+  const validateReplacementCandidate = async ({
+    churchId,
+    scheduleId,
+    occurrenceId,
+    cellKey,
+    memberId,
+  }) => {
+    const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    if (!schedule || schedule.churchId !== churchId || schedule.archivedAt) {
+      throw httpError(404, "Schedule not found.");
+    }
+    const occurrence = (schedule.occurrences || []).find((item) => item?.occurrenceId === occurrenceId);
+    if (!occurrence) throw httpError(409, "This service occurrence is no longer on the schedule.");
+    const positionId = String(cellKey || "").split("::")[0];
+    const cell = schedule.assignments?.[occurrenceId]?.[cellKey];
+    const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+    const response = schedule.responses?.[occurrenceId]?.[cellKey]?.response;
+    if (holderId && response !== "declined") {
+      throw httpError(409, "Replacement invitations are available only for a vacant or declined assignment.");
+    }
+    const churchTeam = await getDoc(COLLECTIONS.teams, schedule.teamId);
+    const position = await getDoc(COLLECTIONS.teamPositions, positionId);
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    if (!churchTeam || churchTeam.churchId !== churchId || !position || position.churchId !== churchId || !member || member.churchId !== churchId) {
+      throw httpError(404, "Replacement candidate or schedule position not found in this church.");
+    }
+    if (member.serviceAvailability?.[occurrenceId] === "unavailable") {
+      throw httpError(409, "This volunteer marked the service unavailable on intake.");
+    }
+    const vacancySchedule = {
+      ...schedule,
+      assignments: JSON.parse(JSON.stringify(schedule.assignments || {})),
+    };
+    const currentCell = vacancySchedule.assignments?.[occurrenceId]?.[cellKey];
+    if (currentCell) {
+      const normalizedCell = normalizeScheduleAssignmentCell(currentCell);
+      const clearedCell = serializeScheduleAssignmentCell({
+        primaryMemberId: "",
+        shadows: normalizedCell.shadows,
+      });
+      if (clearedCell) vacancySchedule.assignments[occurrenceId][cellKey] = clearedCell;
+      else delete vacancySchedule.assignments[occurrenceId][cellKey];
+    }
+    const serviceDate = String(occurrence.startsAt || "").slice(0, 10);
+    const validated = await buildValidatedScheduleAssignments({
+      churchId,
+      schedule: vacancySchedule,
+      team: churchTeam,
+      position,
+      member,
+      serviceId: occurrenceId,
+      positionSlotKey: cellKey,
+      memberId,
+      serviceDate,
+      allowBlockout: false,
+      allowRecurringAvailability: false,
+      allowOccurrenceConflict: false,
+    });
+    const schedules = await listTeamCollectionForChurch(
+      COLLECTIONS.teamSchedules,
+      "scheduleId",
+      churchId,
+    );
+    assertNoCrossTeamScheduleAssignmentConflicts({
+      schedule: vacancySchedule,
+      assignments: validated.assignments,
+      schedules,
+      memberIds: new Set([memberId]),
+      allowCrossTeamConflict: false,
+      targetCellKey: cellKey,
+      targetOccurrenceId: occurrenceId,
+    });
+    return { schedule, occurrence, member, team: churchTeam, position, holderId };
+  };
+
   return {
+    prepareAvailabilityNotificationRecipients,
+    resolveAvailabilityNotificationContext,
+    resolveScheduleNotificationContext,
     async getTeamsBootstrap(req, res) {
       try {
         await requireTeamsView(req, req.params.churchId);
@@ -7355,6 +7687,7 @@ export const createTeamsAuthHandlers = ({
      * no session to throttle behind.
      */
     buildAssignmentResponseUrl,
+    validateReplacementCandidate,
 
     /**
      * Tell people they are on this schedule.
@@ -7615,19 +7948,24 @@ export const createTeamsAuthHandlers = ({
           targets,
           response,
         });
-        try {
-          await saveNotificationEventIntents({
-            churchId,
-            schedule,
-            intentType: response === "declined" ? "replacement_request" : "assignment_confirmation",
-            entries: targets.map((target) => ({
-              memberId,
-              occurrenceId: target.occurrenceId,
-              cellKey: target.cellKey,
-            })),
-          });
-        } catch (error) {
-          console.error("Could not record assignment response message previews", error);
+        // A response updates the schedule response record only. Declines expose
+        // a vacancy to the scheduler; they never address a replacement message
+        // to the volunteer who declined, and accepts do not send confirmations.
+        if (response === "accepted") {
+          try {
+            await saveNotificationEventIntents({
+              churchId,
+              schedule,
+              intentType: "assignment_confirmation",
+              entries: targets.map((target) => ({
+                memberId,
+                occurrenceId: target.occurrenceId,
+                cellKey: target.cellKey,
+              })),
+            });
+          } catch (error) {
+            console.error("Could not record assignment response message previews", error);
+          }
         }
         emitTeamsEvent(churchId, "schedule-updated", { schedule });
         // Owners learn about this without watching the grid. Coalesced, so a
@@ -8518,137 +8856,10 @@ export const createTeamsAuthHandlers = ({
           windowMs: 10 * 60 * 1000,
           blockMs: 10 * 60 * 1000,
         });
-        const recipient = await getDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          req.params.recipientId,
-        );
-        if (!recipient || recipient.churchId !== req.params.churchId) {
-          throw httpError(404, "Individual request not found.");
+        if (typeof sendTeamIntakeNotificationIntent !== "function") {
+          throw httpError(503, "The shared volunteer message dispatcher is unavailable.");
         }
-        const { form, member } = await getTeamIntakeRecipientContext(recipient);
-        const preliminaryEligibility = resolveSmsMemberEligibility({
-          member,
-          churchId: req.params.churchId,
-          consent: null,
-        });
-        const consent = preliminaryEligibility.phoneNumber
-          ? await getSmsConsentForChurchPhone(
-              req.params.churchId,
-              preliminaryEligibility.phoneNumber,
-            )
-          : null;
-        const eligibility = resolveSmsMemberEligibility({
-          member,
-          churchId: req.params.churchId,
-          consent,
-        });
-        if (!eligibility.eligible) {
-          const messages = {
-            no_mobile: "This member does not have a valid mobile number.",
-            consent_needed: "SMS consent is needed for this phone number.",
-            opted_out: "This phone number has opted out of SMS.",
-          };
-          throw httpError(400, messages[eligibility.status]);
-        }
-
-        const config = normalizeChurchMessagingConfig(
-          await getDoc(COLLECTIONS.churchMessagingConfigs, req.params.churchId),
-          req.params.churchId,
-        );
-        if (!isChurchMessagingReady(config)) {
-          throw httpError(503, "Church SMS messaging is not configured and enabled.");
-        }
-        const statusCallbackUrl = resolveTwilioStatusCallbackUrl();
-
-        const ensured = await ensureTeamIntakeRecipientToken(
-          recipient,
-          admin.user.uid,
-        );
-        const publicUrl = buildTeamIntakeRecipientPublicUrl(ensured.token);
-        const message = buildTeamIntakeSms({
-          churchName: (await getChurchById(req.params.churchId))?.name,
-          formName: form.name,
-          publicUrl,
-        });
-        const attemptId = createId("smsAttempt");
-        const createdAt = nowIso();
-        const pendingAttempt = {
-          attemptId,
-          churchId: req.params.churchId,
-          recipientType: "team_intake",
-          recipientId: recipient.recipientId,
-          formId: form.formId,
-          memberId: member.memberId,
-          phoneNumberSnapshot: eligibility.phoneNumber,
-          provider: config.provider,
-          purpose: "initial",
-          status: "pending",
-          createdAt,
-          updatedAt: createdAt,
-        };
-        await setDoc(
-          COLLECTIONS.smsDeliveryAttempts,
-          attemptId,
-          pendingAttempt,
-          { merge: false },
-        );
-
-        try {
-          const provider = smsProviderFactory({
-            config,
-            churchId: req.params.churchId,
-          });
-          const result = await provider.sendMessage({
-            to: eligibility.phoneNumber,
-            body: message.body,
-            statusCallbackUrl,
-          });
-          const providerMessageId = String(result?.providerMessageId || "").trim();
-          if (!providerMessageId) {
-            throw new Error("The SMS provider did not return a message ID.");
-          }
-          const savedAttempt = {
-            ...pendingAttempt,
-            providerMessageId,
-            status: normalizeSmsDeliveryStatus(result.status),
-            updatedAt: nowIso(),
-          };
-          await setDoc(
-            COLLECTIONS.smsDeliveryAttempts,
-            attemptId,
-            {
-              providerMessageId,
-              status: savedAttempt.status,
-              updatedAt: savedAttempt.updatedAt,
-            },
-            { merge: true },
-          );
-          return res.json({
-            success: true,
-            recipient: sanitizeTeamIntakeRecipientForAdmin(ensured.recipient),
-            attempt: sanitizeSmsDeliveryAttemptForAdmin(savedAttempt),
-            message: {
-              encoding: message.encoding,
-              characterCount: message.characterCount,
-              unitCount: message.unitCount,
-              segmentCount: message.segmentCount,
-            },
-          });
-        } catch (error) {
-          const failedAt = nowIso();
-          await setDoc(
-            COLLECTIONS.smsDeliveryAttempts,
-            attemptId,
-            {
-              status: "failed",
-              ...(error?.code ? { failureCode: String(error.code).slice(0, 80) } : {}),
-              failureMessage: String(error?.message || "SMS provider send failed").slice(0, 500),
-              updatedAt: failedAt,
-            },
-            { merge: true },
-          );
-          throw httpError(502, "The SMS could not be sent. Try again.");
-        }
+        return await sendTeamIntakeNotificationIntent(req, res);
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not send the individual intake SMS.");
       }
@@ -9517,7 +9728,8 @@ export const createTeamsAuthHandlers = ({
         // Editing occurrences rewrites assignments wholesale, so answers about
         // slots that no longer exist have to go with them.
         const schedule = await syncScheduleResponsesToAssignments(saved);
-        const changedEntries = [];
+        const removedEntries = [];
+        const addedEntries = [];
         for (const occurrenceId of new Set([
           ...Object.keys(existing.assignments || {}),
           ...Object.keys(schedule.assignments || {}),
@@ -9530,21 +9742,40 @@ export const createTeamsAuthHandlers = ({
             const beforeId = typeof beforeCell === "string" ? beforeCell : beforeCell?.primaryMemberId || "";
             const afterId = typeof afterCell === "string" ? afterCell : afterCell?.primaryMemberId || "";
             if (beforeId === afterId) continue;
-            if (afterId) changedEntries.push({ intentType: "schedule_change", memberId: afterId, occurrenceId, cellKey });
-            else if (beforeId) changedEntries.push({ intentType: "replacement_request", memberId: beforeId, occurrenceId, cellKey });
+            if (beforeId) removedEntries.push({ memberId: beforeId, occurrenceId, cellKey });
+            if (afterId) addedEntries.push({ memberId: afterId, occurrenceId, cellKey });
           }
         }
         try {
-          for (const intentType of ["schedule_change", "replacement_request"]) {
+          for (const { intentType, entries } of [
+            { intentType: "schedule_change", entries: removedEntries },
+            ...(schedule.sentAt
+              ? [{ intentType: "assignment_notification", entries: addedEntries }]
+              : []),
+          ]) {
             await saveNotificationEventIntents({
               churchId: req.params.churchId,
               schedule,
               intentType,
-              entries: changedEntries.filter((entry) => entry.intentType === intentType),
+              entries,
             });
           }
         } catch (error) {
           console.error("Could not record schedule change message previews", error);
+        }
+        if (schedule.sentAt) {
+          for (const entry of addedEntries) {
+            try {
+              await closeResolvedReplacementInvitations({
+                churchId: req.params.churchId,
+                scheduleId: schedule.scheduleId,
+                occurrenceId: entry.occurrenceId,
+                cellKey: entry.cellKey,
+              });
+            } catch (error) {
+              console.error("Could not close resolved replacement invitation", error);
+            }
+          }
         }
         await addSecurityEvent({
           type: "team_schedule_updated",
@@ -10799,17 +11030,38 @@ export const createTeamsAuthHandlers = ({
         const previousMemberId = typeof previousCell === "string" ? previousCell : previousCell?.primaryMemberId || "";
         const currentCell = schedule.assignments?.[changedOccurrenceId]?.[changedCellKey];
         const currentMemberId = typeof currentCell === "string" ? currentCell : currentCell?.primaryMemberId || "";
-        const eventMemberId = currentMemberId || previousMemberId;
-        if (eventMemberId && currentMemberId !== previousMemberId) {
+        if (schedule.sentAt && currentMemberId !== previousMemberId) {
+          if (currentMemberId) {
+            try {
+              await closeResolvedReplacementInvitations({
+                churchId: req.params.churchId,
+                scheduleId: schedule.scheduleId,
+                occurrenceId: changedOccurrenceId,
+                cellKey: changedCellKey,
+              });
+            } catch (error) {
+              console.error("Could not close resolved replacement invitation", error);
+            }
+          }
           try {
-            await saveNotificationEventIntents({
-              churchId: req.params.churchId,
-              schedule,
-              intentType: currentMemberId ? "schedule_change" : "replacement_request",
-              entries: [{ memberId: eventMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
-            });
+            if (previousMemberId) {
+              await saveNotificationEventIntents({
+                churchId: req.params.churchId,
+                schedule,
+                intentType: "schedule_change",
+                entries: [{ memberId: previousMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
+              });
+            }
+            if (currentMemberId) {
+              await saveNotificationEventIntents({
+                churchId: req.params.churchId,
+                schedule,
+                intentType: "assignment_notification",
+                entries: [{ memberId: currentMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
+              });
+            }
           } catch (error) {
-            console.error("Could not record schedule change message preview", error);
+            console.error("Could not record schedule assignment message previews", error);
           }
         }
         await addSecurityEvent({

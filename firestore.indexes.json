@@ -101,6 +101,31 @@
       ]
     },
     {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "formId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "sourceType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teamIntakeRecipients",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "formId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "churchStorageQuotaReservations",
       "queryScope": "COLLECTION",
       "fields": [

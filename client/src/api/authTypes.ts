@@ -607,6 +607,8 @@ export type TeamIntakeForm = {
   name: string;
   startDate: string;
   endDate: string;
+  /** Last date volunteers may submit; older forms fall back to endDate. */
+  responseDeadline?: string;
   availabilityServices: TeamIntakeAvailabilityService[];
   availabilityOccurrences: TeamIntakeAvailabilityOccurrence[];
   // Teams whose positions this form collects availability for. Empty means the
@@ -688,15 +690,21 @@ export type NotificationIntent = {
   intentId: string;
   churchId: string;
   intentType: NotificationIntentType;
-  sourceType: "team_schedule";
+  sourceType: "team_schedule" | "team_intake_recipient";
   sourceId: string;
   sourceVersion: string;
   memberId: string;
+  formId?: string;
+  recipientId?: string;
+  batchId?: string;
+  reminderRound?: number;
   occurrenceId: string;
   cellKey?: string;
   idempotencyKey: string;
   channel: "sms";
-  message: string;
+  message?: string;
+  messagePreview?: string;
+  responseUrl?: string;
   status: NotificationIntentStatus;
   attemptId?: string;
   createdAt: string;
@@ -706,6 +714,50 @@ export type NotificationIntent = {
   previewError?: string;
   attemptStatus?: SmsDeliveryAttemptStatus;
   attemptOutcome?: string;
+  respondedAt?: string;
+  replacementResolvedAt?: string;
+};
+
+export type NotificationBatchRecipient = {
+  memberId: string;
+  memberName: string;
+  recipientId?: string;
+  maskedPhoneNumber?: string;
+  eligibilityStatus?: SmsMemberEligibilityStatus | "";
+  eligible: boolean;
+  exclusionReason?: string;
+  intentId?: string;
+  status: NotificationIntentStatus | "excluded";
+  attemptId?: string;
+  attemptStatus?: SmsDeliveryAttemptStatus | "";
+  attemptOutcome?: string;
+  segmentCount: number;
+  message?: string;
+};
+
+export type NotificationBatch = {
+  batchId: string;
+  churchId: string;
+  formId: string;
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+  reminderRound: number;
+  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent";
+  selectedMemberIds: string[];
+  recipients: NotificationBatchRecipient[];
+  intentIds: string[];
+  summary: {
+    requested: number;
+    eligible: number;
+    excluded: number;
+    totalSegments: number;
+    sent: number;
+    delivered: number;
+    failed: number;
+    uncertain: number;
+    responded: number;
+    waiting: number;
+    optedOut: number;
+  };
 };
 
 export type SmsDeliveryAttempt = {

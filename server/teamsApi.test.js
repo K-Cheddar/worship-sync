@@ -7046,6 +7046,30 @@ test("an emailed token stops working once the slot moves on", async (t) => {
   assert.equal(res.statusCode, 409);
 });
 
+test("declining an assignment records a vacancy without messaging the volunteer who declined", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("decline_vacancy_no_invite");
+  const { memberId, scheduleId } = await seedAssignedSchedule(context, "declinevacancy");
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+
+  const response = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "declined" },
+  });
+  assert.equal(response.statusCode, 200);
+  const intents = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "sourceId", value: scheduleId },
+  ]);
+  assert.equal(intents.filter((intent) => intent.intentType === "replacement_request").length, 0);
+  assert.equal(intents.length, 0, "recording a decline does not create an SMS draft");
+});
+
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");
@@ -8058,7 +8082,7 @@ test("individual intake recipient creation validates the full set before writing
   );
 });
 
-test("individual intake SMS creates auditable attempts, retries preserve history, and bootstrap exposes derived state", async (t) => {
+test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");
   const { teamId, memberIds } = await seedTeam(context, {
@@ -8108,9 +8132,17 @@ test("individual intake SMS creates auditable attempts, retries preserve history
   });
   setSmsProviderForServerTests(fake);
   try {
+    const unconfirmed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+      context,
+      params: { recipientId },
+      body: {},
+    });
+    assert.equal(unconfirmed.statusCode, 400);
+    assert.equal(fake.calls.length, 0, "an individual send requires explicit operator confirmation");
     const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { recipientId },
+      body: { confirmed: true },
     });
     assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
     assert.equal(first.payload.attempt.status, "accepted");
@@ -8131,13 +8163,14 @@ test("individual intake SMS creates auditable attempts, retries preserve history
     const second = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { recipientId },
+      body: { confirmed: true },
     });
-    assert.equal(second.statusCode, 200);
-    assert.notEqual(second.payload.attempt.attemptId, first.payload.attempt.attemptId);
+    assert.equal(second.statusCode, 409);
     const attempts = await queryDocs("smsDeliveryAttempts", [
       { field: "recipientId", value: recipientId },
     ]);
-    assert.equal(attempts.length, 2);
+    assert.equal(attempts.length, 1);
+    assert.equal(fake.calls.length, 1);
 
     const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
       context,
@@ -8152,7 +8185,7 @@ test("individual intake SMS creates auditable attempts, retries preserve history
       params: { formId },
     });
     assert.equal(history.statusCode, 200);
-    assert.equal(history.payload.attempts.length, 2);
+    assert.equal(history.payload.attempts.length, 1);
   } finally {
     setSmsProviderForServerTests(null);
   }
@@ -8187,6 +8220,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const noConsent = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { recipientId },
+    body: { confirmed: true },
   });
   assert.equal(noConsent.statusCode, 400);
   assert.match(noConsent.payload.errorMessage, /consent/i);
@@ -8219,6 +8253,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
     const failed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { recipientId },
+      body: { confirmed: true },
     });
     assert.equal(failed.statusCode, 502);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -8239,6 +8274,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const disabled = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { recipientId },
+    body: { confirmed: true },
   });
   assert.equal(disabled.statusCode, 503);
 
@@ -8251,6 +8287,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const closed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { recipientId },
+    body: { confirmed: true },
   });
   assert.equal(closed.statusCode, 400);
   assert.match(closed.payload.errorMessage, /closed/i);
@@ -8263,6 +8300,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const revokedSend = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { recipientId },
+    body: { confirmed: true },
   });
   assert.equal(revokedSend.statusCode, 404);
 });

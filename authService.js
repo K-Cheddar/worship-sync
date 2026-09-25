@@ -190,6 +190,7 @@ export const COLLECTIONS = {
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
   notificationIntents: "notificationIntents",
+  notificationBatches: "notificationBatches",
   smsInboundCommands: "smsInboundCommands",
   smsConsents: "smsConsents",
   churchMessagingConfigs: "churchMessagingConfigs",
@@ -547,6 +548,7 @@ const memoryState = {
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
   notificationIntents: new Map(),
+  notificationBatches: new Map(),
   smsInboundCommands: new Map(),
   smsConsents: new Map(),
   churchMessagingConfigs: new Map(),
@@ -617,6 +619,7 @@ const collectionMap = {
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
   [COLLECTIONS.notificationIntents]: memoryState.notificationIntents,
+  [COLLECTIONS.notificationBatches]: memoryState.notificationBatches,
   [COLLECTIONS.smsInboundCommands]: memoryState.smsInboundCommands,
   [COLLECTIONS.smsConsents]: memoryState.smsConsents,
   [COLLECTIONS.churchMessagingConfigs]: memoryState.churchMessagingConfigs,
@@ -5279,6 +5282,8 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireFirestore,
   saveNotificationEventIntents: (...args) =>
     notificationIntentHandlers.saveEventIntents(...args),
+  sendTeamIntakeNotificationIntent: (...args) =>
+    notificationIntentHandlers.sendTeamIntakeIntent(...args),
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -5346,6 +5351,14 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   validateTwilioStatusCallbackUrl: () =>
     resolveTwilioStatusCallbackUrl(),
   setDoc,
+  prepareAvailabilityNotificationRecipients: (...args) =>
+    teamsAuthHandlers.prepareAvailabilityNotificationRecipients(...args),
+  resolveAvailabilityNotificationContext: (...args) =>
+    teamsAuthHandlers.resolveAvailabilityNotificationContext(...args),
+  resolveScheduleNotificationContext: (...args) =>
+    teamsAuthHandlers.resolveScheduleNotificationContext(...args),
+  validateReplacementCandidate: (...args) =>
+    teamsAuthHandlers.validateReplacementCandidate(...args),
 });
 
 export const authHandlers = {
