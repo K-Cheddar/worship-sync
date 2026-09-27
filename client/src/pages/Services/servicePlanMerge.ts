@@ -162,12 +162,49 @@ const mergeIdArray = (
     } else order = sorted;
     }
   }
-  // Additions made independently have no shared anchor. Keep the merged order
-  // for surviving base records, then append additions in stable ID order.
+  // Preserve base-record ordering selected above, then place new records near
+  // the neighbors used by the side that added them. This keeps insertions in
+  // their meaningful section instead of moving every new item to the end.
   const baseIds = new Set(baseOrder);
   const orderedBaseIds = order.filter((id) => baseIds.has(id));
-  const additions = [...merged.keys()].filter((id) => !baseIds.has(id)).sort();
-  order = [...orderedBaseIds, ...additions];
+  const allIds = new Set(merged.keys());
+  const edges = new Map([...allIds].map((id) => [id, new Set<string>()]));
+  const addEdge = (before: string, after: string) => {
+    if (before !== after) edges.get(before)?.add(after);
+  };
+  for (let index = 1; index < orderedBaseIds.length; index += 1) {
+    addEdge(orderedBaseIds[index - 1], orderedBaseIds[index]);
+  }
+  for (const sideOrder of [local.map((item) => item.id), remote.map((item) => item.id)]) {
+    const surviving = sideOrder.filter((id) => allIds.has(id));
+    for (let index = 1; index < surviving.length; index += 1) {
+      const previous = surviving[index - 1];
+      const current = surviving[index];
+      if (!baseIds.has(previous) || !baseIds.has(current)) addEdge(previous, current);
+    }
+  }
+  const rank = new Map<string, number>();
+  for (const sequence of [local.map((item) => item.id), remote.map((item) => item.id)]) {
+    sequence.forEach((id, index) => {
+      if (allIds.has(id)) rank.set(id, Math.min(rank.get(id) ?? Number.MAX_SAFE_INTEGER, index));
+    });
+  }
+  const remaining = new Set(allIds);
+  const positioned: string[] = [];
+  while (remaining.size) {
+    const next = [...remaining]
+      .filter((id) => ![...remaining].some((other) => edges.get(other)?.has(id)))
+      .sort((left, right) => (rank.get(left) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right) ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right))[0];
+    if (!next) break;
+    positioned.push(next);
+    remaining.delete(next);
+  }
+  if (remaining.size) {
+    context.conflicts.push({ path: `${path}.__order`, label: `${labelFor(path)} order`, localValue: localOrder, remoteValue: remoteOrder, kind: "order" });
+    order = [...localOrder, ...remoteOrder.filter((id) => !localOrder.includes(id))];
+  } else {
+    order = positioned;
+  }
   return order.map((id) => merged.get(id)!).filter(Boolean);
 };
 
@@ -213,7 +250,9 @@ export const applyServicePlanMergeChoices = (
   conflicts: ServicePlanMergeConflict[],
   choices: Record<string, "local" | "remote">,
 ) => {
-  const result = structuredClone(plan) as ServicePlanMergeResult["plan"];
+  // Service plans are JSON documents; keep this utility usable in runtimes
+  // whose test DOM has not implemented structuredClone.
+  const result = JSON.parse(JSON.stringify(plan)) as ServicePlanMergeResult["plan"];
   const setAtPath = (path: string, value: unknown) => {
     const segments = path.replace(/^plan\./, "").split(".");
     let cursor: unknown = result;

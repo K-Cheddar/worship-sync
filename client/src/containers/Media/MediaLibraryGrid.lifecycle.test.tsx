@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import MediaLibraryGrid from "./MediaLibraryGrid";
 import type { MediaFolder, MediaType } from "../../types";
 import type { VirtualMediaGridHandle } from "./VirtualMediaGrid";
@@ -258,7 +258,7 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
     expect(screen.getByText("Media 20")).toBeInTheDocument();
   });
 
-  it("shows compact vertical folders in the main Media panel", () => {
+  it("shows compact folders together in a wrapping row in the main Media panel", () => {
     const mediaListRef = { current: null } as React.RefObject<HTMLElement | null>;
     const mediaGridRef = {
       current: null,
@@ -273,7 +273,8 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
 
     render(renderGrid(true, mediaListRef, mediaGridRef, { showAll: false, childFolders: folders }));
 
-    expect(screen.getAllByTestId("media-library-folder-row")).toHaveLength(3);
-    expect(screen.getByRole("button", { name: "Backgrounds" })).toBeInTheDocument();
+    const folderGrid = screen.getByTestId("media-library-folder-grid");
+    expect(within(folderGrid).getAllByRole("button")).toHaveLength(3);
+    expect(within(folderGrid).getByRole("button", { name: "Backgrounds" })).toBeInTheDocument();
   });
 });

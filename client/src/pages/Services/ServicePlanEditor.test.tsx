@@ -44,6 +44,7 @@ import {
 } from "../../types/richText";
 import { calendarDateInTimeZone } from "../../utils/teamScheduleOccurrences";
 import * as generalUtils from "../../utils/generalUtils";
+import { readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
 
 jest.mock("../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`, so the
@@ -182,6 +183,7 @@ const nextOccurrence: TeamScheduleOccurrence = {
 };
 
 type RenderEditorProps = {
+  userId?: string;
   service?: TeamService;
   occurrence?: TeamScheduleOccurrence;
   members?: TeamRosterMember[];
@@ -212,6 +214,7 @@ type RenderEditorProps = {
 };
 
 const editorTree = ({
+  userId = "test-user-id",
   service = oneTimeService,
   occurrence: occurrenceProp = occurrence,
   members = [],
@@ -229,7 +232,7 @@ const editorTree = ({
 }: RenderEditorProps = {}) => (
   <GlobalInfoContext.Provider
     value={
-      createMockGlobalContext({ churchId: "church-1" }) as ContextType<
+      createMockGlobalContext({ churchId: "church-1", userId }) as ContextType<
         typeof GlobalInfoContext
       >
     }
@@ -1088,7 +1091,33 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    mockGetServicePlan.mockResolvedValueOnce({
+      success: true,
+      servicePlan: {
+        ...latestPlan,
+        revision: 10,
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Newest item") }],
+        }],
+      },
+    });
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
+    expect(await screen.findByText("Newest item")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply merged plan" })).toBeDisabled();
+
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(2), { timeout: 4_000 });
+    await waitFor(() => {
+      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).toBeNull();
+    });
   });
 
   it("does not offer Reload latest after a generic save failure", async () => {
@@ -1125,6 +1154,85 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reload latest" })).not.toBeInTheDocument();
     expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
+  });
+
+  it("keeps recovery private across an account switch in the same tab", async () => {
+    const currentPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 2,
+      sections: [{ id: "section-1", name: "Worship", elements: [] }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: currentPlan });
+    saveServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey, {
+      savedAt: Date.now(),
+      base: currentPlan,
+      local: { ...currentPlan, name: "Private recovered plan" },
+    });
+
+    const view = render(editorTree({ userId: "test-user-id" }));
+    expect(await screen.findByText("Unsaved plan changes are available from this tab.")).toBeInTheDocument();
+
+    view.rerender(editorTree({ userId: "another-user-id" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Unsaved plan changes are available from this tab.")).not.toBeInTheDocument();
+    });
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey)).not.toBeNull();
+  });
+
+  it("restores after an existing edit and retains the snapshot through a failed save and retry", async () => {
+    const user = userEvent.setup();
+    const original: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 1,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Welcome") }],
+      }],
+    };
+    let latest = original;
+    let saveCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({ success: true, servicePlan: latest }));
+    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, payload) => {
+      saveCount += 1;
+      if (saveCount === 2) throw new Error("temporary network failure");
+      latest = { ...latest, ...payload, planKey, revision: (latest.revision || 0) + 1 } as ServicePlan;
+      return { success: true, servicePlan: latest };
+    });
+    saveServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey, {
+      savedAt: Date.now(),
+      base: original,
+      local: {
+        ...original,
+        sections: [{
+          ...original.sections[0],
+          elements: [{ ...original.sections[0].elements[0], title: plainTextToRichText("Welcome now") }],
+        }],
+      },
+    });
+
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.type(screen.getByLabelText(/^Title/i), " now");
+    await user.click(screen.getByRole("button", { name: "Restore draft" }));
+
+    expect(await screen.findByText("Retrying save…", undefined, { timeout: 6_000 })).toBeInTheDocument();
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).not.toBeNull();
+    await waitFor(() => expect(saveCount).toBeGreaterThanOrEqual(3), { timeout: 8_000 });
+    expect(await screen.findByDisplayValue("Welcome now")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).toBeNull();
+    });
   });
 
   it("applies a saved template to an empty plan", async () => {

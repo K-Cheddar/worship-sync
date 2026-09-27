@@ -6,16 +6,27 @@ const plan = { planId: "p", churchId: "c", planKey: "k", serviceId: "s", date: "
 describe("service plan recovery draft", () => {
   beforeEach(() => sessionStorage.clear());
 
-  it("recovers a draft after a reload within the same tab and isolates plan keys", () => {
-    saveServicePlanRecoveryDraft("c", "k", { savedAt: Date.now(), base: plan, local: { name: "Local", sections: [] } });
-    expect(readServicePlanRecoveryDraft("c", "k")?.local.name).toBe("Local");
-    expect(readServicePlanRecoveryDraft("c", "other")).toBeNull();
+  it("recovers a draft in the same tab and isolates it by user, church, and plan", () => {
+    saveServicePlanRecoveryDraft("user-1", "c", "k", { savedAt: Date.now(), base: plan, local: { name: "Local", sections: [] } });
+    expect(readServicePlanRecoveryDraft("user-1", "c", "k")?.local.name).toBe("Local");
+    expect(readServicePlanRecoveryDraft("user-2", "c", "k")).toBeNull();
+    expect(readServicePlanRecoveryDraft("user-1", "other-church", "k")).toBeNull();
+    expect(readServicePlanRecoveryDraft("user-1", "c", "other-plan")).toBeNull();
+  });
+
+  it("does not expose an unowned legacy draft to an authenticated user", () => {
+    sessionStorage.setItem(
+      "worship-sync:service-plan-draft:c:k",
+      JSON.stringify({ savedAt: Date.now(), base: plan, local: { name: "Legacy", sections: [] } }),
+    );
+    expect(readServicePlanRecoveryDraft("user-1", "c", "k")).toBeNull();
+    expect(sessionStorage.length).toBe(1);
   });
 
   it("expires old drafts and removes them from the temporary store", () => {
-    saveServicePlanRecoveryDraft("c", "k", { savedAt: Date.now() - 25 * 60 * 60 * 1000, base: plan, local: { name: "Old", sections: [] } });
-    expect(readServicePlanRecoveryDraft("c", "k")).toBeNull();
-    clearServicePlanRecoveryDraft("c", "k");
+    saveServicePlanRecoveryDraft("user-1", "c", "k", { savedAt: Date.now() - 25 * 60 * 60 * 1000, base: plan, local: { name: "Old", sections: [] } });
+    expect(readServicePlanRecoveryDraft("user-1", "c", "k")).toBeNull();
+    clearServicePlanRecoveryDraft("user-1", "c", "k");
     expect(sessionStorage.length).toBe(0);
   });
 });

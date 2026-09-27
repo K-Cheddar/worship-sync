@@ -7,15 +7,18 @@ export type RecoveredServicePlanDraft = {
   local: Pick<ServicePlan, "name" | "timezone" | "sourceImport" | "sections">;
 };
 
-const keyFor = (churchId: string, planKey: string) => `worship-sync:service-plan-draft:${encodeURIComponent(churchId)}:${encodeURIComponent(planKey)}`;
+const keyFor = (userId: string, churchId: string, planKey: string) =>
+  `worship-sync:service-plan-draft:${encodeURIComponent(userId)}:${encodeURIComponent(churchId)}:${encodeURIComponent(planKey)}`;
 
-export const saveServicePlanRecoveryDraft = (churchId: string, planKey: string, value: RecoveredServicePlanDraft) => {
-  try { window.sessionStorage.setItem(keyFor(churchId, planKey), JSON.stringify(value)); } catch { /* storage may be disabled */ }
+export const saveServicePlanRecoveryDraft = (userId: string, churchId: string, planKey: string, value: RecoveredServicePlanDraft) => {
+  if (!userId || !churchId || !planKey) return;
+  try { window.sessionStorage.setItem(keyFor(userId, churchId, planKey), JSON.stringify(value)); } catch { /* storage may be disabled */ }
 };
 
-export const readServicePlanRecoveryDraft = (churchId: string, planKey: string): RecoveredServicePlanDraft | null => {
+export const readServicePlanRecoveryDraft = (userId: string, churchId: string, planKey: string): RecoveredServicePlanDraft | null => {
+  if (!userId || !churchId || !planKey) return null;
   try {
-    const key = keyFor(churchId, planKey);
+    const key = keyFor(userId, churchId, planKey);
     const raw = window.sessionStorage.getItem(key);
     if (!raw) return null;
     const value = JSON.parse(raw) as RecoveredServicePlanDraft;
@@ -27,6 +30,7 @@ export const readServicePlanRecoveryDraft = (churchId: string, planKey: string):
   } catch { return null; }
 };
 
-export const clearServicePlanRecoveryDraft = (churchId: string, planKey: string) => {
-  try { window.sessionStorage.removeItem(keyFor(churchId, planKey)); } catch { /* storage may be disabled */ }
+export const clearServicePlanRecoveryDraft = (userId: string, churchId: string, planKey: string) => {
+  if (!userId || !churchId || !planKey) return;
+  try { window.sessionStorage.removeItem(keyFor(userId, churchId, planKey)); } catch { /* storage may be disabled */ }
 };

@@ -5,6 +5,7 @@ import type { MediaFolder, MediaType } from "../../types";
 const mockVirtualizerMeasure = jest.fn();
 const mockVirtualizerMeasureElement = jest.fn();
 const mockVirtualizerCounts: number[] = [];
+let mockFolderRowHeight = 32;
 const mockVirtualizerSnapshots: Array<{
   totalSize: number;
   indexes: number[];
@@ -55,9 +56,11 @@ jest.mock("@tanstack/react-virtual", () => {
     useVirtualizer: ({
       count,
       estimateSize,
+      getItemKey,
     }: {
       count: number;
       estimateSize: (index: number) => number;
+      getItemKey: (index: number) => string | number;
     }) => {
       mockVirtualizerCounts.push(count);
       const [, forceRender] = React.useState(0);
@@ -65,7 +68,9 @@ jest.mock("@tanstack/react-virtual", () => {
       countRef.current = count;
       const estimateSizeRef = React.useRef(estimateSize);
       estimateSizeRef.current = estimateSize;
-      const sizeCacheRef = React.useRef(new Map<number, number>());
+      const getItemKeyRef = React.useRef(getItemKey);
+      getItemKeyRef.current = getItemKey;
+      const sizeCacheRef = React.useRef(new Map<string | number, number>());
       const measure = React.useCallback(() => {
         mockVirtualizerMeasure();
         mockMeasurementPasses.push("virtualizer.measure");
@@ -96,7 +101,7 @@ jest.mock("@tanstack/react-virtual", () => {
             Array.from({ length: countRef.current }, (_, index) => index).reduce(
               (total, index) =>
                 total +
-                (sizeCacheRef.current.get(index) ??
+                (sizeCacheRef.current.get(getItemKeyRef.current(index)) ??
                   estimateSizeRef.current(index)),
               0,
             ),
@@ -109,7 +114,7 @@ jest.mock("@tanstack/react-virtual", () => {
               result.push(
                 (result.at(-1) ?? 0) +
                   (result.length > 0
-                    ? sizeCacheRef.current.get(index - 1) ??
+                    ? sizeCacheRef.current.get(getItemKeyRef.current(index - 1)) ??
                       estimateSizeRef.current(index - 1)
                     : 0),
               );
@@ -119,7 +124,7 @@ jest.mock("@tanstack/react-virtual", () => {
               totalSize: indexes.reduce(
                 (total, index) =>
                   total +
-                  (sizeCacheRef.current.get(index) ??
+                  (sizeCacheRef.current.get(getItemKeyRef.current(index)) ??
                     estimateSizeRef.current(index)),
                 0,
               ),
@@ -128,7 +133,7 @@ jest.mock("@tanstack/react-virtual", () => {
             });
             return indexes.map((index) => ({
               index,
-              key: String(index),
+              key: getItemKeyRef.current(index),
               start: starts[index],
             }));
           },
@@ -137,13 +142,14 @@ jest.mock("@tanstack/react-virtual", () => {
             mockVirtualizerMeasureElement();
             mockMeasurementPasses.push("rendered-row");
             const index = Number(element.dataset.index);
+            const key = getItemKeyRef.current(index);
             const estimatedSize = estimateSizeRef.current(index);
             let measuredSize = estimatedSize;
             if (element.dataset.rowType === "tiles") measuredSize = 120;
-            if (element.dataset.rowType === "folder") {
-              measuredSize = 32;
+            if (element.dataset.rowType === "folders") {
+              measuredSize = mockFolderRowHeight;
             }
-            sizeCacheRef.current.set(index, measuredSize);
+            sizeCacheRef.current.set(key, measuredSize);
             forceRender((value) => value + 1);
           },
           measure,
@@ -221,11 +227,13 @@ describe("VirtualMediaGrid", () => {
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
       .mockImplementation(function (this: HTMLElement) {
         const text = this.textContent ?? "";
+        const isFolderRow = this.dataset.rowType === "folders";
         const isTileRow =
           text.includes("Media") || text.includes("Welcome") || text.includes("Goodbye");
+        const height = isFolderRow ? mockFolderRowHeight : isTileRow ? 120 : 28;
         return {
-          bottom: isTileRow ? 120 : 28,
-          height: isTileRow ? 120 : 28,
+          bottom: height,
+          height,
           left: 0,
           right: 100,
           toJSON: () => ({}),
@@ -243,6 +251,7 @@ describe("VirtualMediaGrid", () => {
 
   beforeEach(() => {
     mockVirtualizerCounts.length = 0;
+    mockFolderRowHeight = 32;
     mockVirtualizerMeasure.mockClear();
     mockVirtualizerMeasureElement.mockClear();
     mockVirtualizerSnapshots.length = 0;
@@ -321,7 +330,7 @@ describe("VirtualMediaGrid", () => {
     expect(onOpenFolder).toHaveBeenCalledWith("folder-1");
   });
 
-  it("renders folders in compact vertical rows with Up above them", () => {
+  it("renders compact folders together in one wrapping row below Up", () => {
     const folders = ["Backgrounds", "Videos", "Logos"].map((name, index) => ({
       id: `folder-${index}`,
       name,
@@ -345,12 +354,11 @@ describe("VirtualMediaGrid", () => {
     const folderButtons = folders.map((folder) =>
       screen.getByRole("button", { name: folder.name }),
     );
-    const folderRows = screen.getAllByTestId("media-library-folder-row");
+    const folderGrid = screen.getByTestId("media-library-folder-grid");
 
-    expect(folderRows).toHaveLength(3);
-    folderRows.forEach((folderRow) =>
-      expect(folderRow).toHaveClass("flex", "items-center", "px-4"),
-    );
+    expect(folderGrid).toHaveClass("flex", "flex-wrap", "gap-2");
+    expect(screen.getAllByTestId("media-library-folder-grid")).toHaveLength(1);
+    expect(mockVirtualizerCounts).toContain(2);
     expect(folderButtons.map((button) => button.textContent)).toEqual([
       "Backgrounds",
       "Videos",
@@ -358,12 +366,14 @@ describe("VirtualMediaGrid", () => {
     ]);
     expect(screen.getByRole("button", { name: "Up" })).toBeInTheDocument();
     expect(screen.getByText("Nested folder")).toBeInTheDocument();
+    const buttonNames = screen.getAllByRole("button").map((button) => button.textContent);
+    expect(buttonNames.indexOf("Up")).toBeLessThan(buttonNames.indexOf("Backgrounds"));
 
     fireEvent.click(screen.getByRole("button", { name: "Up" }));
     expect(onGoUp).toHaveBeenCalledTimes(1);
   });
 
-  it("positions measured folder rows before thumbnail rows without overlap", () => {
+  it("uses the complete wrapped folder height before positioning thumbnails", () => {
     const folder = {
       id: "folder-before-media",
       name: "Folder",
@@ -372,6 +382,7 @@ describe("VirtualMediaGrid", () => {
       updatedAt: "",
     } as MediaFolder;
 
+    mockFolderRowHeight = 68;
     render(
       grid({
         mediaItems: [mediaItem, secondMediaItem],
@@ -383,14 +394,15 @@ describe("VirtualMediaGrid", () => {
       }),
     );
 
-    expect(mockVirtualizerSnapshots.at(-1)).toEqual({
-      totalSize: 304,
-      indexes: [0, 1, 2, 3],
-      starts: [0, 32, 64, 184],
-    });
+    const snapshot = mockVirtualizerSnapshots.at(-1);
+    expect(snapshot?.indexes).toEqual([0, 1, 2, 3]);
+    expect(mockVirtualizerMeasureElement).toHaveBeenCalled();
+    expect(snapshot?.starts[2]).toBeGreaterThanOrEqual(
+      (snapshot?.starts[1] ?? 0) + mockFolderRowHeight,
+    );
   });
 
-  it("truncates long folder names in a narrow vertical list", () => {
+  it("keeps long folder names constrained inside the wrapping row", () => {
     const folder = {
       id: "long-folder",
       name: "A folder name that is much longer than the available panel width",
@@ -412,7 +424,7 @@ describe("VirtualMediaGrid", () => {
     expect(label).toHaveClass("min-w-0", "truncate");
   });
 
-  it("re-measures when folder contents or the available grid width changes", () => {
+  it("remeasures wrapped height after a width change and folder contents update", () => {
     const folder = {
       id: "one-folder",
       name: "One",
@@ -425,9 +437,10 @@ describe("VirtualMediaGrid", () => {
     );
 
     expect(mockResizeObservers).toHaveLength(1);
+    mockFolderRowHeight = 68;
     act(() => mockResizeObservers[0].resize(320));
     expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(1);
-    expect(mockVirtualizerSnapshots.at(-1)?.totalSize).toBe(32);
+    expect(mockVirtualizerSnapshots.at(-1)?.totalSize).toBe(68);
 
     mockVirtualizerMeasure.mockClear();
     rerender(
@@ -446,6 +459,32 @@ describe("VirtualMediaGrid", () => {
     expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Goodbye")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Three" })).toBeInTheDocument();
+  });
+
+  it("does not invalidate measurements for equivalent folder contents", () => {
+    const folder = {
+      id: "same-folder",
+      name: "Same name",
+      parentId: null,
+      createdAt: "",
+      updatedAt: "",
+    } as MediaFolder;
+    const { rerender } = render(
+      grid({ mediaItems: [], showFolders: true, childFolders: [folder] }),
+    );
+    mockVirtualizerMeasure.mockClear();
+    mockMeasurementPasses.length = 0;
+
+    rerender(
+      grid({
+        mediaItems: [],
+        showFolders: true,
+        childFolders: [{ ...folder }],
+      }),
+    );
+
+    expect(mockVirtualizerMeasure).not.toHaveBeenCalled();
+    expect(mockMeasurementPasses).not.toContain("virtualizer.measure");
   });
 
   it("keeps empty folders visible and virtualizes their media rows after navigation", () => {
@@ -547,5 +586,40 @@ describe("VirtualMediaGrid", () => {
     expect(mockVirtualizerMeasure).toHaveBeenCalled();
     expect(mockVirtualizerCounts).toContain(2);
     expect(mockVirtualizerCounts).toContain(1);
+  });
+
+  it("keeps folder wrapping independent from thumbnail zoom", () => {
+    const folder = {
+      id: "zoom-folder",
+      name: "Folder",
+      parentId: null,
+      createdAt: "",
+      updatedAt: "",
+    } as MediaFolder;
+    const { rerender } = render(
+      grid({
+        mediaItems: [mediaItem, secondMediaItem],
+        cols: 1,
+        showFolders: true,
+        childFolders: [folder],
+      }),
+    );
+
+    rerender(
+      grid({
+        mediaItems: [mediaItem, secondMediaItem],
+        cols: 2,
+        showFolders: true,
+        childFolders: [folder],
+      }),
+    );
+
+    expect(screen.getAllByTestId("media-library-folder-grid")).toHaveLength(1);
+    expect(screen.getByTestId("media-library-folder-grid")).toHaveClass(
+      "flex-wrap",
+      "gap-2",
+    );
+    expect(screen.getByText("Welcome")).toBeInTheDocument();
+    expect(screen.getByText("Goodbye")).toBeInTheDocument();
   });
 });

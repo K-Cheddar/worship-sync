@@ -487,7 +487,7 @@ const ServicePlanEditor = ({
   occurrenceSwitcher,
   onPlanTimingChange,
 }: ServicePlanEditorProps) => {
-  const { churchId, access, churchBranding, churchIntegrations } =
+  const { churchId, userId, access, churchBranding, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
@@ -547,6 +547,9 @@ const ServicePlanEditor = ({
   }, [db, dispatch, isAllItemsInitialized]);
 
   const planKey = getServicePlanKey(occurrence);
+  const editorIdentityKey = `${userId || ""}:${churchId || ""}:${planKey}`;
+  const currentEditorIdentityRef = useRef(editorIdentityKey);
+  currentEditorIdentityRef.current = editorIdentityKey;
   const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
 
   const [plan, setPlan] = useState<ServicePlan | null>(null);
@@ -605,15 +608,19 @@ const ServicePlanEditor = ({
   const [publicUrls, setPublicUrls] = useState<ServicePlanPublicUrls | null>(null);
   const [nowMs, setNowMs] = useState(() => serverNow());
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
+  const draftChangeVersionRef = useRef(draftChangeVersion);
+  draftChangeVersionRef.current = draftChangeVersion;
   const [acknowledgedDraftVersion, setAcknowledgedDraftVersion] = useState(0);
   const [conflictPlan, setConflictPlan] = useState<ServicePlan | null>(null);
   const [mergeReview, setMergeReview] = useState<ServicePlanMergeResult | null>(null);
   const [mergeChoices, setMergeChoices] = useState<Record<string, "local" | "remote">>({});
   const [mergeApplying, setMergeApplying] = useState(false);
+  const [restoringRecovery, setRestoringRecovery] = useState(false);
   const mergeApplyingRef = useRef(false);
   const mergeApplyAttemptRef = useRef(0);
   const [recoveryDraft, setRecoveryDraft] = useState<ReturnType<typeof readServicePlanRecoveryDraft>>(null);
   const basePlanRef = useRef<ServicePlan | null>(null);
+  const loadedEditorIdentityRef = useRef("");
   const editorInstanceIdRef = useRef(typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   const liveSyncStateRef = useRef("connecting");
   // An SSE message can arrive after our write commits but before its response.
@@ -751,6 +758,11 @@ const ServicePlanEditor = ({
   }, [canEdit, churchId, showToast]);
 
   useEffect(() => {
+    mergeApplyAttemptRef.current += 1;
+    mergeApplyingRef.current = false;
+    setMergeApplying(false);
+    setRestoringRecovery(false);
+    loadedEditorIdentityRef.current = "";
     onPlanTimingChange?.(null);
     setPlan(null);
     setSections(null);
@@ -789,8 +801,9 @@ const ServicePlanEditor = ({
     getServicePlan(churchId, planKey)
       .then((res) => {
         if (cancelled) return;
+        loadedEditorIdentityRef.current = editorIdentityKey;
         basePlanRef.current = res.servicePlan;
-        setRecoveryDraft(churchId ? readServicePlanRecoveryDraft(churchId, planKey) : null);
+        setRecoveryDraft(userId && churchId ? readServicePlanRecoveryDraft(userId, churchId, planKey) : null);
         setPlan(res.servicePlan);
         setSections(res.servicePlan?.sections ?? null);
         notifyPlanTimingChange(
@@ -816,7 +829,7 @@ const ServicePlanEditor = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId, notifyPlanTimingChange, occurrence.startsAt, planKey]);
+  }, [churchId, editorIdentityKey, notifyPlanTimingChange, occurrence.startsAt, planKey, userId]);
 
   // Assignment suggestions are church-wide, not per-occurrence, so this loads
   // once per church rather than resetting on every occurrence switch.
@@ -945,7 +958,7 @@ const ServicePlanEditor = ({
 
   const autosave = useServicePlanAutosave({
     enabled: Boolean(canEdit && churchId && sections),
-    resetKey: planKey,
+    resetKey: `${userId || ""}:${planKey}`,
     changeVersion: draftChangeVersion,
     // The previous occurrence's plan stays in state until its fetch effect
     // clears it. Feeding that revision in as the new plan's base is what
@@ -968,6 +981,7 @@ const ServicePlanEditor = ({
     },
     onSaveAcknowledged: setAcknowledgedDraftVersion,
     onConflict: (latestPlan) => {
+      if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
       if (latestPlan.planKey && latestPlan.planKey !== planKey) return;
       pendingRemotePlanRef.current = null;
       const baseline = basePlanRef.current || plan || {
@@ -978,7 +992,7 @@ const ServicePlanEditor = ({
       const local = { ...baseline, name: planName, sections, sourceImport, timezone: baseline.timezone };
       const result = mergeServicePlan(baseline, local, latestPlan);
       if (!result.conflicts.length) {
-        if (churchId) saveServicePlanRecoveryDraft(churchId, planKey, {
+        if (userId && churchId) saveServicePlanRecoveryDraft(userId, churchId, planKey, {
           savedAt: Date.now(), base: baseline,
           local: { name: planName, timezone: baseline.timezone, sourceImport, sections },
         });
@@ -989,6 +1003,9 @@ const ServicePlanEditor = ({
         setSourceImport(result.plan.sourceImport);
         notifyPlanTimingChange(result.plan.sections, latestPlan);
         resetDraftHistory();
+        setMergeReview(null);
+        setMergeChoices({});
+        setConflictPlan(null);
         autosaveRef.current.acceptRemoteRevision(latestPlan);
         setDraftChangeVersion((version) => version + 1);
         return;
@@ -1023,6 +1040,8 @@ const ServicePlanEditor = ({
   planRef.current = plan;
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
   const planKeyRef = useRef(planKey);
   planKeyRef.current = planKey;
   const autosaveRef = useRef(autosave);
@@ -1040,6 +1059,7 @@ const ServicePlanEditor = ({
 
   const applyRemoteServicePlan = useCallback(
     (servicePlan: ServicePlan) => {
+      if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
       if (servicePlan.planKey !== planKeyRef.current) return;
       const currentAutosave = autosaveRef.current;
       const incomingRevision = servicePlan.revision ?? 0;
@@ -1090,7 +1110,7 @@ const ServicePlanEditor = ({
             ...baseline, name: planName, sections: localSections, sourceImport,
           }, servicePlan);
           if (result.conflicts.length === 0) {
-            if (churchIdRef.current) saveServicePlanRecoveryDraft(churchIdRef.current, servicePlan.planKey, {
+            if (userIdRef.current && churchIdRef.current) saveServicePlanRecoveryDraft(userIdRef.current, churchIdRef.current, servicePlan.planKey, {
               savedAt: Date.now(), base: baseline,
               local: { name: planName, timezone: baseline.timezone, sourceImport, sections: localSections },
             });
@@ -1099,6 +1119,9 @@ const ServicePlanEditor = ({
             setSections(result.plan.sections);
             setPlanName(result.plan.name);
             setSourceImport(result.plan.sourceImport);
+            setMergeReview(null);
+            setMergeChoices({});
+            setConflictPlan(null);
             resetDraftHistory();
             currentAutosave.acceptRemoteRevision(servicePlan);
             setDraftChangeVersion((version) => version + 1);
@@ -1133,7 +1156,7 @@ const ServicePlanEditor = ({
       resetDraftHistory();
       currentAutosave.acceptRemoteRevision(servicePlan);
     },
-    [notifyPlanTimingChange, occurrence.name, resetDraftHistory, sections, planName, sourceImport],
+    [editorIdentityKey, notifyPlanTimingChange, occurrence.name, resetDraftHistory, sections, planName, sourceImport],
   );
 
   const reconcilePlanOnResume = useCallback(async () => {
@@ -1248,13 +1271,13 @@ const ServicePlanEditor = ({
   }, [autosave.state]);
 
   const reloadConflictPlan = () => {
-    if (!conflictPlan) return;
-    if (churchId && basePlanRef.current && sections) {
+    if (!conflictPlan || loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    if (loadedEditorIdentityRef.current === editorIdentityKey && userId && churchId && basePlanRef.current && sections) {
       const snapshot = {
         savedAt: Date.now(), base: basePlanRef.current,
         local: { name: planName, timezone: basePlanRef.current.timezone, sourceImport, sections },
       };
-      saveServicePlanRecoveryDraft(churchId, planKey, snapshot);
+      saveServicePlanRecoveryDraft(userId, churchId, planKey, snapshot);
       setRecoveryDraft(snapshot);
     }
     setPlan(conflictPlan);
@@ -1271,20 +1294,21 @@ const ServicePlanEditor = ({
   };
 
   const applyReviewedMerge = async () => {
-    if (mergeApplyingRef.current || !mergeReview || !conflictPlan || !churchId) return;
+    if (mergeApplyingRef.current || !mergeReview || !conflictPlan || !churchId || !userId || loadedEditorIdentityRef.current !== editorIdentityKey) return;
     const baseline = basePlanRef.current;
     if (!baseline || !sections) return;
     mergeApplyingRef.current = true;
     setMergeApplying(true);
     const attempt = ++mergeApplyAttemptRef.current;
-    saveServicePlanRecoveryDraft(churchId, planKey, {
+    const identityAtStart = editorIdentityKey;
+    if (userId) saveServicePlanRecoveryDraft(userId, churchId, planKey, {
       savedAt: Date.now(), base: baseline,
       local: { name: planName, timezone: baseline.timezone, sourceImport, sections },
     });
     let latest = conflictPlan;
     try {
       const response = await getServicePlan(churchId, planKey);
-      if (attempt !== mergeApplyAttemptRef.current) return;
+      if (attempt !== mergeApplyAttemptRef.current || currentEditorIdentityRef.current !== identityAtStart) return;
       if (!response.servicePlan) {
         showToast("This plan is no longer available. Your draft is saved in this tab.", "error");
         return;
@@ -1307,6 +1331,7 @@ const ServicePlanEditor = ({
           resetDraftHistory();
           setMergeReview(null);
           setConflictPlan(null);
+          setRecoveryDraft(null);
           autosave.acceptRemoteRevision(latest);
           setDraftChangeVersion((version) => version + 1);
           return;
@@ -1343,32 +1368,59 @@ const ServicePlanEditor = ({
     setMergeReview(null);
     setConflictPlan(null);
     setMergeChoices({});
+    setRecoveryDraft(null);
     autosave.acceptRemoteRevision(latest);
     setDraftChangeVersion((version) => version + 1);
   };
 
-  const restoreRecoveryDraft = () => {
-    if (!recoveryDraft || !plan || !churchId) return;
-    basePlanRef.current = recoveryDraft.base;
-    const result = mergeServicePlan(recoveryDraft.base, {
-      ...recoveryDraft.base, ...recoveryDraft.local,
-    }, plan);
-    if (result.conflicts.length) {
-      setConflictPlan(plan);
-      setMergeReview(result);
-      setMergeChoices({});
-      autosave.markConflict();
-    } else {
-      basePlanRef.current = plan;
-      setPlan(plan);
-      setSections(result.plan.sections);
-      setPlanName(result.plan.name);
-      setSourceImport(result.plan.sourceImport);
-      autosave.acceptRemoteRevision(plan);
-      setDraftChangeVersion(1);
+  const restoreRecoveryDraft = async () => {
+    if (restoringRecovery || !recoveryDraft || !plan || !churchId || !userId || loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    const identityAtStart = editorIdentityKey;
+    const versionAtStart = draftChangeVersionRef.current;
+    setRestoringRecovery(true);
+    try {
+      // Finish any save already in flight before rebasing the recovered content.
+      // This prevents its older response from becoming the accepted baseline.
+      const currentSaveFinished = await autosave.flush();
+      if (currentEditorIdentityRef.current !== identityAtStart) return;
+      if (!currentSaveFinished) throw new Error("The current plan save has not finished.");
+      const latest = await loadLatestPlan();
+      if (currentEditorIdentityRef.current !== identityAtStart) return;
+      if (draftChangeVersionRef.current !== versionAtStart) throw new Error("The current draft changed during recovery.");
+      if (!latest) {
+        showToast("This plan is no longer available. Your draft is saved in this tab.", "error");
+        return;
+      }
+      const result = mergeServicePlan(recoveryDraft.base, {
+        ...recoveryDraft.base, ...recoveryDraft.local,
+      }, latest);
+      if (result.conflicts.length) {
+        setPlan(latest);
+        basePlanRef.current = recoveryDraft.base;
+        setSections(recoveryDraft.local.sections);
+        setPlanName(recoveryDraft.local.name);
+        setSourceImport(recoveryDraft.local.sourceImport);
+        setConflictPlan(latest);
+        setMergeReview(result);
+        setMergeChoices({});
+        autosave.markConflict();
+      } else {
+        basePlanRef.current = latest;
+        setPlan(latest);
+        setSections(result.plan.sections);
+        setPlanName(result.plan.name);
+        setSourceImport(result.plan.sourceImport);
+        notifyPlanTimingChange(result.plan.sections, latest);
+        autosave.acceptRemoteRevision(latest);
+        markDraftChanged();
+        setRecoveryDraft(null);
+      }
+      setIsEditing(true);
+    } catch {
+      showToast("Could not restore the saved draft. It is still available in this tab; try again.", "error");
+    } finally {
+      setRestoringRecovery(false);
     }
-    setRecoveryDraft(null);
-    setIsEditing(true);
   };
 
   const openMergeReview = () => {
@@ -1388,16 +1440,17 @@ const ServicePlanEditor = ({
   };
 
   useEffect(() => {
-    if (churchId && draftChangeVersion > 0 && acknowledgedDraftVersion >= draftChangeVersion && !recoveryDraft) {
-      clearServicePlanRecoveryDraft(churchId, planKey);
+    if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    if (userId && churchId && draftChangeVersion > 0 && acknowledgedDraftVersion >= draftChangeVersion && !recoveryDraft) {
+      clearServicePlanRecoveryDraft(userId, churchId, planKey);
     }
-    if (!churchId || !sections || !basePlanRef.current || draftChangeVersion === 0) return;
+    if (!userId || !churchId || !sections || !basePlanRef.current || draftChangeVersion === 0) return;
     if (!["dirty", "saving", "retrying", "conflict", "error"].includes(autosaveState)) return;
-    saveServicePlanRecoveryDraft(churchId, planKey, {
+    saveServicePlanRecoveryDraft(userId, churchId, planKey, {
       savedAt: Date.now(), base: basePlanRef.current,
       local: { name: planName, timezone: basePlanRef.current.timezone, sourceImport, sections },
     });
-  }, [acknowledgedDraftVersion, autosaveState, churchId, draftChangeVersion, plan, planKey, planName, recoveryDraft, sections, sourceImport]);
+  }, [acknowledgedDraftVersion, autosaveState, churchId, draftChangeVersion, editorIdentityKey, plan, planKey, planName, recoveryDraft, sections, sourceImport, userId]);
 
   /** Undo history is scoped to a single editing session: Done commits the
    * plan, so there is nothing left to step back through. */
@@ -2899,36 +2952,6 @@ const ServicePlanEditor = ({
             />
           </div>
 
-          {/* Autosave state is rendered in the plan toolbar under the tabs.
-            <div
-              className={cn(
-                "hidden flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs",
-                autosave.state === "conflict"
-                  ? "border-amber-700/70 bg-amber-950/30 text-amber-100"
-                  : autosave.state === "error"
-                    ? "border-red-800/70 bg-red-950/30 text-red-100"
-                    : "border-slate-700 bg-slate-900/70 text-slate-300",
-              )}
-              role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
-            >
-              {autosave.state === "dirty" ? "Changes waiting to save." : null}
-              {autosave.state === "saving" ? "Saving changes…" : null}
-              {autosave.state === "retrying" ? "Could not save. Retrying…" : null}
-              {autosave.state === "error" ? "Could not save your changes." : null}
-              {autosave.state === "conflict" ? "Another editor changed this plan." : null}
-              {autosave.state === "error" ? (
-                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
-                  Retry
-                </Button>
-              ) : null}
-              {autosave.state === "conflict" ? (
-                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
-                  Reload latest
-                </Button>
-              ) : null}
-            </div>
-          */}
-
         </div>
       ) : null}
     </>
@@ -3535,11 +3558,11 @@ const ServicePlanEditor = ({
         />
       ) : null}
 
-      {recoveryDraft && plan ? (
+      {recoveryDraft && plan && loadedEditorIdentityRef.current === editorIdentityKey ? (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-amber-700/70 bg-gray-900 px-4 py-3 text-sm text-white shadow-xl" role="status">
-          <span>Unsaved plan changes are available from this tab.</span>
-          <Button variant="cta" onClick={restoreRecoveryDraft}>Restore draft</Button>
-          <Button variant="tertiary" onClick={() => { clearServicePlanRecoveryDraft(churchId || "", planKey); setRecoveryDraft(null); }}>Discard draft</Button>
+          <span>{restoringRecovery ? "Restoring saved changes…" : "Unsaved plan changes are available from this tab."}</span>
+          <Button variant="cta" disabled={restoringRecovery} onClick={() => { void restoreRecoveryDraft(); }}>{restoringRecovery ? "Restoring…" : "Restore draft"}</Button>
+          <Button variant="tertiary" disabled={restoringRecovery} onClick={() => { if (userId && churchId) clearServicePlanRecoveryDraft(userId, churchId, planKey); setRecoveryDraft(null); }}>Discard draft</Button>
         </div>
       ) : null}
 
