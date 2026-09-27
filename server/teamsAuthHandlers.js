@@ -1226,6 +1226,9 @@ export const createTeamsAuthHandlers = ({
     const chapter = normalizeShortText(raw.chapter, { max: 20 });
     if (!book || !chapter) return undefined;
     return {
+      ...(normalizeShortText(raw.id, { max: 160 })
+        ? { id: normalizeShortText(raw.id, { max: 160 }) }
+        : {}),
       label: normalizeShortText(raw.label, { max: 300 }),
       book,
       chapter,
@@ -1374,7 +1377,28 @@ export const createTeamsAuthHandlers = ({
       ? raw.parts.flatMap((part) => {
           if (!part || typeof part !== "object" || !kinds.has(part.kind) || !destinations.has(part.destination)) return [];
           const value = normalizeLongText(part.value, { max: 1000 });
-          return value ? [{ kind: part.kind, value, destination: part.destination }] : [];
+          if (!value) return [];
+          const sourceField = ["title", "note", "ledBy"].includes(part.sourceField)
+            ? part.sourceField
+            : undefined;
+          const managedKind = ["assignee", "scripture", "resource", "note"].includes(part.managed?.kind)
+            ? part.managed.kind
+            : undefined;
+          const managedId = managedKind
+            ? normalizeShortText(part.managed.id, { max: 160 })
+            : "";
+          const fingerprint = managedId
+            ? normalizeLongText(part.managed.fingerprint, { max: 3000 })
+            : "";
+          return [{
+            kind: part.kind,
+            value,
+            destination: part.destination,
+            ...(sourceField ? { sourceField } : {}),
+            ...(managedKind && managedId && fingerprint
+              ? { managed: { kind: managedKind, id: managedId, fingerprint } }
+              : {}),
+          }];
         }).slice(0, 40)
       : [];
     const reasons = Array.isArray(raw.reasons)
@@ -1391,7 +1415,29 @@ export const createTeamsAuthHandlers = ({
       reasons,
       status: raw.status,
       sourceFingerprint,
+      ...(raw.authorizationPending === true ? { authorizationPending: true } : {}),
     };
+  };
+
+  const normalizeServicePlanningSourceState = (raw) => {
+    if (!raw || typeof raw !== "object") return undefined;
+    const normalizeSnapshot = (snapshot) => {
+      if (!snapshot || typeof snapshot !== "object") return undefined;
+      return {
+        elementType: normalizeShortText(snapshot.elementType, { max: 200 }),
+        title: normalizeLongText(snapshot.title, { max: 2000 }),
+        ledBy: normalizeLongText(snapshot.ledBy, { max: 2000 }),
+        note: normalizeLongText(snapshot.note, { max: 2000 }),
+      };
+    };
+    const observed = normalizeSnapshot(raw.observed);
+    const applied = normalizeSnapshot(raw.applied);
+    if (!observed || !applied) return undefined;
+    const fields = new Set(["elementType", "title", "ledBy", "note"]);
+    const pendingFields = Array.isArray(raw.pendingFields)
+      ? [...new Set(raw.pendingFields.filter((field) => fields.has(field)))].slice(0, 4)
+      : [];
+    return { observed, applied, pendingFields };
   };
 
   const normalizeServicePlanElement = (raw) => {
@@ -1425,6 +1471,7 @@ export const createTeamsAuthHandlers = ({
       raw?.durationMinutes,
     );
     const importAmbiguity = normalizeServicePlanImportAmbiguity(raw?.importAmbiguity);
+    const servicePlanningImport = normalizeServicePlanningSourceState(raw?.servicePlanningImport);
     return {
       id:
         normalizeShortText(raw?.id, { max: 160 }) ||
@@ -1492,7 +1539,10 @@ export const createTeamsAuthHandlers = ({
       sourceContentTitleRaw:
         normalizeShortText(raw?.sourceContentTitleRaw, { max: 300 }) ||
         undefined,
+      sourceNoteRaw:
+        normalizeLongText(raw?.sourceNoteRaw, { max: 2000 }) || undefined,
       ...(importAmbiguity ? { importAmbiguity } : {}),
+      ...(servicePlanningImport ? { servicePlanningImport } : {}),
       ...(raw?.sourceSongReferenceDismissed === true
         ? { sourceSongReferenceDismissed: true }
         : {}),

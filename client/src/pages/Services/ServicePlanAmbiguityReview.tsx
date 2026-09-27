@@ -2,13 +2,9 @@ import { useState } from "react";
 import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
-import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
-import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
-import generateRandomId from "../../utils/generateRandomId";
-import { multilineTextToRichText, plainTextToRichText, richTextToPlainText } from "../../types/richText";
-import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
-import { getServicePlanElementScriptureRefs } from "../../types/servicePlan";
-import { createServicePlanLinkResource, createServicePlanTextResource, getServicePlanResourceText } from "./servicePlanResources";
+import { richTextToPlainText } from "../../types/richText";
+import type { ServicePlanElement, ServicePlanImportAmbiguity, ServicePlanSection } from "../../types/servicePlan";
+import { applyReviewedServicePlanParts } from "./servicePlanImportOwnership";
 
 type Props = {
   sections: ServicePlanSection[];
@@ -36,16 +32,6 @@ const destinationsForPart = (kind: string) => {
         ? new Set(["scripture", "content", "notes", "unassigned"])
         : new Set(["content", "notes", "unassigned"]);
   return destinations.filter((destination) => allowed.has(destination.value));
-};
-
-const normalizedUrl = (value: string) => {
-  try {
-    const url = new URL(value);
-    url.hostname = url.hostname.toLowerCase();
-    return url.toString();
-  } catch {
-    return value;
-  }
 };
 
 const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onResolve }: Props) => {
@@ -81,81 +67,19 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
       });
       return;
     }
-    const next: Partial<ServicePlanElement> = {};
     const resolvedParts = ambiguity.parts.map((part, index) => ({
       ...part,
       destination: (destinationsByPart[`${active.element.id}:${index}`] || part.destination) as typeof part.destination,
     }));
-    const names = new Set((active.element.assignees || []).map((assignee) => assignee.name?.toLocaleLowerCase()));
-    const newNames = resolvedParts.filter((part) => part.destination === "assignee" && !names.has(part.value.toLocaleLowerCase())).map((part) => part.value);
-    if (newNames.length) next.assignees = [
-      ...(active.element.assignees || []),
-      ...newNames.map((name) => ({ id: generateRandomId(), name })),
-    ];
-
-    const scriptures = getServicePlanElementScriptureRefs(active.element);
-    const scriptureKeys = new Set(scriptures.map((ref) => `${ref.book}|${ref.chapter}|${ref.verseRange}|${ref.version}`.toLowerCase()));
-    const newScriptures = resolvedParts.flatMap((part) => {
-      if (part.destination !== "scripture") return [];
-      const ref = parseBibleReference(part.value);
-      const key = ref ? `${ref.book}|${ref.chapter}|${ref.verseRange}|${ref.version}`.toLowerCase() : "";
-      if (!ref || scriptureKeys.has(key)) return [];
-      scriptureKeys.add(key);
-      return [{
-        id: generateRandomId(),
-        label: getBibleImportDisplayName(ref, ref.version),
-        book: ref.book,
-        chapter: ref.chapter,
-        verseRange: ref.verseRange,
-        version: ref.version,
-      }];
-    });
-    if (newScriptures.length) {
-      next.scriptureRefs = [...scriptures, ...newScriptures];
-      delete next.scriptureRef;
-    }
-
-    const links = resolvedParts.filter((part) => part.destination === "resource");
-    if (links.length) {
-      const existingUrls = new Set((active.element.resources || []).map((resource) => normalizedUrl(resource.url || "")));
-      next.resources = [
-        ...(active.element.resources || []),
-        ...links.filter((part) => !existingUrls.has(normalizedUrl(part.value))).map((part) => {
-          existingUrls.add(normalizedUrl(part.value));
-          return createServicePlanLinkResource({ title: part.value, url: part.value });
-        }),
-      ];
-    }
-
-    const contentParts = resolvedParts.filter((part) => part.destination === "content");
-    if (contentParts.length) {
-      const resources = next.resources || active.element.resources || [];
-      next.resources = [
-        ...resources,
-        ...contentParts
-          .filter((part) => !resources.some((resource) =>
-            resource.type === "text" &&
-            resource.title === "Imported description" &&
-            richTextToPlainText(getServicePlanResourceText(resource)) === part.value,
-          ))
-          .map((part) => createServicePlanTextResource({
-            title: "Imported description",
-            text: plainTextToRichText(part.value),
-          })),
-      ];
-    }
-    const descriptions = resolvedParts.filter((part) => part.destination === "notes").map((part) => part.value);
-    if (descriptions.length) {
-      const existing = richTextToPlainText(active.element.notes || plainTextToRichText(""));
-      next.notes = multilineTextToRichText([existing, ...descriptions].filter(Boolean).join("\n"));
-    }
-    next.importAmbiguity = {
+    const reconciled = applyReviewedServicePlanParts(active.element, resolvedParts);
+    const nextAmbiguity: ServicePlanImportAmbiguity = {
       ...ambiguity,
-      parts: resolvedParts,
+      parts: reconciled.parts,
       reasons: [],
       status: "confirmed",
+      authorizationPending: false,
     };
-    onResolve(active.element.id, next);
+    onResolve(active.element.id, { ...reconciled.element, importAmbiguity: nextAmbiguity });
   };
 
   return (

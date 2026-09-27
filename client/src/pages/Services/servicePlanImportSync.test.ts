@@ -777,6 +777,111 @@ describe("mergeImportedAssignees", () => {
   });
 });
 
+describe("refresh source snapshots and field selections", () => {
+  const source = (title: string, ledBy: string, note = "") => ({
+    elementType: "Reading",
+    title,
+    ledBy,
+    note,
+  });
+
+  it("records a changed title when Update titles is off without applying it or disturbing assignments", () => {
+    const currentElement = element("same", "Old title", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Old title",
+      assignees: [{ id: "manual", name: "Operator choice", microphoneIds: ["mic-1"] }],
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Reading:0",
+        sourceElementType: "Reading",
+        sourceTitle: "Old title",
+        sourceLedBy: "Old source person",
+        parts: [{ kind: "description", value: "Old title", destination: "content", sourceField: "title" }],
+        reasons: [],
+        status: "confirmed",
+        sourceFingerprint: "old-source",
+      },
+      servicePlanningImport: {
+        observed: source("Old title", "Old source person"),
+        applied: source("Old title", "Old source person"),
+        pendingFields: [],
+      },
+    });
+    const incomingElement = element("new", "New title", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "New title",
+      assignees: [{ id: "new-person", name: "New source person" }],
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Reading:0",
+        sourceElementType: "Reading",
+        sourceTitle: "New title",
+        sourceLedBy: "New source person",
+        parts: [{ kind: "description", value: "New title", destination: "content", sourceField: "title" }],
+        reasons: ["Review the remaining title text."],
+        status: "unresolved",
+        sourceFingerprint: "new-source",
+      },
+      servicePlanningImport: {
+        observed: source("New title", "New source person"),
+        applied: source("New title", "New source person"),
+        pendingFields: [],
+      },
+    });
+    const [refreshed] = refreshServicePlanFromImport(
+      [section("current", "Reading", [currentElement])],
+      [section("source", "Reading", [incomingElement])],
+      { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, updateTitles: false, updateAssignments: false },
+    );
+    const result = refreshed.elements[0];
+
+    expect(richTextToPlainText(result.title)).toBe("Old title");
+    expect(result.assignees).toEqual([{ id: "manual", name: "Operator choice", microphoneIds: ["mic-1"] }]);
+    expect(result.importAmbiguity?.status).toBe("confirmed");
+    expect(result.importAmbiguity?.sourceTitle).toBe("New title");
+    expect(result.servicePlanningImport).toEqual({
+      observed: source("New title", "New source person"),
+      applied: source("Old title", "Old source person"),
+      pendingFields: ["title", "ledBy"],
+    });
+  });
+
+  it("keeps a declined Led By change pending without applying the source assignee", () => {
+    const currentElement = element("same", "Welcome", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Welcome",
+      sourceLedByRaw: "Old source person",
+      assignees: [{ id: "operator", name: "Manual person", microphoneIds: ["mic-a"] }],
+      servicePlanningImport: {
+        observed: source("Welcome", "Old source person"),
+        applied: source("Welcome", "Old source person"),
+        pendingFields: [],
+      },
+    });
+    const incomingElement = element("fresh", "Welcome", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Welcome",
+      sourceLedByRaw: "New source person",
+      assignees: [{ id: "source", name: "New source person" }],
+      servicePlanningImport: {
+        observed: source("Welcome", "New source person"),
+        applied: source("Welcome", "New source person"),
+        pendingFields: [],
+      },
+    });
+    const [refreshed] = refreshServicePlanFromImport(
+      [section("current", "Welcome", [currentElement])],
+      [section("source", "Welcome", [incomingElement])],
+      { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, updateAssignments: false },
+    );
+
+    expect(refreshed.elements[0].assignees).toEqual(currentElement.assignees);
+    expect(refreshed.elements[0].sourceLedByRaw).toBe("Old source person");
+    expect(refreshed.elements[0].servicePlanningImport?.pendingFields).toEqual(["ledBy"]);
+    expect(refreshed.elements[0].servicePlanningImport?.observed.ledBy).toBe("New source person");
+  });
+});
+
 // A template's microphone plan lands as unclaimed slots. An import brings the
 // week's people, and the order pass hands the microphones out down the list —
 // this is what makes "3 mics, 3 people" need no manual work at all.

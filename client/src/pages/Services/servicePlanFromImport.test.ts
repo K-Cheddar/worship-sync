@@ -244,6 +244,29 @@ describe("buildServicePlanSectionsFromImport", () => {
     ]);
     expect(section.elements[0].importAmbiguity?.status).toBe("unresolved");
     expect(richTextToPlainText(getServicePlanResourceText(section.elements[0].resources![0]))).toBe("Skit/Mime – Walking With Jesus");
+    expect(section.elements[0].importAmbiguity?.parts[0].managed).toMatchObject({
+      kind: "resource",
+      id: section.elements[0].resources![0].id,
+    });
+  });
+
+  it("keeps clear links out of the ambiguity prompt while preserving attachment authorization", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Program", rows: [{
+        elementType: "Special Feature",
+        title: "https://youtu.be/abc?t=45",
+        ledBy: "",
+      }] }],
+    }, songs, { classifyExternalTitle: true });
+    const element = section.elements[0];
+
+    expect(element.importAmbiguity).toMatchObject({
+      status: "confirmed",
+      reasons: [],
+      authorizationPending: true,
+    });
+    expect(element.resources).toBeUndefined();
   });
 
   it("merges title people with Led By in source order without duplicating names", () => {

@@ -2504,9 +2504,11 @@ const ServicePlanElementRow = ({
     ? readOnlyAssigneesBlock
     : null;
   const importNeedsReview = Boolean(
-    element.importAmbiguity &&
-      element.importAmbiguity.status !== "confirmed" &&
-      element.importAmbiguity.status !== "acknowledged",
+    element.importAmbiguity && (
+      element.importAmbiguity.authorizationPending ||
+      (element.importAmbiguity.status !== "confirmed" &&
+        element.importAmbiguity.status !== "acknowledged")
+    ),
   );
 
   return (

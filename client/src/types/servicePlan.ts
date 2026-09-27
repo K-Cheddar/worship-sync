@@ -124,10 +124,33 @@ export type ServicePlanImportAmbiguity = {
     kind: "scripture" | "url" | "person" | "description";
     value: string;
     destination: "scripture" | "resource" | "assignee" | "content" | "notes" | "unassigned";
+    /** External field that produced this interpretation. Older plans omit it. */
+    sourceField?: "title" | "note" | "ledBy";
+    /** Exact source-created representation; only this may be reconciled away. */
+    managed?: {
+      kind: "assignee" | "scripture" | "resource" | "note";
+      id: string;
+      fingerprint: string;
+    };
   }>;
   reasons: string[];
   status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
   sourceFingerprint: string;
+  /** URL extraction can be clear while attaching an external link still needs operator approval. */
+  authorizationPending?: boolean;
+};
+
+export type ServicePlanningSourceSnapshot = {
+  elementType: string;
+  title: string;
+  ledBy: string;
+  note: string;
+};
+
+export type ServicePlanImportSourceState = {
+  observed: ServicePlanningSourceSnapshot;
+  applied: ServicePlanningSourceSnapshot;
+  pendingFields: Array<"elementType" | "title" | "ledBy" | "note">;
 };
 
 /**
@@ -270,8 +293,11 @@ export type ServicePlanElement = {
   sourceElementTypeRaw?: string;
   /** Raw attached content title retained independently of the element label. */
   sourceContentTitleRaw?: string;
+  sourceNoteRaw?: string;
   /** External Service Planning extraction and review state, retained with its source row. */
   importAmbiguity?: ServicePlanImportAmbiguity;
+  /** Distinguishes latest observed source from fields accepted into this plan. */
+  servicePlanningImport?: ServicePlanImportSourceState;
   /**
    * The source classified this row as a song, but an operator explicitly
    * removed its inferred attachment. Keep the raw source value for refreshes

@@ -34,6 +34,7 @@ import type {
 } from "../../types/servicePlan";
 import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
 import { createServicePlanTextResource } from "./servicePlanResources";
+import { servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 
 /**
  * These labels describe a content kind rather than a distinct service moment.
@@ -204,6 +205,7 @@ const buildElementFromRow = <
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
     ...(contentTitle ? { sourceContentTitleRaw: contentTitle } : {}),
+    ...(row.note ? { sourceNoteRaw: row.note } : {}),
     ...(sourceLedByAssignments
       ? { sourceLedByAssignments }
       : {}),
@@ -276,6 +278,7 @@ const buildElementFromRow = <
     const parsed = classification?.scripture || parseBibleReference(contentTitle);
     if (parsed) {
       element.scriptureRef = {
+        id: generateRandomId(),
         label: getBibleImportDisplayName(parsed, parsed.version),
         book: parsed.book,
         chapter: parsed.chapter,
@@ -285,6 +288,7 @@ const buildElementFromRow = <
     }
   }
 
+  let importedParts = classification?.parts || [];
   if (classification && classification.parts.length) {
     const descriptionParts = classification.parts.filter(
       (part) => part.kind === "description" &&
@@ -297,6 +301,57 @@ const buildElementFromRow = <
         text: multilineTextToRichText(part.value),
       }));
     }
+    const descriptions = new Map(
+      descriptionParts.map((part, index) => [part.value, element.resources![index]]),
+    );
+    importedParts = importedParts.map((part) => {
+        if (part.kind === "description" && part.destination === "content") {
+          const resource = descriptions.get(part.value);
+          if (resource) return {
+            ...part,
+            managed: {
+              kind: "resource" as const,
+              id: resource.id,
+              fingerprint: servicePlanResourceFingerprint(resource),
+            },
+          };
+        }
+        if (part.kind === "person" && part.destination === "assignee") {
+          const wasLedBy = sourceAssigneeNames.some((name) =>
+            name.toLocaleLowerCase() === part.value.toLocaleLowerCase(),
+          );
+          const assignee = !wasLedBy
+            ? element.assignees?.find((item) =>
+                item.name?.toLocaleLowerCase() === part.value.toLocaleLowerCase(),
+              )
+            : undefined;
+          if (assignee) return {
+            ...part,
+            managed: {
+              kind: "assignee" as const,
+              id: assignee.id,
+              fingerprint: JSON.stringify({ name: assignee.name }),
+            },
+          };
+        }
+        if (part.kind === "scripture" && part.destination === "scripture" && element.scriptureRef?.id) {
+          return {
+            ...part,
+            managed: {
+              kind: "scripture" as const,
+              id: element.scriptureRef.id,
+              fingerprint: JSON.stringify({
+                label: element.scriptureRef.label,
+                book: element.scriptureRef.book,
+                chapter: element.scriptureRef.chapter,
+                verseRange: element.scriptureRef.verseRange,
+                version: element.scriptureRef.version,
+              }),
+            },
+          };
+        }
+        return part;
+    });
   }
 
   if (
@@ -304,6 +359,7 @@ const buildElementFromRow = <
     classification.parts.length &&
     (classification.reasons.length > 0 || classification.urls.length > 0)
   ) {
+    const unresolved = classification.reasons.length > 0;
     element.importAmbiguity = {
       source: "servicePlanning",
       sourceKey: options.sourceKey || "",
@@ -311,21 +367,32 @@ const buildElementFromRow = <
       sourceTitle: row.title || "",
       sourceLedBy: row.sourceLedByRaw || row.ledBy || "",
       ...(row.note ? { sourceNote: row.note } : {}),
-      parts: classification.parts,
-      reasons: classification.reasons.length
-        ? classification.reasons
-        : classification.urls.length
-          ? ["Review the extracted link before adding it as a resource."]
-          : [],
-      status: "unresolved",
+      parts: importedParts,
+      reasons: classification.reasons,
+      status: unresolved ? "unresolved" : "confirmed",
       sourceFingerprint: JSON.stringify([
         row.elementType || "",
         row.title || "",
         row.sourceLedByRaw || row.ledBy || "",
         row.note || "",
       ]),
+      ...(!unresolved && classification.urls.length
+        ? { authorizationPending: true }
+        : {}),
     };
   }
+
+  const sourceSnapshot = {
+    elementType: row.elementType || "",
+    title: row.title || "",
+    ledBy: row.sourceLedByRaw || row.ledBy || "",
+    note: row.note || "",
+  };
+  element.servicePlanningImport = {
+    observed: sourceSnapshot,
+    applied: sourceSnapshot,
+    pendingFields: [],
+  };
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row
   // whose reference didn't parse doesn't claim to be a Bible item. Video,

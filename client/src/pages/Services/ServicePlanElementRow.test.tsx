@@ -270,6 +270,29 @@ describe("import ambiguity indicator", () => {
     await user.click(screen.getByRole("button", { name: "Review import interpretation for Pastoral Greetings" }));
     expect(onReviewImportAmbiguity).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps a clear external link accessible for attachment authorization", () => {
+    renderRow({
+      element: {
+        ...baseElement,
+        importAmbiguity: {
+          source: "servicePlanning",
+          sourceKey: "Worship:0",
+          sourceElementType: "Special Feature",
+          sourceTitle: "https://youtu.be/abc?t=45",
+          sourceLedBy: "",
+          parts: [{ kind: "url", value: "https://youtu.be/abc?t=45", destination: "resource", sourceField: "title" }],
+          reasons: [],
+          status: "confirmed",
+          authorizationPending: true,
+          sourceFingerprint: "source",
+        },
+      },
+      onReviewImportAmbiguity: jest.fn(),
+    });
+
+    expect(screen.getByRole("button", { name: "Review import interpretation for Pastoral Greetings" })).toBeInTheDocument();
+  });
 });
 
 describe("ServicePlanElementRow", () => {

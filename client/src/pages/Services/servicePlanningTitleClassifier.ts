@@ -5,6 +5,7 @@ export type ServicePlanningTitlePart = {
   kind: "scripture" | "url" | "person" | "description";
   value: string;
   destination: "scripture" | "resource" | "assignee" | "content" | "notes" | "unassigned";
+  sourceField?: "title" | "note" | "ledBy";
 };
 
 export type ServicePlanningTitleClassification = {
@@ -27,6 +28,18 @@ const scripturePattern = new RegExp(
 );
 const urlPattern = /https?:\/\/[^\s<>()"']+/gi;
 const stripUrlPunctuation = (url: string) => url.replace(/[.,;!?]+$/g, "");
+const hasMalformedUrlLike = (...values: string[]) =>
+  values
+    .flatMap((value) => [...value.matchAll(/(?:https?:\/\/|www\.)[^\s<>()"']*/gi)])
+    .map((match) => stripUrlPunctuation(match[0]))
+    .some((candidate) => {
+      try {
+        const url = new URL(candidate);
+        return !["http:", "https:"].includes(url.protocol) || !url.hostname;
+      } catch {
+        return true;
+      }
+    });
 const normalizeUrlForDuplicate = (value: string) => {
   try {
     const url = new URL(value);
@@ -51,6 +64,14 @@ const extractUrls = (...values: string[]) => {
   });
   return [...urlsByKey.values()];
 };
+
+const extractUrlParts = (title: string, note: string): ServicePlanningTitlePart[] =>
+  extractUrls(title, note).map((url) => ({
+    kind: "url",
+    value: url,
+    destination: "resource",
+    sourceField: title.includes(url) ? "title" : "note",
+  }));
 
 const unique = (values: string[]) => {
   const seen = new Set<string>();
@@ -114,10 +135,13 @@ export const classifyServicePlanningTitle = ({
   knownPeople?: string[];
 }): ServicePlanningTitleClassification => {
   if (songTitle.trim()) {
-    const urls = extractUrls(title, note);
+    const urlParts = extractUrlParts(title, note);
+    const urls = urlParts.map(({ value }) => value);
     return {
-      parts: urls.map((url) => ({ kind: "url" as const, value: url, destination: "resource" as const })),
-      reasons: urls.length ? ["Review the extracted link before adding it as a resource."] : [],
+      parts: urlParts,
+      reasons: hasMalformedUrlLike(title, note)
+        ? ["A link-like value could not be validated."]
+        : [],
       suggestedAssignees: [],
       urls,
       content: title,
@@ -134,14 +158,14 @@ export const classifyServicePlanningTitle = ({
     if (remaining) reasons.push("Additional title text remains after the scripture reference.");
   }
 
-  const urls = extractUrls(title, note);
+  const urlParts = extractUrlParts(title, note);
+  const urls = urlParts.map(({ value }) => value);
   for (const url of urls) {
     const index = remaining.indexOf(url);
     if (index >= 0) remaining = removeRange(remaining, index, url);
-    parts.push({ kind: "url", value: url, destination: "resource" });
+    parts.push(urlParts.find((part) => part.value === url)!);
   }
-  if (urls.length) reasons.push("Review the extracted link before adding it as a resource.");
-  const malformedUrlLike = /(?:https?:\/\/|www\.)/i.test(title + " " + note) && urls.length === 0;
+  const malformedUrlLike = hasMalformedUrlLike(title, note);
   if (malformedUrlLike) reasons.push("A link-like value could not be validated.");
 
   const rolePrefix = remaining.match(/^\s*(Co[- ]?Hosts?\s*[:–—-]\s*)/i)?.[1] || "";
@@ -177,5 +201,12 @@ export const classifyServicePlanningTitle = ({
     if (!scripture && !urls.length && !songTitle.trim()) reasons.push("The title could be descriptive content or an assignee.");
   }
 
-  return { parts, reasons: unique(reasons), suggestedAssignees, ...(scripture ? { scripture: scripture.parsed } : {}), urls, content: remaining };
+  return {
+    parts: parts.map((part) => ({ sourceField: "title", ...part })),
+    reasons: unique(reasons),
+    suggestedAssignees,
+    ...(scripture ? { scripture: scripture.parsed } : {}),
+    urls,
+    content: remaining,
+  };
 };

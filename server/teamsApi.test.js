@@ -4256,6 +4256,22 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
               sourceContentTitleRaw: "Great Are You Lord",
+              sourceNoteRaw: "Read from the printed plan",
+              servicePlanningImport: {
+                observed: {
+                  elementType: "Reading the Word",
+                  title: "Psalms 97 (NLT) Jasmine Williams",
+                  ledBy: "Jeriyah Brown",
+                  note: "Read from the printed plan",
+                },
+                applied: {
+                  elementType: "Reading the Word",
+                  title: "Psalms 97 (NLT) Jasmine Williams",
+                  ledBy: "Jeriyah Brown",
+                  note: "Read from the printed plan",
+                },
+                pendingFields: [],
+              },
               importAmbiguity: {
                 source: "servicePlanning",
                 sourceKey: "Worship:0",
@@ -4265,7 +4281,17 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
                 sourceNote: "Read from the printed plan",
                 parts: [
                   { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
-                  { kind: "person", value: "Jasmine Williams", destination: "assignee" },
+                  {
+                    kind: "person",
+                    value: "Jasmine Williams",
+                    destination: "assignee",
+                    sourceField: "title",
+                    managed: {
+                      kind: "assignee",
+                      id: "title-assignee-1",
+                      fingerprint: '{"name":"Jasmine Williams"}',
+                    },
+                  },
                   { kind: "unknown", value: "unsafe", destination: "content" },
                 ],
                 reasons: ["Review the remaining title text."],
@@ -4303,6 +4329,28 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     created.payload.servicePlan.sections[0].elements[0].sourceContentTitleRaw,
     "Great Are You Lord",
   );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceNoteRaw,
+    "Read from the printed plan",
+  );
+  assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].servicePlanningImport,
+    {
+      observed: {
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+        note: "Read from the printed plan",
+      },
+      applied: {
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+        note: "Read from the printed plan",
+      },
+      pendingFields: [],
+    },
+  );
   assert.deepEqual(
     created.payload.servicePlan.sections[0].elements[0].importAmbiguity,
     {
@@ -4314,7 +4362,17 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       sourceNote: "Read from the printed plan",
       parts: [
         { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
-        { kind: "person", value: "Jasmine Williams", destination: "assignee" },
+        {
+          kind: "person",
+          value: "Jasmine Williams",
+          destination: "assignee",
+          sourceField: "title",
+          managed: {
+            kind: "assignee",
+            id: "title-assignee-1",
+            fingerprint: '{"name":"Jasmine Williams"}',
+          },
+        },
       ],
       reasons: ["Review the remaining title text."],
       status: "deferred",
@@ -4353,6 +4411,14 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(
     fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.status,
     "deferred",
+  );
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.parts[1].managed.id,
+    "title-assignee-1",
+  );
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].servicePlanningImport.observed.note,
+    "Read from the printed plan",
   );
 
   const updated = await callHandler(authHandlers.saveServicePlan, {

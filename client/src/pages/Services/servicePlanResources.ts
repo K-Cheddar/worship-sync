@@ -246,11 +246,20 @@ export const createServicePlanLinkResource = ({
 }): ServicePlanContentResource => {
   const trimmedUrl = url.trim();
   const youtube = getYouTubeVideoReference(trimmedUrl);
+  const normalizedYoutubeUrl = youtube ? new URL(youtube.watchUrl) : undefined;
+  if (normalizedYoutubeUrl) {
+    const sourceUrl = new URL(trimmedUrl);
+    sourceUrl.searchParams.forEach((value, key) => {
+      if (key.toLowerCase() !== "v") {
+        normalizedYoutubeUrl.searchParams.append(key, value);
+      }
+    });
+  }
   return {
     id: generateRandomId(),
     type: youtube ? "youtube" : "url",
     title: title.trim() || trimmedUrl,
-    url: youtube?.watchUrl || trimmedUrl,
+    url: normalizedYoutubeUrl?.toString() || trimmedUrl,
     ...(youtube
       ? { provider: "youtube", mediaId: youtube.videoId }
       : {}),

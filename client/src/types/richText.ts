@@ -34,6 +34,8 @@ export const MAX_RICH_TEXT_LIST_INDENT = 4;
 
 export type RichTextBlock = {
   type: "paragraph" | "list-item";
+  /** Stable identity for source-managed note blocks; absent on ordinary text. */
+  id?: string;
   align?: RichTextAlign;
   size?: RichTextSize;
   /** Legacy list items omit this and render as bullets. */
@@ -126,6 +128,9 @@ export const normalizeRichTextDocument = (
       if (type === "list-item" && !hasText) return null;
       return {
         type,
+        ...(typeof record.id === "string" && record.id.trim()
+          ? { id: record.id.trim().slice(0, 160) }
+          : {}),
         ...(align ? { align } : {}),
         ...(size ? { size } : {}),
         ...(listStyle ? { listStyle } : {}),

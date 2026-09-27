@@ -144,6 +144,24 @@ const changedFields = (
       after: next.importAmbiguity?.status || "No review needed",
     });
   }
+  const currentImportState = current.servicePlanningImport;
+  const nextImportState = next.servicePlanningImport;
+  const sourceMetadataChanged = currentImportState && nextImportState &&
+    !serializesEqual(currentImportState, nextImportState);
+  const hasPendingSourceChange = Boolean(
+    currentImportState?.pendingFields.length || nextImportState?.pendingFields.length,
+  );
+  if (sourceMetadataChanged || hasPendingSourceChange) {
+    fields.push({
+      label: "Source changes",
+      before: currentImportState?.pendingFields.length
+        ? `Pending: ${currentImportState.pendingFields.join(", ")}`
+        : currentImportState ? "Up to date" : "Not tracked",
+      after: nextImportState?.pendingFields.length
+        ? `Pending: ${nextImportState.pendingFields.join(", ")}`
+        : "Up to date",
+    });
+  }
   const currentAssignees = getServicePlanElementAssigneeNames(current).join(", ");
   const nextAssignees = getServicePlanElementAssigneeNames(next).join(", ");
   if (

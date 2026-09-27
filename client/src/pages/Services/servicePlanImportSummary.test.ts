@@ -145,6 +145,31 @@ describe("summarizeServicePlanImport", () => {
     expect(summary).toEqual({ changes: [], added: 0, removed: 0, updated: 0 });
   });
 
+  it("surfaces declined source changes for explicit review and keeps them out when unchecked", () => {
+    const current = [section([element("item", "Old title", {
+      servicePlanningImport: {
+        observed: { elementType: "Reading", title: "New title", ledBy: "Avery", note: "" },
+        applied: { elementType: "Reading", title: "Old title", ledBy: "Avery", note: "" },
+        pendingFields: ["title"],
+      },
+    })])];
+    const next = [section([element("item", "Old title", {
+      servicePlanningImport: {
+        observed: { elementType: "Reading", title: "New title", ledBy: "Avery", note: "" },
+        applied: { elementType: "Reading", title: "New title", ledBy: "Avery", note: "" },
+        pendingFields: [],
+      },
+    })])];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(summary.changes[0].fields).toContainEqual(expect.objectContaining({
+      label: "Source changes",
+      before: "Pending: title",
+      after: "Up to date",
+    }));
+    expect(applySelectedServicePlanImportChanges(current, next, summary, new Set())).toEqual(current);
+  });
+
   it("does not report regenerated IDs for unchanged imported team notes", () => {
     const current = section([
       element("welcome", "Welcome", {

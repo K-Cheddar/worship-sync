@@ -35,14 +35,20 @@ export const getNewServicePlanImportAmbiguityIds = (
     currentSections.flatMap((section) => section.elements.flatMap((element) => {
       const ambiguity = element.importAmbiguity;
       return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
-        ? [[element.id, ambiguity.sourceFingerprint] as const]
+        ? [[element.id, JSON.stringify({
+            reasons: ambiguity.reasons,
+            parts: ambiguity.parts.map(({ kind, value, destination }) => ({ kind, value, destination })),
+          })] as const]
         : [];
     })),
   );
   return nextSections.flatMap((section) => section.elements.flatMap((element) => {
     const ambiguity = element.importAmbiguity;
     return ambiguity?.status === "unresolved" &&
-      currentFingerprintById.get(element.id) !== ambiguity.sourceFingerprint
+      currentFingerprintById.get(element.id) !== JSON.stringify({
+        reasons: ambiguity.reasons,
+        parts: ambiguity.parts.map(({ kind, value, destination }) => ({ kind, value, destination })),
+      })
       ? [element.id]
       : [];
   }));
@@ -228,13 +234,45 @@ const mergeElement = (
   options: ServicePlanningRefreshOptions,
 ): ServicePlanElement => {
   let next: ServicePlanElement = { ...current, sourcePlanningManaged: true };
-  const sameInterpretedSource = Boolean(
-    current.importAmbiguity?.sourceFingerprint &&
-    current.importAmbiguity.sourceFingerprint === imported.importAmbiguity?.sourceFingerprint,
+  const snapshotFor = (element: ServicePlanElement) =>
+    element.servicePlanningImport?.observed || {
+      elementType: element.sourceElementTypeRaw || element.importAmbiguity?.sourceElementType || "",
+      title: element.sourceContentTitleRaw || element.importAmbiguity?.sourceTitle || "",
+      ledBy: element.sourceLedByRaw || element.importAmbiguity?.sourceLedBy || "",
+      note: element.sourceNoteRaw || element.importAmbiguity?.sourceNote || "",
+    };
+  const currentState = current.servicePlanningImport || {
+    observed: snapshotFor(current),
+    applied: snapshotFor(current),
+    pendingFields: [],
+  };
+  const observed = snapshotFor(imported);
+  const applied = { ...currentState.applied };
+  if (options.updateTitles) {
+    applied.elementType = observed.elementType;
+    applied.title = observed.title;
+  }
+  if (options.updateAssignments) applied.ledBy = observed.ledBy;
+  if (options.updateNotes) applied.note = observed.note;
+  const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
+    .filter((field) => observed[field] !== applied[field]);
+  next.servicePlanningImport = { observed, applied, pendingFields };
+  const changedAcceptedTitle = options.updateTitles && (
+    currentState.applied.title !== observed.title ||
+    currentState.applied.elementType !== observed.elementType
   );
-  const preserveConfirmedInterpretation = sameInterpretedSource &&
-    (current.importAmbiguity?.status === "confirmed" || current.importAmbiguity?.status === "acknowledged");
-  if (options.updateTitles && !preserveConfirmedInterpretation) {
+  const changedAcceptedNote = options.updateNotes && currentState.applied.note !== observed.note;
+  const changedAcceptedTitleOrNote = changedAcceptedTitle || changedAcceptedNote;
+  const confirmed = current.importAmbiguity?.status === "confirmed" ||
+    current.importAmbiguity?.status === "acknowledged";
+  const preserveConfirmedTitle = confirmed && !changedAcceptedTitle;
+  // A title can contain a person suggestion whose destination was explicitly
+  // changed during review. Keep that assignee choice intact until the source
+  // changes are reviewed; Led By still follows its own refresh option.
+  const preserveConfirmedAssignees = confirmed && !changedAcceptedTitle &&
+    (!options.updateAssignments || currentState.applied.ledBy === observed.ledBy);
+  const preserveConfirmedNotes = confirmed && !changedAcceptedNote;
+  if (options.updateTitles && !preserveConfirmedTitle) {
     next = {
       ...next,
       type: imported.type,
@@ -265,18 +303,8 @@ const mergeElement = (
     delete next.scriptureRef;
     next = copyOptionalField(next, imported, "sourceElementTypeRaw");
     next = copyOptionalField(next, imported, "sourceContentTitleRaw");
-    if (
-      current.importAmbiguity?.sourceFingerprint ===
-      imported.importAmbiguity?.sourceFingerprint
-    ) {
-      next.importAmbiguity = current.importAmbiguity;
-    } else if (imported.importAmbiguity) {
-      next.importAmbiguity = imported.importAmbiguity;
-    } else {
-      delete next.importAmbiguity;
-    }
   }
-  if (options.updateAssignments && !preserveConfirmedInterpretation) {
+  if (options.updateAssignments && !preserveConfirmedAssignees) {
     next.assignees = mergeImportedAssignees(current, imported);
     next = copyOptionalField(next, imported, "sourceLedByRaw");
     next = copyOptionalField(next, imported, "sourceLedByAssignments");
@@ -286,8 +314,9 @@ const mergeElement = (
     next = copyOptionalField(next, imported, "durationSeconds");
     next = copyOptionalField(next, imported, "durationMinutes");
   }
-  if (options.updateNotes && !preserveConfirmedInterpretation) {
+  if (options.updateNotes && !preserveConfirmedNotes) {
     next = copyOptionalField(next, imported, "notes");
+    next = copyOptionalField(next, imported, "sourceNoteRaw");
     // Service Planning can refresh shared and team notes, but role notes are
     // local Teams instructions and must survive that refresh.
     const localRoleNotes = (current.teamNotes || []).filter(
@@ -300,6 +329,40 @@ const mergeElement = (
     const nextNotes = [...importedTeamNotes, ...localRoleNotes];
     if (nextNotes.length) next.teamNotes = nextNotes;
     else delete next.teamNotes;
+  }
+
+  // Reconcile interpretation metadata independently from destination updates.
+  // A declined title or note remains observed and pending, never applied later
+  // just because another refresh happens to enable that field.
+  const currentAmbiguity = current.importAmbiguity;
+  const importedAmbiguity = imported.importAmbiguity;
+  if (!changedAcceptedTitleOrNote) {
+    if (currentAmbiguity) next.importAmbiguity = {
+      ...currentAmbiguity,
+      sourceElementType: importedAmbiguity?.sourceElementType ?? observed.elementType,
+      sourceTitle: importedAmbiguity?.sourceTitle ?? observed.title,
+      sourceLedBy: importedAmbiguity?.sourceLedBy ?? observed.ledBy,
+      ...(observed.note ? { sourceNote: observed.note } : {}),
+      sourceFingerprint: importedAmbiguity?.sourceFingerprint || currentAmbiguity.sourceFingerprint,
+    };
+  } else if (importedAmbiguity) {
+    const acceptedFields = new Set([
+      ...(options.updateTitles ? ["title"] : []),
+      ...(options.updateNotes ? ["note"] : []),
+    ]);
+    const retainedParts = (currentAmbiguity?.parts || []).filter((part) =>
+      !acceptedFields.has(part.sourceField || "title"),
+    );
+    const acceptedParts = importedAmbiguity.parts.filter((part) =>
+      acceptedFields.has(part.sourceField || "title"),
+    );
+    next.importAmbiguity = {
+      ...importedAmbiguity,
+      parts: [...retainedParts, ...acceptedParts],
+      status: importedAmbiguity.status === "unresolved" ? "unresolved" : "confirmed",
+    };
+  } else if (currentAmbiguity && changedAcceptedTitleOrNote) {
+    delete next.importAmbiguity;
   }
   return next;
 };

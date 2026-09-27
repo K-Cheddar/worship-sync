@@ -19,7 +19,8 @@ describe("classifyServicePlanningTitle", () => {
     });
     expect(result.suggestedAssignees).toEqual([]);
     expect(result.urls).toEqual(["https://youtu.be/abc?t=30"]);
-    expect(result.reasons).toHaveLength(1);
+    expect(result.reasons).toEqual([]);
+    expect(result.parts[0]).toMatchObject({ kind: "url", sourceField: "note" });
   });
 
   it("extracts a Bible reference and a known person independently", () => {
@@ -52,7 +53,7 @@ describe("classifyServicePlanningTitle", () => {
     });
     expect(result.urls).toEqual(["https://dropbox.com/s/abc?dl=0&token=x"]);
     expect(result.content).toContain("Florida Conference");
-    expect(result.reasons.length).toBeGreaterThan(0);
+    expect(result.reasons).toEqual([]);
   });
 
   it("keeps conference and skit descriptions while deduplicating Dropbox and YouTube URLs", () => {
@@ -87,7 +88,7 @@ describe("classifyServicePlanningTitle", () => {
       knownPeople: ["Chadwick Anderson"],
     });
     expect(person.suggestedAssignees).toEqual(["Chadwick Anderson"]);
-    expect(person.parts).toContainEqual({ kind: "description", value: "Behind the Pulpit", destination: "content" });
+    expect(person.parts).toContainEqual(expect.objectContaining({ kind: "description", value: "Behind the Pulpit", destination: "content" }));
     const group = classifyServicePlanningTitle({ title: "Pathfinder Welcome Video — Florida Conference" });
     expect(group.suggestedAssignees).toEqual([]);
     expect(group.content).toBe("Pathfinder Welcome Video — Florida Conference");
@@ -100,6 +101,31 @@ describe("classifyServicePlanningTitle", () => {
     expect(malformed.content).toContain("Special feature");
     expect(malformed.reasons).toContain("A link-like value could not be validated.");
     expect(classifyServicePlanningTitle({ title: "Unknown free-text Title" }).reasons.length).toBeGreaterThan(0);
+  });
+
+  it("extracts a valid standalone YouTube link without classifying it as ambiguous", () => {
+    const result = classifyServicePlanningTitle({
+      title: "https://youtube.com/watch?v=abc&t=45",
+    });
+    expect(result.urls).toEqual(["https://youtube.com/watch?v=abc&t=45"]);
+    expect(result.reasons).toEqual([]);
+  });
+
+  it("keeps a malformed link reviewable even beside a valid link", () => {
+    const result = classifyServicePlanningTitle({
+      title: "https://youtu.be/abc https:// bad",
+    });
+    expect(result.urls).toEqual(["https://youtu.be/abc"]);
+    expect(result.reasons).toContain("A link-like value could not be validated.");
+  });
+
+  it("keeps malformed links on marked songs reviewable", () => {
+    const result = classifyServicePlanningTitle({
+      title: "There's a Welcome Here",
+      songTitle: "There's a Welcome Here",
+      note: "Reference track: https:// bad",
+    });
+    expect(result.reasons).toContain("A link-like value could not be validated.");
   });
 
   it("does not infer a song when an unmarked title merely resembles a song name", () => {

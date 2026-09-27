@@ -63,6 +63,9 @@ export const normalizeRichTextDocument = (raw) => {
       if (type === "list-item" && !hasText) return null;
       return {
         type,
+        ...(typeof block.id === "string" && block.id.trim()
+          ? { id: block.id.trim().slice(0, 160) }
+          : {}),
         ...(align ? { align } : {}),
         ...(size ? { size } : {}),
         ...(listStyle ? { listStyle } : {}),
