@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AuthApiError, submitSmsConsent, verifySmsConsent } from "../api/auth";
+import {
+  AuthApiError,
+  cancelSmsConsent,
+  submitSmsConsent,
+  verifySmsConsent,
+} from "../api/auth";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
@@ -14,6 +19,8 @@ export const SMS_CONSENT_TEXT =
 const SMS_OPTIONAL_DESCRIPTION =
   "Your church may use WorshipSync to send volunteer availability requests, scheduling information, assignment updates, and related reminders by text. SMS is optional. You can use WorshipSync and participate in church scheduling without receiving text messages.";
 
+type SignupOutcome = "skipped" | "cancelled" | null;
+
 const isValidUsPhone = (value: string) => {
   const input = value.trim();
   if (!input || !/^\+?[\d\s().-]+$/.test(input)) return false;
@@ -26,6 +33,20 @@ const isValidUsPhone = (value: string) => {
   return /^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber);
 };
 
+const createSmsConsentCancellationCapability = () => {
+  const challengeBytes = window.crypto.getRandomValues(new Uint8Array(16));
+  const tokenBytes = window.crypto.getRandomValues(new Uint8Array(32));
+  const challengeId = Array.from(challengeBytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const cancellationToken = window
+    .btoa(String.fromCharCode(...tokenBytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return { challengeId, cancellationToken };
+};
+
 const SmsOptIn = () => {
   const { churchId = "" } = useParams<{ churchId: string }>();
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -35,15 +56,23 @@ const SmsOptIn = () => {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
+  const [verificationChallengeId, setVerificationChallengeId] =
+    useState<string | null>(null);
+  const [cancellationToken, setCancellationToken] = useState<string | null>(null);
   const [verificationError, setVerificationError] = useState("");
+  const [cancellationError, setCancellationError] = useState("");
   const [verificationPending, setVerificationPending] = useState(false);
+  const [verificationRequestUncertain, setVerificationRequestUncertain] =
+    useState(false);
   const [didOptIn, setDidOptIn] = useState(false);
-  const [didDecline, setDidDecline] = useState(false);
+  const [signupOutcome, setSignupOutcome] = useState<SignupOutcome>(null);
+  const [cancellationUnconfirmed, setCancellationUnconfirmed] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isSubmitting || didOptIn || didDecline) return;
+    if (isSubmitting || didOptIn || signupOutcome) return;
 
     const nextPhoneError = isValidUsPhone(phoneNumber)
       ? ""
@@ -57,19 +86,44 @@ const SmsOptIn = () => {
     if (nextPhoneError || nextConsentError) return;
 
     setIsSubmitting(true);
+    let submissionStarted = false;
     try {
       if (!churchId) {
         setErrorMessage("Open the SMS opt-in link provided by your church.");
         return;
       }
-      await submitSmsConsent(churchId, { phoneNumber, consent: true });
+      const capability = createSmsConsentCancellationCapability();
+      setVerificationChallengeId(capability.challengeId);
+      setCancellationToken(capability.cancellationToken);
+      submissionStarted = true;
+      await submitSmsConsent(churchId, {
+        phoneNumber,
+        consent: true,
+        ...capability,
+      });
+      setVerificationRequestUncertain(false);
       setVerificationPending(true);
     } catch (error) {
-      setErrorMessage(
-        error instanceof AuthApiError
-          ? error.message
-          : "Could not save your SMS consent. Please try again.",
+      const requestOutcomeIsUncertain = submissionStarted && (
+        !(error instanceof AuthApiError) ||
+        !error.status ||
+        error.status >= 500
       );
+      setErrorMessage(
+        requestOutcomeIsUncertain
+          ? "We couldn't confirm whether a verification code was sent. If you received one, you can enter it or cancel this signup."
+          : error instanceof AuthApiError
+            ? error.message
+            : "Could not save your SMS consent. Please try again.",
+      );
+      if (requestOutcomeIsUncertain) {
+        setVerificationRequestUncertain(true);
+        setVerificationPending(true);
+      } else {
+        setVerificationRequestUncertain(false);
+        setVerificationChallengeId(null);
+        setCancellationToken(null);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -77,8 +131,9 @@ const SmsOptIn = () => {
 
   const handleVerify = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isVerifying || didOptIn || didDecline) return;
+    if (isVerifying || isCancelling || didOptIn || signupOutcome) return;
     setVerificationError("");
+    setErrorMessage("");
     if (!/^\d{6}$/.test(verificationCode.trim())) {
       setVerificationError("Enter the 6-digit verification code we sent you.");
       return;
@@ -92,9 +147,13 @@ const SmsOptIn = () => {
       await verifySmsConsent(churchId, {
         phoneNumber,
         code: verificationCode.trim(),
+        challengeId: verificationChallengeId || "",
       });
       setDidOptIn(true);
       setVerificationPending(false);
+      setVerificationRequestUncertain(false);
+      setVerificationChallengeId(null);
+      setCancellationToken(null);
     } catch (error) {
       setVerificationError(
         error instanceof AuthApiError
@@ -106,18 +165,62 @@ const SmsOptIn = () => {
     }
   };
 
-  const handleDecline = () => {
-    if (isSubmitting || isVerifying || didOptIn) return;
-    setVerificationPending(false);
-    setDidDecline(true);
+  const handleSkipSignup = () => {
+    if (isSubmitting || isVerifying || isCancelling || didOptIn) return;
+    setSignupOutcome("skipped");
+  };
+
+  const handleCancelSignup = async () => {
+    if (isSubmitting || isVerifying || isCancelling || didOptIn) return;
+    setIsCancelling(true);
+    setCancellationError("");
+    try {
+      if (!churchId || !verificationChallengeId || !cancellationToken) {
+        throw new Error("Cancellation details are unavailable.");
+      }
+      const result = await cancelSmsConsent(churchId, {
+        phoneNumber,
+        challengeId: verificationChallengeId,
+        cancellationToken,
+      });
+      if (!result.success || !result.cancelled) {
+        throw new Error("The server did not confirm cancellation.");
+      }
+      setVerificationPending(false);
+      setVerificationRequestUncertain(false);
+      setVerificationCode("");
+      setVerificationError("");
+      setVerificationChallengeId(null);
+      setCancellationToken(null);
+      setCancellationUnconfirmed(false);
+      setCancellationError("");
+      setSignupOutcome("cancelled");
+    } catch (error) {
+      setVerificationPending(false);
+      setCancellationUnconfirmed(true);
+      setCancellationError(
+        error instanceof AuthApiError
+          ? error.message
+          : "Retry to check this signup. If a verification challenge remains active, it expires after 10 minutes.",
+      );
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
   const handleReturnToOptions = () => {
-    setDidDecline(false);
+    setSignupOutcome(null);
+    setCancellationUnconfirmed(false);
     setVerificationPending(false);
+    setVerificationRequestUncertain(false);
     setConsent(false);
+    setPhoneError("");
+    setConsentError("");
     setVerificationCode("");
+    setVerificationChallengeId(null);
+    setCancellationToken(null);
     setVerificationError("");
+    setCancellationError("");
     setErrorMessage("");
   };
 
@@ -158,15 +261,54 @@ const SmsOptIn = () => {
                 to unsubscribe.
               </p>
             </div>
-          ) : didDecline ? (
+          ) : cancellationUnconfirmed ? (
+            <div className="mt-6 space-y-4 rounded-xl border border-amber-500/50 bg-amber-950/30 px-4 py-5 text-left" role="alert">
+              <div className="space-y-2">
+                <p className="text-base font-medium text-white">Cancellation not confirmed</p>
+                <p className="text-sm leading-relaxed text-gray-300">
+                  We couldn&apos;t confirm whether this signup was cancelled or
+                  completed. If a verification code remains active, it will
+                  expire after 10 minutes. This cancellation request does not
+                  unsubscribe an existing subscriber. If you receive texts
+                  and want them to stop, reply STOP to a WorshipSync text.
+                </p>
+                {cancellationError ? (
+                  <p className="text-sm text-amber-100" role="status">
+                    {cancellationError}
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full cursor-pointer justify-center"
+                isLoading={isCancelling}
+                disabled={isCancelling}
+                onClick={() => void handleCancelSignup()}
+              >
+                Retry cancellation
+              </Button>
+              <Button
+                component="link"
+                to="/"
+                variant="tertiary"
+                className="w-full cursor-pointer justify-center"
+              >
+                Continue to WorshipSync
+              </Button>
+            </div>
+          ) : signupOutcome ? (
             <div className="mt-6 space-y-4 rounded-xl border border-gray-600 bg-gray-900/60 px-4 py-5 text-left" role="status">
               <div className="space-y-2">
-                <p className="text-base font-medium text-white">SMS signup skipped</p>
+                <p className="text-base font-medium text-white">
+                  {signupOutcome === "cancelled"
+                    ? "SMS signup cancelled"
+                    : "SMS signup skipped"}
+                </p>
                 <p className="text-sm leading-relaxed text-gray-300">
-                  No new SMS consent was recorded. You can continue using
-                  WorshipSync and participating in church scheduling without
-                  opting in. If you previously subscribed and want to stop
-                  receiving messages, reply STOP to a WorshipSync text.
+                  {signupOutcome === "cancelled"
+                    ? "The pending verification challenge was cancelled. Any previously verified subscription remains unchanged."
+                    : "No SMS signup was started from this page. Your existing subscription status has not been checked or changed."} You can continue using WorshipSync and participating in church scheduling without opting in. If you previously subscribed and want to stop receiving messages, reply STOP to a WorshipSync text.
                 </p>
               </div>
               <Button
@@ -189,7 +331,9 @@ const SmsOptIn = () => {
           ) : verificationPending ? (
             <form className="mt-6 flex w-full flex-col gap-4" onSubmit={handleVerify} noValidate>
               <p className="text-sm leading-relaxed text-gray-300" role="status">
-                We sent a 6-digit verification code to your phone. Enter it to finish opting in.
+                {verificationRequestUncertain
+                  ? "If you received a 6-digit verification code, enter it to finish opting in."
+                  : "We sent a 6-digit verification code to your phone. Enter it to finish opting in."}
               </p>
               <Input
                 id="sms-verification-code"
@@ -201,16 +345,22 @@ const SmsOptIn = () => {
                 onChange={(value) => {
                   setVerificationCode(String(value).replace(/\D/g, "").slice(0, 6));
                   setVerificationError("");
+                  setErrorMessage("");
                 }}
                 errorText={verificationError}
                 required
               />
+              {errorMessage ? (
+                <p className="text-sm text-amber-100" role="alert">
+                  {errorMessage}
+                </p>
+              ) : null}
               <Button
                 type="submit"
                 variant="primary"
                 className="w-full cursor-pointer justify-center"
                 isLoading={isVerifying}
-                disabled={isVerifying || verificationCode.length !== 6}
+                disabled={isVerifying || isCancelling || verificationCode.length !== 6}
               >
                 Verify phone
               </Button>
@@ -218,8 +368,9 @@ const SmsOptIn = () => {
                 type="button"
                 variant="secondary"
                 className="w-full cursor-pointer justify-center whitespace-normal text-center"
-                disabled={isVerifying}
-                onClick={handleDecline}
+                disabled={isVerifying || isCancelling}
+                isLoading={isCancelling}
+                onClick={() => void handleCancelSignup()}
               >
                 Cancel SMS signup — continue without SMS
               </Button>
@@ -293,7 +444,7 @@ const SmsOptIn = () => {
                   variant="secondary"
                   className="w-full cursor-pointer justify-center whitespace-normal text-center"
                   disabled={isSubmitting}
-                  onClick={handleDecline}
+                  onClick={handleSkipSignup}
                 >
                   No thanks — continue without SMS
                 </Button>

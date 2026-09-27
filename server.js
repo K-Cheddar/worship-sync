@@ -1015,6 +1015,7 @@ app.post("/api/sms-consent", authHandlers.submitSmsConsent);
 app.post("/api/sms-consent/verify", authHandlers.verifySmsConsent);
 app.post("/api/sms-consent/:churchId", authHandlers.submitSmsConsent);
 app.post("/api/sms-consent/:churchId/verify", authHandlers.verifySmsConsent);
+app.post("/api/sms-consent/:churchId/cancel", authHandlers.cancelSmsConsent);
 // Twilio authenticates this endpoint with X-Twilio-Signature; it deliberately
 // does not use browser session or CSRF authentication.
 app.post(

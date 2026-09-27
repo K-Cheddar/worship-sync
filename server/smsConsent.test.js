@@ -12,29 +12,34 @@ import {
   SMS_CONSENT_MAX_ATTEMPTS,
   SMS_CONSENT_VERSION,
   setSmsConsentSenderForServerTests,
+  smsConsentIdForChurchPhone,
   verifySmsConsentCode,
 } from "./smsConsent.js";
 
 const {
+  COLLECTIONS,
   authHandlers,
   canSeedHumanBearerAuthForServerTests,
   getSmsConsentForServerTests,
   seedSmsConsentForServerTests,
   seedLegacySmsConsentForServerTests,
   setServerFirestoreForTests,
+  setDoc,
 } = await import("../authService.js");
 
 const CHURCH_ID = "church_sms_consent_test";
 
 let sentCodes = new Map();
-setSmsConsentSenderForServerTests(({ phoneNumber, code }) => {
+let sentChallengeIds = new Map();
+setSmsConsentSenderForServerTests(({ phoneNumber, code, challengeId }) => {
   sentCodes.set(phoneNumber, code);
+  sentChallengeIds.set(phoneNumber, challengeId);
   return { provider: "test", method: "sms_otp" };
 });
 
-const createReq = ({ body = {}, ip = "127.0.0.1" } = {}) => ({
+const createReq = ({ body = {}, ip = "127.0.0.1", churchId = CHURCH_ID } = {}) => ({
   body,
-  params: { churchId: CHURCH_ID },
+  params: { churchId },
   headers: {},
   session: {},
   ip,
@@ -60,7 +65,39 @@ const validBody = (phoneNumber) => ({
   consentedAt: "2000-01-01T00:00:00.000Z",
 });
 
-const verificationBody = (phoneNumber, code) => ({ phoneNumber, code });
+const verificationBody = (phoneNumber, code) => ({
+  phoneNumber,
+  code,
+  challengeId: sentChallengeIds.get(phoneNumber),
+});
+const cancellationBody = (phoneNumber, submitResponse, overrides = {}) => ({
+  phoneNumber,
+  challengeId: submitResponse.payload.challengeId,
+  cancellationToken: submitResponse.payload.cancellationToken,
+  ...overrides,
+});
+
+const submitChallenge = async (phoneNumber, ip = "127.0.0.1", churchId = CHURCH_ID) => {
+  const response = createRes();
+  await authHandlers.submitSmsConsent(
+    createReq({ body: validBody(phoneNumber), ip, churchId }),
+    response,
+  );
+  return response;
+};
+
+const cancelChallenge = async (phoneNumber, challengeResponse, options = {}) => {
+  const response = createRes();
+  await authHandlers.cancelSmsConsent(
+    createReq({
+      body: cancellationBody(phoneNumber, challengeResponse, options.body),
+      ip: options.ip || "127.0.0.1",
+      churchId: options.churchId || CHURCH_ID,
+    }),
+    response,
+  );
+  return response;
+};
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 
@@ -164,7 +201,10 @@ test("persists server-side consent fields without linking a member", async (t) =
   );
   const record = await getSmsConsentForServerTests(CHURCH_ID, "+19545551234");
 
-  assert.deepEqual(res.payload, { success: true, verificationRequired: true });
+  assert.equal(res.payload?.success, true);
+  assert.equal(res.payload?.verificationRequired, true);
+  assert.match(res.payload?.challengeId || "", /^[a-f\d]{32}$/i);
+  assert.match(res.payload?.cancellationToken || "", /^[A-Za-z\d_-]{43}$/);
   assert.equal(record?.phoneNumber, "+19545551234");
   assert.equal(record?.status, "pending");
   assert.equal(record?.consentedAt, undefined);
@@ -175,6 +215,12 @@ test("persists server-side consent fields without linking a member", async (t) =
   assert.match(record?.consentSubmittedAt || "", /^20\d\d-/);
   assert.match(record?.verificationExpiresAt || "", /^20\d\d-/);
   assert.equal(record?.verificationCode, undefined);
+  assert.equal(record?.verificationChallengeId, res.payload.challengeId);
+  assert.match(record?.verificationCancellationTokenHash || "", /^[a-f\d]{64}$/i);
+  assert.notEqual(
+    record?.verificationCancellationTokenHash,
+    res.payload.cancellationToken,
+  );
   assert.equal(record?.memberId, undefined);
 });
 
@@ -208,6 +254,292 @@ test("correct verification transitions pending consent to opted in", async (t) =
   assert.equal(record?.verificationCodeHash, null);
 });
 
+test("cancelling a pending challenge invalidates its OTP and is idempotent", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("SMS consent persistence tests use the in-memory store only.");
+    return;
+  }
+
+  const phoneNumber = "+19545551246";
+  const submitted = await submitChallenge(phoneNumber, "sms-cancel-success-ip");
+  const before = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  const cancelled = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-success-ip",
+  });
+  assert.deepEqual(cancelled.payload, { success: true, cancelled: true });
+
+  const after = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  assert.equal(after?.status, "pending");
+  assert.equal(after?.consentedAt, undefined);
+  assert.equal(after?.verifiedAt, undefined);
+  assert.equal(after?.verificationCodeHash, null);
+  assert.equal(after?.verificationChallengeId, null);
+  assert.equal(after?.verificationCancellationTokenHash, null);
+  assert.equal(after?.lastCancelledVerificationChallengeId, submitted.payload.challengeId);
+  assert.match(after?.verificationCancelledAt || "", /^20\d\d-/);
+
+  const oldOtp = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: sentCodes.get(phoneNumber),
+        challengeId: submitted.payload.challengeId,
+      },
+      ip: "sms-cancel-success-ip",
+    }),
+    oldOtp,
+  );
+  assert.equal(oldOtp.statusCode, 400);
+  assert.equal(
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))?.status,
+    "pending",
+  );
+
+  const repeated = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-success-ip",
+  });
+  assert.deepEqual(repeated.payload, { success: true, cancelled: true });
+  assert.equal(
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))
+      ?.verificationCancelledAt,
+    after?.verificationCancelledAt,
+  );
+  assert.notEqual(before?.verificationCodeHash, after?.verificationCodeHash);
+
+  const nextChallenge = await submitChallenge(
+    phoneNumber,
+    "sms-cancel-success-ip-next",
+  );
+  const staleCancellation = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-success-ip-next",
+  });
+  assert.deepEqual(staleCancellation.payload, {
+    success: true,
+    cancelled: false,
+  });
+  assert.equal(
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))
+      ?.verificationChallengeId,
+    nextChallenge.payload.challengeId,
+  );
+});
+
+test("verification and cancellation cannot both consume the same pending challenge", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("SMS consent persistence tests use the in-memory store only.");
+    return;
+  }
+
+  const phoneNumber = "+19545551265";
+  const submitted = await submitChallenge(phoneNumber, "sms-cancel-race-ip");
+  const cancellation = cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-race-ip",
+  });
+  const verification = createRes();
+  const verificationRequest = authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: sentCodes.get(phoneNumber),
+        challengeId: submitted.payload.challengeId,
+      },
+      ip: "sms-cancel-race-ip",
+    }),
+    verification,
+  );
+  const [cancelled] = await Promise.all([cancellation, verificationRequest]);
+
+  assert.deepEqual(cancelled.payload, { success: true, cancelled: true });
+  assert.equal(verification.statusCode, 400);
+  const record = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  assert.equal(record?.status, "pending");
+  assert.equal(record?.verificationCodeHash, null);
+
+  const secondPhone = "+19545551266";
+  const secondSubmitted = await submitChallenge(
+    secondPhone,
+    "sms-verify-race-ip",
+  );
+  const successfulVerification = createRes();
+  const successfulVerificationRequest = authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber: secondPhone,
+        code: sentCodes.get(secondPhone),
+        challengeId: secondSubmitted.payload.challengeId,
+      },
+      ip: "sms-verify-race-ip",
+    }),
+    successfulVerification,
+  );
+  const lateCancellation = cancelChallenge(secondPhone, secondSubmitted, {
+    ip: "sms-verify-race-ip",
+  });
+  await Promise.all([successfulVerificationRequest, lateCancellation]);
+  assert.deepEqual(successfulVerification.payload, { success: true });
+  assert.deepEqual((await lateCancellation).payload, {
+    success: true,
+    cancelled: false,
+  });
+  const verifiedRecord = await getSmsConsentForServerTests(CHURCH_ID, secondPhone);
+  assert.equal(verifiedRecord?.status, "opted_in");
+  assert.match(verifiedRecord?.consentedAt || "", /^20\d\d-/);
+});
+
+test("cancellation requires its capability and does not disclose consent state", async () => {
+  const phoneNumber = "+19545551247";
+  const submitted = await submitChallenge(phoneNumber, "sms-cancel-capability-ip");
+  const denied = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-capability-ip",
+    body: { cancellationToken: "A".repeat(43) },
+  });
+
+  assert.deepEqual(denied.payload, { success: true, cancelled: false });
+  assert.equal(
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))?.status,
+    "pending",
+  );
+  const validCode = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)),
+      ip: "sms-cancel-capability-ip",
+    }),
+    validCode,
+  );
+  assert.deepEqual(validCode.payload, { success: true });
+});
+
+test("cancellation is isolated to the church and challenge that issued it", async () => {
+  const phoneNumber = "+19545551248";
+  const submitted = await submitChallenge(phoneNumber, "sms-cancel-scope-ip");
+  const supersededCode = sentCodes.get(phoneNumber);
+  const wrongChurch = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-scope-ip",
+    churchId: "another_church",
+  });
+  assert.deepEqual(wrongChurch.payload, { success: true, cancelled: false });
+  assert.equal(
+    (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))?.status,
+    "pending",
+  );
+
+  const submittedAgain = await submitChallenge(
+    phoneNumber,
+    "sms-cancel-scope-ip-2",
+  );
+  const superseded = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-scope-ip-2",
+  });
+  assert.deepEqual(superseded.payload, { success: true, cancelled: false });
+  const afterSupersededCancel = await getSmsConsentForServerTests(
+    CHURCH_ID,
+    phoneNumber,
+  );
+  assert.equal(
+    afterSupersededCancel?.verificationChallengeId,
+    submittedAgain.payload.challengeId,
+  );
+
+  const oldCode = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: supersededCode,
+        challengeId: submitted.payload.challengeId,
+      },
+      ip: "sms-cancel-scope-ip-2",
+    }),
+    oldCode,
+  );
+  assert.equal(oldCode.statusCode, 400);
+
+  const currentCode = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: sentCodes.get(phoneNumber),
+        challengeId: submittedAgain.payload.challengeId,
+      },
+      ip: "sms-cancel-scope-ip-3",
+    }),
+    currentCode,
+  );
+  assert.deepEqual(currentCode.payload, { success: true });
+});
+
+test("expired cancellation capabilities cannot affect the consent record", async () => {
+  const phoneNumber = "+19545551249";
+  const submitted = await submitChallenge(phoneNumber, "sms-cancel-expired-ip");
+  const record = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  await setDoc(
+    COLLECTIONS.smsConsents,
+    record.id,
+    {
+      verificationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      verificationCancellationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+    },
+    { merge: true },
+  );
+
+  const expired = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-cancel-expired-ip",
+  });
+  assert.deepEqual(expired.payload, { success: true, cancelled: false });
+  const after = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  assert.equal(after?.status, "pending");
+  assert.equal(after?.consentedAt, undefined);
+  assert.ok(after?.verificationCodeHash);
+  const verify = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: sentCodes.get(phoneNumber),
+        challengeId: submitted.payload.challengeId,
+      },
+      ip: "sms-cancel-expired-ip",
+    }),
+    verify,
+  );
+  assert.equal(verify.statusCode, 400);
+});
+
+test("cancelling a re-verification challenge preserves prior verified consent", async () => {
+  const phoneNumber = "+19545551250";
+  const first = await submitChallenge(phoneNumber, "sms-cancel-verified-ip-1");
+  const verify = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: verificationBody(phoneNumber, sentCodes.get(phoneNumber)),
+      ip: "sms-cancel-verified-ip-1",
+    }),
+    verify,
+  );
+  assert.deepEqual(verify.payload, { success: true });
+  const before = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+
+  const reverification = await submitChallenge(
+    phoneNumber,
+    "sms-cancel-verified-ip-2",
+  );
+  const cancelled = await cancelChallenge(phoneNumber, reverification, {
+    ip: "sms-cancel-verified-ip-2",
+  });
+  assert.deepEqual(cancelled.payload, { success: true, cancelled: true });
+  const after = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
+  assert.equal(after?.status, "opted_in");
+  assert.equal(after?.consentedAt, before?.consentedAt);
+  assert.equal(after?.verifiedAt, before?.verifiedAt);
+  assert.equal(after?.consentSubmittedAt, before?.consentSubmittedAt);
+  assert.equal(after?.verificationCodeHash, null);
+  assert.equal(after?.verificationChallengeId, null);
+  assert.notEqual(first.payload.challengeId, reverification.payload.challengeId);
+});
+
 test("Firestore verification commits invalid attempts and preserves the lockout", async (t) => {
   setServerFirestoreForTests(createTransactionalFirestoreMock());
   t.after(() => setServerFirestoreForTests(null));
@@ -218,10 +550,8 @@ test("Firestore verification commits invalid attempts and preserves the lockout"
       createReq({ body: validBody(phoneNumber), ip }),
       response,
     );
-    assert.deepEqual(response.payload, {
-      success: true,
-      verificationRequired: true,
-    });
+    assert.equal(response.payload?.success, true);
+    assert.equal(response.payload?.verificationRequired, true);
   };
   const verify = async (phoneNumber, code, ip) => {
     const response = createRes();
@@ -346,6 +676,52 @@ test("Firestore verification commits invalid attempts and preserves the lockout"
   assert.equal(concurrentRecord?.verificationCodeHash, null);
 });
 
+test("Firestore cancellation transaction clears only its pending challenge", async (t) => {
+  const firestore = createTransactionalFirestoreMock();
+  setServerFirestoreForTests(firestore);
+  t.after(() => setServerFirestoreForTests(null));
+
+  const phoneNumber = "+19545551267";
+  const submitted = await submitChallenge(
+    phoneNumber,
+    "sms-firestore-cancel-ip",
+  );
+  const consentRef = firestore
+    .collection(COLLECTIONS.smsConsents)
+    .doc(smsConsentIdForChurchPhone(CHURCH_ID, phoneNumber));
+  const before = await consentRef.get();
+  assert.equal(before.data()?.status, "pending");
+  assert.ok(before.data()?.verificationCodeHash);
+
+  const cancellation = await cancelChallenge(phoneNumber, submitted, {
+    ip: "sms-firestore-cancel-ip",
+  });
+  assert.deepEqual(cancellation.payload, { success: true, cancelled: true });
+  const after = await consentRef.get();
+  assert.equal(after.data()?.status, "pending");
+  assert.equal(after.data()?.verificationCodeHash, null);
+  assert.equal(after.data()?.verificationCodeSalt, null);
+  assert.equal(after.data()?.verificationChallengeId, null);
+  assert.equal(after.data()?.verificationCancellationTokenHash, null);
+  assert.equal(after.data()?.consentedAt, undefined);
+  assert.equal(after.data()?.verifiedAt, undefined);
+
+  const staleVerification = createRes();
+  await authHandlers.verifySmsConsent(
+    createReq({
+      body: {
+        phoneNumber,
+        code: sentCodes.get(phoneNumber),
+        challengeId: submitted.payload.challengeId,
+      },
+      ip: "sms-firestore-cancel-ip",
+    }),
+    staleVerification,
+  );
+  assert.equal(staleVerification.statusCode, 400);
+  assert.equal((await consentRef.get()).data()?.status, "pending");
+});
+
 test("incorrect and expired codes never become affirmative consent", async (t) => {
   if (!canSeedHumanBearerAuthForServerTests()) {
     t.skip("SMS consent persistence tests use the in-memory store only.");
@@ -414,7 +790,8 @@ test("reverification protects the verified snapshot and records confirmation sep
   }
   assert.notEqual(afterSubmission?.verificationCodeHash, before?.verificationCodeHash);
   assert.equal(afterSubmission?.verificationAttempts, 0);
-  assert.deepEqual(second.payload, { success: true, verificationRequired: true });
+  assert.equal(second.payload?.success, true);
+  assert.equal(second.payload?.verificationRequired, true);
 
   const invalid = createRes();
   await authHandlers.verifySmsConsent(
