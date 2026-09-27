@@ -5,6 +5,8 @@ import {
 } from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { useContext } from "react";
 
 type PresentationQuickLinks = ComponentProps<
   typeof PresentationPreview
@@ -43,6 +45,7 @@ const StreamPresentationPreview = memo(
     name = "Stream",
     footer,
   }: StreamPresentationPreviewProps) => {
+    const globalInfo = useContext(GlobalInfoContext);
     const info = useSelector(
       (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
     );
@@ -83,6 +86,9 @@ const StreamPresentationPreview = memo(
         }
         isMobile={isMobile}
         streamItemContentBlocked={streamItemContentBlocked}
+        showContentHiddenIndicator={
+          Boolean(globalInfo?.sharedDataReady && globalInfo.realtimeConnected)
+        }
         previewScale={previewScale}
         fillWidth={fillWidth}
         footer={footer}

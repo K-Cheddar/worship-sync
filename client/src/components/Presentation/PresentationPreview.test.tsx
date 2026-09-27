@@ -153,6 +153,89 @@ describe("PresentationPreview", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the manual Content Hidden badge only on a confirmed hidden stream preview", () => {
+    const { rerender } = render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{
+          ...basePresentation,
+          displayType: "stream",
+          participantOverlayInfo: { id: "overlay", name: "Name", time: 1 },
+        }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+      />,
+    );
+
+    expect(screen.getByRole("status", { name: "Content Hidden on Lobby Stream" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveClass("pointer-events-none");
+    expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "sm:inline");
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Content Hidden on Lobby Stream",
+    );
+
+    rerender(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked={false}
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not show the badge for overlay-only hiding or non-stream displays", () => {
+    const { rerender } = render(
+      <PresentationPreview
+        name="Stream"
+        outputId="stream"
+        info={{
+          ...basePresentation,
+          displayType: "stream",
+          participantOverlayInfo: { id: "overlay", name: "Name", time: 1 },
+        }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked={false}
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={{ ...basePresentation, displayType: "projector" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("hides both labels when the header is too narrow", async () => {
     headerWidth = 160;
 

@@ -50,6 +50,7 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
+import ContentHiddenStatus from "./ContentHiddenStatus";
 
 type sections =
   | "configurations"
@@ -117,7 +118,8 @@ const Toolbar = ({
   );
   const [section, setSection] = useState<sections>("configurations");
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
-  const { access } = useContext(GlobalInfoContext) || {};
+  const { access, realtimeConnected, sharedDataReady } =
+    useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
 
@@ -461,6 +463,7 @@ const Toolbar = ({
                   <Menu variant="default" />
                 </div>
                 {modeToggle}
+                {sharedDataReady && realtimeConnected && <ContentHiddenStatus />}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
               </div>
@@ -490,6 +493,7 @@ const Toolbar = ({
                 <Menu variant="overlay" />
               </div>
               {modeToggle}
+              {sharedDataReady && realtimeConnected && <ContentHiddenStatus />}
               <MediaSurfaceDiagnostics />
               {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
               <ToolbarOverlay

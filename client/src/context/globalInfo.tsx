@@ -415,6 +415,8 @@ type GlobalInfoContextType = {
    * this so they don't attach before auth and get cancelled by the rules.
    */
   sharedDataReady: boolean;
+  /** True only while this renderer has a live Firebase Realtime Database connection. */
+  realtimeConnected?: boolean;
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
@@ -529,6 +531,7 @@ export const globalHostId = getStableHostId();
 const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [isSharedDataReady, setIsSharedDataReady] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [authenticatedSharedDataScope, setAuthenticatedSharedDataScope] =
     useState<string | null>(null);
   const [sharedDataTokenRemintNonce, setSharedDataTokenRemintNonce] =
@@ -2047,6 +2050,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // Monitor connection state and handle reconnection
   useEffect(() => {
     if (!firebaseDb || !isSharedDataScopeReady) {
+      setRealtimeConnected(false);
       hasSeenRealtimeConnectedRef.current = false;
       wasRealtimeConnectedRef.current = false;
       return;
@@ -2056,6 +2060,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
       globalFireDbInfo.isConnected = isConnected;
+      setRealtimeConnected(isConnected);
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;
         return;
@@ -2096,6 +2101,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     return () => {
       globalFireDbInfo.isConnected = false;
+      setRealtimeConnected(false);
       unsubscribe();
       unsubscribeOffset();
     };
@@ -2998,6 +3004,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       notificationPreferences,
       setNotificationPreference,
       sharedDataReady: isSharedDataScopeReady,
+      realtimeConnected,
     }),
     [
       loginState,
@@ -3064,6 +3071,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       notificationPreferences,
       setNotificationPreference,
       isSharedDataScopeReady,
+      realtimeConnected,
     ]
   );
 

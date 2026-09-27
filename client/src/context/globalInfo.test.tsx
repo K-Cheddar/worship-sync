@@ -303,6 +303,9 @@ const ContextProbe = () => {
   return (
     <div>
       <div data-testid="session-kind">{context.sessionKind || "none"}</div>
+      <div data-testid="realtime-connected">
+        {context.realtimeConnected ? "yes" : "no"}
+      </div>
       <div data-testid="church-id">{context.churchId || "none"}</div>
       <div data-testid="operator-name">{context.operatorName || "none"}</div>
       <div data-testid="auth-status">{context.authServerStatus}</div>
@@ -795,7 +798,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
-    renderProvider();
+    renderProvider(<ContextProbe />);
 
     const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
 
@@ -814,15 +817,18 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("yes");
 
     expect(countStreamInfoSubscriptions()).toBe(initialSubscriptionCount);
 
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("no");
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("yes");
 
     await waitFor(() =>
       expect(countStreamInfoSubscriptions()).toBeGreaterThan(

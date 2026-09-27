@@ -7,7 +7,7 @@ import {
   QuickLinkType,
   TimerInfo,
 } from "../../types";
-import { MonitorX, MonitorUp } from "lucide-react";
+import { EyeOff, MonitorX, MonitorUp } from "lucide-react";
 import { useDispatch } from "../../hooks";
 import { clearOutput } from "../../store/presentationSlice";
 import Button from "../Button/Button";
@@ -41,6 +41,8 @@ type PresentationPreviewProps = {
   showClockTimer?: boolean;
   /** Stream only: when true, item content is faded out (overlay only). */
   streamItemContentBlocked?: boolean;
+  /** Show confirmed operator-only manual Hide Content state on stream previews. */
+  showContentHiddenIndicator?: boolean;
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
   previewScale?: number;
   /**
@@ -83,6 +85,7 @@ const PresentationPreview = ({
   timers,
   showClockTimer = false,
   streamItemContentBlocked = false,
+  showContentHiddenIndicator = false,
   previewScale = 1,
   fillWidth = false,
   previewOverride,
@@ -451,8 +454,24 @@ const PresentationPreview = ({
               </>
             )}
             <div
-              className={cn(info.displayType === "stream" && "bg-gray-500/35")}
+              className={cn(
+                "relative",
+                info.displayType === "stream" && "bg-gray-500/35",
+              )}
             >
+              {info.displayType === "stream" &&
+                streamItemContentBlocked &&
+                showContentHiddenIndicator && (
+                  <div
+                    role="status"
+                    aria-label={`Content Hidden on ${name}`}
+                    title={`Content Hidden on ${name}`}
+                    className="pointer-events-none absolute right-1 top-1 z-[60] inline-flex items-center gap-1 rounded bg-amber-950/95 px-1.5 py-1 text-[10px] font-semibold leading-none text-amber-100 shadow-sm ring-1 ring-amber-300/40"
+                  >
+                    <EyeOff aria-hidden="true" className="h-3 w-3 shrink-0" />
+                    <span className="hidden sm:inline">Content Hidden</span>
+                  </div>
+                )}
               {/* Keep DisplayWindow mounted while the parent tab is only
                   CSS-hidden. Its file-video elements remain mounted but are
                   paused by suspendVideoPlayback. */}
