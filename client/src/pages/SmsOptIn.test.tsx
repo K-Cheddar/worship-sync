@@ -60,10 +60,26 @@ describe("SmsOptIn", () => {
     await user.click(screen.getByRole("button", { name: "No thanks — continue without SMS" }));
 
     const confirmation = screen.getByRole("status");
-    expect(within(confirmation).getByText("SMS not enabled")).toBeInTheDocument();
-    expect(within(confirmation).getByText(/You have not been subscribed to text messages/i)).toBeInTheDocument();
+    expect(within(confirmation).getByText("SMS signup skipped")).toBeInTheDocument();
+    expect(within(confirmation).getByText(/No new SMS consent was recorded/i)).toBeInTheDocument();
+    expect(within(confirmation).getByText(/If you previously subscribed and want to stop receiving messages, reply STOP/i)).toBeInTheDocument();
     expect(within(confirmation).getByRole("link", { name: "Continue to WorshipSync" })).toHaveAttribute("href", "/");
+    expect(within(confirmation).getByRole("button", { name: "Return to SMS options" })).toBeEnabled();
     expect(screen.queryByLabelText(/Mobile phone number/i)).not.toBeInTheDocument();
+    expect(mockedSubmitSmsConsent).not.toHaveBeenCalled();
+    expect(mockedVerifySmsConsent).not.toHaveBeenCalled();
+  });
+
+  it("returns to opt-in options after skipping without carrying checkbox consent forward", async () => {
+    const user = userEvent.setup();
+    renderPage("tenant-with-arbitrary-id");
+
+    await user.click(screen.getByRole("button", { name: "No thanks — continue without SMS" }));
+    await user.click(screen.getByRole("button", { name: "Return to SMS options" }));
+
+    expect(screen.getByRole("heading", { name: "Optional SMS updates" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("button", { name: "Opt in to SMS" })).toBeDisabled();
     expect(mockedSubmitSmsConsent).not.toHaveBeenCalled();
     expect(mockedVerifySmsConsent).not.toHaveBeenCalled();
   });
@@ -128,6 +144,32 @@ describe("SmsOptIn", () => {
     });
     expect(await screen.findByText("You're opted in.")).toBeInTheDocument();
     expect(screen.getByText(/reply STOP/i)).toBeInTheDocument();
+  });
+
+  it("allows cancellation after a verification error without verifying or revoking consent", async () => {
+    mockedSubmitSmsConsent.mockResolvedValue({ success: true, verificationRequired: true });
+    mockedVerifySmsConsent.mockRejectedValue(new Error("Incorrect code"));
+    const user = userEvent.setup();
+    renderPage("demo");
+
+    await user.type(screen.getByLabelText(/Mobile phone number/i), "9545551234");
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "Opt in to SMS" }));
+    await screen.findByLabelText(/Verification code/i);
+    await user.type(screen.getByLabelText(/Verification code/i), "123456");
+    await user.click(screen.getByRole("button", { name: "Verify phone" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not verify your SMS consent. Please try again.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cancel SMS signup — continue without SMS" }));
+
+    const confirmation = screen.getByRole("status");
+    expect(within(confirmation).getByText("SMS signup skipped")).toBeInTheDocument();
+    expect(within(confirmation).getByText(/No new SMS consent was recorded/i)).toBeInTheDocument();
+    expect(mockedSubmitSmsConsent).toHaveBeenCalledTimes(1);
+    expect(mockedVerifySmsConsent).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("You're opted in.")).not.toBeInTheDocument();
   });
 
   it("supports affirmative consent for any provided church tenant ID", async () => {

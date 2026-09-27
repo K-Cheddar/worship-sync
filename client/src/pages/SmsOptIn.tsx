@@ -107,8 +107,18 @@ const SmsOptIn = () => {
   };
 
   const handleDecline = () => {
-    if (isSubmitting || verificationPending || didOptIn) return;
+    if (isSubmitting || isVerifying || didOptIn) return;
+    setVerificationPending(false);
     setDidDecline(true);
+  };
+
+  const handleReturnToOptions = () => {
+    setDidDecline(false);
+    setVerificationPending(false);
+    setConsent(false);
+    setVerificationCode("");
+    setVerificationError("");
+    setErrorMessage("");
   };
 
   return (
@@ -151,11 +161,12 @@ const SmsOptIn = () => {
           ) : didDecline ? (
             <div className="mt-6 space-y-4 rounded-xl border border-gray-600 bg-gray-900/60 px-4 py-5 text-left" role="status">
               <div className="space-y-2">
-                <p className="text-base font-medium text-white">SMS not enabled</p>
+                <p className="text-base font-medium text-white">SMS signup skipped</p>
                 <p className="text-sm leading-relaxed text-gray-300">
-                  You have not been subscribed to text messages. SMS is optional
-                  and is not required to use WorshipSync or participate in your
-                  church&apos;s volunteer scheduling. You may opt in later.
+                  No new SMS consent was recorded. You can continue using
+                  WorshipSync and participating in church scheduling without
+                  opting in. If you previously subscribed and want to stop
+                  receiving messages, reply STOP to a WorshipSync text.
                 </p>
               </div>
               <Button
@@ -165,6 +176,14 @@ const SmsOptIn = () => {
                 className="w-full cursor-pointer justify-center"
               >
                 Continue to WorshipSync
+              </Button>
+              <Button
+                type="button"
+                variant="tertiary"
+                className="w-full cursor-pointer justify-center"
+                onClick={handleReturnToOptions}
+              >
+                Return to SMS options
               </Button>
             </div>
           ) : verificationPending ? (
@@ -194,6 +213,15 @@ const SmsOptIn = () => {
                 disabled={isVerifying || verificationCode.length !== 6}
               >
                 Verify phone
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full cursor-pointer justify-center whitespace-normal text-center"
+                disabled={isVerifying}
+                onClick={handleDecline}
+              >
+                Cancel SMS signup — continue without SMS
               </Button>
             </form>
           ) : (

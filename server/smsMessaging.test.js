@@ -38,6 +38,18 @@ test("SMS eligibility requires a church-scoped opted-in consent", () => {
     resolveSmsMemberEligibility({
       member: member("(954) 555-1234"),
       churchId: "church_1",
+      consent: {
+        churchId: "church_1",
+        status: "pending",
+        verificationCodeHash: "pending-challenge",
+      },
+    }),
+    { status: "consent_needed", eligible: false, phoneNumber: "+19545551234" },
+  );
+  assert.deepEqual(
+    resolveSmsMemberEligibility({
+      member: member("(954) 555-1234"),
+      churchId: "church_1",
       consent: { churchId: "church_1", status: "opted_in" },
     }),
     { status: "enabled", eligible: true, phoneNumber: "+19545551234" },
