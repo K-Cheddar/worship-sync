@@ -71,6 +71,14 @@ const SmsOptIn = () => {
   const [didOptIn, setDidOptIn] = useState(false);
   const [signupOutcome, setSignupOutcome] = useState<SignupOutcome>(null);
   const [cancellationUnconfirmed, setCancellationUnconfirmed] = useState(false);
+  let optInDisabledReason = "";
+  if (!churchId) {
+    optInDisabledReason = "Open your church’s SMS opt-in link to enable signup.";
+  } else if (!isValidUsPhone(phoneNumber)) {
+    optInDisabledReason = "Enter a valid 10-digit U.S. phone number to enable signup.";
+  } else if (!consent) {
+    optInDisabledReason = "Check the box above to enable SMS signup.";
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -250,8 +258,8 @@ const SmsOptIn = () => {
             ) : null}
             {!churchId ? (
               <p className="text-sm text-gray-300">
-                To sign up, open the SMS opt-in link provided by your church.
-                You can continue without SMS below.
+                This page is missing the church ID needed for SMS signup. You
+                can continue without SMS below.
               </p>
             ) : null}
           </div>
@@ -440,6 +448,11 @@ const SmsOptIn = () => {
               ) : null}
 
               <div className="flex flex-col gap-3 border-t border-gray-700 pt-4">
+                {!isSubmitting && optInDisabledReason ? (
+                  <p className="text-sm text-amber-100" role="status">
+                    {optInDisabledReason}
+                  </p>
+                ) : null}
                 <Button
                   type="submit"
                   variant="primary"
