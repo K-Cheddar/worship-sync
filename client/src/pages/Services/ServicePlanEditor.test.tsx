@@ -1460,6 +1460,35 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
   });
 
+  it("offers one optional review prompt after an external import adds ambiguous items", async () => {
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sunday Service",
+      sections: [{
+        sectionName: "Program",
+        rows: [{
+          elementType: "Special Feature",
+          title: "Unknown free-text Title",
+          ledBy: "",
+          note: "Source note",
+        }],
+      }],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Import from Service Planning/i }));
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: { value: "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc" },
+    });
+    await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
+
+    expect(await screen.findByText("1 imported item needs a quick interpretation review.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review items" }));
+    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(2);
+    expect(screen.getAllByText("Source note")).toHaveLength(2);
+  });
+
   it("imports a Planning Center PDF file and remembers that source", async () => {
     mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
 Length
@@ -2904,6 +2933,64 @@ Opening Song to begin the worship experience.
         }),
       );
     });
+    keepInView.mockRestore();
+  });
+
+  it("follows by default and resumes the same live row inside the plan list", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const livePlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+          { id: "song", type: "free", title: plainTextToRichText("Opening song") },
+        ],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
+    const user = userEvent.setup();
+
+    renderEditor({ occurrence: todayOccurrence });
+    await waitFor(() => expect(keepInView).toHaveBeenCalled());
+    expect(keepInView.mock.calls[0][0].parent).toHaveAttribute("id", "service-plan-list");
+    const initialCallCount = keepInView.mock.calls.length;
+
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+    const planRegion = screen.getByRole("region", { name: "Service plan" });
+    fireEvent.pointerDown(planRegion);
+    fireEvent.scroll(planRegion);
+    const followButton = await screen.findByRole("button", { name: /Follow live/i });
+    await user.click(followButton);
+    await waitFor(() => {
+      expect(keepInView).toHaveBeenCalledTimes(initialCallCount + 1);
+    });
+    expect(screen.queryByRole("button", { name: /Follow live/i })).not.toBeInTheDocument();
+
+    const resumedCallCount = keepInView.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
+    expect(keepInView).toHaveBeenCalledTimes(resumedCallCount);
     keepInView.mockRestore();
   });
 

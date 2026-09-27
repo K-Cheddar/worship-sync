@@ -1137,6 +1137,7 @@ type ServicePlanElementRowProps = {
   onOpenAssignment?: (trigger?: HTMLElement) => void;
   onOpenContent?: (trigger?: HTMLElement) => void;
   onOpenSongDetails?: (songRef: ServicePlanSongReference) => void;
+  onReviewImportAmbiguity?: () => void;
 };
 
 /**
@@ -1191,6 +1192,7 @@ const ServicePlanElementRow = ({
   onOpenAssignment,
   onOpenContent,
   onOpenSongDetails,
+  onReviewImportAmbiguity,
 }: ServicePlanElementRowProps) => {
   const globalInfo = useContext(GlobalInfoContext);
   const churchId = globalInfo?.churchId || "";
@@ -2501,6 +2503,11 @@ const ServicePlanElementRow = ({
   const visibleReadOnlyAssigneesBlock = shouldShowAssigneesBlock
     ? readOnlyAssigneesBlock
     : null;
+  const importNeedsReview = Boolean(
+    element.importAmbiguity &&
+      element.importAmbiguity.status !== "confirmed" &&
+      element.importAmbiguity.status !== "acknowledged",
+  );
 
   return (
     <div
@@ -2601,6 +2608,18 @@ const ServicePlanElementRow = ({
           </div>
 
           <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:col-start-5 max-md:ml-auto max-md:row-start-1")}>
+            {importNeedsReview ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                className="text-amber-300 hover:text-amber-200"
+                svg={TriangleAlert}
+                aria-label={`Review import interpretation for ${itemLabel}`}
+                title="Import needs review"
+                onClick={(event) => { event.stopPropagation(); onReviewImportAmbiguity?.(); }}
+              />
+            ) : null}
             {renderItemActionsMenu()}
             {liveControls}
           </div>
@@ -2635,6 +2654,19 @@ const ServicePlanElementRow = ({
             {formattedDurationDisplay || "—"}
           </span>
           <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5 max-md:col-start-4 max-md:row-start-1 max-md:flex max-md:min-h-[2rem] max-md:items-center max-md:self-center max-md:px-1.5")}>
+            {importNeedsReview ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                className="mr-1 shrink-0 text-amber-300 hover:text-amber-200"
+                svg={TriangleAlert}
+                aria-label={`Review import interpretation for ${itemLabel}`}
+                title="Import needs review"
+                disabled={!canEdit || !onReviewImportAmbiguity}
+                onClick={(event) => { event.stopPropagation(); onReviewImportAmbiguity?.(); }}
+              />
+            ) : null}
             <Popover open={titlePopoverOpen} onOpenChange={setTitlePopoverOpen}>
               <PopoverTrigger asChild>
                 <button

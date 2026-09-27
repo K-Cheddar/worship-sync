@@ -5,6 +5,7 @@ import type {
 } from "../../types/servicePlan";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  getNewServicePlanImportAmbiguityIds,
   mergeImportedAssignees,
   refreshServicePlanFromImport,
 } from "./servicePlanImportSync";
@@ -26,6 +27,69 @@ const section = (
   elements: ServicePlanElement[],
   sourcePlanningManaged = true,
 ): ServicePlanSection => ({ id, name, elements, sourcePlanningManaged });
+
+describe("getNewServicePlanImportAmbiguityIds", () => {
+  it("does not repeat an unchanged review after source rows move", () => {
+    const current = [section("section", "Worship", [element("same-id", "Skit", {
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:4",
+        sourceElementType: "Special Feature",
+        sourceTitle: "Skit/Mime – Walking With Jesus",
+        sourceLedBy: "",
+        parts: [{ kind: "description", value: "Skit/Mime", destination: "content" }],
+        reasons: ["The title could be descriptive content or an assignee."],
+        status: "deferred",
+        sourceFingerprint: "unchanged-source",
+      },
+    })])];
+    const refreshed = [section("section", "Worship", [element("same-id", "Skit", {
+      importAmbiguity: {
+        ...current[0].elements[0].importAmbiguity!,
+        sourceKey: "Worship:5",
+        status: "unresolved",
+      },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, refreshed)).toEqual([]);
+  });
+
+  it("queues new rows and materially changed source interpretations", () => {
+    const current = [section("section", "Worship", [element("same-id", "Skit", {
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:4",
+        sourceElementType: "Special Feature",
+        sourceTitle: "Skit/Mime",
+        sourceLedBy: "",
+        parts: [{ kind: "description", value: "Skit/Mime", destination: "content" }],
+        reasons: ["Review this title."],
+        status: "confirmed",
+        sourceFingerprint: "old-source",
+      },
+    })])];
+    const refreshed = [section("section", "Worship", [
+      element("same-id", "Skit", {
+        importAmbiguity: {
+          ...current[0].elements[0].importAmbiguity!,
+          sourceTitle: "Skit/Mime – Walking With Jesus",
+          status: "unresolved",
+          sourceFingerprint: "changed-source",
+        },
+      }),
+      element("new-id", "Special feature", {
+        importAmbiguity: {
+          ...current[0].elements[0].importAmbiguity!,
+          sourceKey: "Worship:8",
+          status: "unresolved",
+          sourceFingerprint: "new-source",
+        },
+      }),
+    ])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, refreshed)).toEqual(["same-id", "new-id"]);
+  });
+});
 
 describe("refreshServicePlanFromImport", () => {
   it("updates selected source fields while keeping local identities and links", () => {
@@ -114,6 +178,59 @@ describe("refreshServicePlanFromImport", () => {
       songId: "song-1",
       songName: "How Great Is Our God",
     });
+  });
+
+  it("preserves a confirmed interpretation and its edited destinations on an unchanged refresh", () => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Reading the Word",
+      sourceTitle: "Psalms 97 Jasmine Williams",
+      sourceLedBy: "Jeriyah Brown",
+      parts: [
+        { kind: "scripture" as const, value: "Psalms 97", destination: "scripture" as const },
+        { kind: "person" as const, value: "Jasmine Williams", destination: "assignee" as const },
+      ],
+      reasons: [],
+      status: "confirmed" as const,
+      sourceFingerprint: '["Reading the Word","Psalms 97 Jasmine Williams","Jeriyah Brown",""]',
+    };
+    const current = [section("s1", "Worship", [element("e1", "Reading the Word", {
+      sourcePlanningManaged: true,
+      importAmbiguity: ambiguity,
+      assignees: [{ id: "a1", name: "Jeriyah Brown" }, { id: "a2", name: "Jasmine Williams" }],
+      notes: plainTextToRichText("Operator-selected description"),
+      scriptureRefs: [{ id: "b1", label: "Psalms 97", book: "Psalms", chapter: "97", verseRange: "", version: "" }],
+    })])];
+    const imported = [section("source", "Worship", [element("incoming", "Reading the Word", {
+      importAmbiguity: { ...ambiguity, status: "unresolved" },
+      assignees: [{ id: "new", name: "Jeriyah Brown" }],
+      notes: plainTextToRichText(""),
+      scriptureRefs: [{ label: "Psalms 97", book: "Psalms", chapter: "97", verseRange: "", version: "" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].importAmbiguity?.status).toBe("confirmed");
+    expect(refreshed.elements[0].assignees?.map(({ name }) => name)).toEqual(["Jeriyah Brown", "Jasmine Williams"]);
+    expect(richTextToPlainText(refreshed.elements[0].notes)).toBe("Operator-selected description");
+  });
+
+  it("keeps a deferred ambiguity record without making it a new import change", () => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "Unknown title",
+      sourceLedBy: "",
+      parts: [{ kind: "description" as const, value: "Unknown title", destination: "content" as const }],
+      reasons: ["Uncertain"],
+      status: "deferred" as const,
+      sourceFingerprint: '["Special Feature","Unknown title","",""]',
+    };
+    const current = [section("s1", "Worship", [element("e1", "Special Feature", { importAmbiguity: ambiguity })])];
+    const imported = [section("source", "Worship", [element("incoming", "Special Feature", { importAmbiguity: { ...ambiguity, status: "unresolved" } })])];
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].importAmbiguity).toEqual(ambiguity);
   });
 
   it("keeps a later library song link when an earlier slot is still pending", () => {

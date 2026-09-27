@@ -24,6 +24,30 @@ export type ServicePlanningRefreshOptions = {
   treatUnmarkedItemsAsSource?: boolean;
 };
 
+/** Return only unresolved imports that are new or materially changed in the
+ * refreshed plan. Element IDs come from reconciliation, so inserting another
+ * source row does not make an unchanged ambiguity look new. */
+export const getNewServicePlanImportAmbiguityIds = (
+  currentSections: ServicePlanSection[],
+  nextSections: ServicePlanSection[],
+): string[] => {
+  const currentFingerprintById = new Map(
+    currentSections.flatMap((section) => section.elements.flatMap((element) => {
+      const ambiguity = element.importAmbiguity;
+      return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
+        ? [[element.id, ambiguity.sourceFingerprint] as const]
+        : [];
+    })),
+  );
+  return nextSections.flatMap((section) => section.elements.flatMap((element) => {
+    const ambiguity = element.importAmbiguity;
+    return ambiguity?.status === "unresolved" &&
+      currentFingerprintById.get(element.id) !== ambiguity.sourceFingerprint
+      ? [element.id]
+      : [];
+  }));
+};
+
 export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOptions =
   {
     updateTitles: true,
@@ -204,7 +228,13 @@ const mergeElement = (
   options: ServicePlanningRefreshOptions,
 ): ServicePlanElement => {
   let next: ServicePlanElement = { ...current, sourcePlanningManaged: true };
-  if (options.updateTitles) {
+  const sameInterpretedSource = Boolean(
+    current.importAmbiguity?.sourceFingerprint &&
+    current.importAmbiguity.sourceFingerprint === imported.importAmbiguity?.sourceFingerprint,
+  );
+  const preserveConfirmedInterpretation = sameInterpretedSource &&
+    (current.importAmbiguity?.status === "confirmed" || current.importAmbiguity?.status === "acknowledged");
+  if (options.updateTitles && !preserveConfirmedInterpretation) {
     next = {
       ...next,
       type: imported.type,
@@ -235,8 +265,18 @@ const mergeElement = (
     delete next.scriptureRef;
     next = copyOptionalField(next, imported, "sourceElementTypeRaw");
     next = copyOptionalField(next, imported, "sourceContentTitleRaw");
+    if (
+      current.importAmbiguity?.sourceFingerprint ===
+      imported.importAmbiguity?.sourceFingerprint
+    ) {
+      next.importAmbiguity = current.importAmbiguity;
+    } else if (imported.importAmbiguity) {
+      next.importAmbiguity = imported.importAmbiguity;
+    } else {
+      delete next.importAmbiguity;
+    }
   }
-  if (options.updateAssignments) {
+  if (options.updateAssignments && !preserveConfirmedInterpretation) {
     next.assignees = mergeImportedAssignees(current, imported);
     next = copyOptionalField(next, imported, "sourceLedByRaw");
     next = copyOptionalField(next, imported, "sourceLedByAssignments");
@@ -246,7 +286,7 @@ const mergeElement = (
     next = copyOptionalField(next, imported, "durationSeconds");
     next = copyOptionalField(next, imported, "durationMinutes");
   }
-  if (options.updateNotes) {
+  if (options.updateNotes && !preserveConfirmedInterpretation) {
     next = copyOptionalField(next, imported, "notes");
     // Service Planning can refresh shared and team notes, but role notes are
     // local Teams instructions and must survive that refresh.

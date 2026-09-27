@@ -4256,6 +4256,22 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
               sourceContentTitleRaw: "Great Are You Lord",
+              importAmbiguity: {
+                source: "servicePlanning",
+                sourceKey: "Worship:0",
+                sourceElementType: "Reading the Word",
+                sourceTitle: "Psalms 97 (NLT) Jasmine Williams",
+                sourceLedBy: "Jeriyah Brown",
+                sourceNote: "Read from the printed plan",
+                parts: [
+                  { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+                  { kind: "person", value: "Jasmine Williams", destination: "assignee" },
+                  { kind: "unknown", value: "unsafe", destination: "content" },
+                ],
+                reasons: ["Review the remaining title text."],
+                status: "deferred",
+                sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+              },
               sourceLedByAssignments: [
                 { kind: "person", id: "person-1", name: "Jane Doe" },
                 { kind: "teamPosition", id: "position-1", name: "Choir" },
@@ -4288,6 +4304,24 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     "Great Are You Lord",
   );
   assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].importAmbiguity,
+    {
+      source: "servicePlanning",
+      sourceKey: "Worship:0",
+      sourceElementType: "Reading the Word",
+      sourceTitle: "Psalms 97 (NLT) Jasmine Williams",
+      sourceLedBy: "Jeriyah Brown",
+      sourceNote: "Read from the printed plan",
+      parts: [
+        { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+        { kind: "person", value: "Jasmine Williams", destination: "assignee" },
+      ],
+      reasons: ["Review the remaining title text."],
+      status: "deferred",
+      sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+    },
+  );
+  assert.deepEqual(
     created.payload.servicePlan.sections[0].elements[0].sourceLedByAssignments,
     [
       { kind: "person", id: "person-1", name: "Jane Doe" },
@@ -4316,6 +4350,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(fetched.statusCode, 200);
   assert.equal(fetched.payload.servicePlan.name, "Sunday Service");
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.status,
+    "deferred",
+  );
 
   const updated = await callHandler(authHandlers.saveServicePlan, {
     context,

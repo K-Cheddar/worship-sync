@@ -202,6 +202,7 @@ const renderRow = (
     resolvedSongRef?: ServicePlanSongReference;
     microphones?: ServicePlanMicrophone[];
     scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+    onReviewImportAmbiguity?: jest.Mock;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
@@ -234,6 +235,7 @@ const renderRow = (
           roleNoteOptions={overrides.roleNoteOptions}
           onViewSongLyrics={overrides.onViewSongLyrics}
           onOpenContent={overrides.onOpenContent}
+          onReviewImportAmbiguity={overrides.onReviewImportAmbiguity}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
@@ -243,6 +245,32 @@ const renderRow = (
     </DndContext>,
   );
 };
+
+describe("import ambiguity indicator", () => {
+  it("opens review from an accessible row action and remains visible when deferred", async () => {
+    const user = userEvent.setup();
+    const onReviewImportAmbiguity = jest.fn();
+    renderRow({
+      element: {
+        ...baseElement,
+        importAmbiguity: {
+          source: "servicePlanning",
+          sourceKey: "Worship:0",
+          sourceElementType: "Reading",
+          sourceTitle: "Psalms 97 Jasmine Williams",
+          sourceLedBy: "",
+          parts: [],
+          reasons: ["Review the remaining text."],
+          status: "deferred",
+          sourceFingerprint: "source",
+        },
+      },
+      onReviewImportAmbiguity,
+    });
+    await user.click(screen.getByRole("button", { name: "Review import interpretation for Pastoral Greetings" }));
+    expect(onReviewImportAmbiguity).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("ServicePlanElementRow", () => {
   let originalMatchMedia: typeof window.matchMedia;

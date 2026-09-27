@@ -32,6 +32,8 @@ import type {
   ServicePlanSection,
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
+import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
+import { createServicePlanTextResource } from "./servicePlanResources";
 
 /**
  * These labels describe a content kind rather than a distinct service moment.
@@ -136,8 +138,18 @@ const buildElementFromRow = <
   row: EventData,
   songs: T[],
   sourceMarksSongs: boolean,
+  options: { classifyExternalTitle?: boolean; knownPeople?: string[]; sourceKey?: string } = {},
 ): ServicePlanElement => {
   const contentTitle = getImportedContentTitle(row);
+  const classification = options.classifyExternalTitle
+    ? classifyServicePlanningTitle({
+        title: contentTitle,
+        note: row.note,
+        ledBy: row.ledBy,
+        songTitle: row.songTitle,
+        knownPeople: options.knownPeople,
+      })
+    : undefined;
   const type =
     row.songTitle || hasPlanningKeySuffix(contentTitle)
       ? "song"
@@ -155,13 +167,21 @@ const buildElementFromRow = <
     .filter((assignment) => assignment.kind === "person")
     .map((assignment) => assignment.name.trim())
     .filter(Boolean);
-  const resolvedAssigneeNames = assigneeNames.length
+  const sourceAssigneeNames = assigneeNames.length
     ? assigneeNames
     : row.ledByAssignments?.length
       ? structuredPersonNames
     : ledBy
       ? splitServicePlanningLedByNames(ledBy)
       : [];
+  const resolvedAssigneeNames = Array.from(new Map(
+    [
+      ...sourceAssigneeNames,
+      ...(classification?.suggestedAssignees || []).filter((name) =>
+        options.knownPeople?.some((known) => known.toLocaleLowerCase() === name.toLocaleLowerCase()),
+      ),
+    ].map((name) => [name.toLocaleLowerCase(), name]),
+  ).values());
   const sourceLedByRaw =
     row.sourceLedByRaw?.trim() ||
     ledBy ||
@@ -249,11 +269,11 @@ const buildElementFromRow = <
     // Prefer structured refs from parsers that already extracted Scripture lines
     // (Planning Center), including when the item title is not itself a reference.
     element.scriptureRefs = row.scriptureRefs;
-  } else if (type === "bible") {
+  } else if (classification?.scripture || type === "bible") {
     // The source's own row is free text ("Reading: John 3:16"), so only attach
     // when it actually parses as a reference — otherwise it stays a plain item
     // the operator can attach scripture to by hand.
-    const parsed = parseBibleReference(contentTitle);
+    const parsed = classification?.scripture || parseBibleReference(contentTitle);
     if (parsed) {
       element.scriptureRef = {
         label: getBibleImportDisplayName(parsed, parsed.version),
@@ -263,6 +283,48 @@ const buildElementFromRow = <
         version: parsed.version,
       };
     }
+  }
+
+  if (classification && classification.parts.length) {
+    const descriptionParts = classification.parts.filter(
+      (part) => part.kind === "description" &&
+        part.destination === "content" &&
+        part.value.trim().toLocaleLowerCase() !== (row.elementType || "").trim().toLocaleLowerCase(),
+    );
+    if (descriptionParts.length) {
+      element.resources = descriptionParts.map((part) => createServicePlanTextResource({
+        title: "Imported description",
+        text: multilineTextToRichText(part.value),
+      }));
+    }
+  }
+
+  if (
+    classification &&
+    classification.parts.length &&
+    (classification.reasons.length > 0 || classification.urls.length > 0)
+  ) {
+    element.importAmbiguity = {
+      source: "servicePlanning",
+      sourceKey: options.sourceKey || "",
+      sourceElementType: row.elementType || "",
+      sourceTitle: row.title || "",
+      sourceLedBy: row.sourceLedByRaw || row.ledBy || "",
+      ...(row.note ? { sourceNote: row.note } : {}),
+      parts: classification.parts,
+      reasons: classification.reasons.length
+        ? classification.reasons
+        : classification.urls.length
+          ? ["Review the extracted link before adding it as a resource."]
+          : [],
+      status: "unresolved",
+      sourceFingerprint: JSON.stringify([
+        row.elementType || "",
+        row.title || "",
+        row.sourceLedByRaw || row.ledBy || "",
+        row.note || "",
+      ]),
+    };
   }
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row
@@ -280,6 +342,7 @@ export const buildServicePlanSectionsFromImport = <
 >(
   data: ServicePlanningImportData,
   songs: T[],
+  options: { classifyExternalTitle?: boolean; knownPeople?: string[] } = {},
 ): ServicePlanSection[] => {
   // Service Planning marks its own songs with a music icon. When a plan uses
   // those markers they settle the question completely — an unmarked row is not
@@ -289,12 +352,15 @@ export const buildServicePlanSectionsFromImport = <
     section.rows.some((row) => Boolean(row.songTitle)),
   );
 
-  return data.sections.map((section) => ({
+  return data.sections.map((section, sectionIndex) => ({
     id: generateRandomId(),
     sourcePlanningManaged: true,
     name: section.sectionName?.trim() || "Section",
-    elements: section.rows.map((row) =>
-      buildElementFromRow(row, songs, sourceMarksSongs),
+    elements: section.rows.map((row, rowIndex) =>
+      buildElementFromRow(row, songs, sourceMarksSongs, {
+        ...options,
+        sourceKey: `${section.sectionName || sectionIndex}:${rowIndex}`,
+      }),
     ),
   }));
 };

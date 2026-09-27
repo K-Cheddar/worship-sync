@@ -5,6 +5,7 @@ import {
 } from "./servicePlanFromImport";
 import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import { richTextToPlainText } from "../../types/richText";
+import { getServicePlanResourceText } from "./servicePlanResources";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 describe("guessServicePlanElementType", () => {
@@ -199,6 +200,72 @@ describe("buildServicePlanSectionsFromImport", () => {
       lyricsText: "",
       key: "E",
     });
+  });
+
+  it("classifies external Service Planning Title text without changing other import sources by default", () => {
+    const mixed: ServicePlanningImportData = {
+      ...data,
+      sections: [{ sectionName: "Reading", rows: [{
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+      }] }],
+    };
+    const ordinary = buildServicePlanSectionsFromImport(mixed, songs);
+    const external = buildServicePlanSectionsFromImport(mixed, songs, {
+      classifyExternalTitle: true,
+      knownPeople: ["Jasmine Williams", "Jeriyah Brown"],
+    });
+    expect(ordinary[0].elements[0].importAmbiguity).toBeUndefined();
+    expect(external[0].elements[0].scriptureRef?.book).toBe("Psalms");
+    expect(external[0].elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Jeriyah Brown",
+      "Jasmine Williams",
+    ]);
+    expect(external[0].elements[0].importAmbiguity).toBeUndefined();
+  });
+
+  it("keeps uncertain descriptive title text visible as content and reviewable", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Program", rows: [{
+        elementType: "Special Feature",
+        title: "Skit/Mime – Walking With Jesus",
+        ledBy: "",
+      }] }],
+    }, songs, { classifyExternalTitle: true });
+
+    expect(section.elements[0].resources).toEqual([
+      expect.objectContaining({
+        type: "text",
+        title: "Imported description",
+        data: { text: expect.anything() },
+      }),
+    ]);
+    expect(section.elements[0].importAmbiguity?.status).toBe("unresolved");
+    expect(richTextToPlainText(getServicePlanResourceText(section.elements[0].resources![0]))).toBe("Skit/Mime – Walking With Jesus");
+  });
+
+  it("merges title people with Led By in source order without duplicating names", () => {
+    const mixed: ServicePlanningImportData = {
+      ...data,
+      sections: [{ sectionName: "Teaching & Mission", rows: [{
+        elementType: "Sabbath School",
+        title: "Sabbath School — Candace Bailey, Oneil Campbell, Jacqueline Mullings",
+        ledBy: "Clarence Jones",
+      }] }],
+    };
+    const [section] = buildServicePlanSectionsFromImport(mixed, songs, {
+      classifyExternalTitle: true,
+      knownPeople: ["Candace Bailey", "Oneil Campbell", "Jacqueline Mullings", "Clarence Jones"],
+    });
+    expect(section.elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones",
+      "Candace Bailey",
+      "Oneil Campbell",
+      "Jacqueline Mullings",
+    ]);
+    expect(section.elements[0].sourceLedByRaw).toBe("Clarence Jones");
   });
 
   it("matches a marked song against the library on the marked title alone", () => {

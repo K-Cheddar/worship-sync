@@ -1362,6 +1362,38 @@ export const createTeamsAuthHandlers = ({
     return assignments.length ? assignments.slice(0, MAX_SERVICE_PLAN_POSITIONS) : undefined;
   };
 
+  const normalizeServicePlanImportAmbiguity = (raw) => {
+    if (!raw || typeof raw !== "object" || raw.source !== "servicePlanning") return undefined;
+    const sourceKey = normalizeShortText(raw.sourceKey, { max: 300 });
+    const sourceFingerprint = normalizeLongText(raw.sourceFingerprint, { max: 3000 });
+    const statuses = new Set(["unresolved", "deferred", "confirmed", "acknowledged"]);
+    if (!sourceKey || !sourceFingerprint || !statuses.has(raw.status)) return undefined;
+    const kinds = new Set(["scripture", "url", "person", "description"]);
+    const destinations = new Set(["scripture", "resource", "assignee", "content", "notes", "unassigned"]);
+    const parts = Array.isArray(raw.parts)
+      ? raw.parts.flatMap((part) => {
+          if (!part || typeof part !== "object" || !kinds.has(part.kind) || !destinations.has(part.destination)) return [];
+          const value = normalizeLongText(part.value, { max: 1000 });
+          return value ? [{ kind: part.kind, value, destination: part.destination }] : [];
+        }).slice(0, 40)
+      : [];
+    const reasons = Array.isArray(raw.reasons)
+      ? raw.reasons.map((reason) => normalizeShortText(reason, { max: 300 })).filter(Boolean).slice(0, 20)
+      : [];
+    return {
+      source: "servicePlanning",
+      sourceKey,
+      sourceElementType: normalizeShortText(raw.sourceElementType, { max: 200 }),
+      sourceTitle: normalizeLongText(raw.sourceTitle, { max: 2000 }),
+      sourceLedBy: normalizeLongText(raw.sourceLedBy, { max: 2000 }),
+      ...(raw.sourceNote ? { sourceNote: normalizeLongText(raw.sourceNote, { max: 2000 }) } : {}),
+      parts,
+      reasons,
+      status: raw.status,
+      sourceFingerprint,
+    };
+  };
+
   const normalizeServicePlanElement = (raw) => {
     const songRefs = normalizeServicePlanAttachments(
       raw?.songRefs,
@@ -1392,6 +1424,7 @@ export const createTeamsAuthHandlers = ({
       raw?.durationSeconds,
       raw?.durationMinutes,
     );
+    const importAmbiguity = normalizeServicePlanImportAmbiguity(raw?.importAmbiguity);
     return {
       id:
         normalizeShortText(raw?.id, { max: 160 }) ||
@@ -1459,6 +1492,7 @@ export const createTeamsAuthHandlers = ({
       sourceContentTitleRaw:
         normalizeShortText(raw?.sourceContentTitleRaw, { max: 300 }) ||
         undefined,
+      ...(importAmbiguity ? { importAmbiguity } : {}),
       ...(raw?.sourceSongReferenceDismissed === true
         ? { sourceSongReferenceDismissed: true }
         : {}),

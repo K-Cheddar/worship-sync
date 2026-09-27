@@ -113,6 +113,23 @@ export type ServicePlanSourceLedByAssignment = {
   name: string;
 };
 
+export type ServicePlanImportAmbiguity = {
+  source: "servicePlanning";
+  sourceKey: string;
+  sourceElementType: string;
+  sourceTitle: string;
+  sourceLedBy: string;
+  sourceNote?: string;
+  parts: Array<{
+    kind: "scripture" | "url" | "person" | "description";
+    value: string;
+    destination: "scripture" | "resource" | "assignee" | "content" | "notes" | "unassigned";
+  }>;
+  reasons: string[];
+  status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
+  sourceFingerprint: string;
+};
+
 /**
  * Either a link to a real song already in the presentation-controller library,
  * or a not-yet-created song captured as raw lyrics text. The "pending" case
@@ -253,6 +270,8 @@ export type ServicePlanElement = {
   sourceElementTypeRaw?: string;
   /** Raw attached content title retained independently of the element label. */
   sourceContentTitleRaw?: string;
+  /** External Service Planning extraction and review state, retained with its source row. */
+  importAmbiguity?: ServicePlanImportAmbiguity;
   /**
    * The source classified this row as a song, but an operator explicitly
    * removed its inferred attachment. Keep the raw source value for refreshes

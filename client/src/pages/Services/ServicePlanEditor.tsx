@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   LayoutTemplate,
+  LocateFixed,
   Mail,
   MoreHorizontal,
   Pencil,
@@ -89,6 +90,7 @@ import {
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
+import useFollowLiveScroll from "../../hooks/useFollowLiveScroll";
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
@@ -116,10 +118,12 @@ import PlanningCenterAccountImportFields from "./PlanningCenterAccountImportFiel
 import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  getNewServicePlanImportAmbiguityIds,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
 } from "./servicePlanImportSync";
 import ServicePlanImportReviewWindow from "./ServicePlanImportReviewWindow";
+import ServicePlanAmbiguityReview from "./ServicePlanAmbiguityReview";
 import {
   applySelectedServicePlanImportChanges,
   summarizeServicePlanImport,
@@ -214,6 +218,14 @@ import {
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 
 const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
+
+const getServicePlanLiveItem = (container: HTMLElement, itemId: string) => {
+  const item = document.getElementById(servicePlanElementDomId(itemId));
+  return item instanceof HTMLElement && container.contains(item) ? item : null;
+};
+
+const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
+  keepElementInView({ child: item, parent: container, shouldScrollToCenter: true });
 
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
@@ -566,6 +578,7 @@ const ServicePlanEditor = ({
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
+  const [ambiguityDialog, setAmbiguityDialog] = useState<{ prompt: boolean; elementIds?: string[] } | null>(null);
   const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
     DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   );
@@ -592,6 +605,7 @@ const ServicePlanEditor = ({
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Microphones live beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
+  const servicePlanScrollRef = useRef<HTMLDivElement | null>(null);
   const planTabPlanKeyRef = useRef(planKey);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -722,6 +736,7 @@ const ServicePlanEditor = ({
     setImportUrl("");
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     setImportPreview(null);
+    setAmbiguityDialog(null);
     setPublicUrls(null);
     setEmailModalOpen(false);
     setConflictPlan(null);
@@ -1228,7 +1243,16 @@ const ServicePlanEditor = ({
       planningCenterPlanId?: string;
     } = {},
   ) => {
-    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs);
+    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
+      classifyExternalTitle: source === "servicePlanning",
+      knownPeople: [
+        ...members.map((member) => memberName(member)),
+        ...(churchIntegrations?.servicePlanning?.people || []).flatMap((person) => [
+          person.displayName,
+          ...person.names,
+        ]),
+      ],
+    });
     const hasElements = importedSections.some((section) => section.elements.length > 0);
     const hasSourceTiming = importedSections.some((section) =>
       section.elements.some((element) => Boolean(element.startTime)),
@@ -1283,6 +1307,10 @@ const ServicePlanEditor = ({
       planName: occurrence.name || service.name || "",
       sourceImport: nextSourceImport,
     });
+    const newAmbiguities = nextSections.flatMap((section) =>
+      section.elements.filter((element) => element.importAmbiguity?.status === "unresolved").map((element) => element.id),
+    );
+    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
     setShowImport(false);
     setImportUrl("");
     setIsEditing(true);
@@ -1374,16 +1402,22 @@ const ServicePlanEditor = ({
 
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
-    applyImportedDraft({
-      sections: applySelectedServicePlanImportChanges(
+    const selectedSections = applySelectedServicePlanImportChanges(
         importPreview.currentSections,
         importPreview.sections,
         importPreview.summary,
         new Set(selectedChangeKeys),
-      ),
+      );
+    applyImportedDraft({
+      sections: selectedSections,
       planName: occurrence.name || service.name || "",
       sourceImport: importPreview.sourceImport,
     });
+    const newAmbiguities = getNewServicePlanImportAmbiguityIds(
+      importPreview.currentSections,
+      selectedSections,
+    );
+    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
     setImportPreview(null);
     setImportUrl("");
     setIsEditing(true);
@@ -1953,39 +1987,20 @@ const ServicePlanEditor = ({
       ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
       : null;
   const liveElementId = liveProgress?.current?.item.id ?? null;
-  const followedLiveElementIdRef = useRef<string | null>(null);
-
-  // In view mode, keep the live row centered in the plan list as the schedule advances.
-  useEffect(() => {
-    if (isEditing) return;
-    if (!liveElementId) {
-      followedLiveElementIdRef.current = null;
-      return;
-    }
-    if (followedLiveElementIdRef.current === liveElementId) return;
-    followedLiveElementIdRef.current = liveElementId;
-    const scrollToLive = () => {
-      const child = document.getElementById(
-        servicePlanElementDomId(liveElementId),
-      );
-      const parent = document.getElementById(SERVICE_PLAN_LIST_SCROLL_ID);
-      if (!child || !parent) return;
-      keepElementInView({
-        child,
-        parent,
-        shouldScrollToCenter: true,
-      });
-    };
-    // Double rAF matches ItemSlides: wait for section expand / layout first.
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(scrollToLive);
-    });
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      window.cancelAnimationFrame(innerFrame);
-    };
-  }, [isEditing, liveElementId]);
+  const {
+    isFollowingLive,
+    pauseLiveFollow,
+    handleScroll: handlePlanScroll,
+    notePointerScrollIntent,
+    handleKeyDown,
+    resumeFollowing,
+  } = useFollowLiveScroll({
+    itemId: liveElementId,
+    enabled: !isEditing && activeTab === "plan",
+    containerRef: servicePlanScrollRef,
+    getItem: getServicePlanLiveItem,
+    scrollToItem: centerServicePlanLiveItem,
+  });
 
   const liveStartedAt = getServicePlanLiveStartedAt(plan);
   const liveStartedAtLabel = liveStartedAt
@@ -2527,56 +2542,83 @@ const ServicePlanEditor = ({
 
       {hasSections && sections ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <ServicePlanSectionList
-            sections={sections}
-            canEdit={canEdit}
-            isEditing={isEditing}
-            sectionLabelColor={churchBranding?.colors?.[1]?.value}
-            sectionBorderColor={churchBranding?.colors?.[0]?.value}
-            onSectionsChange={updateDraftSections}
-            selection={selectedPlanTarget}
-            onSelectionChange={setSelectedPlanTarget}
-            scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
-            header={
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-gray-100">
-                  {planName.trim() || occurrence.name || service.name}
-                </p>
-                {anchorStartTime ? (
-                  <p className="mt-0.5 text-xs text-gray-400">
-                    Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+          <div
+            className="relative flex min-h-0 min-w-0 flex-1"
+            onScrollCapture={handlePlanScroll}
+            onWheel={pauseLiveFollow}
+            onTouchMove={pauseLiveFollow}
+            onPointerDown={notePointerScrollIntent}
+            onKeyDown={handleKeyDown}
+          >
+            <ServicePlanSectionList
+              sections={sections}
+              canEdit={canEdit}
+              isEditing={isEditing}
+              sectionLabelColor={churchBranding?.colors?.[1]?.value}
+              sectionBorderColor={churchBranding?.colors?.[0]?.value}
+              onSectionsChange={updateDraftSections}
+              selection={selectedPlanTarget}
+              onSelectionChange={setSelectedPlanTarget}
+              scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
+              scrollContainerRef={servicePlanScrollRef}
+              header={
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-100">
+                    {planName.trim() || occurrence.name || service.name}
                   </p>
-                ) : null}
-              </div>
-            }
-            assignedToHistoryValues={assignedToSuggestions}
-            onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
-            isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
-            roleNoteOptions={roleNoteOptions}
-            scheduledPositionOptions={scheduledPositionOptions}
-            teamNoteOptions={teamNoteOptions}
-            microphones={microphones}
-            microphoneAudiences={microphoneAudiences}
-            scheduledMicrophoneHolders={scheduledMicrophoneHolders}
-            scheduledAssignmentRows={scheduledAssignmentRows}
-            onOpenScheduledAssignment={onOpenScheduledAssignment}
-            isServiceDay={isServiceDay}
-            liveElementId={liveElementId}
-            isManualLive={isManualLive}
-            isTimelineAdjusted={isTimelineAdjusted}
-            adjustedStartTimes={adjustedStartTimes}
-            liveStartedAtLabel={liveStartedAtLabel}
-            publicLiveBusy={updatingPublicLive}
-            onMakePublicLive={handleMakePublicLive}
-            hideNotes={hideNotes}
-            teamNotesFilter={teamNotesFilter}
-            roleNotesFilter={roleNotesFilter}
-            onViewSongLyrics={setViewSongRef}
-            allSongDocs={allSongDocs}
-            canCreateLibrarySong={canCreateLibrarySong}
-            onCreatePendingSong={openPendingSongCreator}
-            resolvedSongRefs={resolvedSongRefs}
-          />
+                  {anchorStartTime ? (
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+                    </p>
+                  ) : null}
+                </div>
+              }
+              assignedToHistoryValues={assignedToSuggestions}
+              onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
+              isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
+              roleNoteOptions={roleNoteOptions}
+              scheduledPositionOptions={scheduledPositionOptions}
+              teamNoteOptions={teamNoteOptions}
+              microphones={microphones}
+              microphoneAudiences={microphoneAudiences}
+              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledAssignmentRows={scheduledAssignmentRows}
+              onOpenScheduledAssignment={onOpenScheduledAssignment}
+              isServiceDay={isServiceDay}
+              liveElementId={liveElementId}
+              isManualLive={isManualLive}
+              isTimelineAdjusted={isTimelineAdjusted}
+              adjustedStartTimes={adjustedStartTimes}
+              liveStartedAtLabel={liveStartedAtLabel}
+              publicLiveBusy={updatingPublicLive}
+              onMakePublicLive={handleMakePublicLive}
+              hideNotes={hideNotes}
+              teamNotesFilter={teamNotesFilter}
+              roleNotesFilter={roleNotesFilter}
+              onViewSongLyrics={setViewSongRef}
+              allSongDocs={allSongDocs}
+              canCreateLibrarySong={canCreateLibrarySong}
+              onCreatePendingSong={openPendingSongCreator}
+              resolvedSongRefs={resolvedSongRefs}
+              onReviewImportAmbiguity={(elementId) => {
+                setIsEditing(true);
+                setAmbiguityDialog({ prompt: false, elementIds: [elementId] });
+              }}
+              followLiveControl={
+                liveElementId && !isEditing && activeTab === "plan" && !isFollowingLive ? (
+                  <Button
+                    type="button"
+                    variant="cta"
+                    svg={LocateFixed}
+                    className="absolute bottom-3 right-3 z-10 shadow-xl max-md:min-h-0"
+                    onClick={resumeFollowing}
+                  >
+                    Follow live
+                  </Button>
+                ) : null
+              }
+            />
+          </div>
 
           {/* Autosave state is rendered in the plan toolbar under the tabs.
             <div
@@ -3140,6 +3182,36 @@ const ServicePlanEditor = ({
           summary={importPreview.summary}
           onApply={applyImportPreview}
           onClose={() => setImportPreview(null)}
+        />
+      ) : null}
+      {ambiguityDialog ? (
+        <ServicePlanAmbiguityReview
+          sections={sections || []}
+          elementIds={ambiguityDialog.elementIds || []}
+          prompt={ambiguityDialog.prompt}
+          onLater={() => {
+            if (!sections) { setAmbiguityDialog(null); return; }
+            const ids = new Set(ambiguityDialog.elementIds || []);
+            updateDraftSections(sections.map((section) => ({
+              ...section,
+              elements: section.elements.map((element) => ids.has(element.id) && element.importAmbiguity
+                ? { ...element, importAmbiguity: { ...element.importAmbiguity, status: "deferred" } }
+                : element),
+            })));
+            setAmbiguityDialog(null);
+          }}
+          onResolve={(elementId, changes) => {
+            if (!sections) return;
+            updateDraftSections(sections.map((section) => ({
+              ...section,
+              elements: section.elements.map((element) => element.id === elementId ? { ...element, ...changes } : element),
+            })));
+            setAmbiguityDialog((current) => {
+              if (!current) return null;
+              const remainingIds = (current.elementIds || []).filter((id) => id !== elementId);
+              return remainingIds.length ? { prompt: false, elementIds: remainingIds } : null;
+            });
+          }}
         />
       ) : null}
 

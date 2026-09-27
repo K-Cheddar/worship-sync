@@ -137,6 +137,13 @@ const changedFields = (
       after: optionalValue(next.sourceElementTypeRaw, "None"),
     });
   }
+  if (!serializesEqual(current.importAmbiguity, next.importAmbiguity)) {
+    fields.push({
+      label: "Import interpretation",
+      before: current.importAmbiguity?.status || "No review record",
+      after: next.importAmbiguity?.status || "No review needed",
+    });
+  }
   const currentAssignees = getServicePlanElementAssigneeNames(current).join(", ");
   const nextAssignees = getServicePlanElementAssigneeNames(next).join(", ");
   if (
