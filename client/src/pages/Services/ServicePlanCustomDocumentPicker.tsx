@@ -12,11 +12,16 @@ import type { ItemState, ServiceItem } from "../../types";
 
 const FIELD_CLASS = "text-neutral-100";
 
+type AttachableCustomDocument = {
+  _id: string;
+  name: string;
+};
+
 type ServicePlanCustomDocumentPickerProps = {
   isOpen: boolean;
   onClose: () => void;
   attachedDocumentIds: string[];
-  onSelectDocument: (document: ServiceItem) => void;
+  onSelectDocument: (document: AttachableCustomDocument) => void;
 };
 
 /** Searches the current church's existing custom-item library in attach mode. */
