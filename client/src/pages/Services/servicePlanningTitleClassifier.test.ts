@@ -98,6 +98,7 @@ describe("classifyServicePlanningTitle", () => {
     const empty = classifyServicePlanningTitle({ title: "" });
     const malformed = classifyServicePlanningTitle({ title: "Special feature https:// bad link" });
     expect(empty.parts).toEqual([]);
+    expect(empty.reasons).toContain("The source title is empty.");
     expect(malformed.content).toContain("Special feature");
     expect(malformed.reasons).toContain("A link-like value could not be validated.");
     expect(classifyServicePlanningTitle({ title: "Unknown free-text Title" }).reasons.length).toBeGreaterThan(0);

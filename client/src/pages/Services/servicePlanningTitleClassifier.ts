@@ -151,6 +151,7 @@ export const classifyServicePlanningTitle = ({
   let remaining = title.trim();
   const parts: ServicePlanningTitlePart[] = [];
   const reasons: string[] = [];
+  if (!remaining) reasons.push("The source title is empty.");
   const scripture = extractScripture(remaining);
   if (scripture) {
     parts.push({ kind: "scripture", value: scripture.text, destination: "scripture" });

@@ -69,6 +69,26 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(sections[1].elements).toHaveLength(1);
   });
 
+  it("retains an empty external Title as a reviewable source ambiguity", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday Service",
+      sections: [{
+        sectionName: "Program",
+        rows: [{ elementType: "Special Feature", title: "", ledBy: "", note: "Original note" }],
+      }],
+      teamAssignments: [],
+    }, songs, { classifyExternalTitle: true });
+
+    expect(section.elements[0].importAmbiguity).toMatchObject({
+      sourceTitle: "",
+      sourceElementType: "Special Feature",
+      sourceNote: "Original note",
+      status: "unresolved",
+      reasons: ["The source title is empty."],
+      parts: [],
+    });
+  });
+
   it("matches a song row against the library and captures ledBy as the assignment", () => {
     const [section] = buildServicePlanSectionsFromImport(data, songs);
     const [matched] = section.elements;

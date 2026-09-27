@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
@@ -84,6 +85,42 @@ describe("ServicePlanAmbiguityReview", () => {
     expect(onResolve).toHaveBeenCalledWith("element-1", {
       importAmbiguity: expect.objectContaining({ status: "deferred" }),
     });
+  });
+
+  it("advances through queued items without closing the review", async () => {
+    const user = userEvent.setup();
+    const secondElement: ServicePlanElement = {
+      ...sections[0].elements[0],
+      id: "element-2",
+      title: plainTextToRichText("Second item"),
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        sourceTitle: "Unknown second title",
+      },
+    };
+    const reviewSections: ServicePlanSection[] = [{
+      ...sections[0],
+      elements: [...sections[0].elements, secondElement],
+    }];
+    const ReviewQueue = () => {
+      const [elementIds, setElementIds] = useState(["element-1", "element-2"]);
+      return (
+        <ServicePlanAmbiguityReview
+          sections={reviewSections}
+          elementIds={elementIds}
+          prompt={false}
+          onLater={jest.fn()}
+          onResolve={(elementId) => setElementIds((current) => current.filter((id) => id !== elementId))}
+        />
+      );
+    };
+    render(<ReviewQueue />);
+
+    expect(screen.getByText("Psalms 97 Jasmine Williams")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+
+    expect(screen.getByText("Unknown second title")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm interpretation" })).toBeInTheDocument();
   });
 
   it("moves a source-managed description from content to notes and keeps unrelated resources", () => {

@@ -356,7 +356,6 @@ const buildElementFromRow = <
 
   if (
     classification &&
-    classification.parts.length &&
     (classification.reasons.length > 0 || classification.urls.length > 0)
   ) {
     const unresolved = classification.reasons.length > 0;

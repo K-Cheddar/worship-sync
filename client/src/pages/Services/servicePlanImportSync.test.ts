@@ -119,6 +119,55 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
 
     expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual(["e1"]);
   });
+
+  it("reopens an unresolved row when source text changes without changing extracted parts", () => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "Unknown free-text Title",
+      sourceLedBy: "",
+      parts: [{ kind: "description" as const, value: "Unknown free-text Title", destination: "content" as const }],
+      reasons: ["The title could be descriptive content or an assignee."],
+      status: "unresolved" as const,
+      sourceFingerprint: "old-source",
+    };
+    const current = [section("s1", "Worship", [element("e1", "Special Feature", { importAmbiguity: ambiguity })])];
+    const next = [section("s1", "Worship", [element("e1", "Special Feature", {
+      importAmbiguity: {
+        ...ambiguity,
+        sourceTitle: "Unknown free-text Title, revised",
+        sourceFingerprint: "new-source",
+      },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual(["e1"]);
+  });
+
+  it("does not repeat review for source whitespace changes with the same interpretation", () => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "Unknown free-text Title",
+      sourceLedBy: "",
+      parts: [{ kind: "description" as const, value: "Unknown free-text Title", destination: "content" as const }],
+      reasons: ["The title could be descriptive content or an assignee."],
+      status: "deferred" as const,
+      sourceFingerprint: "old-source",
+    };
+    const current = [section("s1", "Worship", [element("e1", "Special Feature", { importAmbiguity: ambiguity })])];
+    const next = [section("s1", "Worship", [element("e1", "Special Feature", {
+      importAmbiguity: {
+        ...ambiguity,
+        sourceTitle: "Unknown  free-text\nTitle",
+        sourceFingerprint: "new-source",
+        status: "unresolved",
+      },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
 });
 
 describe("refreshServicePlanFromImport", () => {

@@ -24,6 +24,21 @@ export type ServicePlanningRefreshOptions = {
   treatUnmarkedItemsAsSource?: boolean;
 };
 
+const normalizedImportSourceValue = (value: string | undefined): string =>
+  (value || "").replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
+
+const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["importAmbiguity"]>) =>
+  JSON.stringify({
+    sourceElementType: normalizedImportSourceValue(ambiguity.sourceElementType),
+    sourceTitle: normalizedImportSourceValue(ambiguity.sourceTitle),
+    sourceLedBy: normalizedImportSourceValue(ambiguity.sourceLedBy),
+    sourceNote: normalizedImportSourceValue(ambiguity.sourceNote),
+    reasons: ambiguity.reasons,
+    parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
+      kind, value, destination, sourceField: sourceField || "title",
+    })),
+  });
+
 /** Return only unresolved imports that are new or materially changed in the
  * refreshed plan. Element IDs come from reconciliation, so inserting another
  * source row does not make an unchanged ambiguity look new. */
@@ -35,24 +50,14 @@ export const getNewServicePlanImportAmbiguityIds = (
     currentSections.flatMap((section) => section.elements.flatMap((element) => {
       const ambiguity = element.importAmbiguity;
       return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
-        ? [[element.id, JSON.stringify({
-            reasons: ambiguity.reasons,
-            parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
-              kind, value, destination, sourceField: sourceField || "title",
-            })),
-          })] as const]
+        ? [[element.id, ambiguityReviewFingerprint(ambiguity)] as const]
         : [];
     })),
   );
   return nextSections.flatMap((section) => section.elements.flatMap((element) => {
     const ambiguity = element.importAmbiguity;
     return ambiguity?.status === "unresolved" &&
-      currentFingerprintById.get(element.id) !== JSON.stringify({
-        reasons: ambiguity.reasons,
-        parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
-          kind, value, destination, sourceField: sourceField || "title",
-        })),
-      })
+      currentFingerprintById.get(element.id) !== ambiguityReviewFingerprint(ambiguity)
       ? [element.id]
       : [];
   }));
