@@ -256,6 +256,11 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         contextRef.current = nextContext;
         activeRoomRef.current = `${requestedChurchId}:${nextContext.todayKey}`;
+        liveStreamReadyRef.current = false;
+        initialMessagesReceivedRef.current = false;
+        todayFallbackRef.current = null;
+        knownMessageIdsRef.current.clear();
+        knownMessagesRef.current.clear();
         setContext(nextContext);
         setSelectedDayKey(nextContext.todayKey);
       })
@@ -529,6 +534,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (!eligible || !context?.todayKey) return;
     let stopped = false;
+    const roomKey = `${churchId}:${context.todayKey}`;
     let abortController: AbortController | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -550,6 +556,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           dayKey: context.todayKey,
           signal: abortController.signal,
           onEvent: (event: ChatStreamEvent) => {
+            if (stopped || activeRoomRef.current !== roomKey) return;
             if (event.type === "connected") {
               attempt = 0;
               setConnectionStatus("connected");

@@ -4,8 +4,8 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { ToastContext } from "../context/toastContext";
 import { createMockGlobalInfo } from "../test/mocks";
 import { ChatProvider, useChat } from "./ChatContext";
-import type { ChatContextInfo, ChatMessage } from "./types";
-import { getChatContext, streamChatEvents } from "./api";
+import type { ChatContextInfo, ChatMessage, ChatStreamEvent } from "./types";
+import { getChatContext, getChatMessages, streamChatEvents } from "./api";
 
 jest.mock("./api", () => ({
   editChatMessage: jest.fn(),
@@ -20,6 +20,7 @@ jest.mock("./api", () => ({
 }));
 
 const mockedGetChatContext = jest.mocked(getChatContext);
+const mockedGetChatMessages = jest.mocked(getChatMessages);
 const mockedStreamChatEvents = jest.mocked(streamChatEvents);
 
 const contextFor = (todayKey: string): ChatContextInfo => ({
@@ -123,7 +124,6 @@ describe("ChatProvider weekly rollover", () => {
 
     setVisibility("hidden");
     setVisibility("visible");
-    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(await screen.findByText(`week: ${currentWeek.todayKey}`)).toBeInTheDocument();
     expect(
@@ -179,4 +179,96 @@ describe("ChatProvider weekly rollover", () => {
       currentWeek.todayKey,
     );
   });
+
+  it("uses the five-second fallback after rollover despite stale previous-week work", async () => {
+    const previousWeek = contextFor("2026-08-03");
+    const currentWeek = contextFor("2026-08-10");
+    mockedGetChatContext
+      .mockResolvedValueOnce({ context: previousWeek })
+      .mockResolvedValue({ context: currentWeek });
+
+    let previousWeekOnEvent: ((event: ChatStreamEvent) => void) | undefined;
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent, dayKey }) => {
+        if (dayKey === previousWeek.todayKey) {
+          previousWeekOnEvent = onEvent;
+        }
+        return new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    );
+
+    let resolvePreviousFallback!: (response: {
+      context: ChatContextInfo;
+      dayKey: string;
+      messages: ChatMessage[];
+      hasMore: boolean;
+    }) => void;
+    mockedGetChatMessages
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePreviousFallback = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        context: currentWeek,
+        dayKey: currentWeek.todayKey,
+        messages: [messageFor(currentWeek.todayKey)],
+        hasMore: false,
+      });
+
+    renderChat();
+
+    expect(await screen.findByText(`week: ${previousWeek.todayKey}`)).toBeInTheDocument();
+    await waitFor(() => expect(mockedStreamChatEvents).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      previousWeekOnEvent?.({ type: "stream-error", message: "retry" });
+      previousWeekOnEvent?.({
+        type: "initial-messages",
+        dayKey: previousWeek.todayKey,
+        messages: [messageFor(previousWeek.todayKey)],
+        hasMore: false,
+      });
+    });
+    await waitFor(() => expect(mockedGetChatMessages).toHaveBeenCalledTimes(1));
+
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(await screen.findByText(`week: ${currentWeek.todayKey}`)).toBeInTheDocument();
+    await waitFor(() => expect(mockedStreamChatEvents).toHaveBeenCalledTimes(2));
+
+    act(() =>
+      previousWeekOnEvent?.({
+        type: "initial-messages",
+        dayKey: previousWeek.todayKey,
+        messages: [messageFor(previousWeek.todayKey)],
+        hasMore: false,
+      }),
+    );
+
+    await waitFor(() => expect(mockedGetChatMessages).toHaveBeenCalledTimes(2), {
+      timeout: 6_000,
+    });
+    expect(
+      await screen.findByText(`Message for ${currentWeek.todayKey}`),
+    ).toBeInTheDocument();
+
+    resolvePreviousFallback({
+      context: previousWeek,
+      dayKey: previousWeek.todayKey,
+      messages: [messageFor(previousWeek.todayKey)],
+      hasMore: false,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(`week: ${currentWeek.todayKey}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(`Message for ${currentWeek.todayKey}`),
+    ).toBeInTheDocument();
+  }, 10_000);
 });
