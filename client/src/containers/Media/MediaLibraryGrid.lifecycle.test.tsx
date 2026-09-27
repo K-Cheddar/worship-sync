@@ -258,7 +258,7 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
     expect(screen.getByText("Media 20")).toBeInTheDocument();
   });
 
-  it("shows compact wrapping folders in the main Media panel", () => {
+  it("shows compact vertical folders in the main Media panel", () => {
     const mediaListRef = { current: null } as React.RefObject<HTMLElement | null>;
     const mediaGridRef = {
       current: null,
@@ -273,12 +273,7 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
 
     render(renderGrid(true, mediaListRef, mediaGridRef, { showAll: false, childFolders: folders }));
 
-    expect(screen.getByTestId("media-library-folder-grid")).toHaveClass(
-      "flex",
-      "flex-wrap",
-      "gap-x-2",
-      "gap-y-1",
-    );
+    expect(screen.getAllByTestId("media-library-folder-row")).toHaveLength(3);
     expect(screen.getByRole("button", { name: "Backgrounds" })).toBeInTheDocument();
   });
 });

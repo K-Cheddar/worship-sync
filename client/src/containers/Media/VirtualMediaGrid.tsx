@@ -37,9 +37,9 @@ const findMediaElement = (container: HTMLElement, id: string) =>
   ).find((element) => element.dataset.mediaId === id) ?? null;
 
 type UpRow = { type: "up"; label: string };
-type FoldersRow = { type: "folders"; folders: MediaFolder[] };
+type FolderRow = { type: "folder"; folder: MediaFolder };
 type TilesRow = { type: "tiles"; items: MediaType[]; startIndex: number };
-type VirtualRow = UpRow | FoldersRow | TilesRow;
+type VirtualRow = UpRow | FolderRow | TilesRow;
 
 export type VirtualMediaGridHandle = {
   scrollToMediaId: (
@@ -120,8 +120,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       const result: VirtualRow[] = [];
       if (showFolders) {
         if (canGoUp) result.push({ type: "up", label: currentFolderName ?? "" });
-        if (childFolders.length > 0) {
-          result.push({ type: "folders", folders: childFolders });
+        for (const folder of childFolders) {
+          result.push({ type: "folder", folder });
         }
       }
       for (let i = 0; i < mediaItems.length; i += cols) {
@@ -187,8 +187,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     );
     const previousLayoutRef = useRef({ cols, folderLayoutKey });
 
-    // Width changes can alter the number of wrapped folder lines. Invalidate
-    // cached row sizes only on a real resize, not during ordinary scrolling.
+    // Width changes can affect measured row sizes. Invalidate only on a real
+    // resize, not during ordinary scrolling.
     useLayoutEffect(() => {
       const gridElement = gridRef.current;
       if (!gridElement || typeof ResizeObserver === "undefined") return;
@@ -233,9 +233,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
       }
       virtualizerRef.current.measure();
-      if (colsChanged) {
-        measureVisibleRows();
-      }
+      measureVisibleRows();
     }, [cols, folderLayoutKey, measureVisibleRows]);
 
     useImperativeHandle(
@@ -367,18 +365,15 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                   />
                 </div>
               )}
-              {row.type === "folders" && (
+              {row.type === "folder" && (
                 <div
-                  data-testid="media-library-folder-grid"
-                  className="flex flex-wrap gap-x-2 gap-y-1 px-4"
+                  data-testid="media-library-folder-row"
+                  className="flex min-w-0 items-center px-4"
                 >
-                  {row.folders.map((folder) => (
-                    <MediaLibraryFolderChip
-                      key={folder.id}
-                      folder={folder}
-                      onOpen={onOpenFolder}
-                    />
-                  ))}
+                  <MediaLibraryFolderChip
+                    folder={row.folder}
+                    onOpen={onOpenFolder}
+                  />
                 </div>
               )}
               {row.type === "tiles" && (

@@ -5,7 +5,6 @@ import type { MediaFolder, MediaType } from "../../types";
 const mockVirtualizerMeasure = jest.fn();
 const mockVirtualizerMeasureElement = jest.fn();
 const mockVirtualizerCounts: number[] = [];
-let mockFolderRowHeight = 32;
 const mockVirtualizerSnapshots: Array<{
   totalSize: number;
   indexes: number[];
@@ -141,8 +140,8 @@ jest.mock("@tanstack/react-virtual", () => {
             const estimatedSize = estimateSizeRef.current(index);
             let measuredSize = estimatedSize;
             if (element.dataset.rowType === "tiles") measuredSize = 120;
-            if (element.dataset.rowType === "folders") {
-              measuredSize = mockFolderRowHeight;
+            if (element.dataset.rowType === "folder") {
+              measuredSize = 32;
             }
             sizeCacheRef.current.set(index, measuredSize);
             forceRender((value) => value + 1);
@@ -244,7 +243,6 @@ describe("VirtualMediaGrid", () => {
 
   beforeEach(() => {
     mockVirtualizerCounts.length = 0;
-    mockFolderRowHeight = 32;
     mockVirtualizerMeasure.mockClear();
     mockVirtualizerMeasureElement.mockClear();
     mockVirtualizerSnapshots.length = 0;
@@ -323,7 +321,7 @@ describe("VirtualMediaGrid", () => {
     expect(onOpenFolder).toHaveBeenCalledWith("folder-1");
   });
 
-  it("renders folders together in a wrapping grid while keeping Up above them", () => {
+  it("renders folders in compact vertical rows with Up above them", () => {
     const folders = ["Backgrounds", "Videos", "Logos"].map((name, index) => ({
       id: `folder-${index}`,
       name,
@@ -347,10 +345,17 @@ describe("VirtualMediaGrid", () => {
     const folderButtons = folders.map((folder) =>
       screen.getByRole("button", { name: folder.name }),
     );
-    const folderGrid = screen.getByTestId("media-library-folder-grid");
+    const folderRows = screen.getAllByTestId("media-library-folder-row");
 
-    expect(folderGrid).toHaveClass("flex", "flex-wrap", "gap-x-2", "gap-y-1");
-    expect(folderButtons).toHaveLength(3);
+    expect(folderRows).toHaveLength(3);
+    folderRows.forEach((folderRow) =>
+      expect(folderRow).toHaveClass("flex", "items-center", "px-4"),
+    );
+    expect(folderButtons.map((button) => button.textContent)).toEqual([
+      "Backgrounds",
+      "Videos",
+      "Logos",
+    ]);
     expect(screen.getByRole("button", { name: "Up" })).toBeInTheDocument();
     expect(screen.getByText("Nested folder")).toBeInTheDocument();
 
@@ -385,7 +390,7 @@ describe("VirtualMediaGrid", () => {
     });
   });
 
-  it("allows long folder names to truncate inside a narrow wrapping row", () => {
+  it("truncates long folder names in a narrow vertical list", () => {
     const folder = {
       id: "long-folder",
       name: "A folder name that is much longer than the available panel width",
@@ -420,10 +425,9 @@ describe("VirtualMediaGrid", () => {
     );
 
     expect(mockResizeObservers).toHaveLength(1);
-    mockFolderRowHeight = 68;
     act(() => mockResizeObservers[0].resize(320));
     expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(1);
-    expect(mockVirtualizerSnapshots.at(-1)?.totalSize).toBe(68);
+    expect(mockVirtualizerSnapshots.at(-1)?.totalSize).toBe(32);
 
     mockVirtualizerMeasure.mockClear();
     rerender(
