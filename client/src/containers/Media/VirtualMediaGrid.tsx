@@ -10,17 +10,14 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { MediaFolder, MediaType } from "../../types";
 import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
-import Button from "../../components/Button/Button";
-import { ArrowUp, Folder } from "lucide-react";
 import {
-  MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS,
-  MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS,
-  MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
-} from "./mediaLibraryOrangeFolderIcon";
+  MediaLibraryFolderChip,
+  MediaLibraryUpChip,
+} from "./MediaLibraryFolderChip";
 
 const COL_GAP = 8;  // gap-x-2
 const ROW_GAP = 4;  // gap-y-1
-const FOLDER_ROW_HEIGHT = 28;
+const FOLDER_ROW_ESTIMATE_HEIGHT = 32;
 const INITIAL_TILE_ROW_HEIGHT = 80; // fallback before first real measurement
 
 const getUsableScrollViewport = (element: HTMLElement | null) => {
@@ -40,9 +37,9 @@ const findMediaElement = (container: HTMLElement, id: string) =>
   ).find((element) => element.dataset.mediaId === id) ?? null;
 
 type UpRow = { type: "up"; label: string };
-type FolderRow = { type: "folder"; folder: MediaFolder };
+type FoldersRow = { type: "folders"; folders: MediaFolder[] };
 type TilesRow = { type: "tiles"; items: MediaType[]; startIndex: number };
-type VirtualRow = UpRow | FolderRow | TilesRow;
+type VirtualRow = UpRow | FoldersRow | TilesRow;
 
 export type VirtualMediaGridHandle = {
   scrollToMediaId: (
@@ -123,7 +120,9 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       const result: VirtualRow[] = [];
       if (showFolders) {
         if (canGoUp) result.push({ type: "up", label: currentFolderName ?? "" });
-        for (const folder of childFolders) result.push({ type: "folder", folder });
+        if (childFolders.length > 0) {
+          result.push({ type: "folders", folders: childFolders });
+        }
       }
       for (let i = 0; i < mediaItems.length; i += cols) {
         result.push({ type: "tiles", items: mediaItems.slice(i, i + cols), startIndex: i });
@@ -141,7 +140,9 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       getScrollElement: () =>
         scrollElement === undefined ? scrollRef.current : scrollElement,
       estimateSize: (index) =>
-        rowsRef.current[index]?.type === "tiles" ? tileRowHeightRef.current : FOLDER_ROW_HEIGHT,
+        rowsRef.current[index]?.type === "tiles"
+          ? tileRowHeightRef.current
+          : FOLDER_ROW_ESTIMATE_HEIGHT,
       overscan: 3,
       paddingStart: 16,
       paddingEnd: 16,
@@ -174,18 +175,38 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         .forEach(measureRowElement);
     }, [measureRowElement]);
 
-    // Folder rows have a different fixed size than tile rows. Invalidate the
-    // index-based cache only when that folder-row prefix changes; media
-    // updates keep the shared tile estimate and need no row remeasurement.
-    const folderRowCount = showFolders
-      ? childFolders.length + (canGoUp ? 1 : 0)
-      : 0;
-    const previousFolderRowCountRef = useRef(folderRowCount);
+    const folderLayoutKey = useMemo(
+      () =>
+        showFolders
+          ? JSON.stringify([
+              canGoUp ? currentFolderName ?? "" : "",
+              childFolders.map((folder) => [folder.id, folder.name]),
+            ])
+          : "",
+      [showFolders, canGoUp, currentFolderName, childFolders],
+    );
+    const previousLayoutRef = useRef({ cols, folderLayoutKey });
+
+    // Width changes can alter the number of wrapped folder lines. Invalidate
+    // cached row sizes only on a real resize, not during ordinary scrolling.
     useLayoutEffect(() => {
-      if (previousFolderRowCountRef.current === folderRowCount) return;
-      previousFolderRowCountRef.current = folderRowCount;
-      virtualizerRef.current.measure();
-    }, [folderRowCount]);
+      const gridElement = gridRef.current;
+      if (!gridElement || typeof ResizeObserver === "undefined") return;
+
+      let previousWidth = gridElement.getBoundingClientRect().width;
+      const resizeObserver = new ResizeObserver(([entry]) => {
+        const nextWidth = entry?.contentRect.width ?? 0;
+        if (Math.abs(nextWidth - previousWidth) <= 1) return;
+
+        previousWidth = nextWidth;
+        shouldSyncTileRowHeightRef.current = true;
+        virtualizerRef.current.measure();
+        measureVisibleRows();
+      });
+      resizeObserver.observe(gridElement);
+
+      return () => resizeObserver.disconnect();
+    }, [measureVisibleRows]);
 
     // Flush stale size cache when the measured tile height changes.
     const prevTileRowHeightRef = useRef(tileRowHeight);
@@ -196,19 +217,26 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       }
     }, [tileRowHeight]);
 
-    // When cols change (zoom), reset the measured height so the next render
-    // re-measures tiles at their new size and flushes the cache.
-    const prevColsRef = useRef(cols);
+    // Folder rows and thumbnail rows share an index-based measurement cache.
+    // Invalidate once when either layout changes, and reset tile estimates only
+    // when the thumbnail column count changes (including zoom).
     useLayoutEffect(() => {
-      if (prevColsRef.current !== cols) {
-        prevColsRef.current = cols;
+      const previousLayout = previousLayoutRef.current;
+      const colsChanged = previousLayout.cols !== cols;
+      const foldersChanged = previousLayout.folderLayoutKey !== folderLayoutKey;
+      if (!colsChanged && !foldersChanged) return;
+
+      previousLayoutRef.current = { cols, folderLayoutKey };
+      if (colsChanged) {
         shouldSyncTileRowHeightRef.current = true;
         setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
         prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
-        virtualizerRef.current.measure();
+      }
+      virtualizerRef.current.measure();
+      if (colsChanged) {
         measureVisibleRows();
       }
-    }, [cols, measureVisibleRows]);
+    }, [cols, folderLayoutKey, measureVisibleRows]);
 
     useImperativeHandle(
       ref,
@@ -324,6 +352,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
             <div
               key={virtualRow.key}
               data-index={virtualRow.index}
+              data-row-type={row.type}
               ref={measureRowElement}
               className="absolute left-0 top-0 w-full"
               style={{
@@ -331,36 +360,25 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
               }}
             >
               {row.type === "up" && (
-                <div className="flex items-center gap-2 px-4 py-0.5">
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
-                    onClick={onGoUp}
-                    title="Up one level"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5 shrink-0 text-zinc-200" aria-hidden />
-                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>Up</span>
-                  </Button>
-                  {row.label && <p className="text-xs text-zinc-200">{row.label}</p>}
+                <div className="px-4">
+                  <MediaLibraryUpChip
+                    currentFolderName={row.label}
+                    onGoUp={onGoUp}
+                  />
                 </div>
               )}
-              {row.type === "folder" && (
-                <div className="flex items-center px-4 py-0.5">
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
-                    onClick={() => onOpenFolder(row.folder.id)}
-                    title={row.folder.name}
-                  >
-                    <Folder
-                      {...MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE}
-                      className="h-3.5 w-3.5 shrink-0 text-orange-400"
-                      aria-hidden
+              {row.type === "folders" && (
+                <div
+                  data-testid="media-library-folder-grid"
+                  className="flex flex-wrap gap-x-2 gap-y-1 px-4"
+                >
+                  {row.folders.map((folder) => (
+                    <MediaLibraryFolderChip
+                      key={folder.id}
+                      folder={folder}
+                      onOpen={onOpenFolder}
                     />
-                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>{row.folder.name}</span>
-                  </Button>
+                  ))}
                 </div>
               )}
               {row.type === "tiles" && (
