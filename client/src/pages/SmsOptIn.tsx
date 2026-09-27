@@ -17,7 +17,7 @@ export const SMS_CONSENT_TEXT =
   "I agree to receive SMS messages from my church through WorshipSync about volunteer availability, scheduling, assignments, and related reminders. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. Consent is optional and is not required to use WorshipSync.";
 
 const SMS_OPTIONAL_DESCRIPTION =
-  "Your church may use WorshipSync to send volunteer availability requests, scheduling information, assignment updates, and related reminders by text. SMS is optional. You can use WorshipSync and participate in church scheduling without receiving text messages.";
+  "Get volunteer schedule updates from your church by text.";
 
 type SignupOutcome = "skipped" | "cancelled" | null;
 
