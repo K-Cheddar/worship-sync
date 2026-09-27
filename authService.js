@@ -34,6 +34,8 @@ import {
 import {
   createSmsConsentChallenge,
   normalizeUsPhoneNumber,
+  matchesSmsConsentCancellationCapability,
+  parseSmsConsentCancellationBody,
   parseSmsConsentBody,
   parseSmsConsentVerificationBody,
   sendSmsConsentVerificationCode,
@@ -629,6 +631,7 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
+const smsConsentMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
 
@@ -638,6 +641,25 @@ const sweepExpiredRateLimits = (now) => {
     const resetAt = Number(bucket?.resetAt || 0);
     if (blockedUntil <= now && resetAt <= now) {
       rateLimits.delete(bucketKey);
+    }
+  }
+};
+
+const withSmsConsentMutationLock = async (consentId, operation) => {
+  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const current = previous.then(() => gate);
+  smsConsentMutationQueues.set(consentId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (smsConsentMutationQueues.get(consentId) === current) {
+      smsConsentMutationQueues.delete(consentId);
     }
   }
 };
@@ -1522,16 +1544,31 @@ const addSecurityEvent = async (event) => {
  * phone-global documents remain readable only for audit/migration tooling; no
  * eligibility lookup falls back to them.
  */
-const upsertSmsConsent = async (churchId, phoneNumber) => {
+const upsertSmsConsent = async (
+  churchId,
+  phoneNumber,
+  { challengeId, cancellationToken } = {},
+) => {
   const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
   if (!consentId) throw httpError(400, "A church is required for SMS consent.");
   const submittedAt = nowIso();
-  const challenge = createSmsConsentChallenge();
+  const challenge = createSmsConsentChallenge({
+    churchId,
+    phoneNumber: normalizedPhoneNumber,
+    challengeId,
+    cancellationToken,
+  });
   const challengeFields = {
     verificationCodeHash: challenge.codeHash,
     verificationCodeSalt: challenge.codeSalt,
     verificationExpiresAt: challenge.expiresAt,
+    verificationChallengeId: challenge.challengeId,
+    verificationCancellationTokenHash: challenge.cancellationTokenHash,
+    verificationCancellationExpiresAt: challenge.expiresAt,
+    lastCancelledVerificationChallengeId: null,
+    lastCancelledVerificationTokenHash: null,
+    lastCancelledVerificationTokenExpiresAt: null,
     verificationAttempts: 0,
     updatedAt: submittedAt,
   };
@@ -1570,34 +1607,36 @@ const upsertSmsConsent = async (churchId, phoneNumber) => {
     return { consentId, challenge, shouldSend: true };
   }
 
-  const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
-  if (existing?.status === "opted_out" || existing?.optedOutAt) {
-    throw httpError(400, "This phone number has opted out of SMS.");
-  }
-  if (existing?.status === "opted_in") {
-    // Keep the in-memory fallback aligned with the transactional path above.
-    await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
-      merge: true,
-    });
+  return withSmsConsentMutationLock(consentId, async () => {
+    const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (existing?.status === "opted_out" || existing?.optedOutAt) {
+      throw httpError(400, "This phone number has opted out of SMS.");
+    }
+    if (existing?.status === "opted_in") {
+      // Keep the in-memory fallback aligned with the transactional path above.
+      await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
+        merge: true,
+      });
+      return { consentId, challenge, shouldSend: true };
+    }
+    await setDoc(COLLECTIONS.smsConsents, consentId, {
+      consentId,
+      churchId,
+      phoneNumber: normalizedPhoneNumber,
+      phoneHash: hashValue(normalizedPhoneNumber),
+      status: "pending",
+      source: "web_form",
+      consentVersion: SMS_CONSENT_VERSION,
+      consentText: SMS_CONSENT_TEXT,
+      consentSubmittedAt: submittedAt,
+      ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+      ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+      optedOutAt: existing?.optedOutAt || null,
+      createdAt: existing?.createdAt || submittedAt,
+      ...challengeFields,
+    }, { merge: false });
     return { consentId, challenge, shouldSend: true };
-  }
-  await setDoc(COLLECTIONS.smsConsents, consentId, {
-    consentId,
-    churchId,
-    phoneNumber: normalizedPhoneNumber,
-    phoneHash: hashValue(normalizedPhoneNumber),
-    status: "pending",
-    source: "web_form",
-    consentVersion: SMS_CONSENT_VERSION,
-    consentText: SMS_CONSENT_TEXT,
-    consentSubmittedAt: submittedAt,
-    ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
-    ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
-    optedOutAt: existing?.optedOutAt || null,
-    createdAt: existing?.createdAt || submittedAt,
-    ...challengeFields,
-  }, { merge: false });
-  return { consentId, challenge, shouldSend: true };
+  });
 };
 
 const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
@@ -1616,7 +1655,7 @@ const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
   return sentAt;
 };
 
-const verifySmsConsent = async (churchId, phoneNumber, code) => {
+const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
   const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
   if (!consentId) throw httpError(400, "A church is required for SMS consent.");
@@ -1630,10 +1669,16 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const record = snapshot.exists ? snapshot.data() : null;
-      const result = verifySmsConsentCode({ record, code });
+      // challengeId binds current clients to the exact challenge. Keep it
+      // optional for already-open clients from before this field was added.
+      const challengeMatches =
+        !challengeId || record?.verificationChallengeId === challengeId;
+      const result = challengeMatches
+        ? verifySmsConsentCode({ record, code })
+        : { ok: false, reason: "unavailable" };
       if (!result.ok) {
         const attempts = Number(record?.verificationAttempts || 0) + 1;
-        if (record) {
+        if (challengeMatches && record?.verificationCodeHash) {
           transaction.set(consentRef, {
             verificationAttempts: attempts,
             ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
@@ -1656,6 +1701,9 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
         verificationCodeHash: null,
         verificationCodeSalt: null,
         verificationExpiresAt: null,
+        verificationChallengeId: null,
+        verificationCancellationTokenHash: null,
+        verificationCancellationExpiresAt: null,
         updatedAt: verifiedAt,
       }, { merge: true });
       return { status: "verified", verifiedAt };
@@ -1666,33 +1714,152 @@ const verifySmsConsent = async (churchId, phoneNumber, code) => {
     return { consentId, verifiedAt };
   }
 
-  const record = await getDoc(COLLECTIONS.smsConsents, consentId);
-  const result = verifySmsConsentCode({ record, code });
-  if (!result.ok) {
-    if (record) {
-      const attempts = Number(record.verificationAttempts || 0) + 1;
-      await setDoc(COLLECTIONS.smsConsents, consentId, {
-        verificationAttempts: attempts,
-        ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
-          ? { verificationCodeHash: null }
-          : {}),
-        updatedAt: nowIso(),
-      }, { merge: true });
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    const challengeMatches =
+      !challengeId || record?.verificationChallengeId === challengeId;
+    const result = challengeMatches
+      ? verifySmsConsentCode({ record, code })
+      : { ok: false, reason: "unavailable" };
+    if (!result.ok) {
+      if (challengeMatches && record?.verificationCodeHash) {
+        const attempts = Number(record.verificationAttempts || 0) + 1;
+        await setDoc(COLLECTIONS.smsConsents, consentId, {
+          verificationAttempts: attempts,
+          ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+            ? { verificationCodeHash: null }
+            : {}),
+          updatedAt: nowIso(),
+        }, { merge: true });
+      }
+      invalid();
     }
-    invalid();
-  }
-  const verifiedAt = nowIso();
-  await setDoc(COLLECTIONS.smsConsents, consentId, {
-    status: "opted_in",
-    ...(record?.status === "opted_in"
-      ? { verificationConfirmedAt: verifiedAt }
-      : { consentedAt: verifiedAt, verifiedAt }),
+    const verifiedAt = nowIso();
+    await setDoc(COLLECTIONS.smsConsents, consentId, {
+      status: "opted_in",
+      ...(record?.status === "opted_in"
+        ? { verificationConfirmedAt: verifiedAt }
+        : { consentedAt: verifiedAt, verifiedAt }),
+      verificationCodeHash: null,
+      verificationCodeSalt: null,
+      verificationExpiresAt: null,
+      verificationChallengeId: null,
+      verificationCancellationTokenHash: null,
+      verificationCancellationExpiresAt: null,
+      updatedAt: verifiedAt,
+    }, { merge: true });
+    return { consentId, verifiedAt };
+  });
+};
+
+const cancelSmsConsentVerification = async ({
+  churchId,
+  phoneNumber,
+  challengeId,
+  cancellationToken,
+}) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) return { confirmed: false };
+  const db = requireFirestore();
+  const now = Date.now();
+  const nowTimestamp = new Date(now).toISOString();
+  const isMatchingCapability = (record, idField, hashField, expiresField) =>
+    record?.[idField] === challengeId &&
+    matchesSmsConsentCancellationCapability({
+      churchId,
+      phoneNumber: normalizedPhoneNumber,
+      challengeId,
+      cancellationToken,
+      storedHash: record?.[hashField],
+      expiresAt: record?.[expiresField],
+      now,
+    });
+  const cancelledChallengeFields = {
     verificationCodeHash: null,
     verificationCodeSalt: null,
     verificationExpiresAt: null,
-    updatedAt: verifiedAt,
-  }, { merge: true });
-  return { consentId, verifiedAt };
+    verificationChallengeId: null,
+    verificationCancellationTokenHash: null,
+    verificationCancellationExpiresAt: null,
+    lastCancelledVerificationChallengeId: challengeId,
+  };
+
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const record = snapshot.exists ? snapshot.data() : null;
+      if (record?.status === "opted_out" || record?.optedOutAt) {
+        return { confirmed: false };
+      }
+      if (
+        isMatchingCapability(
+          record,
+          "lastCancelledVerificationChallengeId",
+          "lastCancelledVerificationTokenHash",
+          "lastCancelledVerificationTokenExpiresAt",
+        )
+      ) {
+        return { confirmed: true, alreadyCancelled: true, consentId };
+      }
+      if (
+        !isMatchingCapability(
+          record,
+          "verificationChallengeId",
+          "verificationCancellationTokenHash",
+          "verificationCancellationExpiresAt",
+        )
+      ) {
+        return { confirmed: false };
+      }
+      transaction.set(consentRef, {
+        ...cancelledChallengeFields,
+        lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
+        lastCancelledVerificationTokenExpiresAt:
+          record.verificationCancellationExpiresAt,
+        verificationCancelledAt: nowTimestamp,
+        updatedAt: nowTimestamp,
+      }, { merge: true });
+      return { confirmed: true, alreadyCancelled: false, consentId };
+    });
+  }
+
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (record?.status === "opted_out" || record?.optedOutAt) {
+      return { confirmed: false };
+    }
+    if (
+      isMatchingCapability(
+        record,
+        "lastCancelledVerificationChallengeId",
+        "lastCancelledVerificationTokenHash",
+        "lastCancelledVerificationTokenExpiresAt",
+      )
+    ) {
+      return { confirmed: true, alreadyCancelled: true, consentId };
+    }
+    if (
+      !isMatchingCapability(
+        record,
+        "verificationChallengeId",
+        "verificationCancellationTokenHash",
+        "verificationCancellationExpiresAt",
+      )
+    ) {
+      return { confirmed: false };
+    }
+    await setDoc(COLLECTIONS.smsConsents, consentId, {
+      ...cancelledChallengeFields,
+      lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
+      lastCancelledVerificationTokenExpiresAt:
+        record.verificationCancellationExpiresAt,
+      verificationCancelledAt: nowTimestamp,
+      updatedAt: nowTimestamp,
+    }, { merge: true });
+    return { confirmed: true, alreadyCancelled: false, consentId };
+  });
 };
 
 const buildDesktopAuthBrowserUrl = ({ desktopAuthId, provider }) =>
@@ -6565,6 +6732,7 @@ export const authHandlers = {
       const { consentId, challenge, shouldSend } = await upsertSmsConsent(
         churchId,
         parsed.phoneNumber,
+        parsed,
       );
       if (shouldSend && challenge) {
         const messagingConfig = await getDoc(
@@ -6576,6 +6744,7 @@ export const authHandlers = {
           delivery = await sendSmsConsentVerificationCode({
             phoneNumber: parsed.phoneNumber,
             code: challenge.code,
+            challengeId: challenge.challengeId,
             config: messagingConfig,
           });
         } catch (deliveryError) {
@@ -6602,7 +6771,12 @@ export const authHandlers = {
         consentVersion: SMS_CONSENT_VERSION,
       });
 
-      return res.json({ success: true, verificationRequired: true });
+      return res.json({
+        success: true,
+        verificationRequired: true,
+        challengeId: challenge.challengeId,
+        cancellationToken: challenge.cancellationToken,
+      });
     } catch (error) {
       const statusCode = error.statusCode || 500;
       return res.status(statusCode).json({
@@ -6637,6 +6811,7 @@ export const authHandlers = {
         churchId,
         parsed.phoneNumber,
         parsed.code,
+        parsed.challengeId,
       );
       await addSecurityEvent({
         type: "sms_consent_verified",
@@ -6655,6 +6830,54 @@ export const authHandlers = {
           statusCode >= 500
             ? "Could not verify your SMS consent right now. Please try again."
             : error.message || "That verification code is not valid or has expired.",
+      });
+    }
+  },
+
+  /** Cancels one public SMS challenge using its browser-held capability. */
+  async cancelSmsConsent(req, res) {
+    try {
+      const churchId = String(req.params?.churchId || "").trim();
+      if (!churchId) {
+        throw httpError(400, "Could not confirm SMS signup cancellation.");
+      }
+      const parsed = parseSmsConsentCancellationBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      enforceRateLimit({
+        scope: "sms-consent-cancel-ip",
+        key: getClientIp(req),
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+
+      const result = await cancelSmsConsentVerification({
+        churchId,
+        phoneNumber: parsed.phoneNumber,
+        challengeId: parsed.challengeId,
+        cancellationToken: parsed.cancellationToken,
+      });
+      if (result.confirmed && !result.alreadyCancelled) {
+        await addSecurityEvent({
+          type: "sms_consent_verification_cancelled",
+          churchId,
+          consentId: result.consentId,
+          phoneHash: hashValue(parsed.phoneNumber),
+          source: "web_form",
+        });
+      }
+      // The same response is used for wrong capabilities and stale challenges;
+      // it reveals no existing subscription status.
+      return res.json({ success: true, cancelled: result.confirmed });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        cancelled: false,
+        errorMessage:
+          statusCode >= 500
+            ? "Could not confirm SMS signup cancellation. The verification code may remain usable until it expires."
+            : error.message || "Could not confirm SMS signup cancellation.",
       });
     }
   },

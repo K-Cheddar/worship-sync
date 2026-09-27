@@ -55,10 +55,18 @@ const InviteProviderLayout = () => (
 );
 
 /** Unknown path under the public shell → operator entry (HashRouter). */
-const LeaveToOperatorApp = () => {
+const defaultLeaveToOperatorApp = (path: string) => {
+  window.location.replace(path);
+};
+
+const LeaveToOperatorApp = ({
+  onLeave,
+}: {
+  onLeave: (path: string) => void;
+}) => {
   useLayoutEffect(() => {
-    window.location.replace("/");
-  }, []);
+    onLeave("/");
+  }, [onLeave]);
   return <PublicFallback />;
 };
 
@@ -67,7 +75,11 @@ const PublicDocumentTitle = () => {
   return null;
 };
 
-const PublicApp = () => (
+const PublicApp = ({
+  onLeaveToOperatorApp = defaultLeaveToOperatorApp,
+}: {
+  onLeaveToOperatorApp?: (path: string) => void;
+}) => (
   <BrowserRouter>
     <PublicDocumentTitle />
     <ToastProvider>
@@ -95,7 +107,10 @@ const PublicApp = () => (
               />
               <Route path="/invite" element={<InviteAccept />} />
             </Route>
-            <Route path="*" element={<LeaveToOperatorApp />} />
+            <Route
+              path="*"
+              element={<LeaveToOperatorApp onLeave={onLeaveToOperatorApp} />}
+            />
           </Routes>
         </Suspense>
       </ErrorBoundary>

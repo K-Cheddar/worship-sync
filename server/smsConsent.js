@@ -4,6 +4,7 @@ import { createSmsProviderForConfig } from "./smsProvider.js";
 export const SMS_CONSENT_VERSION = "2026-09-23-church-scoped";
 
 export const SMS_CONSENT_CODE_TTL_MS = 10 * 60 * 1000;
+export const SMS_CONSENT_CANCELLATION_TTL_MS = SMS_CONSENT_CODE_TTL_MS;
 export const SMS_CONSENT_MAX_ATTEMPTS = 5;
 
 export const SMS_CONSENT_TEXT =
@@ -75,33 +76,127 @@ export const parseSmsConsentBody = (body = {}) => {
     };
   }
 
-  return { ok: true, phoneNumber };
+  const challengeId = String(body.challengeId || "").trim();
+  const cancellationToken = String(body.cancellationToken || "").trim();
+  if (
+    Boolean(challengeId) !== Boolean(cancellationToken) ||
+    (challengeId && !/^[a-f\d]{32}$/i.test(challengeId)) ||
+    (cancellationToken && !/^[A-Za-z\d_-]{43}$/.test(cancellationToken))
+  ) {
+    return {
+      ok: false,
+      errorMessage: "Could not start SMS verification. Please try again.",
+    };
+  }
+
+  return {
+    ok: true,
+    phoneNumber,
+    ...(challengeId ? { challengeId, cancellationToken } : {}),
+  };
 };
 
 export const parseSmsConsentVerificationBody = (body = {}) => {
   const phoneNumber = normalizeUsPhoneNumber(body.phoneNumber);
   const code = String(body.code || "").trim();
-  if (!phoneNumber || !/^\d{6}$/.test(code)) {
+  const challengeId = String(body.challengeId || "").trim();
+  if (
+    !phoneNumber ||
+    !/^\d{6}$/.test(code) ||
+    (challengeId && !/^[a-f\d]{32}$/i.test(challengeId))
+  ) {
     return { ok: false, errorMessage: "Enter the verification code we sent you." };
   }
-  return { ok: true, phoneNumber, code };
+  return { ok: true, phoneNumber, code, ...(challengeId ? { challengeId } : {}) };
+};
+
+export const parseSmsConsentCancellationBody = (body = {}) => {
+  const phoneNumber = normalizeUsPhoneNumber(body.phoneNumber);
+  const challengeId = String(body.challengeId || "").trim();
+  const cancellationToken = String(body.cancellationToken || "").trim();
+  if (
+    !phoneNumber ||
+    !/^[a-f\d]{32}$/i.test(challengeId) ||
+    !/^[A-Za-z\d_-]{43}$/.test(cancellationToken)
+  ) {
+    return { ok: false, errorMessage: "Could not confirm SMS signup cancellation." };
+  }
+  return { ok: true, phoneNumber, challengeId, cancellationToken };
 };
 
 const hashCode = (code, salt) =>
   crypto.createHash("sha256").update(`${salt}:${code}`).digest("hex");
 
+const hashSmsConsentCancellationCapability = ({
+  churchId,
+  phoneNumber,
+  challengeId,
+  cancellationToken,
+}) => {
+  const normalizedChurchId = String(churchId || "").trim();
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber) || "";
+  return crypto
+    .createHash("sha256")
+    .update(`sms-consent-cancel:${normalizedChurchId}:${normalizedPhoneNumber}:${challengeId}:${cancellationToken}`)
+    .digest("hex");
+};
+
+export const matchesSmsConsentCancellationCapability = ({
+  churchId,
+  phoneNumber,
+  challengeId,
+  cancellationToken,
+  storedHash,
+  expiresAt,
+  now = Date.now(),
+}) => {
+  const expirationTime = new Date(expiresAt || "").getTime();
+  if (!Number.isFinite(expirationTime) || expirationTime <= now) return false;
+  if (typeof storedHash !== "string" || !/^[a-f\d]{64}$/i.test(storedHash)) {
+    return false;
+  }
+  const expected = Buffer.from(
+    hashSmsConsentCancellationCapability({
+      churchId,
+      phoneNumber,
+      challengeId,
+      cancellationToken,
+    }),
+    "hex",
+  );
+  const actual = Buffer.from(storedHash, "hex");
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+};
+
 export const createSmsConsentChallenge = ({
+  churchId = "",
+  phoneNumber = "",
+  challengeId: suppliedChallengeId,
+  cancellationToken: suppliedCancellationToken,
   now = Date.now(),
   randomCode = () => crypto.randomInt(100000, 1000000).toString(),
   randomSalt = () => crypto.randomBytes(16).toString("hex"),
+  randomChallengeId = () => crypto.randomBytes(16).toString("hex"),
+  randomCancellationToken = () => crypto.randomBytes(32).toString("base64url"),
 } = {}) => {
   const code = randomCode();
   const salt = randomSalt();
+  const challengeId = suppliedChallengeId || randomChallengeId();
+  const cancellationToken = suppliedCancellationToken || randomCancellationToken();
+  const expiresAt = new Date(now + SMS_CONSENT_CODE_TTL_MS).toISOString();
   return {
     code,
     codeHash: hashCode(code, salt),
     codeSalt: salt,
-    expiresAt: new Date(now + SMS_CONSENT_CODE_TTL_MS).toISOString(),
+    challengeId,
+    cancellationToken,
+    cancellationTokenHash: hashSmsConsentCancellationCapability({
+      churchId,
+      phoneNumber,
+      challengeId,
+      cancellationToken,
+    }),
+    expiresAt,
   };
 };
 
@@ -136,10 +231,11 @@ export const setSmsConsentSenderForServerTests = (sender) => {
 export const sendSmsConsentVerificationCode = async ({
   phoneNumber,
   code,
+  challengeId,
   config,
 } = {}) => {
   if (smsConsentSender) {
-    return smsConsentSender({ phoneNumber, code });
+    return smsConsentSender({ phoneNumber, code, challengeId });
   }
 
   const provider = createSmsProviderForConfig({

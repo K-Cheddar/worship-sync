@@ -899,10 +899,14 @@ export const submitSupportContact = async (body: {
 export const submitSmsConsent = async (churchId: string, body: {
   phoneNumber: string;
   consent: boolean;
+  challengeId: string;
+  cancellationToken: string;
 }) =>
   apiFetchWithoutAuthRecovery<{
     success: boolean;
     verificationRequired: boolean;
+    challengeId: string;
+    cancellationToken: string;
   }>(`api/sms-consent/${encodeURIComponent(churchId)}`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -911,12 +915,29 @@ export const submitSmsConsent = async (churchId: string, body: {
 export const verifySmsConsent = async (churchId: string, body: {
   phoneNumber: string;
   code: string;
+  challengeId: string;
 }) =>
   apiFetchWithoutAuthRecovery<{ success: boolean }>(
     `api/sms-consent/${encodeURIComponent(churchId)}/verify`,
     {
     method: "POST",
     body: JSON.stringify(body),
+    },
+  );
+
+export const cancelSmsConsent = async (
+  churchId: string,
+  body: {
+    phoneNumber: string;
+    challengeId: string;
+    cancellationToken: string;
+  },
+) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean; cancelled: boolean }>(
+    `api/sms-consent/${encodeURIComponent(churchId)}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
     },
   );
 
