@@ -427,6 +427,7 @@ const ServicePublicView = ({
     resumeFollowing,
   } = useFollowLiveScroll({
     itemId: currentItemId,
+    resetKey: snapshot.service.shareId,
     containerRef: servicePlanScrollRef,
     getItem: getServicePublicItem,
     scrollToItem: scrollServicePublicItemNearTop,

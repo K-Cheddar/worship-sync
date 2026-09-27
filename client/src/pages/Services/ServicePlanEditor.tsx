@@ -91,6 +91,7 @@ import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
 import useFollowLiveScroll from "../../hooks/useFollowLiveScroll";
+import { ANIMATE_COLLAPSE_DURATION_MS } from "../../components/AnimateCollapse/AnimateCollapse";
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
@@ -222,6 +223,17 @@ const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
 const getServicePlanLiveItem = (container: HTMLElement, itemId: string) => {
   const item = document.getElementById(servicePlanElementDomId(itemId));
   return item instanceof HTMLElement && container.contains(item) ? item : null;
+};
+
+const isServicePlanLiveItemReady = (item: HTMLElement, container: HTMLElement) => {
+  if (item.closest('[aria-hidden="true"]')) return false;
+  for (let ancestor = item.parentElement; ancestor && ancestor !== container; ancestor = ancestor.parentElement) {
+    if (ancestor.getAnimations?.().some((animation) => animation.playState === "running")) return false;
+  }
+  const itemRect = item.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  return itemRect.width > 0 && itemRect.height > 0
+    && containerRect.width > 0 && containerRect.height > 0;
 };
 
 const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
@@ -1996,9 +2008,17 @@ const ServicePlanEditor = ({
     resumeFollowing,
   } = useFollowLiveScroll({
     itemId: liveElementId,
+    resetKey: planKey,
     enabled: !isEditing && activeTab === "plan",
+    suspensionReason: isEditing
+      ? "editing"
+      : activeTab === "plan"
+        ? null
+        : "inactive",
+    settleDelayMs: ANIMATE_COLLAPSE_DURATION_MS,
     containerRef: servicePlanScrollRef,
     getItem: getServicePlanLiveItem,
+    isItemReady: isServicePlanLiveItemReady,
     scrollToItem: centerServicePlanLiveItem,
   });
 
