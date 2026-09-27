@@ -219,6 +219,115 @@ describe("summarizeServicePlanImport", () => {
     });
   });
 
+  it("compares span text without changing whitespace at boundaries", () => {
+    const single = (text: string) => ({
+      blocks: [{ type: "paragraph" as const, spans: [{ text }] }],
+    });
+    const joinedWord = {
+      blocks: [{ type: "paragraph" as const, spans: [{ text: "Sun" }, { text: "day" }] }],
+    };
+    const joinedWords = {
+      blocks: [{ type: "paragraph" as const, spans: [{ text: "Welcome " }, { text: "Home" }] }],
+    };
+    const meaningfulSpace = {
+      blocks: [{ type: "paragraph" as const, spans: [{ text: "Sun" }, { text: " day" }] }],
+    };
+
+    expect(summarizeServicePlanImport(
+      [section([element("item", "Title", { notes: single("Sunday") })])],
+      [section([element("item", "Title", { notes: joinedWord })])],
+    ).changes).toEqual([]);
+    expect(summarizeServicePlanImport(
+      [section([element("item", "Title", { notes: single("Welcome Home") })])],
+      [section([element("item", "Title", { notes: joinedWords })])],
+    ).changes).toEqual([]);
+    expect(summarizeServicePlanImport(
+      [section([element("item", "Title", { notes: single("Sunday") })])],
+      [section([element("item", "Title", { notes: meaningfulSpace })])],
+    ).changes[0]?.fields[0]).toMatchObject({ label: "Notes" });
+  });
+
+  it("ignores block IDs and span segmentation while retaining meaningful formatting", () => {
+    const current = [section([element("item", "Title", {
+      notes: { blocks: [{ type: "paragraph", id: "old-block", spans: [
+        { text: "Wel", bold: true }, { text: "come", bold: true }, { text: " home" },
+      ] }] },
+    })])];
+    const equivalent = [section([element("item", "Title", {
+      notes: { blocks: [{ type: "paragraph", id: "new-block", spans: [
+        { text: "Welcome", bold: true }, { text: " home" },
+      ] }] },
+    })])];
+    const movedFormatting = [section([element("item", "Title", {
+      notes: { blocks: [{ type: "paragraph", id: "new-block", spans: [
+        { text: "Welcome " }, { text: "home", bold: true },
+      ] }] },
+    })])];
+
+    expect(summarizeServicePlanImport(current, equivalent).changes).toEqual([]);
+    expect(summarizeServicePlanImport(current, movedFormatting).changes[0]?.fields).toEqual([
+      {
+        label: "Notes",
+        before: "Shared: [bold: Welcome] home",
+        after: "Shared: Welcome [bold: home]",
+      },
+    ]);
+    expect(summarizeServicePlanImport(
+      [section([element("item", "Title", { notes: { blocks: [{ type: "paragraph", spans: [{ text: "One\r\nTwo" }] }] } })])],
+      [section([element("item", "Title", { notes: { blocks: [{ type: "paragraph", id: "fresh", spans: [{ text: "One\nTwo" }] }] } })])],
+    ).changes).toEqual([]);
+    expect(summarizeServicePlanImport(
+      [section([element("item", "Title", { notes: { blocks: [{ type: "paragraph", spans: [{ text: "One\nTwo" }] }] } })])],
+      [section([element("item", "Title", { notes: { blocks: [
+        { type: "paragraph", spans: [{ text: "One" }] },
+        { type: "paragraph", spans: [{ text: "Two" }] },
+      ] } })])],
+    ).changes[0]?.fields[0]?.label).toBe("Notes");
+  });
+
+  it("reports inline and block formatting changes including list structure", () => {
+    const before = [section([element("item", "Title", { notes: { blocks: [
+      { type: "paragraph", spans: [{ text: "Words", bold: true, color: "#112233" }] },
+      { type: "list-item", listStyle: "bullet", spans: [{ text: "Item" }] },
+    ] } })])];
+    const after = [section([element("item", "Title", { notes: { blocks: [
+      { type: "paragraph", align: "center", size: "large", spans: [{ text: "Words", italic: true, underline: true, color: "#abcdef" }] },
+      { type: "list-item", listStyle: "ordered", indent: 1, listStart: 3, spans: [{ text: "Item" }] },
+    ] } })])];
+
+    expect(summarizeServicePlanImport(before, after).changes[0]?.fields).toEqual([
+      {
+        label: "Notes",
+        before: "Shared: [bold, color #112233: Words]\n[bulleted list] Item",
+        after: "Shared: [center-aligned, large text] [italic, underlined, color #abcdef: Words]\n[numbered list, level 2, starts at 3] Item",
+      },
+    ]);
+  });
+
+  it("shows the position of title formatting and distinct song reference changes", () => {
+    const before = [section([element("item", "Welcome home", {
+      title: { blocks: [{ type: "paragraph", spans: [
+        { text: "Welcome", bold: true }, { text: " home" },
+      ] }] },
+      songRefs: [{ kind: "library", songId: "song-old", songName: "Same title", key: "C" }],
+    })])];
+    const after = [section([element("item", "Welcome home", {
+      title: { blocks: [{ type: "paragraph", spans: [
+        { text: "Welcome " }, { text: "home", bold: true },
+      ] }] },
+      songRefs: [{ kind: "library", songId: "song-new", songName: "Same title", key: "C" }],
+    })])];
+
+    expect(summarizeServicePlanImport(before, after).changes[0]?.fields).toEqual([
+      { label: "Title", before: "[bold: Welcome] home", after: "Welcome [bold: home]" },
+      {
+        label: "Song",
+        before: "Same title (Key C)",
+        after: "Same title (Key C) (linked library song changed)",
+      },
+    ]);
+  });
+
   it("shows song identity, key, and pending lyric changes in the review", () => {
     const current = [section([element("set", "Songs", {
       songRefs: [

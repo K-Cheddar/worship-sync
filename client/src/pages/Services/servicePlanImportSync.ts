@@ -1,4 +1,4 @@
-import { normalizeRichTextDocument, richTextToPlainText } from "../../types/richText";
+import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementScriptureRefs,
@@ -79,9 +79,6 @@ const normalizedSourceValue = (value: string): string =>
 const normalizedLyrics = (value: string): string =>
   value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
 
-const normalizedRichText = (value: string): string =>
-  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
-
 const normalizedStartTime = (value: string | undefined): string => {
   const time = normalizedSourceValue(value || "");
   const match = /^(\d{1,2}):(\d{2})$/.exec(time);
@@ -91,49 +88,10 @@ const normalizedStartTime = (value: string | undefined): string => {
 const sameSourceValue = (left: string, right: string): boolean =>
   normalizedSourceValue(left) === normalizedSourceValue(right);
 
-const normalizedRichTextValue = (value: ServicePlanElement["notes"]) => {
-  const document = normalizeRichTextDocument(value);
-  return document.blocks.map(({ id: _id, ...block }) => ({
-    ...block,
-    spans: block.spans.reduce<Array<{ text: string; bold?: true; italic?: true; underline?: true; color?: string }>>(
-      (spans, span) => {
-        const normalizedSpan = {
-          text: normalizedRichText(span.text),
-          ...(span.bold ? { bold: true as const } : {}),
-          ...(span.italic ? { italic: true as const } : {}),
-          ...(span.underline ? { underline: true as const } : {}),
-          ...(span.color ? { color: span.color.toLowerCase() } : {}),
-        };
-        const previous = spans.at(-1);
-        if (!normalizedSpan.text) return spans;
-        if (previous && JSON.stringify({ ...previous, text: "" }) === JSON.stringify({ ...normalizedSpan, text: "" })) {
-          previous.text += `${previous.text ? " " : ""}${normalizedSpan.text}`;
-        } else {
-          spans.push(normalizedSpan);
-        }
-        return spans;
-      },
-      [],
-    ),
-  }));
-};
-
 const sameRichText = (
   left: ServicePlanElement["notes"],
   right: ServicePlanElement["notes"],
-) => JSON.stringify(normalizedRichTextValue(left)) === JSON.stringify(normalizedRichTextValue(right));
-
-const sameSongOccurrence = (
-  left: ReturnType<typeof getServicePlanElementSongRefs>[number],
-  right: ReturnType<typeof getServicePlanElementSongRefs>[number],
-): boolean => {
-  if (left.kind === "library" && right.kind === "library") {
-    return left.songId === right.songId;
-  }
-  const leftTitle = normalized(left.kind === "library" ? left.songName : left.title);
-  const rightTitle = normalized(right.kind === "library" ? right.songName : right.title);
-  return Boolean(leftTitle && leftTitle === rightTitle);
-};
+) => richTextSemanticEqual(left, right);
 
 const sameSongContent = (
   left: ReturnType<typeof getServicePlanElementSongRefs>[number],
@@ -161,20 +119,100 @@ const sameScriptureContent = (
   normalized(left.verseRange) === normalized(right.verseRange) &&
   normalized(left.version) === normalized(right.version);
 
-/** Reuse occurrence IDs for the same song while retaining each linked library reference. */
+/** Reuse occurrence IDs through increasingly weaker, deterministic evidence. */
 const reconcileImportedSongRefs = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
 ): ReturnType<typeof getServicePlanElementSongRefs> => {
   const currentRefs = getServicePlanElementSongRefs(current);
   const importedRefs = getServicePlanElementSongRefs(imported);
-  const used = new Set<number>();
-  return importedRefs.map((importedRef) => {
-    const matchIndex = currentRefs.findIndex((currentRef, index) =>
-      !used.has(index) && sameSongOccurrence(currentRef, importedRef),
+  const matchByIncomingIndex = new Map<number, number>();
+  const usedCurrent = new Set<number>();
+  const songTitle = (ref: (typeof currentRefs)[number]) =>
+    normalized(ref.kind === "library" ? ref.songName : ref.title);
+
+  const pair = (incomingIndex: number, currentIndex: number) => {
+    matchByIncomingIndex.set(incomingIndex, currentIndex);
+    usedCurrent.add(currentIndex);
+  };
+
+  // Semantic equality is strongest evidence and deliberately ignores occurrence IDs.
+  importedRefs.forEach((incomingRef, incomingIndex) => {
+    const candidates = currentRefs.flatMap((existing, index) =>
+      !usedCurrent.has(index) && sameSongContent(existing, incomingRef)
+        ? [index]
+        : [],
     );
-    if (matchIndex < 0) return importedRef;
-    used.add(matchIndex);
+    if (candidates.length === 1) pair(incomingIndex, candidates[0]);
+  });
+
+  // A shared occurrence ID can establish continuity when content changed.
+  importedRefs.forEach((incomingRef, incomingIndex) => {
+    if (matchByIncomingIndex.has(incomingIndex) || !incomingRef.id) return;
+    const identityIndex = currentRefs.findIndex((existing, index) =>
+      !usedCurrent.has(index) && existing.id === incomingRef.id,
+    );
+    if (identityIndex >= 0) pair(incomingIndex, identityIndex);
+  });
+
+  // A linked library song ID is stable across key/name changes.
+  importedRefs.forEach((incomingRef, incomingIndex) => {
+    if (matchByIncomingIndex.has(incomingIndex) || incomingRef.kind !== "library") return;
+    const identityIndex = currentRefs.findIndex((existing, index) =>
+      !usedCurrent.has(index) && existing.kind === "library" &&
+      existing.songId === incomingRef.songId,
+    );
+    if (identityIndex >= 0) pair(incomingIndex, identityIndex);
+  });
+
+  // A title is safe only when it identifies exactly one remaining occurrence
+  // on each side. Exact-content matches above retain intentional duplicate order,
+  // while this fallback prevents duplicate titles from preserving the wrong link.
+  importedRefs.forEach((incomingRef, incomingIndex) => {
+    if (matchByIncomingIndex.has(incomingIndex)) return;
+    const title = songTitle(incomingRef);
+    if (!title) return;
+    const currentCandidates = currentRefs.flatMap((existing, index) =>
+      !usedCurrent.has(index) && normalized(existing.kind === "library" ? existing.songName : existing.title) === title
+        ? [index]
+        : [],
+    );
+    const incomingCandidates = importedRefs.flatMap((candidate, index) =>
+      !matchByIncomingIndex.has(index) &&
+      normalized(candidate.kind === "library" ? candidate.songName : candidate.title) === title
+        ? [index]
+        : [],
+    );
+    if (currentCandidates.length === 1 && incomingCandidates.length === 1) {
+      pair(incomingIndex, currentCandidates[0]);
+    }
+  });
+
+  // Identical repeated pending entries have no content-based identity. When
+  // their counts still match, preserve their source order rather than letting
+  // the first exact match claim an arbitrary occurrence.
+  const pendingTitles = new Set(importedRefs.flatMap((ref, index) =>
+    !matchByIncomingIndex.has(index) && ref.kind === "pending" ? [songTitle(ref)] : [],
+  ));
+  pendingTitles.forEach((title) => {
+    if (!title) return;
+    const currentCandidates = currentRefs.flatMap((ref, index) =>
+      !usedCurrent.has(index) && ref.kind === "pending" && songTitle(ref) === title
+        ? [index]
+        : [],
+    );
+    const incomingCandidates = importedRefs.flatMap((ref, index) =>
+      !matchByIncomingIndex.has(index) && ref.kind === "pending" && songTitle(ref) === title
+        ? [index]
+        : [],
+    );
+    if (currentCandidates.length !== incomingCandidates.length) return;
+    incomingCandidates.forEach((incomingIndex, index) => pair(incomingIndex, currentCandidates[index]));
+  });
+
+  return importedRefs.map((importedRef, incomingIndex) => {
+    const matchIndex = matchByIncomingIndex.get(incomingIndex);
+    if (matchIndex === undefined) return importedRef;
     const currentRef = currentRefs[matchIndex];
     if (currentRef.kind === "library" && importedRef.kind === "pending") {
       return currentRef;

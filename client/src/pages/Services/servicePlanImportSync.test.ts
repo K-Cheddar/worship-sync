@@ -239,6 +239,94 @@ describe("refreshServicePlanFromImport", () => {
     ]);
   });
 
+  it("matches repeated pending occurrences by lyrics before title when the import reorders them", () => {
+    const current = [section("section-1", "Praise", [
+      element("element-1", "Worship Set", {
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "morning", kind: "pending", title: "Same Song", lyricsText: "Morning lyrics" },
+          { id: "evening", kind: "pending", title: "Same Song", lyricsText: "Evening lyrics" },
+        ],
+      }),
+    ])];
+    const imported = [section("source", "Praise", [
+      element("incoming", "Worship Set", {
+        songRefs: [
+          { kind: "pending", title: "Same Song", lyricsText: "Evening lyrics" },
+          { kind: "pending", title: "Same Song", lyricsText: "Morning lyrics" },
+        ],
+      }),
+    ])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "evening", kind: "pending", title: "Same Song", lyricsText: "Evening lyrics" },
+      { id: "morning", kind: "pending", title: "Same Song", lyricsText: "Morning lyrics" },
+    ]);
+  });
+
+  it("matches repeated library occurrences by key content and preserves their IDs", () => {
+    const current = [section("section-1", "Praise", [
+      element("element-1", "Worship Set", {
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "key-c", kind: "library", songId: "song-1", songName: "Same Song", key: "C" },
+          { id: "key-g", kind: "library", songId: "song-1", songName: "Same Song", key: "G" },
+        ],
+      }),
+    ])];
+    const imported = [section("source", "Praise", [
+      element("incoming", "Worship Set", {
+        songRefs: [
+          { kind: "library", songId: "song-1", songName: "Same Song", key: "G" },
+          { kind: "library", songId: "song-1", songName: "Same Song", key: "C" },
+        ],
+      }),
+    ])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "key-g", kind: "library", songId: "song-1", songName: "Same Song", key: "G" },
+      { id: "key-c", kind: "library", songId: "song-1", songName: "Same Song", key: "C" },
+    ]);
+  });
+
+  it("does not preserve one of multiple same-title library links for an ambiguous pending occurrence", () => {
+    const current = [section("section-1", "Praise", [
+      element("element-1", "Worship Set", {
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "linked-one", kind: "library", songId: "song-1", songName: "Same Song" },
+          { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+        ],
+      }),
+    ])];
+    const imported = [section("source", "Praise", [
+      element("incoming", "Worship Set", {
+        songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "New lyrics" }],
+      }),
+    ])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+    ]);
+  });
+
+  it("treats adjacent same-format spans as the same note without adding spaces", () => {
+    const current = [section("section-1", "Praise", [element("element-1", "Welcome", {
+      sourcePlanningManaged: true,
+      notes: { blocks: [{ type: "paragraph", id: "old", spans: [{ text: "Sun", bold: true }, { text: "day", bold: true }] }] },
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Welcome", {
+      notes: { blocks: [{ type: "paragraph", id: "new", spans: [{ text: "Sunday", bold: true }] }] },
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].notes).toEqual(current[0].elements[0].notes);
+    expect(summarizeServicePlanImport(current, [refreshed]).changes).toEqual([]);
+  });
+
   it("makes a repeated refresh a no-op for equivalent songs, scripture, title, timing, and notes", () => {
     const current = [section("section-1", "Praise", [
       element("element-1", "Welcome", {
@@ -321,6 +409,69 @@ describe("refreshServicePlanFromImport", () => {
     expect(summarizeServicePlanImport(applied, repeated)).toEqual({
       changes: [], added: 0, removed: 0, updated: 0,
     });
+  });
+
+  it("parses multiple songs, reconciles them, and applies one reviewed item without disturbing a skipped item", () => {
+    const source: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{
+        sectionName: "Praise",
+        rows: [
+          { elementType: "Song", title: "First Song (D)", songTitle: "First Song (D)", ledBy: "" },
+          { elementType: "Song", title: "Second Song (A)", songTitle: "Second Song (A)", ledBy: "" },
+        ],
+      }],
+      teamAssignments: [],
+    };
+    const parsed = buildServicePlanSectionsFromImport(source, [
+      { _id: "song-first", name: "First Song" },
+      { _id: "song-second", name: "Second Song" },
+    ]);
+    const confirmed = {
+      source: "servicePlanning" as const,
+      sourceKey: "Praise:1",
+      sourceElementType: "Song",
+      sourceTitle: "Second Song",
+      sourceLedBy: "",
+      parts: [],
+      reasons: [],
+      status: "confirmed" as const,
+      sourceFingerprint: "confirmed-second-song",
+    };
+    const current = [section("section-1", "Praise", [
+      element("first", "First Song", {
+        type: "song",
+        sourcePlanningManaged: true,
+        songRefs: [{ id: "first-occurrence", kind: "library", songId: "song-first", songName: "First Song", key: "C" }],
+      }),
+      element("second", "Second Song", {
+        type: "song",
+        sourcePlanningManaged: true,
+        songRefs: [{ id: "second-occurrence", kind: "library", songId: "song-second", songName: "Second Song", key: "G" }],
+        assignees: [{ id: "local-assignee", name: "Avery", microphoneIds: ["mic-1"] }],
+        teamNotes: [{ id: "role-note", scope: "role", positionId: "camera", label: "Media · Camera", note: plainTextToRichText("Keep the wide shot.") }],
+        importAmbiguity: confirmed,
+      }),
+    ])];
+
+    const reconciled = refreshServicePlanFromImport(current, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, reconciled);
+    const firstChange = summary.changes.find(({ id, itemName }) => id === "first" || itemName.includes("First Song"));
+    expect(firstChange).toBeDefined();
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      reconciled,
+      summary,
+      new Set(firstChange ? [servicePlanImportChangeKey(firstChange)] : []),
+    );
+
+    expect(summary.changes).toHaveLength(2);
+    expect(applied[0].elements.map(({ id }) => id)).toEqual(["first", "second"]);
+    expect(applied[0].elements[0].songRefs).toEqual([
+      { id: "first-occurrence", kind: "library", songId: "song-first", songName: "First Song", key: "D" },
+    ]);
+    expect(applied[0].elements[1]).toEqual(current[0].elements[1]);
+    expect(summarizeServicePlanImport(applied, reconciled).changes.map(({ id }) => id)).toEqual(["second"]);
   });
 
   it("preserves a confirmed interpretation and its edited destinations on an unchanged refresh", () => {

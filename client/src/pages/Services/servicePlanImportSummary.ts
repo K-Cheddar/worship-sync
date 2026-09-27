@@ -1,5 +1,7 @@
 import {
   normalizeRichTextDocument,
+  richTextSemanticEqual,
+  richTextSemanticValue,
   richTextToPlainText,
 } from "../../types/richText";
 import {
@@ -51,9 +53,6 @@ const normalizedText = (value: string | undefined) =>
 const normalizedLyrics = (value: string) =>
   value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
 
-const normalizedRichText = (value: string) =>
-  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
-
 const normalizedStartTime = (value: string | undefined) => {
   const time = normalizedText(value);
   const match = /^(\d{1,2}):(\d{2})$/.exec(time);
@@ -61,35 +60,13 @@ const normalizedStartTime = (value: string | undefined) => {
   return `${match[1].padStart(2, "0")}:${match[2]}`;
 };
 
-const richTextValue = (value: ServicePlanElement["notes"]) => {
-  const document = normalizeRichTextDocument(value);
-  return document.blocks.map((block) => ({
-    type: block.type,
-    align: block.align || "left",
-    size: block.size || "normal",
-    listStyle: block.type === "list-item" ? block.listStyle || "bullet" : undefined,
-    indent: block.indent || 0,
-    listStart: block.listStart || 1,
-    spans: block.spans.reduce<Array<{ text: string; marks: string }>>((spans, span) => {
-      const marks = JSON.stringify({
-        bold: span.bold || false,
-        italic: span.italic || false,
-        underline: span.underline || false,
-        color: span.color?.toLowerCase() || "",
-      });
-      const previous = spans.at(-1);
-      const text = normalizedRichText(span.text);
-      if (text && previous?.marks === marks) previous.text += `${previous.text ? " " : ""}${text}`;
-      else if (text) spans.push({ text, marks });
-      return spans;
-    }, []),
-  }));
-};
+const richTextValue = (value: ServicePlanElement["notes"]) =>
+  richTextSemanticValue(value);
 
 const richTextEqual = (
   left: ServicePlanElement["notes"],
   right: ServicePlanElement["notes"],
-) => JSON.stringify(richTextValue(left)) === JSON.stringify(richTextValue(right));
+) => richTextSemanticEqual(left, right);
 
 const songRefValue = (ref: ReturnType<typeof getServicePlanElementSongRefs>[number]) =>
   ref.kind === "library"
@@ -154,38 +131,47 @@ const formatDuration = (element: ServicePlanElement) => {
 const formatTiming = (element: ServicePlanElement) =>
   `${optionalValue(element.startTime, "No start time")} · ${formatDuration(element)}`;
 
-const formatRichTextFormatting = (value: ServicePlanElement["notes"]) => {
+const formatRichTextForReview = (value: ServicePlanElement["notes"]) => {
   const blocks = normalizeRichTextDocument(value).blocks;
-  const formatting = new Set<string>();
-  blocks.forEach((block) => {
-    if (block.align && block.align !== "left") formatting.add(`${block.align}-aligned`);
-    if (block.size) formatting.add(`${block.size} text`);
-    if (block.type === "list-item") formatting.add(block.listStyle === "ordered" ? "numbered list" : "bulleted list");
-    if (block.indent) formatting.add("indented list");
-    block.spans.forEach((span) => {
-      if (span.bold) formatting.add("bold");
-      if (span.italic) formatting.add("italic");
-      if (span.underline) formatting.add("underlined");
-      if (span.color) formatting.add("colored text");
-    });
-  });
-  return formatting.size ? [...formatting].join(", ") : "plain text";
-};
-
-const richTextStyleSuffix = (value: ServicePlanElement["notes"]) => {
-  const style = formatRichTextFormatting(value);
-  return style === "plain text" ? "" : ` (${style})`;
+  return blocks.map((block) => {
+    const blockStyles = [
+      block.align && block.align !== "left" ? `${block.align}-aligned` : "",
+      block.size ? `${block.size} text` : "",
+      block.type === "list-item"
+        ? `${block.listStyle === "ordered" ? "numbered" : "bulleted"} list${block.indent ? `, level ${block.indent + 1}` : ""}${block.listStart && block.listStart !== 1 ? `, starts at ${block.listStart}` : ""}`
+        : "",
+    ].filter(Boolean);
+    const spans = block.spans.reduce<Array<{ text: string; styles: string[] }>>((result, span) => {
+      const styles = [
+        span.bold ? "bold" : "",
+        span.italic ? "italic" : "",
+        span.underline ? "underlined" : "",
+        span.color ? `color ${span.color}` : "",
+      ].filter(Boolean);
+      const previous = result.at(-1);
+      if (previous && JSON.stringify(previous.styles) === JSON.stringify(styles)) {
+        previous.text += span.text;
+      } else {
+        result.push({ text: span.text, styles });
+      }
+      return result;
+    }, []);
+    const content = spans.map(({ text, styles }) =>
+      styles.length ? `[${styles.join(", ")}: ${text}]` : text,
+    ).join("");
+    return `${blockStyles.length ? `[${blockStyles.join(", ")}] ` : ""}${content}`;
+  }).join("\n") || "No text";
 };
 
 const formatNotes = (element: ServicePlanElement) => {
   const values = [
     ...(richTextToPlainText(element.notes).trim()
-      ? [`Shared: ${richTextToPlainText(element.notes).trim()}${richTextStyleSuffix(element.notes)}`]
+      ? [`Shared: ${formatRichTextForReview(element.notes)}`]
       : []),
     ...(element.teamNotes || [])
       .map((note) => {
         const text = richTextToPlainText(note.note).trim();
-        return text ? `${note.label}: ${text}${richTextStyleSuffix(note.note)}` : "";
+        return text ? `${note.label}: ${formatRichTextForReview(note.note)}` : "";
       })
       .filter(Boolean),
   ];
@@ -208,8 +194,30 @@ const formatSong = (element: ServicePlanElement) => {
   return refs.map(formatSongRef).join(", ");
 };
 
-const formatTitle = (element: ServicePlanElement) => {
-  return `${itemName(element)} (${formatRichTextFormatting(element.title)})`;
+const describeSongReferenceDifference = (
+  current: ServicePlanElement,
+  next: ServicePlanElement,
+) => {
+  const beforeRefs = getServicePlanElementSongRefs(current);
+  const afterRefs = getServicePlanElementSongRefs(next);
+  const sharedLength = Math.min(beforeRefs.length, afterRefs.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const before = beforeRefs[index];
+    const after = afterRefs[index];
+    if (JSON.stringify(songRefValue(before)) === JSON.stringify(songRefValue(after))) continue;
+    if (before.kind === "library" && after.kind === "library" && before.songId !== after.songId) {
+      return "linked library song changed";
+    }
+    if (before.kind !== after.kind) return "song reference type changed";
+    if (before.kind === "pending" && after.kind === "pending" &&
+      normalizedLyrics(before.lyricsText) !== normalizedLyrics(after.lyricsText)) {
+      return "lyrics changed";
+    }
+    return "song reference details changed";
+  }
+  return beforeRefs.length === afterRefs.length
+    ? "song reference details changed"
+    : "number of song references changed";
 };
 
 const formatInterpretation = (element: ServicePlanElement) => {
@@ -240,18 +248,36 @@ const formatScripture = (element: ServicePlanElement) =>
     })
     .join(", ") || "No scripture";
 
+const describeScriptureReferenceDifference = (
+  current: ServicePlanElement,
+  next: ServicePlanElement,
+) => {
+  const beforeRefs = getServicePlanElementScriptureRefs(current);
+  const afterRefs = getServicePlanElementScriptureRefs(next);
+  const sharedLength = Math.min(beforeRefs.length, afterRefs.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const before = beforeRefs[index];
+    const after = afterRefs[index];
+    if (normalizedText(before.book) !== normalizedText(after.book)) return "Bible book changed";
+    if (normalizedText(before.chapter) !== normalizedText(after.chapter)) return "chapter changed";
+    if (normalizedText(before.verseRange) !== normalizedText(after.verseRange)) return "verse range changed";
+    if (normalizedText(before.version) !== normalizedText(after.version)) return "Bible version changed";
+  }
+  return beforeRefs.length === afterRefs.length
+    ? "scripture reference details changed"
+    : "number of scripture references changed";
+};
+
 const changedFields = (
   current: ServicePlanElement,
   next: ServicePlanElement,
 ): ServicePlanImportFieldChange[] => {
   const fields: ServicePlanImportFieldChange[] = [];
-  const sameVisibleTitle = normalizedText(richTextToPlainText(current.title)) ===
-    normalizedText(richTextToPlainText(next.title));
   if (!richTextEqual(current.title, next.title)) {
     fields.push({
       label: "Title",
-      before: sameVisibleTitle ? formatTitle(current) : itemName(current),
-      after: sameVisibleTitle ? formatTitle(next) : itemName(next),
+      before: formatRichTextForReview(current.title),
+      after: formatRichTextForReview(next.title),
     });
   }
   if (!songsEqual(getServicePlanElementSongRefs(current), getServicePlanElementSongRefs(next))) {
@@ -260,14 +286,16 @@ const changedFields = (
     fields.push({
       label: "Song",
       before,
-      after: before === after ? `${after} (song reference changed)` : after,
+      after: before === after ? `${after} (${describeSongReferenceDifference(current, next)})` : after,
     });
   }
   if (!scripturesEqual(getServicePlanElementScriptureRefs(current), getServicePlanElementScriptureRefs(next))) {
+    const before = formatScripture(current);
+    const after = formatScripture(next);
     fields.push({
       label: "Scripture",
-      before: formatScripture(current),
-      after: formatScripture(next),
+      before,
+      after: before === after ? `${after} (${describeScriptureReferenceDifference(current, next)})` : after,
     });
   }
   if (normalizedText(current.sourceElementTypeRaw).toLocaleLowerCase() !==
