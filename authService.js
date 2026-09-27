@@ -1,10 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import {
-  FieldPath,
-  FieldValue,
-  Timestamp,
-} from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
@@ -98,7 +94,10 @@ import {
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
 import { createNotificationIntentHandlers } from "./server/notificationIntents.js";
-import { createSmsInboundWebhookHandler, resolveTwilioInboundCallbackUrl } from "./server/smsInboundWebhook.js";
+import {
+  createSmsInboundWebhookHandler,
+  resolveTwilioInboundCallbackUrl,
+} from "./server/smsInboundWebhook.js";
 import {
   getSmsProviderForConfig,
   normalizeTwilioStatus,
@@ -1042,7 +1041,8 @@ const requireFirebaseAdmin = () => {
   return firebaseRuntime.auth;
 };
 
-const requireFirestore = () => firestoreTestOverride || firebaseRuntime?.db || null;
+const requireFirestore = () =>
+  firestoreTestOverride || firebaseRuntime?.db || null;
 
 let authReadObserverForServerTests = null;
 
@@ -1052,7 +1052,8 @@ export const setAuthReadObserverForServerTests = (observer) => {
       "setAuthReadObserverForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
     );
   }
-  authReadObserverForServerTests = typeof observer === "function" ? observer : null;
+  authReadObserverForServerTests =
+    typeof observer === "function" ? observer : null;
 };
 
 export const setServerFirestoreForTests = (db) => {
@@ -1171,7 +1172,12 @@ export const getDoc = async (collectionName, id) => {
   return item ? { id, ...item } : null;
 };
 
-export const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
+export const setDoc = async (
+  collectionName,
+  id,
+  data,
+  { merge = false } = {},
+) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).set(data, { merge });
@@ -1279,7 +1285,11 @@ export const queryDocs = async (
   filters = [],
   { limit = 100 } = {},
 ) => {
-  authReadObserverForServerTests?.({ type: "queryDocs", collectionName, filters });
+  authReadObserverForServerTests?.({
+    type: "queryDocs",
+    collectionName,
+    filters,
+  });
   const db = requireFirestore();
   if (db) {
     let query = db.collection(collectionName);
@@ -1302,7 +1312,10 @@ export const queryDocs = async (
         const operator = filter.op || "==";
         if (operator === "==") return item[filter.field] === filter.value;
         if (operator === "in") {
-          return Array.isArray(filter.value) && filter.value.includes(item[filter.field]);
+          return (
+            Array.isArray(filter.value) &&
+            filter.value.includes(item[filter.field])
+          );
         }
         return false;
       }),
@@ -1456,7 +1469,10 @@ const updateInviteForResend = async ({
         throw httpError(404, "Invite not found.");
       }
       if (expectedTokenHash && current.tokenHash !== expectedTokenHash) {
-        throw httpError(409, "This invite changed while the resend was starting.");
+        throw httpError(
+          409,
+          "This invite changed while the resend was starting.",
+        );
       }
       if (current.status === "accepted" || current.acceptedAt) {
         throw httpError(400, "Accepted invites cannot be resent.");
@@ -1493,11 +1509,7 @@ const updateInviteForResend = async ({
   return { id: inviteId, ...updated };
 };
 
-const clearPendingInviteToken = async ({
-  churchId,
-  inviteId,
-  tokenHash,
-}) => {
+const clearPendingInviteToken = async ({ churchId, inviteId, tokenHash }) => {
   const db = requireFirestore();
   if (db) {
     await db.runTransaction(async (transaction) => {
@@ -1505,10 +1517,7 @@ const clearPendingInviteToken = async ({
       const snapshot = await transaction.get(inviteRef);
       if (!snapshot.exists) return;
       const current = snapshot.data();
-      if (
-        current.churchId === churchId &&
-        current.tokenHash === tokenHash
-      ) {
+      if (current.churchId === churchId && current.tokenHash === tokenHash) {
         transaction.update(inviteRef, { pendingResendToken: null });
       }
     });
@@ -1516,10 +1525,7 @@ const clearPendingInviteToken = async ({
   }
 
   const current = collectionMap[COLLECTIONS.invites].get(inviteId);
-  if (
-    current?.churchId === churchId &&
-    current.tokenHash === tokenHash
-  ) {
+  if (current?.churchId === churchId && current.tokenHash === tokenHash) {
     collectionMap[COLLECTIONS.invites].set(inviteId, {
       ...current,
       pendingResendToken: null,
@@ -1619,22 +1625,27 @@ const upsertSmsConsent = async (
       });
       return { consentId, challenge, shouldSend: true };
     }
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
+    await setDoc(
+      COLLECTIONS.smsConsents,
       consentId,
-      churchId,
-      phoneNumber: normalizedPhoneNumber,
-      phoneHash: hashValue(normalizedPhoneNumber),
-      status: "pending",
-      source: "web_form",
-      consentVersion: SMS_CONSENT_VERSION,
-      consentText: SMS_CONSENT_TEXT,
-      consentSubmittedAt: submittedAt,
-      ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
-      ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
-      optedOutAt: existing?.optedOutAt || null,
-      createdAt: existing?.createdAt || submittedAt,
-      ...challengeFields,
-    }, { merge: false });
+      {
+        consentId,
+        churchId,
+        phoneNumber: normalizedPhoneNumber,
+        phoneHash: hashValue(normalizedPhoneNumber),
+        status: "pending",
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+        consentText: SMS_CONSENT_TEXT,
+        consentSubmittedAt: submittedAt,
+        ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+        ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+        optedOutAt: existing?.optedOutAt || null,
+        createdAt: existing?.createdAt || submittedAt,
+        ...challengeFields,
+      },
+      { merge: false },
+    );
     return { consentId, challenge, shouldSend: true };
   });
 };
@@ -1679,13 +1690,17 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
       if (!result.ok) {
         const attempts = Number(record?.verificationAttempts || 0) + 1;
         if (challengeMatches && record?.verificationCodeHash) {
-          transaction.set(consentRef, {
-            verificationAttempts: attempts,
-            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
-              ? { verificationCodeHash: null }
-              : {}),
-            updatedAt: nowIso(),
-          }, { merge: true });
+          transaction.set(
+            consentRef,
+            {
+              verificationAttempts: attempts,
+              ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+                ? { verificationCodeHash: null }
+                : {}),
+              updatedAt: nowIso(),
+            },
+            { merge: true },
+          );
         }
         return {
           status:
@@ -1693,19 +1708,23 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
         };
       }
       const verifiedAt = nowIso();
-      transaction.set(consentRef, {
-        status: "opted_in",
-        ...(record?.status === "opted_in"
-          ? { verificationConfirmedAt: verifiedAt }
-          : { consentedAt: verifiedAt, verifiedAt }),
-        verificationCodeHash: null,
-        verificationCodeSalt: null,
-        verificationExpiresAt: null,
-        verificationChallengeId: null,
-        verificationCancellationTokenHash: null,
-        verificationCancellationExpiresAt: null,
-        updatedAt: verifiedAt,
-      }, { merge: true });
+      transaction.set(
+        consentRef,
+        {
+          status: "opted_in",
+          ...(record?.status === "opted_in"
+            ? { verificationConfirmedAt: verifiedAt }
+            : { consentedAt: verifiedAt, verifiedAt }),
+          verificationCodeHash: null,
+          verificationCodeSalt: null,
+          verificationExpiresAt: null,
+          verificationChallengeId: null,
+          verificationCancellationTokenHash: null,
+          verificationCancellationExpiresAt: null,
+          updatedAt: verifiedAt,
+        },
+        { merge: true },
+      );
       return { status: "verified", verifiedAt };
     });
 
@@ -1724,30 +1743,40 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
     if (!result.ok) {
       if (challengeMatches && record?.verificationCodeHash) {
         const attempts = Number(record.verificationAttempts || 0) + 1;
-        await setDoc(COLLECTIONS.smsConsents, consentId, {
-          verificationAttempts: attempts,
-          ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
-            ? { verificationCodeHash: null }
-            : {}),
-          updatedAt: nowIso(),
-        }, { merge: true });
+        await setDoc(
+          COLLECTIONS.smsConsents,
+          consentId,
+          {
+            verificationAttempts: attempts,
+            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+              ? { verificationCodeHash: null }
+              : {}),
+            updatedAt: nowIso(),
+          },
+          { merge: true },
+        );
       }
       invalid();
     }
     const verifiedAt = nowIso();
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
-      status: "opted_in",
-      ...(record?.status === "opted_in"
-        ? { verificationConfirmedAt: verifiedAt }
-        : { consentedAt: verifiedAt, verifiedAt }),
-      verificationCodeHash: null,
-      verificationCodeSalt: null,
-      verificationExpiresAt: null,
-      verificationChallengeId: null,
-      verificationCancellationTokenHash: null,
-      verificationCancellationExpiresAt: null,
-      updatedAt: verifiedAt,
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.smsConsents,
+      consentId,
+      {
+        status: "opted_in",
+        ...(record?.status === "opted_in"
+          ? { verificationConfirmedAt: verifiedAt }
+          : { consentedAt: verifiedAt, verifiedAt }),
+        verificationCodeHash: null,
+        verificationCodeSalt: null,
+        verificationExpiresAt: null,
+        verificationChallengeId: null,
+        verificationCancellationTokenHash: null,
+        verificationCancellationExpiresAt: null,
+        updatedAt: verifiedAt,
+      },
+      { merge: true },
+    );
     return { consentId, verifiedAt };
   });
 };
@@ -1813,14 +1842,19 @@ const cancelSmsConsentVerification = async ({
       ) {
         return { confirmed: false };
       }
-      transaction.set(consentRef, {
-        ...cancelledChallengeFields,
-        lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
-        lastCancelledVerificationTokenExpiresAt:
-          record.verificationCancellationExpiresAt,
-        verificationCancelledAt: nowTimestamp,
-        updatedAt: nowTimestamp,
-      }, { merge: true });
+      transaction.set(
+        consentRef,
+        {
+          ...cancelledChallengeFields,
+          lastCancelledVerificationTokenHash:
+            record.verificationCancellationTokenHash,
+          lastCancelledVerificationTokenExpiresAt:
+            record.verificationCancellationExpiresAt,
+          verificationCancelledAt: nowTimestamp,
+          updatedAt: nowTimestamp,
+        },
+        { merge: true },
+      );
       return { confirmed: true, alreadyCancelled: false, consentId };
     });
   }
@@ -1850,14 +1884,20 @@ const cancelSmsConsentVerification = async ({
     ) {
       return { confirmed: false };
     }
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
-      ...cancelledChallengeFields,
-      lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
-      lastCancelledVerificationTokenExpiresAt:
-        record.verificationCancellationExpiresAt,
-      verificationCancelledAt: nowTimestamp,
-      updatedAt: nowTimestamp,
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.smsConsents,
+      consentId,
+      {
+        ...cancelledChallengeFields,
+        lastCancelledVerificationTokenHash:
+          record.verificationCancellationTokenHash,
+        lastCancelledVerificationTokenExpiresAt:
+          record.verificationCancellationExpiresAt,
+        verificationCancelledAt: nowTimestamp,
+        updatedAt: nowTimestamp,
+      },
+      { merge: true },
+    );
     return { confirmed: true, alreadyCancelled: false, consentId };
   });
 };
@@ -1992,40 +2032,74 @@ const readDesktopAuthRequestForSecret = async ({
 /** Firestore TTL: policy on `devicePairingRequests.ttlExpireAt` (Timestamp) — configure in Firebase console. */
 const devicePairingTtlExpireAt = (expiresAtIso) =>
   Timestamp.fromDate(
-    new Date(new Date(expiresAtIso).getTime() + DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS),
+    new Date(
+      new Date(expiresAtIso).getTime() + DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS,
+    ),
   );
 
 const isDevicePairingRequestExpired = (request) =>
-  Boolean(request?.expiresAt) && new Date(request.expiresAt).getTime() <= Date.now();
+  Boolean(request?.expiresAt) &&
+  new Date(request.expiresAt).getTime() <= Date.now();
 
 const expireDevicePairingRequestIfNeeded = async (request) => {
   if (!request || !isDevicePairingRequestExpired(request)) return request;
   if (request.status !== DEVICE_PAIRING_STATUS_EXPIRED) {
-    await setDoc(COLLECTIONS.devicePairingRequests, request.id, {
-      status: DEVICE_PAIRING_STATUS_EXPIRED,
-      expiredAt: nowIso(),
-      pairingTokenPlaintext: null,
-      ttlExpireAt: Timestamp.fromDate(new Date(Date.now() + DESKTOP_AUTH_DOC_PURGE_AFTER_MS)),
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.devicePairingRequests,
+      request.id,
+      {
+        status: DEVICE_PAIRING_STATUS_EXPIRED,
+        expiredAt: nowIso(),
+        pairingTokenPlaintext: null,
+        ttlExpireAt: Timestamp.fromDate(
+          new Date(Date.now() + DESKTOP_AUTH_DOC_PURGE_AFTER_MS),
+        ),
+      },
+      { merge: true },
+    );
   }
-  return { ...request, status: DEVICE_PAIRING_STATUS_EXPIRED, pairingTokenPlaintext: null };
+  return {
+    ...request,
+    status: DEVICE_PAIRING_STATUS_EXPIRED,
+    pairingTokenPlaintext: null,
+  };
 };
 
 const validateDevicePairingRequestForExchange = (request, requestSecret) => {
-  if (!request) throw httpError(404, "This device pairing request was not found. Generate a new QR code.");
-  if (request.secretHash !== hashValue(requestSecret)) throw httpError(403, "This device pairing request is not valid.");
+  if (!request)
+    throw httpError(
+      404,
+      "This device pairing request was not found. Generate a new QR code.",
+    );
+  if (request.secretHash !== hashValue(requestSecret))
+    throw httpError(403, "This device pairing request is not valid.");
   if (request.status !== DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE) {
-    throw httpError(409, "This device pairing request is not ready for exchange.");
+    throw httpError(
+      409,
+      "This device pairing request is not ready for exchange.",
+    );
   }
-  if (!request.pairingId) throw httpError(409, "This device pairing request is missing its pairing record.");
+  if (!request.pairingId)
+    throw httpError(
+      409,
+      "This device pairing request is missing its pairing record.",
+    );
 };
 
-const readDevicePairingRequestForSecret = async ({ requestId, requestSecret }) => {
+const readDevicePairingRequestForSecret = async ({
+  requestId,
+  requestSecret,
+}) => {
   const request = await expireDevicePairingRequestIfNeeded(
     await getDoc(COLLECTIONS.devicePairingRequests, requestId),
   );
-  if (!request) throw httpError(404, "This device pairing request was not found. Generate a new QR code.");
-  if (request.secretHash !== hashValue(requestSecret)) throw httpError(403, "This device pairing request is not valid.");
+  if (!request)
+    throw httpError(
+      404,
+      "This device pairing request was not found. Generate a new QR code.",
+    );
+  if (request.secretHash !== hashValue(requestSecret))
+    throw httpError(403, "This device pairing request is not valid.");
   return request;
 };
 
@@ -2038,15 +2112,31 @@ const createWorkstationPairingRecord = ({ churchId, createdByUid, body }) => {
   const platformType = body?.platformType || "electron";
   const serviceWorkspaceAccess = Boolean(body?.serviceWorkspaceAccess);
   if (!label) throw httpError(400, "A workstation label is required.");
-  if (!APP_ACCESS_VALUES.has(appAccess)) throw httpError(400, "That workstation access level is not valid.");
-  if (platformType !== "electron" && platformType !== "web") throw httpError(400, "That workstation platform is not valid.");
+  if (!APP_ACCESS_VALUES.has(appAccess))
+    throw httpError(400, "That workstation access level is not valid.");
+  if (platformType !== "electron" && platformType !== "web")
+    throw httpError(400, "That workstation platform is not valid.");
   const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
   const pairingId = createId("workstationPairing");
-  return { rawToken, collection: COLLECTIONS.workstationPairings, pairing: {
-    pairingId, churchId, label, appAccess, platformType, serviceWorkspaceAccess,
-    tokenHash: hashValue(rawToken), status: "pending", expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
-    createdAt: nowIso(), createdByUid, redeemedAt: null, workstationDeviceId: null,
-  }};
+  return {
+    rawToken,
+    collection: COLLECTIONS.workstationPairings,
+    pairing: {
+      pairingId,
+      churchId,
+      label,
+      appAccess,
+      platformType,
+      serviceWorkspaceAccess,
+      tokenHash: hashValue(rawToken),
+      status: "pending",
+      expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
+      createdAt: nowIso(),
+      createdByUid,
+      redeemedAt: null,
+      workstationDeviceId: null,
+    },
+  };
 };
 
 const createDisplayPairingRecord = ({ churchId, createdByUid, body }) => {
@@ -2054,23 +2144,41 @@ const createDisplayPairingRecord = ({ churchId, createdByUid, body }) => {
   const surfaceType = body?.surfaceType || "display";
   const rawOutputId = String(body?.outputId || "").trim();
   if (!label) throw httpError(400, "A display label is required.");
-  if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId)) throw httpError(400, "That display output is not valid.");
+  if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId))
+    throw httpError(400, "That display output is not valid.");
   const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
   const pairingId = createId("displayPairing");
-  return { rawToken, collection: COLLECTIONS.displayPairings, pairing: {
-    pairingId, churchId, label, surfaceType, outputId: rawOutputId || null,
-    tokenHash: hashValue(rawToken), status: "pending", expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
-    createdAt: nowIso(), createdByUid, redeemedAt: null, displayDeviceId: null,
-  }};
+  return {
+    rawToken,
+    collection: COLLECTIONS.displayPairings,
+    pairing: {
+      pairingId,
+      churchId,
+      label,
+      surfaceType,
+      outputId: rawOutputId || null,
+      tokenHash: hashValue(rawToken),
+      status: "pending",
+      expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
+      createdAt: nowIso(),
+      createdByUid,
+      redeemedAt: null,
+      displayDeviceId: null,
+    },
+  };
 };
 
 const devicePairingApprovalChains = new Map();
 const serializeDevicePairingApproval = async (requestId, fn) => {
-  const previous = devicePairingApprovalChains.get(requestId) || Promise.resolve();
+  const previous =
+    devicePairingApprovalChains.get(requestId) || Promise.resolve();
   const next = previous.catch(() => undefined).then(fn);
   devicePairingApprovalChains.set(requestId, next);
-  try { return await next; } finally {
-    if (devicePairingApprovalChains.get(requestId) === next) devicePairingApprovalChains.delete(requestId);
+  try {
+    return await next;
+  } finally {
+    if (devicePairingApprovalChains.get(requestId) === next)
+      devicePairingApprovalChains.delete(requestId);
   }
 };
 
@@ -2823,58 +2931,175 @@ const redeemDisplayPairingMemory = async (token) => {
   };
 };
 
-const redeemDevicePairingRequestMemory = async ({ requestId, requestSecret, platformType }) => {
+const redeemDevicePairingRequestMemory = async ({
+  requestId,
+  requestSecret,
+  platformType,
+}) => {
   const request = await expireDevicePairingRequestIfNeeded(
     await getDoc(COLLECTIONS.devicePairingRequests, requestId),
   );
   validateDevicePairingRequestForExchange(request, requestSecret);
-  const pairingCollection = request.kind === "workstation"
-    ? COLLECTIONS.workstationPairings
-    : COLLECTIONS.displayPairings;
+  const pairingCollection =
+    request.kind === "workstation"
+      ? COLLECTIONS.workstationPairings
+      : COLLECTIONS.displayPairings;
   const pairing = await getDoc(pairingCollection, request.pairingId);
-  if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+  if (!pairing || pairing.status !== "pending")
+    throw httpError(400, "That pairing request is no longer valid.");
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-    await setDoc(pairingCollection, request.pairingId, { status: "expired" }, { merge: true });
+    await setDoc(
+      pairingCollection,
+      request.pairingId,
+      { status: "expired" },
+      { merge: true },
+    );
     throw httpError(400, "That pairing request expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId(request.kind);
-  const device = request.kind === "workstation"
-    ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
-    : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
-  const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+  const device =
+    request.kind === "workstation"
+      ? {
+          churchId: pairing.churchId,
+          label: pairing.label,
+          appAccess: pairing.appAccess,
+          platformType: platformType || pairing.platformType || "web",
+          serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
+          status: "active",
+          credentialHash: hashValue(credential),
+          createdAt: nowIso(),
+          lastSeenAt: nowIso(),
+          revokedAt: null,
+          revokedBy: null,
+          lastOperatorName: null,
+        }
+      : {
+          churchId: pairing.churchId,
+          label: pairing.label,
+          surfaceType: pairing.surfaceType,
+          outputId: pairing.outputId ?? null,
+          status: "active",
+          credentialHash: hashValue(credential),
+          createdAt: nowIso(),
+          lastSeenAt: nowIso(),
+          revokedAt: null,
+          revokedBy: null,
+        };
+  const deviceCollection =
+    request.kind === "workstation"
+      ? COLLECTIONS.workstationDevices
+      : COLLECTIONS.displayDevices;
   await setDoc(deviceCollection, deviceId, device);
-  await setDoc(pairingCollection, request.pairingId, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) }, { merge: true });
-  await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null }, { merge: true });
-  return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+  await setDoc(
+    pairingCollection,
+    request.pairingId,
+    {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      ...(request.kind === "workstation"
+        ? { workstationDeviceId: deviceId }
+        : { displayDeviceId: deviceId }),
+    },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.devicePairingRequests,
+    requestId,
+    { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null },
+    { merge: true },
+  );
+  return {
+    credential,
+    deviceId,
+    device,
+    pairingChurchId: pairing.churchId,
+    kind: request.kind,
+  };
 };
 
-const redeemDevicePairingRequestFirestore = async ({ requestId, requestSecret, platformType }) => {
+const redeemDevicePairingRequestFirestore = async ({
+  requestId,
+  requestSecret,
+  platformType,
+}) => {
   const db = requireFirestore();
   return db.runTransaction(async (transaction) => {
-    const requestRef = db.collection(COLLECTIONS.devicePairingRequests).doc(requestId);
+    const requestRef = db
+      .collection(COLLECTIONS.devicePairingRequests)
+      .doc(requestId);
     const requestSnap = await transaction.get(requestRef);
-    const request = requestSnap.exists ? { id: requestSnap.id, ...requestSnap.data() } : null;
+    const request = requestSnap.exists
+      ? { id: requestSnap.id, ...requestSnap.data() }
+      : null;
     validateDevicePairingRequestForExchange(request, requestSecret);
-    const pairingCollection = request.kind === "workstation" ? COLLECTIONS.workstationPairings : COLLECTIONS.displayPairings;
+    const pairingCollection =
+      request.kind === "workstation"
+        ? COLLECTIONS.workstationPairings
+        : COLLECTIONS.displayPairings;
     const pairingRef = db.collection(pairingCollection).doc(request.pairingId);
     const pairingSnap = await transaction.get(pairingRef);
     const pairing = pairingSnap.exists ? pairingSnap.data() : null;
-    if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+    if (!pairing || pairing.status !== "pending")
+      throw httpError(400, "That pairing request is no longer valid.");
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
       throw httpError(400, "That pairing request expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId(request.kind);
-    const device = request.kind === "workstation"
-      ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
-      : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
-    const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+    const device =
+      request.kind === "workstation"
+        ? {
+            churchId: pairing.churchId,
+            label: pairing.label,
+            appAccess: pairing.appAccess,
+            platformType: platformType || pairing.platformType || "web",
+            serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
+            status: "active",
+            credentialHash: hashValue(credential),
+            createdAt: nowIso(),
+            lastSeenAt: nowIso(),
+            revokedAt: null,
+            revokedBy: null,
+            lastOperatorName: null,
+          }
+        : {
+            churchId: pairing.churchId,
+            label: pairing.label,
+            surfaceType: pairing.surfaceType,
+            outputId: pairing.outputId ?? null,
+            status: "active",
+            credentialHash: hashValue(credential),
+            createdAt: nowIso(),
+            lastSeenAt: nowIso(),
+            revokedAt: null,
+            revokedBy: null,
+          };
+    const deviceCollection =
+      request.kind === "workstation"
+        ? COLLECTIONS.workstationDevices
+        : COLLECTIONS.displayDevices;
     transaction.set(db.collection(deviceCollection).doc(deviceId), device);
-    transaction.update(pairingRef, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) });
-    transaction.update(requestRef, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null });
-    return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+    transaction.update(pairingRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      ...(request.kind === "workstation"
+        ? { workstationDeviceId: deviceId }
+        : { displayDeviceId: deviceId }),
+    });
+    transaction.update(requestRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      pairingTokenPlaintext: null,
+    });
+    return {
+      credential,
+      deviceId,
+      device,
+      pairingChurchId: pairing.churchId,
+      kind: request.kind,
+    };
   });
 };
 
@@ -4896,7 +5121,10 @@ export const seedSmsConsentForServerTests = async ({
   }
   const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhone);
-  if (!consentId) throw new Error("seedSmsConsentForServerTests requires churchId and phoneNumber");
+  if (!consentId)
+    throw new Error(
+      "seedSmsConsentForServerTests requires churchId and phoneNumber",
+    );
   const record = {
     consentId,
     churchId,
@@ -5518,8 +5746,7 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
       smsConsentIdForChurchPhone(churchId, phoneNumber),
     ),
   smsProviderFactory: getSmsProviderForConfig,
-  validateTwilioStatusCallbackUrl: () =>
-    resolveTwilioStatusCallbackUrl(),
+  validateTwilioStatusCallbackUrl: () => resolveTwilioStatusCallbackUrl(),
   setDoc,
   prepareAvailabilityNotificationRecipients: (...args) =>
     teamsAuthHandlers.prepareAvailabilityNotificationRecipients(...args),
@@ -6706,7 +6933,10 @@ export const authHandlers = {
         req.params?.churchId || req.body?.churchId || "",
       ).trim();
       if (!churchId) {
-        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+        throw httpError(
+          400,
+          "Use the SMS opt-in link provided by your church.",
+        );
       }
       const parsed = parseSmsConsentBody(req.body);
       if (!parsed.ok) {
@@ -6748,9 +6978,10 @@ export const authHandlers = {
             config: messagingConfig,
           });
         } catch (deliveryError) {
-          const message = deliveryError?.code === "sms_provider_not_configured"
-            ? "SMS verification is not configured for this church yet. Please contact your church administrator."
-            : "Could not send the verification text right now. Please try again later or contact your church administrator.";
+          const message =
+            deliveryError?.code === "sms_provider_not_configured"
+              ? "SMS verification is not configured for this church yet. Please contact your church administrator."
+              : "Could not send the verification text right now. Please try again later or contact your church administrator.";
           return res.status(deliveryError?.statusCode || 503).json({
             success: false,
             errorMessage: message,
@@ -6796,7 +7027,10 @@ export const authHandlers = {
         req.params?.churchId || req.body?.churchId || "",
       ).trim();
       if (!churchId) {
-        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+        throw httpError(
+          400,
+          "Use the SMS opt-in link provided by your church.",
+        );
       }
       const parsed = parseSmsConsentVerificationBody(req.body);
       if (!parsed.ok) throw httpError(400, parsed.errorMessage);
@@ -6829,7 +7063,8 @@ export const authHandlers = {
         errorMessage:
           statusCode >= 500
             ? "Could not verify your SMS consent right now. Please try again."
-            : error.message || "That verification code is not valid or has expired.",
+            : error.message ||
+              "That verification code is not valid or has expired.",
       });
     }
   },
@@ -7086,7 +7321,10 @@ export const authHandlers = {
         { limit: 200 },
       );
       const pendingInvites = invites
-        .filter((invite) => invite.status === "pending" || invite.status === "expired")
+        .filter(
+          (invite) =>
+            invite.status === "pending" || invite.status === "expired",
+        )
         .sort(
           (a, b) =>
             new Date(b.lastSentAt || b.createdAt || 0).getTime() -
@@ -7356,7 +7594,8 @@ export const authHandlers = {
             ? `The previous invitation for ${email} expired.`
             : `An invitation for ${email} already exists.`,
         );
-        error.existingInvite = sanitizeInviteWithEffectiveStatus(existingInvite);
+        error.existingInvite =
+          sanitizeInviteWithEffectiveStatus(existingInvite);
         throw error;
       }
       reservedInvite = invite;
@@ -7423,7 +7662,9 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
-        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
+        ...(error.existingInvite
+          ? { existingInvite: error.existingInvite }
+          : {}),
       });
     }
   },
@@ -8157,49 +8398,127 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
-        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
+        ...(error.existingInvite
+          ? { existingInvite: error.existingInvite }
+          : {}),
       });
     }
   },
 
   async startDevicePairingRequest(req, res) {
     try {
-      enforceRateLimit({ scope: "device-pairing-start", key: getClientIp(req), limit: 12, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      enforceRateLimit({
+        scope: "device-pairing-start",
+        key: getClientIp(req),
+        limit: 12,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
       const kind = req.body?.kind;
       const platformType = req.body?.platformType || null;
-      if (kind !== "workstation" && kind !== "display") throw httpError(400, "A valid device type is required.");
-      if (kind === "workstation" && platformType !== "electron" && platformType !== "web") throw httpError(400, "A valid workstation platform is required.");
-      if (kind === "display" && platformType) throw httpError(400, "Displays do not use a workstation platform.");
+      if (kind !== "workstation" && kind !== "display")
+        throw httpError(400, "A valid device type is required.");
+      if (
+        kind === "workstation" &&
+        platformType !== "electron" &&
+        platformType !== "web"
+      )
+        throw httpError(400, "A valid workstation platform is required.");
+      if (kind === "display" && platformType)
+        throw httpError(400, "Displays do not use a workstation platform.");
       const requestId = createId("devicePairing");
       const requestSecret = randomSecret(24);
       const expiresAt = new Date(Date.now() + PAIRING_TTL_MS).toISOString();
       await setDoc(COLLECTIONS.devicePairingRequests, requestId, {
-        requestId, kind, platformType, secretHash: hashValue(requestSecret), status: DEVICE_PAIRING_STATUS_PENDING,
-        createdAt: nowIso(), expiresAt, ttlExpireAt: devicePairingTtlExpireAt(expiresAt), approvedAt: null,
-        approvedByUid: null, churchId: null, pairingId: null, expiredAt: null, failedAt: null,
+        requestId,
+        kind,
+        platformType,
+        secretHash: hashValue(requestSecret),
+        status: DEVICE_PAIRING_STATUS_PENDING,
+        createdAt: nowIso(),
+        expiresAt,
+        ttlExpireAt: devicePairingTtlExpireAt(expiresAt),
+        approvedAt: null,
+        approvedByUid: null,
+        churchId: null,
+        pairingId: null,
+        expiredAt: null,
+        failedAt: null,
       });
-      return res.json({ success: true, requestId, requestSecret, approvalUrl: buildDevicePairingApprovalUrl(requestId), status: DEVICE_PAIRING_STATUS_PENDING, expiresAt, pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not start device pairing." }); }
+      return res.json({
+        success: true,
+        requestId,
+        requestSecret,
+        approvalUrl: buildDevicePairingApprovalUrl(requestId),
+        status: DEVICE_PAIRING_STATUS_PENDING,
+        expiresAt,
+        pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS,
+      });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          errorMessage: error.message || "Could not start device pairing.",
+        });
+    }
   },
 
   async getDevicePairingRequestStatus(req, res) {
     try {
       const requestId = String(req.body?.requestId || "").trim();
       const requestSecret = String(req.body?.requestSecret || "").trim();
-      if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
-      const request = await readDevicePairingRequestForSecret({ requestId, requestSecret });
-      const payload = { success: true, status: request.status || DEVICE_PAIRING_STATUS_PENDING, expiresAt: request.expiresAt };
+      if (!requestId || !requestSecret)
+        throw httpError(400, "Device pairing request and secret are required.");
+      const request = await readDevicePairingRequestForSecret({
+        requestId,
+        requestSecret,
+      });
+      const payload = {
+        success: true,
+        status: request.status || DEVICE_PAIRING_STATUS_PENDING,
+        expiresAt: request.expiresAt,
+      };
       return res.json(payload);
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not load device pairing status." }); }
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          errorMessage:
+            error.message || "Could not load device pairing status.",
+        });
+    }
   },
 
   async getDevicePairingRequest(req, res) {
     try {
       await requireHumanSession(req);
-      const request = await expireDevicePairingRequestIfNeeded(await getDoc(COLLECTIONS.devicePairingRequests, req.params.requestId));
-      if (!request) throw httpError(404, "This device pairing request was not found.");
-      return res.json({ success: true, request: { requestId: request.requestId, kind: request.kind, platformType: request.platformType || null, status: request.status, createdAt: request.createdAt, expiresAt: request.expiresAt } });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not load device pairing request." }); }
+      const request = await expireDevicePairingRequestIfNeeded(
+        await getDoc(COLLECTIONS.devicePairingRequests, req.params.requestId),
+      );
+      if (!request)
+        throw httpError(404, "This device pairing request was not found.");
+      return res.json({
+        success: true,
+        request: {
+          requestId: request.requestId,
+          kind: request.kind,
+          platformType: request.platformType || null,
+          status: request.status,
+          createdAt: request.createdAt,
+          expiresAt: request.expiresAt,
+        },
+      });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          errorMessage:
+            error.message || "Could not load device pairing request.",
+        });
+    }
   },
 
   async approveDevicePairingRequest(req, res) {
@@ -8207,63 +8526,190 @@ export const authHandlers = {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const requestId = String(req.params.requestId || "").trim();
-      const issue = (request) => request.kind === "workstation"
-        ? createWorkstationPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: { ...req.body, platformType: request.platformType } })
-        : createDisplayPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const issue = (request) =>
+        request.kind === "workstation"
+          ? createWorkstationPairingRecord({
+              churchId: req.params.churchId,
+              createdByUid: admin.user.uid,
+              body: { ...req.body, platformType: request.platformType },
+            })
+          : createDisplayPairingRecord({
+              churchId: req.params.churchId,
+              createdByUid: admin.user.uid,
+              body: req.body,
+            });
       const db = requireFirestore();
       let issued;
       if (db) {
         issued = await db.runTransaction(async (transaction) => {
-          const requestRef = db.collection(COLLECTIONS.devicePairingRequests).doc(requestId);
+          const requestRef = db
+            .collection(COLLECTIONS.devicePairingRequests)
+            .doc(requestId);
           const snapshot = await transaction.get(requestRef);
-          if (!snapshot.exists) throw httpError(404, "This device pairing request was not found.");
+          if (!snapshot.exists)
+            throw httpError(404, "This device pairing request was not found.");
           const request = { id: snapshot.id, ...snapshot.data() };
-          if (isDevicePairingRequestExpired(request)) throw httpError(400, "This device pairing request has expired. Generate a new QR code.");
-          if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
+          if (isDevicePairingRequestExpired(request))
+            throw httpError(
+              400,
+              "This device pairing request has expired. Generate a new QR code.",
+            );
+          if (request.status !== DEVICE_PAIRING_STATUS_PENDING)
+            throw httpError(
+              409,
+              "This device pairing request has already been approved.",
+            );
           const result = issue(request);
-          transaction.create(db.collection(result.collection).doc(result.pairing.pairingId), result.pairing);
-          transaction.update(requestRef, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId, ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt) });
+          transaction.create(
+            db.collection(result.collection).doc(result.pairing.pairingId),
+            result.pairing,
+          );
+          transaction.update(requestRef, {
+            status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+            approvedAt: nowIso(),
+            approvedByUid: admin.user.uid,
+            churchId: req.params.churchId,
+            pairingId: result.pairing.pairingId,
+            ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt),
+          });
           return { request, result };
         });
       } else {
         issued = await serializeDevicePairingApproval(requestId, async () => {
-          const request = await expireDevicePairingRequestIfNeeded(await getDoc(COLLECTIONS.devicePairingRequests, requestId));
-          if (!request) throw httpError(404, "This device pairing request was not found.");
-          if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
+          const request = await expireDevicePairingRequestIfNeeded(
+            await getDoc(COLLECTIONS.devicePairingRequests, requestId),
+          );
+          if (!request)
+            throw httpError(404, "This device pairing request was not found.");
+          if (request.status !== DEVICE_PAIRING_STATUS_PENDING)
+            throw httpError(
+              409,
+              "This device pairing request has already been approved.",
+            );
           const result = issue(request);
-          await setDoc(result.collection, result.pairing.pairingId, result.pairing);
-          await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId }, { merge: true });
+          await setDoc(
+            result.collection,
+            result.pairing.pairingId,
+            result.pairing,
+          );
+          await setDoc(
+            COLLECTIONS.devicePairingRequests,
+            requestId,
+            {
+              status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+              approvedAt: nowIso(),
+              approvedByUid: admin.user.uid,
+              churchId: req.params.churchId,
+              pairingId: result.pairing.pairingId,
+            },
+            { merge: true },
+          );
           return { request, result };
         });
       }
-      await addSecurityEvent({ type: `${issued.request.kind}_device_pairing_approved`, churchId: req.params.churchId, userId: admin.user.uid, pairingId: issued.result.pairing.pairingId, requestId });
-      return res.json({ success: true, request: { requestId, kind: issued.request.kind, status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE } });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not approve device pairing." }); }
+      await addSecurityEvent({
+        type: `${issued.request.kind}_device_pairing_approved`,
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        pairingId: issued.result.pairing.pairingId,
+        requestId,
+      });
+      return res.json({
+        success: true,
+        request: {
+          requestId,
+          kind: issued.request.kind,
+          status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+        },
+      });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          errorMessage: error.message || "Could not approve device pairing.",
+        });
+    }
   },
 
   async exchangeDevicePairingRequest(req, res) {
     try {
       const requestId = String(req.body?.requestId || "").trim();
       const requestSecret = String(req.body?.requestSecret || "").trim();
-      if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
-      enforceRateLimit({ scope: "device-pairing-exchange", key: `${getClientIp(req)}:${hashValue(requestId)}`, limit: 10, windowMs: 30 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      if (!requestId || !requestSecret)
+        throw httpError(400, "Device pairing request and secret are required.");
+      enforceRateLimit({
+        scope: "device-pairing-exchange",
+        key: `${getClientIp(req)}:${hashValue(requestId)}`,
+        limit: 10,
+        windowMs: 30 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
       const platformType = req.body?.platformType;
       const db = requireFirestore();
       const payload = db
-        ? await redeemDevicePairingRequestFirestore({ requestId, requestSecret, platformType })
-        : await enqueueMemoryPairingRedeem(hashValue(requestId), () => redeemDevicePairingRequestMemory({ requestId, requestSecret, platformType }));
+        ? await redeemDevicePairingRequestFirestore({
+            requestId,
+            requestSecret,
+            platformType,
+          })
+        : await enqueueMemoryPairingRedeem(hashValue(requestId), () =>
+            redeemDevicePairingRequestMemory({
+              requestId,
+              requestSecret,
+              platformType,
+            }),
+          );
       if (payload.kind === "workstation" && platformType === "web") {
         const church = await getChurchById(payload.pairingChurchId);
         if (church) {
-          const bootstrap = await establishWorkstationSession({ req, church, workstation: { deviceId: payload.deviceId, ...payload.device } });
-          await addSecurityEvent({ type: "workstation_pairing_redeemed", churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: "session" });
-          return res.json({ success: true, credential: payload.credential, sessionEstablished: true, bootstrap, device: sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+          const bootstrap = await establishWorkstationSession({
+            req,
+            church,
+            workstation: { deviceId: payload.deviceId, ...payload.device },
+          });
+          await addSecurityEvent({
+            type: "workstation_pairing_redeemed",
+            churchId: payload.pairingChurchId,
+            deviceId: payload.deviceId,
+            mode: "session",
+          });
+          return res.json({
+            success: true,
+            credential: payload.credential,
+            sessionEstablished: true,
+            bootstrap,
+            device: sanitizeWorkstationDeviceForClient({
+              deviceId: payload.deviceId,
+              ...payload.device,
+            }),
+          });
         }
       }
-      await addSecurityEvent({ type: `${payload.kind}_pairing_redeemed`, churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: payload.kind === "workstation" ? "credential" : undefined });
-      return res.json({ success: true, credential: payload.credential, device: payload.kind === "workstation" ? sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) : sanitizeDisplayDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+      await addSecurityEvent({
+        type: `${payload.kind}_pairing_redeemed`,
+        churchId: payload.pairingChurchId,
+        deviceId: payload.deviceId,
+        mode: payload.kind === "workstation" ? "credential" : undefined,
+      });
+      return res.json({
+        success: true,
+        credential: payload.credential,
+        device:
+          payload.kind === "workstation"
+            ? sanitizeWorkstationDeviceForClient({
+                deviceId: payload.deviceId,
+                ...payload.device,
+              })
+            : sanitizeDisplayDeviceForClient({
+                deviceId: payload.deviceId,
+                ...payload.device,
+              }),
+      });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message });
+      return res
+        .status(error.statusCode || 500)
+        .json({ success: false, errorMessage: error.message });
     }
   },
 
@@ -8278,7 +8724,11 @@ export const authHandlers = {
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
-      const { rawToken, pairing } = createWorkstationPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const { rawToken, pairing } = createWorkstationPairingRecord({
+        churchId: req.params.churchId,
+        createdByUid: admin.user.uid,
+        body: req.body,
+      });
       await setDoc(COLLECTIONS.workstationPairings, pairing.pairingId, pairing);
       await addSecurityEvent({
         type: "workstation_pairing_created",
@@ -8530,7 +8980,11 @@ export const authHandlers = {
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
-      const { rawToken, pairing } = createDisplayPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const { rawToken, pairing } = createDisplayPairingRecord({
+        churchId: req.params.churchId,
+        createdByUid: admin.user.uid,
+        body: req.body,
+      });
       await setDoc(COLLECTIONS.displayPairings, pairing.pairingId, pairing);
       await addSecurityEvent({
         type: "display_pairing_created",
