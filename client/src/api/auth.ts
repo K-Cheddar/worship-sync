@@ -2253,7 +2253,7 @@ export const getServicePlanAssignments = async (
 export const saveServicePlan = async (
   churchId: string,
   planKey: string,
-  body: ServicePlanPayload,
+  body: ServicePlanPayload & { saveOperationId?: string },
 ) =>
   apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`,

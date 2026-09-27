@@ -375,7 +375,7 @@ test("Canva PNG cancellation stops uploads for remaining pages", async () => {
   assert.deepEqual(uploaded, ["https://document-export.canva.com/page-1.png"]);
 });
 
-test("Canva removes earlier Cloudinary PNG uploads when a later upload fails", async () => {
+test("Canva keeps successful PNG pages when a later page upload fails", async () => {
   const destroyed = [];
   const { service, destroyedCloudinaryPublicIds } = await createConnectedService({
     exportJobForRequest: ({ body }) => ({
@@ -400,19 +400,16 @@ test("Canva removes earlier Cloudinary PNG uploads when a later upload fails", a
     },
   });
 
-  await assert.rejects(() =>
-    service.importDesign({
-      churchId: "church-1",
-      designId: "DAF_design_1",
-      pages: [1, 2],
-      format: "png",
-    }),
-  );
-  assert.deepEqual(destroyed, ["worship-sync/canva/church-1/page-1"]);
-  assert.deepEqual(
-    destroyedCloudinaryPublicIds.map(({ publicId }) => publicId),
-    destroyed,
-  );
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1, 2],
+    format: "png",
+  });
+  assert.deepEqual(result.assets.map(({ data }) => data.canvaSource.pageNumbers), [[1]]);
+  assert.deepEqual(result.failedPages, [{ page: 2, error: "Could not save this page. Try again." }]);
+  assert.deepEqual(destroyed, []);
+  assert.deepEqual(destroyedCloudinaryPublicIds, []);
 });
 
 test("Canva getDesign explains that public link access does not grant API access on 403", async () => {
@@ -635,7 +632,7 @@ test("Canva falls back to one PNG export per page when a multi-page result is in
   );
 });
 
-test("Canva does not upload or return a successful PNG import when fallback export fails", async () => {
+test("Canva keeps successful PNG pages when a fallback export fails", async () => {
   const { service, uploaded } = await createConnectedService({
     exportJobForRequest: ({ body, index }) => ({
       id: `export-${index}`,
@@ -651,20 +648,18 @@ test("Canva does not upload or return a successful PNG import when fallback expo
     }),
   });
 
-  await assert.rejects(
-    () =>
-      service.importDesign({
-        churchId: "church-1",
-        designId: "DAF_design_1",
-        pages: [1, 2, 3],
-        format: "png",
-      }),
-    (error) => {
-      assert.match(String(error.message), /Could not export Canva page 2/i);
-      return true;
-    },
-  );
-  assert.equal(uploaded.length, 0);
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1, 2, 3],
+    format: "png",
+  });
+  assert.deepEqual(uploaded.map(({ url }) => url), [
+    "https://document-export.canva.com/page-1.png",
+    "https://document-export.canva.com/page-3.png",
+  ]);
+  assert.deepEqual(result.failedPages, [{ page: 2, error: "Could not export this page. Try again." }]);
+  assert.deepEqual(result.assets.map((asset) => asset.data.canvaSource.pageNumbers), [[1], [3]]);
 });
 
 test("Canva imports selected MP4 pages as one combined video by default", async () => {
@@ -1161,17 +1156,14 @@ test("times out stuck Mux pages, marks them failed, and cleans up assets", async
     }),
   });
 
-  await assert.rejects(
-    service.importDesign({
-      churchId: "church-1",
-      designId: "DAF_design_1",
-      pages: [1, 2, 3],
-      format: "mp4",
-      mp4ImportMode: "separate",
-      onProgress: (event) => progress.push(event),
-    }),
-    /video processing timed out/i,
-  );
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1, 2, 3],
+    format: "mp4",
+    mp4ImportMode: "separate",
+    onProgress: (event) => progress.push(event),
+  });
 
   assert.deepEqual(
     progress
@@ -1185,6 +1177,7 @@ test("times out stuck Mux pages, marks them failed, and cleans up assets", async
     "mux-stuck-2",
     "mux-stuck-3",
   ]);
+  assert.deepEqual(result.failedPages.map(({ page }) => page).sort(), [1, 2, 3]);
 });
 
 test("cancellation stops Mux polling and cleans up accepted assets", async () => {
@@ -1401,7 +1394,7 @@ test("Canva export polling uses increasing intervals", async () => {
   assert.deepEqual(waitCalls.slice(0, 3), [1000, 2000, 4000]);
 });
 
-test("Canva persistent export rate limits fail at the deadline", async () => {
+test("Canva persistent export rate limits are returned as a failed page", async () => {
   let currentTime = 0;
   const muxClient = createReadyMuxClient();
   const { service } = await createConnectedService({
@@ -1426,21 +1419,14 @@ test("Canva persistent export rate limits fail at the deadline", async () => {
     },
   });
 
-  await assert.rejects(
-    () =>
-      service.importDesign({
-        churchId: "church-1",
-        designId: "DAF_design_1",
-        pages: [1],
-        format: "mp4",
-        mp4ImportMode: "separate",
-      }),
-    (error) => {
-      assert.equal(error.statusCode, 429);
-      assert.match(error.message, /temporarily limiting export requests/i);
-      return true;
-    },
-  );
+  const result = await service.importDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+    pages: [1],
+    format: "mp4",
+    mp4ImportMode: "separate",
+  });
+  assert.deepEqual(result.failedPages, [{ page: 1, error: "Canva is temporarily limiting export requests. Wait a moment, then retry this page." }]);
 });
 
 test("Canva separate MP4 progress is keyed by page and preserves order", async () => {

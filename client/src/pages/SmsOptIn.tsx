@@ -307,6 +307,15 @@ const SmsOptIn = () => {
               >
                 Continue to WorshipSync
               </Button>
+              <Button
+                type="button"
+                variant="tertiary"
+                className="w-full cursor-pointer justify-center"
+                disabled={isCancelling}
+                onClick={handleReturnToOptions}
+              >
+                Return to SMS options
+              </Button>
             </div>
           ) : signupOutcome ? (
             <div className="mt-6 space-y-4 rounded-xl border border-gray-600 bg-gray-900/60 px-4 py-5 text-left" role="status">

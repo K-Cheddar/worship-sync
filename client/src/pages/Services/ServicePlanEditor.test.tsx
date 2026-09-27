@@ -384,6 +384,7 @@ describe("ServicePlanEditor", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    sessionStorage.clear();
     localStorage.removeItem("worshipsyncServicePlanImportSource");
     localStorage.removeItem("worshipsyncServicePublicNotesTeam");
     mockAllSongDocs = [];
@@ -1031,7 +1032,7 @@ describe("ServicePlanEditor", () => {
     expect(mockSaveServicePlan.mock.calls[0][2].baseRevision).not.toBe(50);
   });
 
-  it("offers Reload latest only for a concurrent-edit conflict", async () => {
+  it("offers field review only for a concurrent-edit conflict", async () => {
     const user = userEvent.setup();
     const latestPlan = {
       planId: "church-1::service-1@2026-07-26",
@@ -1082,7 +1083,12 @@ describe("ServicePlanEditor", () => {
     expect(
       await screen.findByText("Plan changed elsewhere", undefined, { timeout: 2_500 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reload latest" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(screen.getAllByText(/Their item/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review changes" })).toBeInTheDocument();
   });
 
   it("does not offer Reload latest after a generic save failure", async () => {
@@ -2509,7 +2515,7 @@ Opening Song to begin the worship experience.
     }
   });
 
-  it("preserves an unsaved draft and raises the existing conflict state on resume", async () => {
+  it("preserves an unsaved draft and merges an independent remote change on resume", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
     let resolveSave: (() => void) | null = null;
@@ -2578,12 +2584,12 @@ Opening Song to begin the worship experience.
       });
 
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      const finishSave = resolveSave as (() => void) | null;
+      if (finishSave) await act(async () => finishSave());
       expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
       expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
-      expect(screen.getByText("Plan changed elsewhere")).toBeInTheDocument();
-      expect(
-        await screen.findByRole("button", { name: "Reload latest" }),
-      ).toBeInTheDocument();
+      expect(await screen.findByText("Remote version")).toBeInTheDocument();
+      expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
     } finally {
       const finishSave = resolveSave as (() => void) | null;
       if (finishSave) {

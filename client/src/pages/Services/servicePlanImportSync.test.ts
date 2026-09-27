@@ -9,6 +9,13 @@ import {
   mergeImportedAssignees,
   refreshServicePlanFromImport,
 } from "./servicePlanImportSync";
+import {
+  applySelectedServicePlanImportChanges,
+  servicePlanImportChangeKey,
+  summarizeServicePlanImport,
+} from "./servicePlanImportSummary";
+import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
+import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 const element = (
   id: string,
@@ -88,6 +95,29 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
     ])];
 
     expect(getNewServicePlanImportAmbiguityIds(current, refreshed)).toEqual(["same-id", "new-id"]);
+  });
+
+  it("treats a changed interpretation source field as a new review", () => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Reading",
+      sourceTitle: "John 3:16",
+      sourceLedBy: "",
+      parts: [{ kind: "scripture" as const, value: "John 3:16", destination: "scripture" as const, sourceField: "title" as const }],
+      reasons: ["Review the source interpretation."],
+      status: "unresolved" as const,
+      sourceFingerprint: "same-source",
+    };
+    const current = [section("s1", "Worship", [element("e1", "Reading", { importAmbiguity: ambiguity })])];
+    const next = [section("s1", "Worship", [element("e1", "Reading", {
+      importAmbiguity: {
+        ...ambiguity,
+        parts: [{ ...ambiguity.parts[0], sourceField: "note" }],
+      },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual(["e1"]);
   });
 });
 
@@ -177,6 +207,119 @@ describe("refreshServicePlanFromImport", () => {
       kind: "library",
       songId: "song-1",
       songName: "How Great Is Our God",
+    });
+  });
+
+  it("keeps song occurrence IDs, duplicate order, and matching library links through refresh", () => {
+    const current = [section("section-1", "Praise", [
+      element("element-1", "Worship Set", {
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "linked-occurrence", kind: "library", songId: "song-2", songName: "Great Are You Lord" },
+          { id: "first-repeat", kind: "pending", title: "Way Maker", lyricsText: "" },
+          { id: "second-repeat", kind: "pending", title: "Way Maker", lyricsText: "" },
+        ],
+      }),
+    ])];
+    const imported = [section("source", "Praise", [
+      element("incoming", "Worship Set", {
+        songRefs: [
+          { kind: "pending", title: "Way Maker", lyricsText: "Verse" },
+          { kind: "pending", title: "Great Are You Lord", lyricsText: "" },
+          { kind: "pending", title: "Way Maker", lyricsText: "" },
+        ],
+      }),
+    ])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "first-repeat", kind: "pending", title: "Way Maker", lyricsText: "Verse" },
+      { id: "linked-occurrence", kind: "library", songId: "song-2", songName: "Great Are You Lord" },
+      { id: "second-repeat", kind: "pending", title: "Way Maker", lyricsText: "" },
+    ]);
+  });
+
+  it("makes a repeated refresh a no-op for equivalent songs, scripture, title, timing, and notes", () => {
+    const current = [section("section-1", "Praise", [
+      element("element-1", "Welcome", {
+        sourcePlanningManaged: true,
+        songRefs: [{ id: "song-occurrence", kind: "library", songId: "song-1", songName: "Welcome Song" }],
+        scriptureRefs: [{ id: "scripture-occurrence", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+        durationSeconds: 120,
+        startTime: "09:00",
+        notes: plainTextToRichText("A shared note"),
+        servicePlanningImport: {
+          observed: { elementType: "Song", title: "Welcome", ledBy: "Avery", note: "A shared note" },
+          applied: { elementType: "Song", title: "Welcome", ledBy: "Avery", note: "A shared note" },
+          pendingFields: [],
+        },
+      }),
+    ])];
+    const imported = [section("source", "Praise", [
+      element("incoming", " Welcome ", {
+        songRefs: [{ kind: "library", songId: "song-1", songName: "Welcome Song" }],
+        scriptureRefs: [{ id: "new-scripture-id", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+        durationMinutes: 2,
+        startTime: " 09:00 ",
+        notes: plainTextToRichText("A shared note"),
+        sourceElementTypeRaw: "Song",
+        servicePlanningImport: {
+          observed: { elementType: "Song", title: "Welcome", ledBy: "Avery", note: "A shared note" },
+          applied: { elementType: "Song", title: "Welcome", ledBy: "Avery", note: "A shared note" },
+          pendingFields: [],
+        },
+      }),
+    ])];
+
+    const [once] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const [twice] = refreshServicePlanFromImport([once], imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(once.elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(once.elements[0].scriptureRefs).toEqual(current[0].elements[0].scriptureRefs);
+    expect(twice.elements[0]).toEqual(once.elements[0]);
+    expect(summarizeServicePlanImport([once], [twice])).toEqual({
+      changes: [], added: 0, removed: 0, updated: 0,
+    });
+  });
+
+  it("keeps an unchanged parsed import idempotent through reconciliation, review, and selected apply", () => {
+    const source: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{
+        sectionName: "Praise",
+        rows: [{ elementType: "Song", title: "Way Maker", ledBy: "Avery", songTitle: "Way Maker" }],
+      }],
+      teamAssignments: [],
+    };
+    const parsed = buildServicePlanSectionsFromImport(source, [{ _id: "song-1", name: "Way Maker" }]);
+    const current = [section("section-1", "Praise", [element("element-1", "Way Maker", {
+      sourcePlanningManaged: true,
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Way Maker",
+      sourceLedByRaw: "Avery",
+      songRefs: [{ id: "song-occurrence", kind: "library", songId: "song-1", songName: "Way Maker" }],
+      assignees: [{ id: "assignee-1", name: "Avery", microphoneIds: ["mic-1"] }],
+      servicePlanningImport: {
+        observed: { elementType: "Song", title: "Way Maker", ledBy: "Avery", note: "" },
+        applied: { elementType: "Song", title: "Way Maker", ledBy: "Avery", note: "" },
+        pendingFields: [],
+      },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, refreshed);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      refreshed,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+    const repeated = refreshServicePlanFromImport(applied, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(summary).toEqual({ changes: [], added: 0, removed: 0, updated: 0 });
+    expect(applied[0].elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(applied[0].elements[0].assignees).toEqual(current[0].elements[0].assignees);
+    expect(summarizeServicePlanImport(applied, repeated)).toEqual({
+      changes: [], added: 0, removed: 0, updated: 0,
     });
   });
 

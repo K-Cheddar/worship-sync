@@ -1200,6 +1200,9 @@ export const createTeamsAuthHandlers = ({
       const songId = normalizeShortText(raw.songId, { max: 160 });
       if (!songId) return undefined;
       return {
+        ...(normalizeShortText(raw.id, { max: 160 })
+          ? { id: normalizeShortText(raw.id, { max: 160 }) }
+          : {}),
         kind: "library",
         songId,
         songName: normalizeShortText(raw.songName, { max: 300 }),
@@ -1209,6 +1212,9 @@ export const createTeamsAuthHandlers = ({
       const title = normalizeShortText(raw.title, { max: 300 });
       if (!title) return undefined;
       return {
+        ...(normalizeShortText(raw.id, { max: 160 })
+          ? { id: normalizeShortText(raw.id, { max: 160 }) }
+          : {}),
         kind: "pending",
         title,
         lyricsText: normalizeLongText(raw.lyricsText, { max: 20000 }),
@@ -1629,6 +1635,9 @@ export const createTeamsAuthHandlers = ({
       timezone: timezone ?? null,
       sections,
       sourceImport: sourceImport ?? null,
+      ...(typeof body?.saveOperationId === "string" && /^[A-Za-z0-9_-]{8,100}$/.test(body.saveOperationId)
+        ? { saveOperationId: body.saveOperationId }
+        : {}),
       ...(clonedFromPlanKey ? { clonedFromPlanKey } : {}),
     };
   };
@@ -1684,9 +1693,10 @@ export const createTeamsAuthHandlers = ({
     adminUid,
     now,
   }) => {
+    const { saveOperationId, ...contentPayload } = payload;
     const resolvedPublicLive = normalizePublicLiveState(existing?.publicLive, {
       ...existing,
-      ...payload,
+      ...contentPayload,
     });
     const nextPublicLive =
       (existing?.publicLive?.mode === "manual" ||
@@ -1695,7 +1705,7 @@ export const createTeamsAuthHandlers = ({
         ? resolvedPublicLive
         : null;
     return {
-      ...payload,
+      ...contentPayload,
       planId: docId,
       pushedToOutlineAt: existing?.pushedToOutlineAt || null,
       published: Boolean(existing?.published),
@@ -1717,6 +1727,7 @@ export const createTeamsAuthHandlers = ({
           }
         : {}),
       revision: getServicePlanRevision(existing) + 1,
+      lastSaveOperationId: saveOperationId || null,
       updatedAt: now,
       updatedByUid: adminUid,
       ...(existing ? {} : { createdAt: now, createdByUid: adminUid }),
@@ -1759,6 +1770,7 @@ export const createTeamsAuthHandlers = ({
     if (!plan || typeof plan !== "object") return plan;
     const safe = { ...plan };
     for (const field of SERVICE_PLAN_SECRET_FIELDS) delete safe[field];
+    delete safe.lastSaveOperationId;
     return safe;
   };
 
@@ -10137,9 +10149,13 @@ export const createTeamsAuthHandlers = ({
               : {}),
           };
         }
+        const responsePlan = withoutServicePlanAssignments(servicePlan, reader);
+        if (canEdit && servicePlan.lastSaveOperationId) {
+          responsePlan.lastSaveOperationId = servicePlan.lastSaveOperationId;
+        }
         return res.json({
           success: true,
-          servicePlan: withoutServicePlanAssignments(servicePlan, reader),
+          servicePlan: responsePlan,
           ...(publicUrls ? { publicUrls } : {}),
         });
       } catch (error) {
@@ -10299,6 +10315,7 @@ export const createTeamsAuthHandlers = ({
         }
         emitTeamsEvent(churchId, "service-plan-updated", {
           servicePlan: withoutServicePlanSecrets(servicePlan),
+          saveOperationId: payload.saveOperationId,
         });
         await emitPublicServicePlanUpdated(
           servicePlan,
@@ -10314,7 +10331,12 @@ export const createTeamsAuthHandlers = ({
             success: false,
             conflict: true,
             errorMessage: error.message,
-            servicePlan: withoutServicePlanSecrets(error.servicePlanConflict),
+            servicePlan: {
+              ...withoutServicePlanSecrets(error.servicePlanConflict),
+              ...(error.servicePlanConflict.lastSaveOperationId
+                ? { lastSaveOperationId: error.servicePlanConflict.lastSaveOperationId }
+                : {}),
+            },
           });
         }
         return sendTeamsJsonError(

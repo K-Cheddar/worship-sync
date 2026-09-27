@@ -1,5 +1,9 @@
-import { richTextToPlainText } from "../../types/richText";
 import {
+  normalizeRichTextDocument,
+  richTextToPlainText,
+} from "../../types/richText";
+import {
+  getServicePlanElementAssignees,
   getServicePlanElementAssigneeNames,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
@@ -41,15 +45,95 @@ export type ServicePlanImportSummary = {
 const itemName = (element: ServicePlanElement) =>
   richTextToPlainText(element.title).trim() || "Untitled item";
 
-const serializesEqual = (left: unknown, right: unknown) =>
-  JSON.stringify(left) === JSON.stringify(right);
+const normalizedText = (value: string | undefined) =>
+  (value || "").replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
+
+const normalizedLyrics = (value: string) =>
+  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const normalizedRichText = (value: string) =>
+  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const normalizedStartTime = (value: string | undefined) => {
+  const time = normalizedText(value);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time);
+  if (!match) return time;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+};
+
+const richTextValue = (value: ServicePlanElement["notes"]) => {
+  const document = normalizeRichTextDocument(value);
+  return document.blocks.map((block) => ({
+    type: block.type,
+    align: block.align || "left",
+    size: block.size || "normal",
+    listStyle: block.type === "list-item" ? block.listStyle || "bullet" : undefined,
+    indent: block.indent || 0,
+    listStart: block.listStart || 1,
+    spans: block.spans.reduce<Array<{ text: string; marks: string }>>((spans, span) => {
+      const marks = JSON.stringify({
+        bold: span.bold || false,
+        italic: span.italic || false,
+        underline: span.underline || false,
+        color: span.color?.toLowerCase() || "",
+      });
+      const previous = spans.at(-1);
+      const text = normalizedRichText(span.text);
+      if (text && previous?.marks === marks) previous.text += `${previous.text ? " " : ""}${text}`;
+      else if (text) spans.push({ text, marks });
+      return spans;
+    }, []),
+  }));
+};
+
+const richTextEqual = (
+  left: ServicePlanElement["notes"],
+  right: ServicePlanElement["notes"],
+) => JSON.stringify(richTextValue(left)) === JSON.stringify(richTextValue(right));
+
+const songRefValue = (ref: ReturnType<typeof getServicePlanElementSongRefs>[number]) =>
+  ref.kind === "library"
+    ? ["library", ref.songId, normalizedText(ref.songName).toLocaleLowerCase(), normalizedText(ref.key).toLocaleUpperCase()]
+    : ["pending", normalizedText(ref.title).toLocaleLowerCase(), normalizedLyrics(ref.lyricsText), normalizedText(ref.key).toLocaleUpperCase()];
+
+const songsEqual = (
+  left: ReturnType<typeof getServicePlanElementSongRefs>,
+  right: ReturnType<typeof getServicePlanElementSongRefs>,
+) => JSON.stringify(left.map(songRefValue)) === JSON.stringify(right.map(songRefValue));
+
+const scriptureValue = (ref: ReturnType<typeof getServicePlanElementScriptureRefs>[number]) =>
+  [normalizedText(ref.book).toLocaleLowerCase(), normalizedText(ref.chapter),
+    normalizedText(ref.verseRange), normalizedText(ref.version).toLocaleLowerCase()];
+
+const scripturesEqual = (
+  left: ReturnType<typeof getServicePlanElementScriptureRefs>,
+  right: ReturnType<typeof getServicePlanElementScriptureRefs>,
+) => JSON.stringify(left.map(scriptureValue)) === JSON.stringify(right.map(scriptureValue));
+
+const comparableInterpretation = (element: ServicePlanElement) => {
+  const ambiguity = element.importAmbiguity;
+  if (!ambiguity) return null;
+  return {
+    status: ambiguity.status,
+    authorizationPending: Boolean(ambiguity.authorizationPending),
+    reasons: ambiguity.reasons.map(normalizedText),
+    parts: ambiguity.parts.map(({ kind, value, destination, sourceField, managed }) => ({
+      kind,
+      value: normalizedText(value),
+      destination,
+      sourceField: sourceField || "title",
+      managed: managed && { kind: managed.kind, fingerprint: managed.fingerprint },
+    })),
+  };
+};
 
 const comparableTeamNotes = (element: ServicePlanElement) =>
   (element.teamNotes || [])
-    .map(({ id: _id, ...note }) => note)
-    .sort((left, right) =>
-      JSON.stringify(left).localeCompare(JSON.stringify(right)),
-    );
+    .filter((note) => note.scope !== "role")
+    .map((note) => ({
+      label: normalizedText(note.label),
+      note: richTextValue(note.note),
+    }));
 
 const optionalValue = (value: string | undefined, emptyLabel: string) =>
   value?.trim() || emptyLabel;
@@ -70,32 +154,90 @@ const formatDuration = (element: ServicePlanElement) => {
 const formatTiming = (element: ServicePlanElement) =>
   `${optionalValue(element.startTime, "No start time")} · ${formatDuration(element)}`;
 
+const formatRichTextFormatting = (value: ServicePlanElement["notes"]) => {
+  const blocks = normalizeRichTextDocument(value).blocks;
+  const formatting = new Set<string>();
+  blocks.forEach((block) => {
+    if (block.align && block.align !== "left") formatting.add(`${block.align}-aligned`);
+    if (block.size) formatting.add(`${block.size} text`);
+    if (block.type === "list-item") formatting.add(block.listStyle === "ordered" ? "numbered list" : "bulleted list");
+    if (block.indent) formatting.add("indented list");
+    block.spans.forEach((span) => {
+      if (span.bold) formatting.add("bold");
+      if (span.italic) formatting.add("italic");
+      if (span.underline) formatting.add("underlined");
+      if (span.color) formatting.add("colored text");
+    });
+  });
+  return formatting.size ? [...formatting].join(", ") : "plain text";
+};
+
+const richTextStyleSuffix = (value: ServicePlanElement["notes"]) => {
+  const style = formatRichTextFormatting(value);
+  return style === "plain text" ? "" : ` (${style})`;
+};
+
 const formatNotes = (element: ServicePlanElement) => {
   const values = [
     ...(richTextToPlainText(element.notes).trim()
-      ? [`Shared: ${richTextToPlainText(element.notes).trim()}`]
+      ? [`Shared: ${richTextToPlainText(element.notes).trim()}${richTextStyleSuffix(element.notes)}`]
       : []),
     ...(element.teamNotes || [])
       .map((note) => {
         const text = richTextToPlainText(note.note).trim();
-        return text ? `${note.label}: ${text}` : "";
+        return text ? `${note.label}: ${text}${richTextStyleSuffix(note.note)}` : "";
       })
       .filter(Boolean),
   ];
   return values.join(" · ") || "No notes";
 };
 
+const formatSongRef = (songRef: ReturnType<typeof getServicePlanElementSongRefs>[number]) => {
+  const name = songRef.kind === "library" ? songRef.songName : songRef.title;
+  const details = [songRef.key ? `Key ${songRef.key}` : ""];
+  if (songRef.kind === "pending") {
+    const lyrics = normalizedLyrics(songRef.lyricsText).replace(/\n/g, " / ");
+    details.push(lyrics ? `Lyrics: ${lyrics.slice(0, 60)}${lyrics.length > 60 ? "…" : ""}` : "No lyrics");
+  }
+  return `${name}${details.filter(Boolean).length ? ` (${details.filter(Boolean).join(" · ")})` : ""}`;
+};
+
 const formatSong = (element: ServicePlanElement) => {
   const refs = getServicePlanElementSongRefs(element);
   if (!refs.length) return "No song";
-  return refs.map((songRef) =>
-    songRef.kind === "library" ? songRef.songName : songRef.title,
-  ).join(", ");
+  return refs.map(formatSongRef).join(", ");
+};
+
+const formatTitle = (element: ServicePlanElement) => {
+  return `${itemName(element)} (${formatRichTextFormatting(element.title)})`;
+};
+
+const formatInterpretation = (element: ServicePlanElement) => {
+  const ambiguity = element.importAmbiguity;
+  if (!ambiguity) return "No review record";
+  const parts = ambiguity.parts
+    .map((part) => `${part.kind}: ${part.value} → ${part.destination}`)
+    .join("; ");
+  return `${ambiguity.status}${parts ? ` · ${parts}` : ""}`;
+};
+
+const formatSourceChanges = (element: ServicePlanElement) => {
+  const state = element.servicePlanningImport;
+  if (!state) return "Not tracked";
+  if (!state.pendingFields.length) return "Up to date";
+  return state.pendingFields.map((field) =>
+    `${field}: ${normalizedText(state.applied[field]) || "empty"} → ${normalizedText(state.observed[field]) || "empty"}`,
+  ).join("; ");
 };
 
 const formatScripture = (element: ServicePlanElement) =>
   getServicePlanElementScriptureRefs(element)
-    .map((scriptureRef) => scriptureRef.label)
+    .map((scriptureRef) => {
+      const structured = `${scriptureRef.book} ${scriptureRef.chapter}${scriptureRef.verseRange ? `:${scriptureRef.verseRange}` : ""}${scriptureRef.version ? ` · ${scriptureRef.version}` : ""}`;
+      return scriptureRef.label && normalizedText(scriptureRef.label) !== normalizedText(structured)
+        ? `${scriptureRef.label} (${structured})`
+        : scriptureRef.label || structured;
+    })
     .join(", ") || "No scripture";
 
 const changedFields = (
@@ -103,81 +245,78 @@ const changedFields = (
   next: ServicePlanElement,
 ): ServicePlanImportFieldChange[] => {
   const fields: ServicePlanImportFieldChange[] = [];
-  if (!serializesEqual(current.title, next.title)) {
+  const sameVisibleTitle = normalizedText(richTextToPlainText(current.title)) ===
+    normalizedText(richTextToPlainText(next.title));
+  if (!richTextEqual(current.title, next.title)) {
     fields.push({
       label: "Title",
-      before: itemName(current),
-      after: itemName(next),
+      before: sameVisibleTitle ? formatTitle(current) : itemName(current),
+      after: sameVisibleTitle ? formatTitle(next) : itemName(next),
     });
   }
-  if (!serializesEqual(
-    getServicePlanElementSongRefs(current),
-    getServicePlanElementSongRefs(next),
-  )) {
+  if (!songsEqual(getServicePlanElementSongRefs(current), getServicePlanElementSongRefs(next))) {
+    const before = formatSong(current);
+    const after = formatSong(next);
     fields.push({
       label: "Song",
-      before: formatSong(current),
-      after: formatSong(next),
+      before,
+      after: before === after ? `${after} (song reference changed)` : after,
     });
   }
-  if (!serializesEqual(
-    getServicePlanElementScriptureRefs(current),
-    getServicePlanElementScriptureRefs(next),
-  )) {
+  if (!scripturesEqual(getServicePlanElementScriptureRefs(current), getServicePlanElementScriptureRefs(next))) {
     fields.push({
       label: "Scripture",
       before: formatScripture(current),
       after: formatScripture(next),
     });
   }
-  if (current.sourceElementTypeRaw !== next.sourceElementTypeRaw) {
+  if (normalizedText(current.sourceElementTypeRaw).toLocaleLowerCase() !==
+    normalizedText(next.sourceElementTypeRaw).toLocaleLowerCase()) {
     fields.push({
       label: "Source type",
       before: optionalValue(current.sourceElementTypeRaw, "None"),
       after: optionalValue(next.sourceElementTypeRaw, "None"),
     });
   }
-  if (!serializesEqual(current.importAmbiguity, next.importAmbiguity)) {
+  if (JSON.stringify(comparableInterpretation(current)) !== JSON.stringify(comparableInterpretation(next))) {
     fields.push({
       label: "Import interpretation",
-      before: current.importAmbiguity?.status || "No review record",
-      after: next.importAmbiguity?.status || "No review needed",
+      before: formatInterpretation(current),
+      after: formatInterpretation(next),
     });
   }
   const currentImportState = current.servicePlanningImport;
   const nextImportState = next.servicePlanningImport;
-  const sourceMetadataChanged = currentImportState && nextImportState &&
-    !serializesEqual(currentImportState, nextImportState);
-  const hasPendingSourceChange = Boolean(
-    currentImportState?.pendingFields.length || nextImportState?.pendingFields.length,
-  );
-  if (sourceMetadataChanged || hasPendingSourceChange) {
+  if (currentImportState && nextImportState &&
+    formatSourceChanges(current) !== formatSourceChanges(next)) {
     fields.push({
       label: "Source changes",
-      before: currentImportState?.pendingFields.length
-        ? `Pending: ${currentImportState.pendingFields.join(", ")}`
-        : currentImportState ? "Up to date" : "Not tracked",
-      after: nextImportState?.pendingFields.length
-        ? `Pending: ${nextImportState.pendingFields.join(", ")}`
-        : "Up to date",
+      before: formatSourceChanges(current),
+      after: formatSourceChanges(next),
     });
   }
-  const currentAssignees = getServicePlanElementAssigneeNames(current).join(", ");
-  const nextAssignees = getServicePlanElementAssigneeNames(next).join(", ");
-  if (
-    currentAssignees !== nextAssignees ||
-    current.sourceLedByRaw !== next.sourceLedByRaw
-  ) {
+  const currentAssignees = getServicePlanElementAssigneeNames(current).map(normalizedText);
+  const nextAssignees = getServicePlanElementAssigneeNames(next).map(normalizedText);
+  const assignmentIdentity = (element: ServicePlanElement) =>
+    getServicePlanElementAssignees(element)
+      .filter((assignee) => assignee.name?.trim() || assignee.memberId)
+      .map((assignee) => [normalizedText(assignee.name), assignee.memberId || ""]);
+  const sameAssignment = JSON.stringify(assignmentIdentity(current)) ===
+    JSON.stringify(assignmentIdentity(next));
+  if (!sameAssignment) {
     fields.push({
       label: "Assigned to",
-      before: optionalValue(currentAssignees, "Unassigned"),
-      after: optionalValue(nextAssignees, "Unassigned"),
+      before: optionalValue(currentAssignees.join(", "), "Unassigned"),
+      after: optionalValue(nextAssignees.join(", "), "Unassigned") +
+        (JSON.stringify(currentAssignees) === JSON.stringify(nextAssignees)
+          ? " (person link changed)"
+          : ""),
     });
   }
   if (
-    current.startTime !== next.startTime ||
-    current.durationSeconds !== next.durationSeconds ||
-    current.durationMinutes !== next.durationMinutes
+    normalizedStartTime(current.startTime) !== normalizedStartTime(next.startTime) ||
+    (current.durationSeconds ?? (current.durationMinutes ?? 0) * 60) !==
+      (next.durationSeconds ?? (next.durationMinutes ?? 0) * 60)
   ) {
     fields.push({
       label: "Time or duration",
@@ -186,8 +325,8 @@ const changedFields = (
     });
   }
   if (
-    !serializesEqual(current.notes, next.notes) ||
-    !serializesEqual(comparableTeamNotes(current), comparableTeamNotes(next))
+    !richTextEqual(current.notes, next.notes) ||
+    JSON.stringify(comparableTeamNotes(current)) !== JSON.stringify(comparableTeamNotes(next))
   ) {
     fields.push({
       label: "Notes",

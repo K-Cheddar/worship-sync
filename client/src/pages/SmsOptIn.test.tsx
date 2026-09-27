@@ -240,6 +240,33 @@ describe("SmsOptIn", () => {
     expect(mockedVerifySmsConsent).not.toHaveBeenCalled();
   });
 
+  it("returns to SMS options when cancellation cannot be confirmed", async () => {
+    mockedSubmitSmsConsent.mockResolvedValue({ success: true, verificationRequired: true, challengeId: "challenge", cancellationToken: "token" });
+    mockedCancelSmsConsent.mockResolvedValue({ success: true, cancelled: false });
+    const user = userEvent.setup();
+    renderPage("demo");
+
+    await user.type(screen.getByLabelText(/Mobile phone number/i), "9545551234");
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "Opt in to SMS" }));
+    await screen.findByLabelText(/Verification code/i);
+    await user.click(screen.getByRole("button", { name: "Cancel SMS signup — continue without SMS" }));
+    await screen.findByText("Cancellation not confirmed");
+
+    await user.click(screen.getByRole("button", { name: "Return to SMS options" }));
+
+    expect(screen.getByLabelText(/Mobile phone number/i)).toHaveValue("(954) 555-1234");
+    expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("button", { name: "Opt in to SMS" })).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: "Opt in to SMS" }));
+
+    expect(mockedSubmitSmsConsent).toHaveBeenCalledTimes(2);
+    expect(await screen.findByLabelText(/Verification code/i)).toBeInTheDocument();
+    expect(mockedCancelSmsConsent).toHaveBeenCalledTimes(1);
+  });
+
   it("supports affirmative consent for any provided church tenant ID", async () => {
     mockedSubmitSmsConsent.mockResolvedValue({ success: true, verificationRequired: true, challengeId: "challenge", cancellationToken: "token" });
     const user = userEvent.setup();

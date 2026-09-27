@@ -5,16 +5,19 @@ import LocalMediaCloudShareManager from "./components/LocalMediaCloudShareManage
 import LocalVideoIssueManager from "./components/LocalVideoIssueManager/LocalVideoIssueManager";
 import LocalVideoCaptureManager from "./components/LocalVideoCaptureManager/LocalVideoCaptureManager";
 import LocalVideoListWarmPublisher from "./components/LocalVideoListWarmPublisher/LocalVideoListWarmPublisher";
+import { TransferProvider } from "./context/transferContext";
 
 const ControllerContextWrapper = () => {
   return (
     <ControllerInfoProvider>
+      <TransferProvider>
       <LocalImageUploadManager />
       <LocalMediaCloudShareManager />
       <LocalVideoListWarmPublisher />
       {!window.__ELECTRON__ && <LocalVideoCaptureManager />}
       <LocalVideoIssueManager />
       <Outlet />
+      </TransferProvider>
     </ControllerInfoProvider>
   );
 };

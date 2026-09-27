@@ -152,6 +152,26 @@ describe("useServicePlanAutosave", () => {
     );
   });
 
+  it("recovers a committed write by operation id when the response is lost and server normalization differs", async () => {
+    let operationId = "";
+    const normalized = { ...planFor("plan-a", 6), lastSaveOperationId: "" };
+    const save = jest.fn(async (_payload: unknown, _revision: number, id?: string) => {
+      operationId = id || "";
+      throw new Error("response lost after commit");
+    });
+    const { view, options } = setup({
+      baseRevision: 5,
+      save,
+      isOwnWrite: (doc, _payload, id) => (doc as ServicePlan & { lastSaveOperationId?: string }).lastSaveOperationId === id,
+      loadLatest: async () => ({ ...normalized, lastSaveOperationId: operationId }),
+    });
+    view.rerender({ ...options, changeVersion: 1 });
+    await act(async () => { jest.advanceTimersByTime(1_200); await Promise.resolve(); });
+    await waitFor(() => expect(view.result.current.state).toBe("saved"));
+    expect(operationId).toBeTruthy();
+    expect(view.result.current.getRevision()).toBe(6);
+  });
+
   it("ignores a save that resolves after the editor moved to another plan", async () => {
     // Regression: the editor stays mounted across prev/next, so an in-flight
     // save for plan A used to land on plan B — applying A's revision and

@@ -790,7 +790,107 @@ describe("ServicePlanElementRow", () => {
     expect(screen.queryByRole("button", { name: /Remove note/i })).not.toBeInTheDocument();
   });
 
-  it("opens the read-only people popover from the lead cell", async () => {
+  it("shows ordered participant names and opens complete microphone details", async () => {
+    const user = userEvent.setup();
+    const orange: ServicePlanMicrophone = {
+      id: "mic-orange",
+      name: "Orange",
+      type: "Handheld",
+      color: "#f97316",
+    };
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "mic", microphoneIds: ["mic-orange"] },
+          { id: "lead", name: "Pastor John", microphoneIds: ["mic-orange"] },
+          { id: "second", name: "Sarah Lee" },
+        ],
+      },
+    });
+
+    const trigger = screen.getByRole("button", {
+      name: "Show all 2 participants for Pastoral Greetings",
+    });
+    expect(trigger).toHaveTextContent("2");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveClass(
+      "flex-none",
+      "shrink-0",
+      "max-md:min-h-0!",
+      "max-md:h-[2rem]!",
+    );
+    expect(screen.getByText("Pastor John, Sarah Lee")).toHaveClass(
+      "min-w-0",
+      "flex-1",
+      "overflow-hidden",
+      "text-ellipsis",
+      "whitespace-nowrap",
+    );
+
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(dialog).toHaveTextContent("Assignees");
+    expect(dialog).toHaveTextContent("Pastor John");
+    expect(dialog).toHaveTextContent("Sarah Lee");
+    expect(dialog).toHaveTextContent("Orange");
+  });
+
+  it("keeps the details trigger available for one long-named participant and zero people", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderRow({
+      canEdit: false,
+      isEditing: false,
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "A Very Exceptionally Long Participant Name" }],
+      },
+    });
+
+    const oneParticipant = screen.getByRole("button", {
+      name: "Show all 1 participant for Pastoral Greetings",
+    });
+    expect(oneParticipant).toHaveTextContent("1");
+    expect(screen.getByText("A Very Exceptionally Long Participant Name")).toHaveAttribute(
+      "title",
+      "A Very Exceptionally Long Participant Name",
+    );
+    await user.click(oneParticipant);
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "A Very Exceptionally Long Participant Name",
+    );
+    await user.keyboard("{Escape}");
+    expect(oneParticipant).toHaveAttribute("aria-expanded", "false");
+
+    rerender(
+      <DndContext onDragEnd={() => { }}>
+        <SortableContext
+          items={[elementDndId(baseElement.id)]}
+          strategy={verticalListSortingStrategy}
+        >
+          <ServicePlanElementRow
+            element={baseElement}
+            canEdit={false}
+            isEditing={false}
+            onRemove={jest.fn()}
+            onUpdate={jest.fn()}
+            onDurationChange={jest.fn()}
+            onStartTimeChange={jest.fn()}
+            assignedToHistoryValues={[]}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+    expect(
+      screen.getByRole("button", { name: "View people and microphones for Pastoral Greetings" }),
+    ).not.toHaveTextContent(/\d/);
+  });
+
+  it("shows a stable total for many participants, including names beyond the visible width", async () => {
     const user = userEvent.setup();
     renderRow({
       canEdit: false,
@@ -798,17 +898,31 @@ describe("ServicePlanElementRow", () => {
       element: {
         ...baseElement,
         assignees: [
-          { id: "mic", microphoneIds: ["mic-orange"] },
-          { id: "lead", name: "Pastor John" },
+          { id: "a1", name: "Alexandria Montgomery" },
+          { id: "a2", name: "Benjamin Christopher" },
+          { id: "a3", name: "Catherine Isabella" },
+          { id: "a4", name: "Dominic Alexander" },
+          { id: "stand", microphoneIds: ["mic-orange"] },
         ],
       },
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /View people and microphones for Pastoral Greetings/i }),
-    );
-    expect(await screen.findByRole("dialog")).toHaveTextContent("Assignees");
-    expect(screen.getByRole("dialog")).toHaveTextContent("Pastor John");
+    const trigger = screen.getByRole("button", {
+      name: "Show all 4 participants for Pastoral Greetings",
+    });
+    expect(trigger).toHaveTextContent("4");
+    expect(screen.getByText(
+      "Alexandria Montgomery, Benjamin Christopher, Catherine Isabella, Dominic Alexander",
+    )).toHaveAttribute("title", "Alexandria Montgomery, Benjamin Christopher, Catherine Isabella, Dominic Alexander");
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveTextContent("4");
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
   it("opens lyrics from the song badge without removing the song", async () => {
@@ -1248,7 +1362,9 @@ describe("assignees and their microphones", () => {
     // The running-order column is intentionally compact; the full block
     // beneath the item still exposes both people and their microphones.
     expect(screen.getAllByText("Pastor John").length).toBeGreaterThan(0);
-    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Show all 2 participants for Pastoral Greetings" }),
+    ).toHaveTextContent("2");
     expect(screen.getByText("Sarah Lee")).toBeInTheDocument();
   });
 
@@ -1298,7 +1414,7 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+      screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
     await user.click(
       await screen.findByRole("button", { name: /Add microphone for Pastor John/i }),
@@ -1328,7 +1444,7 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+      screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
     await user.click(
       screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
@@ -1385,7 +1501,7 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+      screen.getByRole("button", { name: "Show all 2 participants for Pastoral Greetings" }),
     );
     await user.click(
       await screen.findByRole("button", { name: /Add microphone for Sarah Lee/i }),
@@ -1409,7 +1525,7 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+      screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
     await user.click(
       await screen.findByRole("button", { name: /Add microphone for Abigail/i }),
@@ -1568,7 +1684,7 @@ describe("microphone slots from a template", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+      screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
     await user.click(
       await screen.findByRole("button", {

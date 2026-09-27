@@ -1566,7 +1566,11 @@ export function useMediaLibraryController({
   };
 
   const createCanvaDeckItemFromMedia = useCallback(
-    async (pages: MediaType[], designTitle: string) => {
+    async (
+      pages: MediaType[],
+      designTitle: string,
+      options: { navigateToItem?: boolean } = {},
+    ) => {
       if (!db || pages.length === 0) return;
       // Prefer live list entries so refreshed Canva backgrounds are current.
       const resolvedPages = pages.map(
@@ -1596,19 +1600,21 @@ export function useMediaLibraryController({
           _id: newItem._id,
           listId: "",
         };
-        dispatch(setActiveItem(newItem));
+        if (options.navigateToItem !== false) dispatch(setActiveItem(newItem));
         const addedAction = dispatch(addItemToItemList(listItem));
         dispatch(upsertItemInAllItemsList(listItem));
-        navigate(
-          getControllerItemPath(
-            { _id: newItem._id, listId: addedAction.payload.listId },
-            controllerBasePath,
-          ),
+        const itemPath = getControllerItemPath(
+          { _id: newItem._id, listId: addedAction.payload.listId },
+          controllerBasePath,
         );
-        showToast(
-          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
-          "success",
-        );
+        if (options.navigateToItem !== false) {
+          navigate(itemPath);
+          showToast(
+            `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
+            "success",
+          );
+        }
+        return itemPath;
       } catch {
         showToast(
           "Canva media was imported, but the custom item could not be created. Try Create custom item from Media.",

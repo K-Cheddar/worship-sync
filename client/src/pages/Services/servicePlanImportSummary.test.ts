@@ -164,7 +164,7 @@ describe("summarizeServicePlanImport", () => {
 
     expect(summary.changes[0].fields).toContainEqual(expect.objectContaining({
       label: "Source changes",
-      before: "Pending: title",
+      before: "title: Old title → New title",
       after: "Up to date",
     }));
     expect(applySelectedServicePlanImportChanges(current, next, summary, new Set())).toEqual(current);
@@ -200,6 +200,81 @@ describe("summarizeServicePlanImport", () => {
       removed: 0,
       updated: 0,
     });
+  });
+
+  it("treats regenerated song occurrence IDs and normalized rich text as unchanged", () => {
+    const current = [section([element("song", "  Welcome   Song ", {
+      title: { blocks: [{ type: "paragraph", id: "title-1", spans: [{ text: "Welcome Song" }] }] },
+      songRefs: [{ id: "occurrence-1", kind: "library", songId: "song-1", songName: "Welcome Song", key: "C" }],
+      scriptureRefs: [{ id: "scripture-1", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+    })])];
+    const next = [section([element("song", "Welcome Song", {
+      title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome " }, { text: "Song" }] }] },
+      songRefs: [{ id: "occurrence-2", kind: "library", songId: "song-1", songName: " Welcome Song ", key: "C" }],
+      scriptureRefs: [{ id: "scripture-2", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+    })])];
+
+    expect(summarizeServicePlanImport(current, next)).toEqual({
+      changes: [], added: 0, removed: 0, updated: 0,
+    });
+  });
+
+  it("shows song identity, key, and pending lyric changes in the review", () => {
+    const current = [section([element("set", "Songs", {
+      songRefs: [
+        { id: "a", kind: "library", songId: "song-1", songName: "First Song", key: "C" },
+        { id: "b", kind: "pending", title: "Second Song", lyricsText: "Old verse", key: "G" },
+      ],
+    })])];
+    const next = [section([element("set", "Songs", {
+      songRefs: [
+        { id: "a2", kind: "library", songId: "song-2", songName: "First Song", key: "D" },
+        { id: "b2", kind: "pending", title: "Second Song", lyricsText: "New verse", key: "G" },
+      ],
+    })])];
+
+    expect(summarizeServicePlanImport(current, next).changes[0].fields).toEqual([
+      {
+        label: "Song",
+        before: "First Song (Key C), Second Song (Key G · Lyrics: Old verse)",
+        after: "First Song (Key D), Second Song (Key G · Lyrics: New verse)",
+      },
+    ]);
+  });
+
+  it("ignores equivalent assignments, duration units, timing whitespace, and note serialization", () => {
+    const current = [section([element("item", "Welcome", {
+      assignees: [{ id: "a1", name: "Avery" }], sourceLedByRaw: " Avery  Smith ",
+      startTime: "09:00", durationSeconds: 120,
+      notes: { blocks: [{ type: "paragraph", id: "note-1", spans: [{ text: "Hello" }] }] },
+      teamNotes: [{ id: "tn-1", label: "Media Team", note: { blocks: [{ type: "paragraph", spans: [{ text: "Capture " }, { text: "the greeting." }] }] } }],
+    })])];
+    const next = [section([element("item", "Welcome", {
+      assignees: [{ id: "new-assignee", name: " Avery " }], sourceLedByRaw: "Avery Smith",
+      startTime: " 09:00 ", durationMinutes: 2,
+      notes: { blocks: [{ type: "paragraph", spans: [{ text: "Hello" }] }] },
+      teamNotes: [{ id: "tn-2", label: "Media Team", note: { blocks: [{ type: "paragraph", spans: [{ text: "Capture the greeting." }] }] } }],
+    })])];
+
+    expect(summarizeServicePlanImport(current, next)).toEqual({
+      changes: [], added: 0, removed: 0, updated: 0,
+    });
+  });
+
+  it("still detects assignment, duration, shared note, and title formatting changes", () => {
+    const current = [section([element("item", "Welcome", {
+      assignees: [{ id: "a1", name: "Avery" }], durationMinutes: 2,
+      notes: plainTextToRichText("Old note"),
+    })])];
+    const next = [section([element("item", "Welcome", {
+      assignees: [{ id: "a2", name: "Blair" }], durationSeconds: 180,
+      notes: plainTextToRichText("New note"),
+      title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome", bold: true }] }] },
+    })])];
+
+    expect(summarizeServicePlanImport(current, next).changes[0].fields.map(({ label }) => label)).toEqual([
+      "Title", "Assigned to", "Time or duration", "Notes",
+    ]);
   });
 
   it("keeps unchecked import changes out of the applied draft", () => {

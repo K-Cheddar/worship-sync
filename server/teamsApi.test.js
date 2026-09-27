@@ -4426,6 +4426,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     params: { planKey },
     body: {
       baseRevision: created.payload.servicePlan.revision,
+      saveOperationId: "autosave-operation-0001",
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
@@ -4442,6 +4443,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               id: "el-1",
               type: "song",
               title: richText("Great Are You Lord"),
+              songRefs: [{ id: "song-ref-1", kind: "pending", title: "Draft song", lyricsText: "lyrics" }],
+              scriptureRefs: [{ id: "scripture-ref-1", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
               durationMinutes: 5,
               notes: richText("Red mic"),
               teamNotes: [
@@ -4461,7 +4464,15 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.payload.servicePlan.revision, 2);
+  assert.equal(updated.payload.servicePlan.saveOperationId, undefined);
+  const updateEvent = sseClient.events().filter((event) => event.type === "service-plan-updated").at(-1);
+  assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
+  assert.equal(updateEvent.servicePlan.lastSaveOperationId, undefined);
+  const recovered = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+  assert.equal(recovered.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
   assert.equal(updated.payload.servicePlan.sections[0].elements.length, 2);
+  assert.equal(updated.payload.servicePlan.sections[0].elements[0].songRefs[0].id, "song-ref-1");
+  assert.equal(updated.payload.servicePlan.sections[0].elements[0].scriptureRefs[0].id, "scripture-ref-1");
   assert.equal(
     updated.payload.servicePlan.sections[0].elements[1].durationMinutes,
     1.5,
@@ -4490,6 +4501,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(staleSave.statusCode, 409);
   assert.equal(staleSave.payload.conflict, true);
   assert.equal(staleSave.payload.servicePlan.revision, 2);
+  assert.equal(staleSave.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
 
   const published = await callHandler(authHandlers.publishServicePlan, {
     context,

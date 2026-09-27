@@ -1,4 +1,4 @@
-import { richTextToPlainText } from "../../types/richText";
+import { normalizeRichTextDocument, richTextToPlainText } from "../../types/richText";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementScriptureRefs,
@@ -37,7 +37,9 @@ export const getNewServicePlanImportAmbiguityIds = (
       return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
         ? [[element.id, JSON.stringify({
             reasons: ambiguity.reasons,
-            parts: ambiguity.parts.map(({ kind, value, destination }) => ({ kind, value, destination })),
+            parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
+              kind, value, destination, sourceField: sourceField || "title",
+            })),
           })] as const]
         : [];
     })),
@@ -47,7 +49,9 @@ export const getNewServicePlanImportAmbiguityIds = (
     return ambiguity?.status === "unresolved" &&
       currentFingerprintById.get(element.id) !== JSON.stringify({
         reasons: ambiguity.reasons,
-        parts: ambiguity.parts.map(({ kind, value, destination }) => ({ kind, value, destination })),
+        parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
+          kind, value, destination, sourceField: sourceField || "title",
+        })),
       })
       ? [element.id]
       : [];
@@ -68,6 +72,120 @@ type Indexed<T> = { value: T; index: number };
 
 const normalized = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+
+const normalizedSourceValue = (value: string): string =>
+  value.replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
+
+const normalizedLyrics = (value: string): string =>
+  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const normalizedRichText = (value: string): string =>
+  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const normalizedStartTime = (value: string | undefined): string => {
+  const time = normalizedSourceValue(value || "");
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time);
+  return match ? `${match[1].padStart(2, "0")}:${match[2]}` : time;
+};
+
+const sameSourceValue = (left: string, right: string): boolean =>
+  normalizedSourceValue(left) === normalizedSourceValue(right);
+
+const normalizedRichTextValue = (value: ServicePlanElement["notes"]) => {
+  const document = normalizeRichTextDocument(value);
+  return document.blocks.map(({ id: _id, ...block }) => ({
+    ...block,
+    spans: block.spans.reduce<Array<{ text: string; bold?: true; italic?: true; underline?: true; color?: string }>>(
+      (spans, span) => {
+        const normalizedSpan = {
+          text: normalizedRichText(span.text),
+          ...(span.bold ? { bold: true as const } : {}),
+          ...(span.italic ? { italic: true as const } : {}),
+          ...(span.underline ? { underline: true as const } : {}),
+          ...(span.color ? { color: span.color.toLowerCase() } : {}),
+        };
+        const previous = spans.at(-1);
+        if (!normalizedSpan.text) return spans;
+        if (previous && JSON.stringify({ ...previous, text: "" }) === JSON.stringify({ ...normalizedSpan, text: "" })) {
+          previous.text += `${previous.text ? " " : ""}${normalizedSpan.text}`;
+        } else {
+          spans.push(normalizedSpan);
+        }
+        return spans;
+      },
+      [],
+    ),
+  }));
+};
+
+const sameRichText = (
+  left: ServicePlanElement["notes"],
+  right: ServicePlanElement["notes"],
+) => JSON.stringify(normalizedRichTextValue(left)) === JSON.stringify(normalizedRichTextValue(right));
+
+const sameSongOccurrence = (
+  left: ReturnType<typeof getServicePlanElementSongRefs>[number],
+  right: ReturnType<typeof getServicePlanElementSongRefs>[number],
+): boolean => {
+  if (left.kind === "library" && right.kind === "library") {
+    return left.songId === right.songId;
+  }
+  const leftTitle = normalized(left.kind === "library" ? left.songName : left.title);
+  const rightTitle = normalized(right.kind === "library" ? right.songName : right.title);
+  return Boolean(leftTitle && leftTitle === rightTitle);
+};
+
+const sameSongContent = (
+  left: ReturnType<typeof getServicePlanElementSongRefs>[number],
+  right: ReturnType<typeof getServicePlanElementSongRefs>[number],
+): boolean => {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "library" && right.kind === "library") {
+    return left.songId === right.songId &&
+      normalized(left.songName) === normalized(right.songName) &&
+      normalized(left.key || "") === normalized(right.key || "");
+  }
+  if (left.kind === "pending" && right.kind === "pending") {
+    return normalized(left.title) === normalized(right.title) &&
+      normalizedLyrics(left.lyricsText) === normalizedLyrics(right.lyricsText) &&
+      normalized(left.key || "") === normalized(right.key || "");
+  }
+  return false;
+};
+
+const sameScriptureContent = (
+  left: ReturnType<typeof getServicePlanElementScriptureRefs>[number],
+  right: ReturnType<typeof getServicePlanElementScriptureRefs>[number],
+): boolean => normalized(left.book) === normalized(right.book) &&
+  normalized(left.chapter) === normalized(right.chapter) &&
+  normalized(left.verseRange) === normalized(right.verseRange) &&
+  normalized(left.version) === normalized(right.version);
+
+/** Reuse occurrence IDs for the same song while retaining each linked library reference. */
+const reconcileImportedSongRefs = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+): ReturnType<typeof getServicePlanElementSongRefs> => {
+  const currentRefs = getServicePlanElementSongRefs(current);
+  const importedRefs = getServicePlanElementSongRefs(imported);
+  const used = new Set<number>();
+  return importedRefs.map((importedRef) => {
+    const matchIndex = currentRefs.findIndex((currentRef, index) =>
+      !used.has(index) && sameSongOccurrence(currentRef, importedRef),
+    );
+    if (matchIndex < 0) return importedRef;
+    used.add(matchIndex);
+    const currentRef = currentRefs[matchIndex];
+    if (currentRef.kind === "library" && importedRef.kind === "pending") {
+      return currentRef;
+    }
+    if (sameSongContent(currentRef, importedRef)) return currentRef;
+    if (currentRef.id && !importedRef.id) {
+      return { ...importedRef, id: currentRef.id };
+    }
+    return importedRef;
+  });
+};
 
 const labelsMatch = (left: string | string[], right: string | string[]): boolean => {
   const leftLabels = (Array.isArray(left) ? left : [left])
@@ -213,18 +331,20 @@ const preserveImportedTeamNoteIds = (
   return importedNotes.map((importedNote) => {
     const exactIndex = available.findIndex(
       (currentNote) =>
-        currentNote.label === importedNote.label &&
-        JSON.stringify(currentNote.note) === JSON.stringify(importedNote.note),
+        normalized(currentNote.label) === normalized(importedNote.label) &&
+        sameRichText(currentNote.note, importedNote.note),
     );
     const labelIndex =
       exactIndex >= 0
         ? exactIndex
         : available.findIndex(
-            (currentNote) => currentNote.label === importedNote.label,
+            (currentNote) => normalized(currentNote.label) === normalized(importedNote.label),
           );
     if (labelIndex < 0) return importedNote;
     const [currentNote] = available.splice(labelIndex, 1);
-    return { ...importedNote, id: currentNote.id };
+    return exactIndex >= 0
+      ? { ...importedNote, id: currentNote.id, label: currentNote.label, note: currentNote.note }
+      : { ...importedNote, id: currentNote.id };
   });
 };
 
@@ -246,22 +366,43 @@ const mergeElement = (
     applied: snapshotFor(current),
     pendingFields: [],
   };
-  const observed = snapshotFor(imported);
+  const incomingObserved = snapshotFor(imported);
+  const observed = {
+    elementType: sameSourceValue(currentState.observed.elementType, incomingObserved.elementType)
+      ? currentState.observed.elementType
+      : incomingObserved.elementType,
+    title: sameSourceValue(currentState.observed.title, incomingObserved.title)
+      ? currentState.observed.title
+      : incomingObserved.title,
+    ledBy: sameSourceValue(currentState.observed.ledBy, incomingObserved.ledBy)
+      ? currentState.observed.ledBy
+      : incomingObserved.ledBy,
+    note: sameSourceValue(currentState.observed.note, incomingObserved.note)
+      ? currentState.observed.note
+      : incomingObserved.note,
+  };
   const applied = { ...currentState.applied };
   if (options.updateTitles) {
-    applied.elementType = observed.elementType;
-    applied.title = observed.title;
+    if (!sameSourceValue(applied.elementType, observed.elementType)) {
+      applied.elementType = observed.elementType;
+    }
+    if (!sameSourceValue(applied.title, observed.title)) applied.title = observed.title;
   }
-  if (options.updateAssignments) applied.ledBy = observed.ledBy;
-  if (options.updateNotes) applied.note = observed.note;
+  if (options.updateAssignments && !sameSourceValue(applied.ledBy, observed.ledBy)) {
+    applied.ledBy = observed.ledBy;
+  }
+  if (options.updateNotes && !sameSourceValue(applied.note, observed.note)) {
+    applied.note = observed.note;
+  }
   const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
-    .filter((field) => observed[field] !== applied[field]);
+    .filter((field) => !sameSourceValue(observed[field], applied[field]));
   next.servicePlanningImport = { observed, applied, pendingFields };
   const changedAcceptedTitle = options.updateTitles && (
-    currentState.applied.title !== observed.title ||
-    currentState.applied.elementType !== observed.elementType
+    !sameSourceValue(currentState.applied.title, observed.title) ||
+    !sameSourceValue(currentState.applied.elementType, observed.elementType)
   );
-  const changedAcceptedNote = options.updateNotes && currentState.applied.note !== observed.note;
+  const changedAcceptedNote = options.updateNotes &&
+    !sameSourceValue(currentState.applied.note, observed.note);
   const changedAcceptedTitleOrNote = changedAcceptedTitle || changedAcceptedNote;
   const confirmed = current.importAmbiguity?.status === "confirmed" ||
     current.importAmbiguity?.status === "acknowledged";
@@ -276,7 +417,9 @@ const mergeElement = (
     next = {
       ...next,
       type: imported.type,
-      title: imported.title,
+      ...(!sameRichText(current.title, imported.title)
+        ? { title: imported.title }
+        : {}),
     };
     // A refresh must not undo song linking: once a slot points at a real
     // library song, an unmatched ("pending") ref from the source is the weaker
@@ -284,14 +427,7 @@ const mergeElement = (
     // worship set can keep a later library link even when an earlier one is
     // still pending.
     const currentSongRefs = getServicePlanElementSongRefs(current);
-    const importedSongRefs = getServicePlanElementSongRefs(imported);
-    const mergedSongRefs = importedSongRefs.map((importedRef, index) => {
-      const currentRef = currentSongRefs[index];
-      if (currentRef?.kind === "library" && importedRef.kind === "pending") {
-        return currentRef;
-      }
-      return importedRef;
-    });
+    const mergedSongRefs = reconcileImportedSongRefs(current, imported);
     const songRefsUnchanged =
       mergedSongRefs.length === currentSongRefs.length &&
       mergedSongRefs.every((ref, index) => ref === currentSongRefs[index]);
@@ -299,24 +435,61 @@ const mergeElement = (
       next.songRefs = mergedSongRefs;
       delete next.songRef;
     }
-    next.scriptureRefs = getServicePlanElementScriptureRefs(imported);
-    delete next.scriptureRef;
-    next = copyOptionalField(next, imported, "sourceElementTypeRaw");
-    next = copyOptionalField(next, imported, "sourceContentTitleRaw");
+    const currentScriptureRefs = getServicePlanElementScriptureRefs(current);
+    const importedScriptureRefs = getServicePlanElementScriptureRefs(imported);
+    const scriptureRefsUnchanged = currentScriptureRefs.length === importedScriptureRefs.length &&
+      currentScriptureRefs.every((ref, index) =>
+        sameScriptureContent(ref, importedScriptureRefs[index]),
+      );
+    if (!scriptureRefsUnchanged) {
+      next.scriptureRefs = importedScriptureRefs.map((ref, index) => ({
+        ...ref,
+        ...(currentScriptureRefs[index]?.id && !ref.id
+          ? { id: currentScriptureRefs[index].id }
+          : {}),
+      }));
+      delete next.scriptureRef;
+    }
+    if (normalized(current.sourceElementTypeRaw || "") !== normalized(imported.sourceElementTypeRaw || "")) {
+      next = copyOptionalField(next, imported, "sourceElementTypeRaw");
+    }
+    if (!sameSourceValue(current.sourceContentTitleRaw || "", imported.sourceContentTitleRaw || "")) {
+      next = copyOptionalField(next, imported, "sourceContentTitleRaw");
+    }
   }
   if (options.updateAssignments && !preserveConfirmedAssignees) {
-    next.assignees = mergeImportedAssignees(current, imported);
-    next = copyOptionalField(next, imported, "sourceLedByRaw");
-    next = copyOptionalField(next, imported, "sourceLedByAssignments");
+    const mergedAssignees = mergeImportedAssignees(current, imported);
+    if (JSON.stringify(mergedAssignees) !== JSON.stringify(getServicePlanElementAssignees(current))) {
+      next.assignees = mergedAssignees;
+    }
+    if (!sameSourceValue(current.sourceLedByRaw || "", imported.sourceLedByRaw || "")) {
+      next = copyOptionalField(next, imported, "sourceLedByRaw");
+    }
+    const comparableSourceAssignments = (assignments: ServicePlanElement["sourceLedByAssignments"]) =>
+      (assignments || []).map(({ kind, id, name }) => ({ kind, id: id || "", name: normalized(name) }));
+    if (JSON.stringify(comparableSourceAssignments(current.sourceLedByAssignments)) !==
+      JSON.stringify(comparableSourceAssignments(imported.sourceLedByAssignments))) {
+      next = copyOptionalField(next, imported, "sourceLedByAssignments");
+    }
   }
   if (options.updateTiming) {
-    next = copyOptionalField(next, imported, "startTime");
-    next = copyOptionalField(next, imported, "durationSeconds");
-    next = copyOptionalField(next, imported, "durationMinutes");
+    if (normalizedStartTime(current.startTime) !== normalizedStartTime(imported.startTime)) {
+      next = copyOptionalField(next, imported, "startTime");
+    }
+    const currentDurationSeconds = current.durationSeconds ?? (current.durationMinutes ?? 0) * 60;
+    const importedDurationSeconds = imported.durationSeconds ?? (imported.durationMinutes ?? 0) * 60;
+    if (currentDurationSeconds !== importedDurationSeconds) {
+      next = copyOptionalField(next, imported, "durationSeconds");
+      next = copyOptionalField(next, imported, "durationMinutes");
+    }
   }
   if (options.updateNotes && !preserveConfirmedNotes) {
-    next = copyOptionalField(next, imported, "notes");
-    next = copyOptionalField(next, imported, "sourceNoteRaw");
+    if (!sameRichText(current.notes, imported.notes)) {
+      next = copyOptionalField(next, imported, "notes");
+    }
+    if (!sameSourceValue(current.sourceNoteRaw || "", imported.sourceNoteRaw || "")) {
+      next = copyOptionalField(next, imported, "sourceNoteRaw");
+    }
     // Service Planning can refresh shared and team notes, but role notes are
     // local Teams instructions and must survive that refresh.
     const localRoleNotes = (current.teamNotes || []).filter(

@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   useContext,
+  useMemo,
 } from "react";
 import { createPortal } from "react-dom";
 import { Cloud, Upload, Minimize2 } from "lucide-react";
@@ -37,9 +38,10 @@ import {
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
 import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
-import { ProgressPopup } from "./components/ProgressPopup";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
+import { useOptionalTransfers } from "../../context/transferContext";
+import { ProgressPopup } from "./components/ProgressPopup";
 
 const isLocalMediaPlaybackError = (error: unknown) =>
   error instanceof Error &&
@@ -67,6 +69,8 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const { churchId = "", uploadPreset: contextUploadPreset } =
       useContext(GlobalInfoContext) || {};
     const { isGuestSession = false } = useContext(ControllerInfoContext) || {};
+    const transferContext = useOptionalTransfers();
+    const updateUploadTransfer = transferContext?.updateUploadTransfer;
     const resolvedUploadPreset = contextUploadPreset || uploadPreset;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
@@ -512,6 +516,26 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const isUploading = uploadStatus === "uploading" || uploadStatus === "processing";
 
+    const transferItem = useMemo(() => uploadStatus === "idle" ? null : {
+      id: "media-upload",
+      kind: "upload" as const,
+      title: selectedFiles.length === 1 ? selectedFiles[0].displayName : `${selectedFiles.length} media files`,
+      status: uploadStatus === "ready" ? "completed" as const : uploadStatus === "error" ? "failed" as const : uploadStatus,
+      progress: overallProgress,
+      message: statusMessage || (uploadStatus === "error" ? error : ""),
+    }, [error, overallProgress, selectedFiles, statusMessage, uploadStatus]);
+    const transferItemRef = useRef(transferItem);
+    transferItemRef.current = transferItem;
+    useEffect(() => {
+      updateUploadTransfer?.(transferItem);
+    }, [updateUploadTransfer, transferItem]);
+    useEffect(() => () => {
+      const lastTransfer = transferItemRef.current;
+      if (lastTransfer?.status === "uploading" || lastTransfer?.status === "processing") {
+        updateUploadTransfer?.({ ...lastTransfer, status: "failed", message: "Upload stopped when the Media page closed." });
+      }
+    }, [updateUploadTransfer]);
+
     const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
       disabled: uploadDisabled || isUploading,
       onFiles: addFiles,
@@ -531,7 +555,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       [openModal, openModalWithFiles, isUploading, overallProgress, uploadStatus],
     );
     const cloudEnabled = !isGuestSession && uploadToCloud;
-    const showProgressPopup = (isUploading || uploadStatus === "ready" || uploadStatus === "error") && isMinimized && !isMinimizedToButton;
+    const showProgressPopup = !transferContext &&
+      (isUploading || uploadStatus === "ready" || uploadStatus === "error") &&
+      isMinimized && !isMinimizedToButton;
+    const getControllerElement = () => document.getElementById("controller-main") || document.body;
     const offlineConversionCandidates = selectedFiles.reduce<number[]>(
       (candidates, fileProgress, index) => {
         if (fileProgress.canConvertForOfflinePlayback) candidates.push(index);
@@ -597,11 +624,6 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       }
     };
 
-    const getControllerElement = () => {
-      const controllerMain = document.getElementById("controller-main");
-      return controllerMain || document.body;
-    };
-
     const imageCount = selectedFiles.filter(f => f.fileType === "image").length;
     const videoCount = selectedFiles.filter(f => f.fileType === "video").length;
     let confirmLabel = cloudEnabled ? "Upload" : "Add";
@@ -616,6 +638,19 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     return (
       <>
+        {showProgressPopup && createPortal(
+          <ProgressPopup
+            uploadStatus={uploadStatus}
+            overallProgress={overallProgress}
+            statusMessage={statusMessage}
+            progressLabel={cloudEnabled ? "Upload" : "Add"}
+            currentFileIndex={currentFileIndex}
+            totalFiles={selectedFiles.length}
+            onRestore={() => { setIsMinimized(false); setIsMinimizedToButton(false); }}
+            onMinimize={() => { setIsMinimizedToButton(true); setIsMinimized(false); }}
+          />,
+          getControllerElement(),
+        )}
         {showButton && (
           <Button
             variant="tertiary"
@@ -626,26 +661,6 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           >
             Add
           </Button>
-        )}
-
-        {showProgressPopup && createPortal(
-          <ProgressPopup
-            uploadStatus={uploadStatus}
-            overallProgress={overallProgress}
-            statusMessage={statusMessage}
-            progressLabel={cloudEnabled ? "Upload" : "Add"}
-            currentFileIndex={currentFileIndex}
-            totalFiles={selectedFiles.length}
-            onRestore={() => {
-              setIsMinimized(false);
-              setIsMinimizedToButton(false);
-            }}
-            onMinimize={() => {
-              setIsMinimizedToButton(true);
-              setIsMinimized(false);
-            }}
-          />,
-          getControllerElement()
         )}
 
         <Modal

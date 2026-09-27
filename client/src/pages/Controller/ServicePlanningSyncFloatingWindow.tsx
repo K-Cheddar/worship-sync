@@ -337,6 +337,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [microphoneRefreshVersion, setMicrophoneRefreshVersion] = useState(0);
   // Keeps the Controller's copy of the plan in step with the Services editor.
   const {
     savedPlans,
@@ -420,7 +421,7 @@ const ServicePlanningSyncFloatingWindow = ({
     return () => {
       cancelled = true;
     };
-  }, [churchId]);
+  }, [churchId, microphoneRefreshVersion]);
 
   useEffect(() => {
     if (floatingWindowRestoreId !== prevRestoreIdRef.current) {
@@ -473,6 +474,7 @@ const ServicePlanningSyncFloatingWindow = ({
       setIsRefreshing(true);
       try {
         await refreshPlan();
+        setMicrophoneRefreshVersion((version) => version + 1);
         showToast("Plan refreshed", "success");
       } catch {
         showToast("Failed to refresh plan", "error");
@@ -487,6 +489,7 @@ const ServicePlanningSyncFloatingWindow = ({
     try {
       const result = await loadPreview(url);
       dispatch(setServicePlanningServiceOutline(result));
+      setMicrophoneRefreshVersion((version) => version + 1);
       showToast("Plan refreshed", "success");
     } catch {
       showToast("Failed to refresh plan", "error");

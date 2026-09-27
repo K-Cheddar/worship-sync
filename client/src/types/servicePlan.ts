@@ -597,6 +597,8 @@ export type ServicePlan = {
   pushedToOutlineAt?: string | null;
   /** Incremented by the server on each content save for conflict detection. */
   revision?: number;
+  /** Opaque last-save correlation id used only for autosave recovery. */
+  lastSaveOperationId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
