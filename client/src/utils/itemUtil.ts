@@ -497,6 +497,7 @@ export const updateFormattedSections = ({
 };
 
 type CreateNewFreeFormType = {
+  id?: string;
   name: string;
   text: string;
   list: ServiceItem[];
@@ -519,6 +520,7 @@ type CreateNewFreeFormType = {
 };
 
 export const createNewFreeForm = async ({
+  id,
   name,
   text,
   list,
@@ -584,7 +586,7 @@ export const createNewFreeForm = async ({
   const newItem: ItemState = {
     name: _name,
     type: "free",
-    _id: _name,
+    _id: id || _name,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,

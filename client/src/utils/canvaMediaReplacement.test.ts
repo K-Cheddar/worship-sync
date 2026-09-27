@@ -104,6 +104,17 @@ test("does not delete the old provider when Media persistence fails", async () =
   expect(args.events).not.toContain("old-provider");
 });
 
+test("reverts references and keeps a newer Media revision when the target changes before commit", async () => {
+  const args = createArgs({ canCommit: () => false });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(
+    "Media changed while Canva was refreshing this page.",
+  );
+  expect(args.events).toEqual(["references", "rollback-references", "new-provider"]);
+  expect(args.events).not.toContain("media");
+  expect(args.events).not.toContain("old-provider");
+});
+
 test("keeps a refreshed Mux rendition active when old-asset cleanup fails", async () => {
   const args = createArgs({
     oldMedia: media({

@@ -31,6 +31,9 @@ export type CanvaMediaReplacementTransactionArgs = {
   applyList: (list: MediaType[], folders: MediaFolder[]) => void;
   applyLiveReferences: (replacement: MediaReferenceReplacement) => void;
   onCleanupFailure: (rows: MediaType[]) => void;
+  canCommit?: () => boolean;
+  getCurrentList?: () => MediaType[];
+  getCurrentFolders?: () => MediaFolder[];
 };
 
 /**
@@ -49,6 +52,9 @@ export async function commitCanvaMediaReplacement({
   applyList,
   applyLiveReferences,
   onCleanupFailure,
+  canCommit,
+  getCurrentList,
+  getCurrentFolders,
 }: CanvaMediaReplacementTransactionArgs): Promise<void> {
   const replacement = { oldMedia, newMedia };
   let references: ReferenceMutationResult;
@@ -82,20 +88,51 @@ export async function commitCanvaMediaReplacement({
     );
   }
 
-  const nextList = currentList.map((media) =>
+  if (canCommit && !canCommit()) {
+    let rollback: ReferenceMutationResult;
+    try {
+      rollback = await replaceReferences({ oldMedia: newMedia, newMedia: oldMedia });
+    } catch (error) {
+      rollback = {
+        ok: false,
+        rollbackStatus: "uncertain",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (rollback.ok && (rollback.rollbackStatus === "complete" || rollback.rollbackStatus === "not_needed")) {
+      if (!(await deleteProvider(newMedia, oldMedia))) onCleanupFailure([newMedia]);
+      throw new Error("Media changed while Canva was refreshing this page. The newer Media version was kept.");
+    }
+    throw new Error("Media changed while Canva was refreshing this page. The newer version was kept, and provider cleanup needs reconciliation.");
+  }
+
+  const latestListBeforeApply = getCurrentList?.() ?? currentList;
+  const latestFoldersBeforeApply = getCurrentFolders?.() ?? folders;
+  const nextList = latestListBeforeApply.map((media) =>
     media.id === oldMedia.id ? newMedia : media,
   );
-  applyList(nextList, folders);
+  applyList(nextList, latestFoldersBeforeApply);
   applyLiveReferences(replacement);
 
   let mediaFlush: MediaFlushResult;
   try {
-    mediaFlush = await flushMedia(nextList, folders);
+    mediaFlush = await flushMedia(nextList, latestFoldersBeforeApply);
   } catch (error) {
     mediaFlush = { ok: false, error };
   }
   if (!mediaFlush.ok) {
-    applyList(currentList, folders);
+    const latestList = getCurrentList?.() ?? currentList;
+    const latestFolders = getCurrentFolders?.() ?? folders;
+    const rollbackList = latestList.map((media) =>
+      media.id === newMedia.id &&
+      media.canvaImportKey === newMedia.canvaImportKey &&
+      media.background === newMedia.background &&
+      media.publicId === newMedia.publicId &&
+      media.muxAssetId === newMedia.muxAssetId
+        ? currentList.find((current) => current.id === oldMedia.id) ?? media
+        : media,
+    );
+    applyList(rollbackList, latestFolders);
     let rollback: ReferenceMutationResult;
     try {
       rollback = await replaceReferences({

@@ -53,24 +53,22 @@ import { useTransfers } from "../../context/transferContext";
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImageComplete: (info: mediaInfoType) => MediaType | void;
-  onVideoComplete: (info: MuxUploadResult) => MediaType | void;
-  onImageRefresh: (
-    info: mediaInfoType,
-    mediaId: string,
-  ) => void | Promise<void>;
+  onImageComplete: (info: mediaInfoType) => MediaType | void | Promise<MediaType | void>;
+  onVideoComplete: (info: MuxUploadResult) => MediaType | void | Promise<MediaType | void>;
+  onImageRefresh: (info: mediaInfoType, mediaId: string) => void | boolean | Promise<void | boolean>;
   onVideoRefresh: (
     info: MuxUploadResult,
     mediaId: string,
-  ) => void | Promise<void>;
+  ) => void | boolean | Promise<void | boolean>;
   onUnprocessedAssetCleanup?: (asset: CanvaImportedAsset) => Promise<boolean>;
   /** Optionally build a custom item from the imported Canva media. */
   onCreateDeckItem?: (
     pages: MediaType[],
     designTitle: string,
-    options?: { navigateToItem?: boolean },
+    options?: { navigateToItem?: boolean; idempotencyKey?: string },
   ) => string | void | Promise<string | void>;
   existingMedia: readonly MediaType[];
+  getCurrentMedia?: () => readonly MediaType[];
   sourceMedia?: MediaType | null;
 };
 
@@ -92,6 +90,7 @@ const CanvaImportSheet = ({
   onUnprocessedAssetCleanup,
   onCreateDeckItem,
   existingMedia,
+  getCurrentMedia,
   sourceMedia,
 }: Props) => {
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
@@ -287,25 +286,6 @@ const CanvaImportSheet = ({
     }
   };
 
-  const findRefreshTarget = (
-    source: NonNullable<mediaInfoType["canvaSource"]>,
-  ) => {
-    const candidates = mediaSources
-      .filter(
-        ({ source: existingSource }) =>
-          canvaSourcesMatch(existingSource, source) &&
-          existingSource.revision < source.revision,
-      )
-      .sort((left, right) => right.source.revision - left.source.revision);
-    if (sourceMedia) {
-      const preferred = candidates.find(
-        ({ mediaItem }) => mediaItem.id === sourceMedia.id,
-      );
-      if (preferred) return preferred.mediaItem;
-    }
-    return candidates[0]?.mediaItem;
-  };
-
   const togglePage = (pageNumber: number) => {
     if (isImportPending) return;
     if (!selectedPages.has(pageNumber) && selectedPages.size >= 25) {
@@ -328,42 +308,6 @@ const CanvaImportSheet = ({
       const allSelected = pages.every((pageNumber) => current.has(pageNumber));
       return allSelected ? new Set() : new Set(pages);
     });
-  };
-
-  const findCurrentPageMedia = (
-    pageNumber: number,
-    revision: number | string,
-  ) => {
-    if (!selectedDesign) return undefined;
-    const candidates = mediaSources
-      .filter(
-        ({ source }) =>
-          source.designId === selectedDesign.id &&
-          source.format === format &&
-          source.pageNumbers.length === 1 &&
-          source.pageNumbers[0] === pageNumber &&
-          isCanvaSourceCurrent(source, revision),
-      )
-      .sort((left, right) => right.source.revision - left.source.revision);
-    return candidates[0]?.mediaItem;
-  };
-
-  const findCurrentCanvaVideo = (revision: number | string) => {
-    if (!selectedDesign) return undefined;
-    const requestedPageKey = [...selectedPages]
-      .sort((left, right) => left - right)
-      .join(",");
-    const candidates = mediaSources
-      .filter(
-        ({ source }) =>
-          source.designId === selectedDesign.id &&
-          source.format === "mp4" &&
-          [...source.pageNumbers].sort((left, right) => left - right).join(",") ===
-            requestedPageKey &&
-          isCanvaSourceCurrent(source, revision),
-      )
-      .sort((left, right) => right.source.revision - left.source.revision);
-    return candidates[0]?.mediaItem;
   };
 
   const mediaFromRefreshedImage = (
@@ -403,78 +347,152 @@ const CanvaImportSheet = ({
     canvaSource: data.canvaSource,
   });
 
-  const buildOrderedDeckPages = (
-    deckPageByNumber: Map<number, MediaType>,
-    revision: number | string,
-    deckMedia?: MediaType,
-  ): MediaType[] => {
-    if (format === "mp4" && mp4ImportMode === "combined") {
-      const video = deckMedia ?? findCurrentCanvaVideo(revision);
-      return video ? [video] : [];
-    }
-    const ordered: MediaType[] = [];
-    for (const pageNumber of [...selectedPages].sort((a, b) => a - b)) {
-      const pageMedia =
-        deckPageByNumber.get(pageNumber) ??
-        findCurrentPageMedia(pageNumber, revision);
-      if (pageMedia) ordered.push(pageMedia);
-    }
-    return ordered;
-  };
-
   const importSelected = async () => {
     if (isImportPending || !selectedDesign || selectedPages.size === 0) return;
     const design = selectedDesign;
     const importPages = [...selectedPages].sort((a, b) => a - b);
-    const designImportKeyPrefix = `canva:${design.id}:`;
-    const existingImportKeys = existingMedia
-      .map((item) => item.canvaImportKey)
-      .filter((key): key is string => typeof key === "string" && key.startsWith(designImportKeyPrefix));
-    const replacementAssets = existingMedia.flatMap((mediaItem) => {
-      const source = mediaItem.canvaSource;
-      if (!source || source.designId !== design.id || source.format !== format || !source.pageNumbers?.length) return [];
-      const provider = mediaItem.providerStorage?.provider;
-      const assetId = provider === "mux" ? mediaItem.providerStorage?.assetId || mediaItem.muxAssetId
-        : provider === "cloudinary" ? mediaItem.providerStorage?.publicId || mediaItem.publicId
-          : mediaItem.source === "mux" ? mediaItem.muxAssetId
-            : mediaItem.source === "cloudinary" ? mediaItem.publicId : "";
-      if (!assetId) return [];
-      return [{ provider: provider === "mux" || mediaItem.source === "mux" ? "muxMinutes" : "cloudinaryBytes", assetId, revision: source.revision, preferred: mediaItem.id === sourceMedia?.id, pageNumbers: [...source.pageNumbers].sort((a, b) => a - b) }];
-    });
-    const request = { designId: design.id, pages: importPages, format, ...(format === "mp4" ? { mp4ImportMode } : {}), existingImportKeys, replacementAssets };
+    const importFormat = format;
+    const importMode = mp4ImportMode;
+    const includeCustomItem = createDeckItem;
+    let customItemPages: MediaType[] = [];
+    let mediaAtExecution: readonly MediaType[] = [];
+    const transferId = `canva-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const customItemIdempotencyKey = `canva-custom-${transferId}`;
+    const getLatestMedia = () => getCurrentMedia?.() || existingMedia;
+    const createImportRequest = () => {
+      const latestMedia = getLatestMedia();
+      const designImportKeyPrefix = `canva:${design.id}:`;
+      const existingImportKeys = latestMedia
+        .map((item) => item.canvaImportKey)
+        .filter((key): key is string => typeof key === "string" && key.startsWith(designImportKeyPrefix));
+      const replacementAssets = latestMedia.flatMap((mediaItem) => {
+        const source = getCanvaMediaSource(mediaItem);
+        if (!source || source.designId !== design.id || source.format !== importFormat || !source.pageNumbers?.length) return [];
+        const provider = mediaItem.providerStorage?.provider;
+        const assetId = provider === "mux" ? mediaItem.providerStorage?.assetId || mediaItem.muxAssetId
+          : provider === "cloudinary" ? mediaItem.providerStorage?.publicId || mediaItem.publicId
+            : mediaItem.source === "mux" ? mediaItem.muxAssetId
+              : mediaItem.source === "cloudinary" ? mediaItem.publicId : "";
+        if (!assetId) return [];
+        return [{ provider: provider === "mux" || mediaItem.source === "mux" ? "muxMinutes" as const : "cloudinaryBytes" as const, assetId, revision: source.revision, preferred: mediaItem.id === sourceMedia?.id, pageNumbers: [...source.pageNumbers].sort((a, b) => a - b) }];
+      });
+      return { designId: design.id, pages: importPages, format: importFormat, ...(importFormat === "mp4" ? { mp4ImportMode: importMode } : {}), existingImportKeys, ...(replacementAssets.length ? { replacementAssets } : {}) };
+    };
     setError("");
     try {
       startCanvaTransfer({
-        id: `canva-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        id: transferId,
         title: design.title,
-        format,
+        format: importFormat,
         pages: importPages,
-        run: (signal, onProgress) => importCanvaDesign(churchId, request, onProgress, { signal }),
+        dedupeKey: JSON.stringify([churchId, design.id, importFormat, importFormat === "mp4" ? importMode : "", importPages]),
+        run: (signal, onProgress) => {
+          mediaAtExecution = getLatestMedia();
+          return importCanvaDesign(churchId, createImportRequest(), onProgress, { signal });
+        },
+        customItemRetry: async () => {
+          if (!onCreateDeckItem || !customItemPages.length) throw new Error("Imported media is no longer available. Refresh Media and try again.");
+          const latestById = new Map(getLatestMedia().map((mediaItem) => [mediaItem.id, mediaItem]));
+          const currentPages = customItemPages.map((page) => latestById.get(page.id)).filter((page): page is MediaType => Boolean(page));
+          if (currentPages.length !== customItemPages.length) throw new Error("One or more imported pages are no longer in Media.");
+          const viewPath = await onCreateDeckItem(currentPages, design.title, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+          return viewPath;
+        },
         finalize: async (result, signal, onPagesPersisted) => {
           const pageMap = new Map<number, MediaType>();
           let importedCount = 0;
-          let processedAssetCount = 0;
+          let assetIndex = 0;
+          let assetStarted = false;
           let deckMedia: MediaType | undefined;
+          customItemPages = [];
+          const persistedPages = new Set<number>();
+          const markPagesPersisted = (pages: number[]) => {
+            pages.forEach((page) => persistedPages.add(page));
+            onPagesPersisted(pages);
+          };
           const recordDeckPages = (media: MediaType | void) => {
             if (media?.canvaSource?.pageNumbers) for (const page of media.canvaSource.pageNumbers) pageMap.set(page, media);
           };
-          const orderedPages = () => buildOrderedDeckPages(pageMap, result.revision, deckMedia);
-          try {
-            if (!result.assets.length) {
-              const pagesToUse = createDeckItem && onCreateDeckItem ? buildOrderedDeckPages(new Map(), result.revision) : [];
-              const viewPath = createDeckItem && pagesToUse.length
-                ? await onCreateDeckItem?.(pagesToUse, design.title, { navigateToItem: false }) : undefined;
-              onPagesPersisted(importPages.filter((page) => !result.failedPages?.some((failure) => failure.page === page)));
-              return { importedCount: pagesToUse.length, ...(viewPath ? { viewPath } : {}), ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
+          const latestMediaForDesign = () => getLatestMedia().flatMap((mediaItem) => {
+            const source = getCanvaMediaSource(mediaItem);
+            return source ? [{ mediaItem, source }] : [];
+          });
+          const findCurrentPage = (pageNumber: number) => latestMediaForDesign()
+            .filter(({ source }) => source.designId === design.id && source.format === importFormat && source.pageNumbers.length === 1 && source.pageNumbers[0] === pageNumber && isCanvaSourceCurrent(source, result.revision))
+            .sort((left, right) => Number(right.source.revision) - Number(left.source.revision))[0]?.mediaItem;
+          const findCurrentVideo = () => latestMediaForDesign()
+            .filter(({ source }) => source.designId === design.id && source.format === "mp4" && [...source.pageNumbers].sort((a, b) => a - b).join(",") === importPages.join(",") && isCanvaSourceCurrent(source, result.revision))
+            .sort((left, right) => Number(right.source.revision) - Number(left.source.revision))[0]?.mediaItem;
+          const orderedPages = () => {
+            if (importFormat === "mp4" && importMode === "combined") {
+              const video = deckMedia ?? findCurrentVideo();
+              return video ? [video] : [];
             }
-            for (const asset of result.assets) {
+            return importPages.flatMap((page) => {
+              const mediaItem = pageMap.get(page) ?? findCurrentPage(page);
+              return mediaItem ? [mediaItem] : [];
+            });
+          };
+          const createDeckIfRequested = async (pagesToUse: MediaType[]): Promise<{ viewPath?: string; customItemError?: string }> => {
+            if (signal.aborted) throw new Error("Canva import cancelled.");
+            if (!includeCustomItem) return {};
+            if (!pagesToUse.length || !onCreateDeckItem) return { customItemError: "No saved media is available to create the custom item." };
+            customItemPages = pagesToUse;
+            try {
+              const viewPath = await onCreateDeckItem(pagesToUse, design.title, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+              return typeof viewPath === "string" ? { viewPath } : {};
+            } catch (customError) {
+              return { customItemError: customError instanceof Error ? customError.message : "Try again." };
+            }
+          };
+          try {
+            if (signal.aborted) throw new Error("Canva import cancelled.");
+            if (!result.assets.length) {
+              const currentPages = importPages.filter((page) => findCurrentPage(page));
+              const pagesAlreadyCurrent = importFormat === "mp4" && importMode === "combined"
+                ? findCurrentVideo() ? importPages : []
+                : currentPages;
+              markPagesPersisted(pagesAlreadyCurrent.filter((page) => !result.failedPages?.some((failure) => failure.page === page)));
+              const pagesToUse = includeCustomItem ? orderedPages() : [];
+              const customResult = await createDeckIfRequested(pagesToUse);
+              return { importedCount: 0, ...customResult, ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
+            }
+            for (let index = 0; index < result.assets.length; index += 1) {
+              const asset = result.assets[index];
+              assetIndex = index;
+              assetStarted = false;
               if (signal.aborted) throw new Error("Canva import cancelled.");
-              const target = asset.data.canvaSource ? findRefreshTarget(asset.data.canvaSource) : undefined;
+              assetStarted = true;
+              const currentMedia = getLatestMedia();
+              const source = asset.data.canvaSource;
+              const matchingTargets = source ? currentMedia
+                .filter((mediaItem) => {
+                  const currentSource = getCanvaMediaSource(mediaItem);
+                  return currentSource && canvaSourcesMatch(currentSource, source);
+                })
+                .sort((left, right) => Number(getCanvaMediaSource(right)?.revision || 0) - Number(getCanvaMediaSource(left)?.revision || 0)) : [];
+              const newestTarget = matchingTargets[0];
+              const target = newestTarget && Number(getCanvaMediaSource(newestTarget)?.revision) < Number(source?.revision) ? newestTarget : undefined;
+              const expectedRefresh = Boolean(source && mediaAtExecution.some((mediaItem) => {
+                const originalSource = getCanvaMediaSource(mediaItem);
+                return originalSource && canvaSourcesMatch(originalSource, source) && Number(originalSource.revision) < Number(source.revision);
+              }));
+              if (source && !target && (expectedRefresh || (newestTarget && Number(getCanvaMediaSource(newestTarget)?.revision) >= Number(source.revision)))) {
+                const cleanupSucceeded = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
+                throw new Error(`${newestTarget ? "A newer Media version already exists" : "The Canva refresh target is no longer in Media"}. ${cleanupSucceeded ? "The newer Media version was kept." : "The Canva asset could not be cleaned up; Media was left unchanged."}`);
+              }
               if (asset.kind === "image") {
                 if (target) { await onImageRefresh(asset.data, target.id); recordDeckPages(mediaFromRefreshedImage(target, asset.data)); }
                 else {
-                  const created = onImageComplete(asset.data);
-                  if (!created) throw new Error("A Canva page could not be added to Media. Refresh Media and try again.");
+                  let created: MediaType | void;
+                  try {
+                    created = await onImageComplete(asset.data);
+                    if (!created) throw new Error("A Canva page could not be added to Media. Refresh Media and try again.");
+                  } catch (saveError) {
+                    const cleaned = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
+                    const message = saveError instanceof Error ? saveError.message : "A Canva page could not be saved to Media.";
+                    throw new Error(cleaned ? message : `${message} The unused Canva asset could not be removed.`);
+                  }
                   recordDeckPages(created);
                   importedCount += 1;
                 }
@@ -483,22 +501,35 @@ const CanvaImportSheet = ({
                 deckMedia = mediaFromRefreshedVideo(target, asset.data);
                 recordDeckPages(deckMedia);
               } else {
-                const created = onVideoComplete(asset.data);
-                if (!created) throw new Error("The Canva video could not be added to Media. Refresh Media and try again.");
+                let created: MediaType | void;
+                try {
+                  created = await onVideoComplete(asset.data);
+                  if (!created) throw new Error("The Canva video could not be added to Media. Refresh Media and try again.");
+                } catch (saveError) {
+                  const cleaned = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
+                  const message = saveError instanceof Error ? saveError.message : "The Canva video could not be saved to Media.";
+                  throw new Error(cleaned ? message : `${message} The unused Canva asset could not be removed.`);
+                }
                 deckMedia = created;
                 recordDeckPages(created);
                 importedCount += 1;
               }
-              onPagesPersisted(asset.data.canvaSource?.pageNumbers || []);
-              processedAssetCount += 1;
+              markPagesPersisted(asset.data.canvaSource?.pageNumbers || []);
+              assetIndex = index + 1;
+              assetStarted = false;
             }
             const pagesToUse = orderedPages();
-            const viewPath = createDeckItem && pagesToUse.length && onCreateDeckItem
-              ? await onCreateDeckItem(pagesToUse, design.title, { navigateToItem: false }) : undefined;
-            return { importedCount: pagesToUse.length || importedCount, ...(viewPath ? { viewPath } : {}), ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
+            const customResult = await createDeckIfRequested(pagesToUse);
+            return { importedCount: includeCustomItem ? pagesToUse.length : importedCount, ...customResult, ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
           } catch (error) {
-            if (onUnprocessedAssetCleanup && result.assets.length > processedAssetCount + 1) {
-              await cleanupUnprocessedCanvaAssets(result.assets.slice(processedAssetCount + 1), onUnprocessedAssetCleanup);
+            let cleanupFailures: CanvaImportedAsset[] = [];
+            if (onUnprocessedAssetCleanup) {
+              const firstUnprocessed = assetStarted ? assetIndex + 1 : assetIndex;
+              if (firstUnprocessed < result.assets.length) cleanupFailures = await cleanupUnprocessedCanvaAssets(result.assets.slice(firstUnprocessed), onUnprocessedAssetCleanup);
+            }
+            if (cleanupFailures.length) {
+              const originalMessage = error instanceof Error ? error.message : "Canva import could not finish.";
+              throw new Error(`${originalMessage} ${cleanupFailures.length} unprocessed Canva asset${cleanupFailures.length === 1 ? " could" : "s could"} not be removed.`);
             }
             throw error;
           }

@@ -25,6 +25,7 @@ export async function flushMediaLibraryDocToPouch(
   db: PouchDB.Database | undefined,
   list: MediaType[],
   folders: MediaFolder[],
+  getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
@@ -38,8 +39,11 @@ export async function flushMediaLibraryDocToPouch(
     if (!databaseIsActive()) {
       return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
     }
-    db_media.list = [...list];
-    db_media.folders = [...folders];
+    const latestState = getLatestState?.();
+    const listToPersist = latestState?.list ?? list;
+    const foldersToPersist = latestState?.folders ?? folders;
+    db_media.list = [...listToPersist];
+    db_media.folders = [...foldersToPersist];
     db_media.updatedAt = new Date().toISOString();
     await db.put(db_media);
     // The intended database was updated, but do not publish/cache its result
@@ -54,7 +58,7 @@ export async function flushMediaLibraryDocToPouch(
     });
     if (window.electronAPI) {
       try {
-        const urlArray = extractMediaUrlsFromBackgrounds(list);
+        const urlArray = extractMediaUrlsFromBackgrounds(listToPersist);
         const electronAPI = window.electronAPI as unknown as {
           syncMediaCache: (
             urls: string[],

@@ -326,7 +326,6 @@ test("refreshes an existing Canva media record when its design revision changes"
     pages: [1],
     format: "png",
     existingImportKeys: ["canva:DAF_design_1:rev:100:png:1"],
-    replacementAssets: [],
   }, expect.any(Function), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
@@ -751,7 +750,7 @@ test("creates a one-slide custom item for an imported Canva video", async () => 
     expect(onCreateDeckItem).toHaveBeenCalledWith(
       [createdVideo],
       "Sunday Welcome",
-      { navigateToItem: false },
+      expect.objectContaining({ navigateToItem: false, idempotencyKey: expect.any(String) }),
     );
   });
   expect(onVideoComplete).toHaveBeenCalledWith(importedVideo);
@@ -761,7 +760,6 @@ test("creates a one-slide custom item for an imported Canva video", async () => 
     format: "mp4",
     mp4ImportMode: "combined",
     existingImportKeys: [],
-    replacementAssets: [],
   }, expect.any(Function), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
@@ -855,7 +853,7 @@ test("creates one custom-item slide per imported Canva video page", async () => 
     expect(onCreateDeckItem).toHaveBeenCalledWith(
       createdVideos,
       "Sunday Welcome",
-      { navigateToItem: false },
+      expect.objectContaining({ navigateToItem: false, idempotencyKey: expect.any(String) }),
     );
   });
   expect(onVideoComplete).toHaveBeenCalledTimes(2);
@@ -865,7 +863,6 @@ test("creates one custom-item slide per imported Canva video page", async () => 
     format: "mp4",
     mp4ImportMode: "separate",
     existingImportKeys: [],
-    replacementAssets: [],
   }, expect.any(Function), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
@@ -1053,4 +1050,114 @@ test("keeps the sheet open when the transfer cannot be registered", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent("Canva import couldn't finish. Please try again.");
   expect(screen.getByRole("dialog", { name: "Import from Canva" })).toBeInTheDocument();
   expect(onOpenChange).not.toHaveBeenCalledWith(false);
+});
+
+test("builds queued import keys from Media state at execution time", async () => {
+  setCanvaDesignList(1);
+  let latestMedia: readonly MediaType[] = [];
+  mockStartCanvaTransfer.mockImplementationOnce(() => "queued-canva");
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets: [], skippedCount: 1, revision: 100 });
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={jest.fn()} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} existingMedia={[]} getCurrentMedia={() => latestMedia} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+
+  latestMedia = [existingMedia];
+  const queuedJob = mockStartCanvaTransfer.mock.calls[0][0] as unknown as {
+    run: (signal: AbortSignal, onProgress: (event: never) => void) => Promise<unknown>;
+  };
+  await queuedJob.run(new AbortController().signal, jest.fn());
+
+  expect(importCanvaDesign).toHaveBeenCalledWith("church-1", expect.objectContaining({
+    existingImportKeys: [existingMedia.canvaImportKey],
+  }), expect.any(Function), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+});
+
+test("resolves a refresh target from current Media state during finalization", async () => {
+  setCanvaDesignList(1);
+  let latestMedia: readonly MediaType[] = [];
+  mockStartCanvaTransfer.mockImplementationOnce(() => "queued-refresh");
+  jest.mocked(importCanvaDesign).mockResolvedValue({
+    assets: [{ kind: "image", data: refreshedImage }],
+    skippedCount: 0,
+    revision: 101,
+  });
+  const onImageRefresh = jest.fn().mockResolvedValue(true);
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={jest.fn()} onVideoComplete={jest.fn()} onImageRefresh={onImageRefresh} onVideoRefresh={jest.fn()} existingMedia={[]} getCurrentMedia={() => latestMedia} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  latestMedia = [existingMedia];
+
+  const queuedJob = mockStartCanvaTransfer.mock.calls[0][0] as unknown as {
+    run: (signal: AbortSignal, onProgress: (event: never) => void) => Promise<unknown>;
+    finalize: (result: unknown, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<unknown>;
+  };
+  const signal = new AbortController().signal;
+  const imported = await queuedJob.run(signal, jest.fn());
+  await queuedJob.finalize(imported, signal, jest.fn());
+
+  expect(onImageRefresh).toHaveBeenCalledWith(refreshedImage, "media-1");
+});
+
+test("fails and cleans the exported asset when a queued refresh target disappears", async () => {
+  setCanvaDesignList(1);
+  const oldTarget = { ...existingMedia, canvaImportKey: "canva:DAF_design_1:rev:99:png:1", canvaSource: { ...existingMedia.canvaSource, revision: 99 } } as MediaType;
+  let latestMedia: readonly MediaType[] = [oldTarget];
+  mockStartCanvaTransfer.mockImplementationOnce(() => "queued-missing-refresh");
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets: [{ kind: "image", data: refreshedImage }], skippedCount: 0, revision: 101 });
+  const cleanup = jest.fn().mockResolvedValue(true);
+  const onImageComplete = jest.fn();
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[oldTarget]} getCurrentMedia={() => latestMedia} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected|Refresh selected/i }));
+  const queuedJob = mockStartCanvaTransfer.mock.calls[0][0] as unknown as {
+    run: (signal: AbortSignal, onProgress: (event: never) => void) => Promise<unknown>;
+    finalize: (result: unknown, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<unknown>;
+  };
+  const signal = new AbortController().signal;
+  const imported = await queuedJob.run(signal, jest.fn());
+  latestMedia = [];
+  await expect(queuedJob.finalize(imported, signal, jest.fn())).rejects.toThrow("The Canva refresh target is no longer in Media");
+  expect(cleanup).toHaveBeenCalledWith({ kind: "image", data: refreshedImage });
+  expect(onImageComplete).not.toHaveBeenCalled();
+});
+
+test("retries custom-item creation from saved media without exporting again", async () => {
+  setCanvaDesignList(1);
+  jest.mocked(importCanvaDesign).mockClear();
+  jest.mocked(importCanvaDesign).mockResolvedValue({
+    assets: [{ kind: "image", data: { ...refreshedImage, canvaImportKey: "canva:DAF_design_progress:rev:101:png:1", canvaSource: { designId: "DAF_design_progress", designTitle: "Progress Deck", revision: 101, format: "png", pageNumbers: [1] } } }],
+    skippedCount: 0,
+    revision: 101,
+  });
+  const savedMedia = { ...existingMedia, id: "saved-page" } as MediaType;
+  let latestMedia: readonly MediaType[] = [];
+  const onImageComplete = jest.fn(async () => {
+    latestMedia = [savedMedia];
+    return savedMedia;
+  });
+  const onCreateDeckItem = jest.fn()
+    .mockRejectedValueOnce(new Error("Database unavailable."))
+    .mockResolvedValueOnce("/controller/item-canva");
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onCreateDeckItem={onCreateDeckItem} existingMedia={[]} getCurrentMedia={() => latestMedia} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  await waitFor(() => expect(onCreateDeckItem).toHaveBeenCalledTimes(1));
+  const job = mockStartCanvaTransfer.mock.calls[0][0] as unknown as { customItemRetry: () => Promise<string | void> };
+  await expect(job.customItemRetry()).resolves.toBe("/controller/item-canva");
+
+  expect(importCanvaDesign).toHaveBeenCalledTimes(1);
+  expect(onImageComplete).toHaveBeenCalledTimes(1);
+  expect(onCreateDeckItem.mock.calls[1][2]).toEqual(onCreateDeckItem.mock.calls[0][2]);
 });

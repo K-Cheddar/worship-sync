@@ -99,6 +99,109 @@ test("cancellation is explicit and waits for the job to stop", async () => {
   confirm.mockRestore();
 });
 
+test("deduplicates an identical Canva job while it is active or queued", async () => {
+  const gate = deferred<typeof result>();
+  const user = userEvent.setup();
+  let runCount = 0;
+  const DuplicateHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <>
+      <button onClick={() => startCanvaTransfer({
+        id: `duplicate-${runCount}`,
+        dedupeKey: "church-1:design-1:png:1,2",
+        title: "Duplicate deck",
+        format: "png",
+        pages: [1, 2],
+        run: () => { runCount += 1; return gate.promise; },
+        finalize: async () => ({ importedCount: 2 }),
+      })}>Request duplicate</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><DuplicateHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Request duplicate" }));
+  await user.click(screen.getByRole("button", { name: "Request duplicate" }));
+  await waitFor(() => expect(runCount).toBe(1));
+  await act(async () => gate.resolve(result));
+  expect(await screen.findByText("2 slides imported")).toBeInTheDocument();
+  expect(runCount).toBe(1);
+});
+
+test("offers a custom-item retry after media import without rerunning Canva", async () => {
+  const user = userEvent.setup();
+  const retry = jest.fn().mockResolvedValue("/controller/item-canva");
+  const PartialCustomHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "partial-custom",
+      title: "Custom deck",
+      format: "png",
+      pages: [1],
+      run: async () => result,
+      finalize: async (_importResult, _signal, onPagesPersisted) => {
+        onPagesPersisted([1]);
+        return { importedCount: 1, customItemError: "Database unavailable." };
+      },
+      customItemRetry: retry,
+    })}>Import custom deck</button>;
+  };
+  render(<MemoryRouter><TransferProvider><PartialCustomHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Import custom deck" }));
+  expect(await screen.findByText(/Media was imported, but the custom item was not created/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry custom item" }));
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText("Import complete")).toBeInTheDocument();
+});
+
+test("cancelling a queued Canva job prevents its export from starting", async () => {
+  const gate = deferred<typeof result>();
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  const secondRun = jest.fn(async () => result);
+  const QueuedHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <>
+      <button onClick={() => startCanvaTransfer({ id: "first-queued", title: "First deck", format: "png", pages: [1], run: () => gate.promise, finalize: async () => ({ importedCount: 1 }) })}>Start first</button>
+      <button onClick={() => startCanvaTransfer({ id: "second-queued", title: "Second deck", format: "png", pages: [1], run: secondRun, finalize: async () => ({ importedCount: 1 }) })}>Start second</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><QueuedHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start first" }));
+  await user.click(screen.getByRole("button", { name: "Start second" }));
+  await user.click(screen.getByRole("button", { name: "Cancel Second deck" }));
+  await act(async () => gate.resolve(result));
+  expect(await screen.findByText("Import cancelled before any pages were saved.")).toBeInTheDocument();
+  expect(secondRun).not.toHaveBeenCalled();
+  confirm.mockRestore();
+});
+
+test("cancelling between page saves keeps the first committed page", async () => {
+  const gate = deferred<void>();
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  const FinalizingHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "finalizing-canva", title: "Finalizing deck", format: "png", pages: [1, 2],
+      run: async () => result,
+      finalize: async (_importResult, signal, onPagesPersisted) => {
+        onPagesPersisted([1]);
+        await gate.promise;
+        if (signal.aborted) throw new Error("Canva import cancelled.");
+        onPagesPersisted([2]);
+        return { importedCount: 2 };
+      },
+    })}>Start finalizing import</button>;
+  };
+  render(<MemoryRouter><TransferProvider><FinalizingHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start finalizing import" }));
+  await screen.findByText("1 of 2 pages processed · 50% of pages");
+  await user.click(screen.getByRole("button", { name: "Cancel Finalizing deck" }));
+  await act(async () => gate.resolve());
+  expect(await screen.findByText(/Import cancelled after saving 1 page/)).toBeInTheDocument();
+  expect(screen.getByText("1 of 2 pages processed · 50% of pages")).toBeInTheDocument();
+  confirm.mockRestore();
+});
+
 test("keeps successful pages and reports failed pages as a partial import", async () => {
   const user = userEvent.setup();
   const PartialHarness = () => {
@@ -119,7 +222,7 @@ test("keeps successful pages and reports failed pages as a partial import", asyn
   await user.click(screen.getByRole("button", { name: "Start partial import" }));
   expect(await screen.findByText("Import completed with some pages failed")).toBeInTheDocument();
   expect(screen.getByText(/Page 2: Could not export this page/)).toBeInTheDocument();
-  expect(screen.getByText("1 of 2 pages processed")).toBeInTheDocument();
+  expect(screen.getByText("1 of 2 pages processed · 50% of pages")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "View presentation" })).toBeInTheDocument();
 });
 
