@@ -27,6 +27,7 @@ import {
   resolveRequestBootstrap,
   requireTeamsViewSession,
   assertServerCsrf,
+  startIntakeSubmissionDigestRecovery,
   setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
@@ -3979,7 +3980,11 @@ if (isDevelopment) {
 
   https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
     console.log("HTTPS server running at https://local.worshipsync.net:5000");
+    startIntakeSubmissionDigestRecovery();
   });
 } else {
-  app.listen(port, () => console.log(`Listening on port ${port}`));
+  app.listen(port, () => {
+    console.log(`Listening on port ${port}`);
+    startIntakeSubmissionDigestRecovery();
+  });
 }

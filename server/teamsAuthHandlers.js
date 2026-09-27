@@ -5535,7 +5535,12 @@ export const createTeamsAuthHandlers = ({
         },
         { merge: true },
       );
-      return { success: true, submissionId };
+      return {
+        success: true,
+        submissionId,
+        formId: form.formId,
+        submittedAt,
+      };
     });
   };
 
@@ -5557,8 +5562,8 @@ export const createTeamsAuthHandlers = ({
     return run;
   };
 
-  const submitTeamIntakeRecipient = async (req, token) =>
-    enqueueTeamIntakeRecipientSubmission(token, async () => {
+  const submitTeamIntakeRecipient = async (req, token) => {
+    const result = await enqueueTeamIntakeRecipientSubmission(token, async () => {
       const { recipient, form, member } =
         await getTeamIntakeRecipientContextByToken(token);
       const payload = await validateTeamIntakeSubmissionPayload(
@@ -5626,8 +5631,27 @@ export const createTeamsAuthHandlers = ({
         },
         { merge: true },
       );
-      return { success: true, submissionId };
+      return {
+        success: true,
+        submissionId,
+        formId: form.formId,
+        submittedAt,
+      };
     });
+    // Both the Firestore transaction and the fallback have committed all
+    // submission effects before this shared scheduling point.
+    if (scheduleIntakeSubmissionDigest) {
+      Promise.resolve(
+        scheduleIntakeSubmissionDigest(result.formId, result.submittedAt),
+      ).catch((error) =>
+        logAuthEvent?.("warn", "intake.digest.schedule_failed", {
+          formId: result.formId,
+          errorName: error?.name || "Error",
+        }),
+      );
+    }
+    return result;
+  };
 
   const getScheduleAssignmentCellMemberIds = (cell) => {
     const normalized = normalizeScheduleAssignmentCell(cell);
@@ -9144,7 +9168,11 @@ export const createTeamsAuthHandlers = ({
           throw httpError(404, "Request not found.");
         }
         if (looksLikeTeamIntakeRecipientToken(token)) {
-          return res.json(await submitTeamIntakeRecipient(req, token));
+          const result = await submitTeamIntakeRecipient(req, token);
+          return res.json({
+            success: result.success,
+            submissionId: result.submissionId,
+          });
         }
         const { form } = await getTeamIntakeFormByToken(token);
         assertTeamIntakeFormIsOpen(form);
@@ -9167,13 +9195,16 @@ export const createTeamsAuthHandlers = ({
           },
           { merge: false },
         );
-        // Notify editors out-of-band; a failure here must not fail the public
-        // submission (the response is already saved).
+        // Schedule the lead digest out-of-band after persistence. A scheduling
+        // failure must not change the public submission response.
         if (scheduleIntakeSubmissionDigest) {
           Promise.resolve(
             scheduleIntakeSubmissionDigest(form.formId, submittedAt),
           ).catch((error) =>
-            console.error("Could not schedule intake digest", error),
+            logAuthEvent?.("warn", "intake.digest.schedule_failed", {
+              formId: form.formId,
+              errorName: error?.name || "Error",
+            }),
           );
         }
         return res.json({ success: true, submissionId });

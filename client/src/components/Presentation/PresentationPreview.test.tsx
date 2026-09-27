@@ -173,13 +173,16 @@ describe("PresentationPreview", () => {
       />,
     );
 
-    expect(screen.getByRole("status", { name: "Content Hidden on Lobby Stream" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveClass("pointer-events-none");
-    expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "sm:inline");
-    expect(screen.getByRole("status")).toHaveAttribute(
-      "aria-label",
-      "Content Hidden on Lobby Stream",
+    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute(
+      "aria-describedby",
+      expect.any(String),
     );
+    expect(screen.getByText("Confirmed active Hide Content state for Lobby Stream.")).toBeInTheDocument();
+    expect(badge).toHaveClass("pointer-events-none", "max-w-[calc(100%-0.5rem)]");
+    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass("@container/preview");
+    expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "@sm/preview:inline");
 
     rerender(
       <PresentationPreview
@@ -196,6 +199,39 @@ describe("PresentationPreview", () => {
       />,
     );
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps a compact accessible badge when hidden state is unconfirmed", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        contentHiddenUnconfirmed
+      />,
+    );
+
+    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    expect(badge).toHaveAttribute("aria-describedby", expect.any(String));
+    expect(
+      screen.getByText(
+        "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while offline.",
+      ),
+    ).toBeInTheDocument();
+    expect(badge).toHaveClass("border-dashed");
+    expect(screen.getByTestId("content-hidden-preview-badge")).toBeInTheDocument();
+    expect(screen.getByText("Content Hidden · Offline")).toHaveClass(
+      "hidden",
+      "truncate",
+      "@sm/preview:inline",
+    );
   });
 
   it("does not show the badge for overlay-only hiding or non-stream displays", () => {

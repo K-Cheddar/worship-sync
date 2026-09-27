@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useId, useRef, useState } from "react";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import Toggle from "../Toggle/Toggle";
 import QuickLink from "../QuickLink/QuickLink";
@@ -43,6 +43,9 @@ type PresentationPreviewProps = {
   streamItemContentBlocked?: boolean;
   /** Show confirmed operator-only manual Hide Content state on stream previews. */
   showContentHiddenIndicator?: boolean;
+  /** The last known hidden state is being retained without a fresh connection. */
+  contentHiddenUnconfirmed?: boolean;
+  contentHiddenUnconfirmedLabel?: "Offline" | "Syncing";
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
   previewScale?: number;
   /**
@@ -86,12 +89,15 @@ const PresentationPreview = ({
   showClockTimer = false,
   streamItemContentBlocked = false,
   showContentHiddenIndicator = false,
+  contentHiddenUnconfirmed = false,
+  contentHiddenUnconfirmedLabel = "Offline",
   previewScale = 1,
   fillWidth = false,
   previewOverride,
   footer,
   isVisible = true,
 }: PresentationPreviewProps) => {
+  const contentHiddenDescriptionId = useId();
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
   const headerRef = useRef<HTMLHeadingElement | null>(null);
@@ -455,9 +461,10 @@ const PresentationPreview = ({
             )}
             <div
               className={cn(
-                "relative",
+                "relative @container/preview",
                 info.displayType === "stream" && "bg-gray-500/35",
               )}
+              data-testid="content-hidden-preview-stage"
             >
               {info.displayType === "stream" &&
                 streamItemContentBlocked &&
@@ -465,11 +472,26 @@ const PresentationPreview = ({
                   <div
                     role="status"
                     aria-label={`Content Hidden on ${name}`}
-                    title={`Content Hidden on ${name}`}
-                    className="pointer-events-none absolute right-1 top-1 z-[60] inline-flex items-center gap-1 rounded bg-amber-950/95 px-1.5 py-1 text-[10px] font-semibold leading-none text-amber-100 shadow-sm ring-1 ring-amber-300/40"
+                    aria-describedby={contentHiddenDescriptionId}
+                    data-testid="content-hidden-preview-badge"
+                    className={cn(
+                      "pointer-events-none absolute right-1 top-1 z-[60] inline-flex max-w-[calc(100%-0.5rem)] items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold leading-none text-amber-100 shadow-sm ring-1",
+                      contentHiddenUnconfirmed
+                        ? "border border-dashed border-amber-300/60 bg-amber-950/75 ring-transparent"
+                        : "bg-amber-950/95 ring-amber-300/40",
+                    )}
                   >
                     <EyeOff aria-hidden="true" className="h-3 w-3 shrink-0" />
-                    <span className="hidden sm:inline">Content Hidden</span>
+                    <span className="hidden truncate @sm/preview:inline">
+                      {contentHiddenUnconfirmed
+                        ? `Content Hidden · ${contentHiddenUnconfirmedLabel}`
+                        : "Content Hidden"}
+                    </span>
+                    <span id={contentHiddenDescriptionId} className="sr-only">
+                      {contentHiddenUnconfirmed
+                        ? `Last known hidden state for ${name}; the remote stream state is unconfirmed while ${contentHiddenUnconfirmedLabel.toLowerCase()}.`
+                        : `Confirmed active Hide Content state for ${name}.`}
+                    </span>
                   </div>
                 )}
               {/* Keep DisplayWindow mounted while the parent tab is only

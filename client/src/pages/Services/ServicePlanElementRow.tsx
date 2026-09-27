@@ -1326,23 +1326,38 @@ const ServicePlanElementRow = ({
   const [leadInputAssigneeId, setLeadInputAssigneeId] = useState<string | undefined>(
     leadAssignee?.id,
   );
-  useEffect(() => {
-    if (leadInputAssigneeId && assignees.some((assignee) => assignee.id === leadInputAssigneeId)) {
-      return;
-    }
-    setLeadInputAssigneeId(leadAssignee?.id);
-  }, [assignees, leadAssignee?.id, leadInputAssigneeId]);
   const leadInputAssignee = assignees.find(
     (assignee) => assignee.id === leadInputAssigneeId,
   );
+  useEffect(() => {
+    const currentLeadInputAssignee = assignees.find(
+      (assignee) => assignee.id === leadInputAssigneeId,
+    );
+    // Clearing a lead intentionally leaves the input on that blank assignment;
+    // a deliberate Make lead reorder should move it to the new lead instead.
+    if (currentLeadInputAssignee && !currentLeadInputAssignee.name?.trim()) return;
+    if (leadInputAssigneeId === leadAssignee?.id) return;
+    setLeadInputAssigneeId(leadAssignee?.id);
+  }, [assignees, leadAssignee?.id, leadInputAssigneeId]);
   const hasLeadAssignee = Boolean(leadAssignee?.name?.trim());
   const assigneeSummary = leadAssignee?.name?.trim() ||
     (assignees.some((assignee) => !assignee.name?.trim()) ? "Unassigned" : "");
   const participantCount = participantAssignees.length;
+  const seenParticipantNames = new Set<string>();
   const participantNames = namedAssignees
     .map((assignee) => assignee.name?.trim())
-    .filter((name): name is string => Boolean(name));
+    .filter((name): name is string => Boolean(name))
+    .filter((name) => {
+      const normalizedName = name.toLowerCase();
+      if (seenParticipantNames.has(normalizedName)) return false;
+      seenParticipantNames.add(normalizedName);
+      return true;
+    });
   const participantNamesLabel = participantNames.join(", ");
+  const leadName = leadInputAssignee?.name?.trim();
+  const additionalParticipantNamesLabel = participantNames
+    .filter((name) => !leadName || name.toLowerCase() !== leadName.toLowerCase())
+    .join(", ");
   const participantDetailsLabel = participantCount
     ? `Show all ${participantCount} participant${participantCount === 1 ? "" : "s"} for ${itemLabel}`
     : undefined;
@@ -1445,7 +1460,7 @@ const ServicePlanElementRow = ({
       {allowEdit ? (
         <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
           {/* HistorySuggestField's flex-1 sits under PopoverAnchor, so wrap so the
-              name field claims column width and the add button stays icon-sized. */}
+              lead field and read-only names can shrink while the count stays fixed. */}
           <div className="min-w-0 flex-1">
             <DebouncedAssigneeNameField
               value={leadInputAssignee?.name || ""}
@@ -1469,12 +1484,20 @@ const ServicePlanElementRow = ({
               compact
             />
           </div>
+          {additionalParticipantNamesLabel ? (
+            <span
+              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400"
+              title={additionalParticipantNamesLabel}
+            >
+              {additionalParticipantNamesLabel}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="tertiary"
             svg={participantCount ? Users : UserPlus}
             iconSize="sm"
-            className="h-full max-h-full min-h-0 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 justify-center gap-1 rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
+            className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 justify-center gap-1 rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
             aria-label={participantDetailsLabel
               ? participantDetailsLabel
               : `${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
@@ -1508,7 +1531,7 @@ const ServicePlanElementRow = ({
                 variant="tertiary"
                 svg={Users}
                 iconSize="sm"
-                className="h-full max-h-full min-h-0 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 gap-1 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400 [&_svg]:size-4"
+                className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 gap-1 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400 [&_svg]:size-4"
                 aria-label={participantDetailsLabel
                   ? participantDetailsLabel
                   : `View people and microphones for ${itemLabel}`}

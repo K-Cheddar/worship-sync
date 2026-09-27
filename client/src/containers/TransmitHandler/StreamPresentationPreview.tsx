@@ -46,6 +46,7 @@ const StreamPresentationPreview = memo(
     footer,
   }: StreamPresentationPreviewProps) => {
     const globalInfo = useContext(GlobalInfoContext);
+    const hiddenStatus = globalInfo?.contentHiddenByOutput?.[outputId];
     const info = useSelector(
       (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
     );
@@ -85,9 +86,14 @@ const StreamPresentationPreview = memo(
           (variant === "overlayStreamFocus" && showFocusedStreamControls)
         }
         isMobile={isMobile}
-        streamItemContentBlocked={streamItemContentBlocked}
-        showContentHiddenIndicator={
-          Boolean(globalInfo?.sharedDataReady && globalInfo.realtimeConnected)
+        streamItemContentBlocked={hiddenStatus?.hidden ?? streamItemContentBlocked}
+        showContentHiddenIndicator={Boolean(hiddenStatus)}
+        contentHiddenUnconfirmed={
+          Boolean(hiddenStatus?.hidden) &&
+          (!hiddenStatus?.confirmed || !globalInfo?.realtimeConnected)
+        }
+        contentHiddenUnconfirmedLabel={
+          globalInfo?.realtimeConnected ? "Syncing" : "Offline"
         }
         previewScale={previewScale}
         fillWidth={fillWidth}

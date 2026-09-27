@@ -44,10 +44,13 @@ jest.mock("../../context/activeController", () => ({
   useActiveControllerProfile: () => mockProfile,
 }));
 
-const renderStatus = () =>
+const renderStatus = (
+  contentHiddenByOutput: Record<string, { hidden: boolean; confirmed: boolean }> = {},
+  realtimeConnected = true,
+) =>
   render(
     <GlobalInfoContext.Provider
-      value={{ sharedDataReady: true, realtimeConnected: true } as never}
+      value={{ contentHiddenByOutput, realtimeConnected } as never}
     >
       <ContentHiddenStatus />
     </GlobalInfoContext.Provider>,
@@ -59,8 +62,7 @@ describe("ContentHiddenStatus", () => {
     renderStatus();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    mockState.presentation.outputs["stream-a"].itemContentBlocked = true;
-    renderStatus();
+    renderStatus({ "stream-a": { hidden: true, confirmed: true } });
     expect(screen.getByRole("status", { name: "Content Hidden on Lobby" })).toBeInTheDocument();
   });
 
@@ -70,30 +72,68 @@ describe("ContentHiddenStatus", () => {
       type: "presentation",
       outputIds: ["stream-a", "stream-b"],
     };
-    mockState.presentation.outputs["stream-a"].itemContentBlocked = true;
-    const { unmount } = renderStatus();
+    const { unmount } = renderStatus({
+      "stream-a": { hidden: true, confirmed: true },
+      "stream-b": { hidden: true, confirmed: true },
+    });
     expect(screen.getByRole("status", { name: "Content Hidden on Lobby, Sanctuary" })).toBeInTheDocument();
     unmount();
 
     mockProfile = { ...mockProfile, type: "overlay", outputIds: ["stream-b"] };
-    mockState.presentation.outputs["stream-b"].itemContentBlocked = true;
-    renderStatus();
+    renderStatus({ "stream-b": { hidden: true, confirmed: true } });
     expect(screen.getByRole("status", { name: "Content Hidden on Sanctuary" })).toBeInTheDocument();
     mockProfile = {
       ...mockProfile,
       type: "aux-presentation",
       outputIds: ["stream-a"],
     };
-    mockState.presentation.outputs["stream-a"].itemContentBlocked = true;
-    renderStatus();
+    renderStatus({ "stream-a": { hidden: true, confirmed: true } });
     expect(screen.getByRole("status", { name: "Content Hidden on Lobby" })).toBeInTheDocument();
   });
 
-  it("does not confirm a stale local status while Firebase is disconnected", () => {
+  it("retains the last hidden state while disconnected and labels it unconfirmed", () => {
     mockProfile = { ...mockProfile, type: "presentation", outputIds: ["stream-b"] };
-    render(
+    renderStatus({ "stream-b": { hidden: true, confirmed: false } }, false);
+    expect(screen.getByRole("status", { name: /Content Hidden · Offline on Sanctuary/ })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveClass("border-dashed");
+  });
+
+  it("does not report cached Redux values before this controller receives a stream snapshot", () => {
+    mockProfile = { ...mockProfile, type: "presentation", outputIds: ["stream-b"] };
+    renderStatus({}, false);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("returns to confirmed state after synchronization and clears after restoration", () => {
+    mockProfile = { ...mockProfile, type: "presentation", outputIds: ["stream-b"] };
+    const { rerender } = render(
       <GlobalInfoContext.Provider
-        value={{ sharedDataReady: true, realtimeConnected: false } as never}
+        value={{
+          realtimeConnected: true,
+          contentHiddenByOutput: { "stream-b": { hidden: true, confirmed: false } },
+        } as never}
+      >
+        <ContentHiddenStatus />
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByRole("status", { name: /Syncing/ })).toBeInTheDocument();
+    rerender(
+      <GlobalInfoContext.Provider
+        value={{
+          realtimeConnected: true,
+          contentHiddenByOutput: { "stream-b": { hidden: true, confirmed: true } },
+        } as never}
+      >
+        <ContentHiddenStatus />
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByRole("status", { name: "Content Hidden on Sanctuary" })).toBeInTheDocument();
+    rerender(
+      <GlobalInfoContext.Provider
+        value={{
+          realtimeConnected: true,
+          contentHiddenByOutput: { "stream-b": { hidden: false, confirmed: true } },
+        } as never}
       >
         <ContentHiddenStatus />
       </GlobalInfoContext.Provider>,

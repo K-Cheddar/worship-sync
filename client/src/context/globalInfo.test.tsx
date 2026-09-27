@@ -306,6 +306,9 @@ const ContextProbe = () => {
       <div data-testid="realtime-connected">
         {context.realtimeConnected ? "yes" : "no"}
       </div>
+      <div data-testid="content-hidden-snapshots">
+        {JSON.stringify(context.contentHiddenByOutput)}
+      </div>
       <div data-testid="church-id">{context.churchId || "none"}</div>
       <div data-testid="operator-name">{context.operatorName || "none"}</div>
       <div data-testid="auth-status">{context.authServerStatus}</div>
@@ -819,7 +822,11 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     });
     expect(screen.getByTestId("realtime-connected")).toHaveTextContent("yes");
 
-    expect(countStreamInfoSubscriptions()).toBe(initialSubscriptionCount);
+    await waitFor(() =>
+      expect(countStreamInfoSubscriptions()).toBeGreaterThan(
+        initialSubscriptionCount,
+      ),
+    );
 
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
@@ -834,6 +841,70 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(countStreamInfoSubscriptions()).toBeGreaterThan(
         initialSubscriptionCount,
       )
+    );
+  });
+
+  it("retains only Firebase-confirmed stream states across listener reconnection", async () => {
+    localStorage.setItem("loggedIn", "true");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+    renderProvider(<ContextProbe />);
+
+    const blockedPath = "churches/church-1/data/presentation/stream_itemContentBlocked";
+    const outputsPath = "churches/church-1/data/presentation/outputs";
+    await waitFor(() => expect(onValueCallbacks.has(blockedPath)).toBe(true));
+    expect(onValueCallbacks.has(outputsPath)).toBe(true);
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent("{}");
+
+    act(() => {
+      onValueCallbacks.get(blockedPath)?.(snapshotFor(true));
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({
+          "out-lobby": { type: "stream", itemContentBlocked: true },
+          "out-projector": { type: "projector", itemContentBlocked: true },
+        }),
+      );
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"stream":{"hidden":true,"confirmed":true}',
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":true}',
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).not.toHaveTextContent(
+      "out-projector",
+    );
+
+    const outputsSubscriptionCount = () =>
+      onValueMock.mock.calls.filter(([target]) => target.path === outputsPath).length;
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+
+    const oldSubscriptionCount = outputsSubscriptionCount();
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+    await waitFor(() =>
+      expect(outputsSubscriptionCount()).toBeGreaterThan(oldSubscriptionCount),
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+
+    act(() => {
+      onValueCallbacks.get(blockedPath)?.(snapshotFor(false));
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: false } }),
+      );
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":false,"confirmed":true}',
     );
   });
 

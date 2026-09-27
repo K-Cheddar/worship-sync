@@ -3080,6 +3080,9 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
     submitRes,
   );
   assert.equal(submitRes.statusCode, 200);
+  await flushAsyncWork();
+  const scheduledForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+  assert.ok(scheduledForm.pendingDigestSince);
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -3091,6 +3094,35 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
   assert.equal(submission.lastName, "");
   assert.equal(submission.email, "");
   assert.equal(submission.notes, "");
+});
+
+test("a rejected public intake submission does not schedule a digest", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_failed_submit_no_digest");
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Rejected submission",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+    },
+  });
+  const rejected = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: "not-a-valid-token" },
+      body: { firstName: "Avery" },
+    },
+    rejected,
+  );
+  await flushAsyncWork();
+  assert.equal(rejected.statusCode, 404);
+  const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+  assert.equal(storedForm.pendingDigestSince, undefined);
 });
 
 test("intake profile and scheduling fields carry onto a created member", async (t) => {
@@ -8020,6 +8052,11 @@ test("individual intake recipients personalize and automatically apply one audit
 
   const firstSubmit = await submit("unavailable");
   assert.equal(firstSubmit.statusCode, 200, JSON.stringify(firstSubmit.payload));
+  await flushAsyncWork();
+  assert.ok(
+    (await getDoc("teamIntakeForms", formId)).pendingDigestSince,
+    "individualized submissions schedule the same digest",
+  );
   const firstSubmissionId = firstSubmit.payload.submissionId;
   const afterFirst = await callHandler(authHandlers.getTeamsBootstrap, {
     context,

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { TransferProvider, useTransfers } from "./transferContext";
@@ -72,6 +72,24 @@ test("minimizing and expanding the panel does not interrupt an active Canva impo
   await user.click(screen.getByRole("button", { name: "Expand transfers" }));
   await act(async () => gate.resolve(result));
   expect(await screen.findByText("2 slides imported")).toBeInTheDocument();
+});
+
+test("warns before a browser refresh while a Canva request is active", async () => {
+  const gate = deferred<typeof result>();
+  const user = userEvent.setup();
+  const SlowHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "refresh-canva", title: "Refresh-sensitive deck", format: "png", pages: [1],
+      run: () => gate.promise,
+      finalize: async () => ({ importedCount: 1 }),
+    })}>Start refresh-sensitive import</button>;
+  };
+  render(<MemoryRouter><TransferProvider><SlowHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start refresh-sensitive import" }));
+  const event = new Event("beforeunload", { cancelable: true });
+  fireEvent(window, event);
+  expect(event.defaultPrevented).toBe(true);
 });
 
 test("cancellation is explicit and waits for the job to stop", async () => {

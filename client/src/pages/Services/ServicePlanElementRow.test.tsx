@@ -838,6 +838,149 @@ describe("ServicePlanElementRow", () => {
     expect(dialog).toHaveTextContent("Pastor John");
     expect(dialog).toHaveTextContent("Sarah Lee");
     expect(dialog).toHaveTextContent("Orange");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("shows the editable lead and a deduplicated additional-participant summary", async () => {
+    const user = userEvent.setup();
+    const orange: ServicePlanMicrophone = {
+      id: "mic-orange",
+      name: "Orange",
+      type: "Handheld",
+      color: "#f97316",
+    };
+    renderRow({
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "lead", name: "Pastor John" },
+          { id: "duplicate", name: " pastor john " },
+          { id: "second", name: "Sarah Lee" },
+          { id: "stand", microphoneIds: [orange.id] },
+        ],
+      },
+      microphones: [orange],
+    });
+
+    expect(screen.getByPlaceholderText("Led by")).toHaveValue("Pastor John");
+    const additionalNames = screen.getByTitle("Sarah Lee");
+    expect(additionalNames).toHaveTextContent("Sarah Lee");
+    expect(additionalNames).toHaveAttribute("title", "Sarah Lee");
+    expect(additionalNames).not.toHaveTextContent("Pastor John");
+    const trigger = screen.getByRole("button", {
+      name: "Show all 3 participants for Pastoral Greetings",
+    });
+    expect(trigger).toHaveTextContent("3");
+    expect(trigger).toHaveClass("min-w-10", "shrink-0");
+
+    await user.click(trigger);
+    expect(await screen.findByText("Edit people and microphones")).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByPlaceholderText("Assigned to")
+        .map((field) => (field as HTMLInputElement).value),
+    ).toEqual(expect.arrayContaining(["Pastor John", " pastor john ", "Sarah Lee"]));
+    expect(screen.getAllByText("Orange").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByText("Edit people and microphones")).not.toBeInTheDocument();
+  });
+
+  it("keeps view names ordered and unique while counting assigned participants", () => {
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "stand", microphoneIds: ["mic-orange"] },
+          { id: "lead", name: "Pastor John" },
+          { id: "duplicate", name: " pastor john " },
+          { id: "second", name: "Sarah Lee" },
+        ],
+      },
+    });
+
+    expect(screen.getByText("Pastor John, Sarah Lee")).toHaveAttribute(
+      "title",
+      "Pastor John, Sarah Lee",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Show all 3 participants for Pastoral Greetings",
+      }),
+    ).toHaveTextContent("3");
+  });
+
+  it("keeps the edit assignment trigger without a count for zero participants", async () => {
+    const user = userEvent.setup();
+    renderRow();
+
+    const trigger = screen.getByRole("button", {
+      name: "Assignees for Pastoral Greetings",
+    });
+    expect(trigger).not.toHaveTextContent(/\d/);
+    await user.click(trigger);
+    expect(await screen.findByText("Edit people and microphones")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add person/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByText("Edit people and microphones")).not.toBeInTheDocument();
+  });
+
+  it("updates the lead input and additional names after promoting another participant", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const initialElement = {
+      ...baseElement,
+      assignees: [
+        { id: "lead", name: "Pastor John" },
+        { id: "second", name: "Sarah Lee" },
+      ],
+    };
+    const { rerender } = renderRow({ element: initialElement, onUpdate });
+
+    expect(screen.getByPlaceholderText("Led by")).toHaveValue("Pastor John");
+    expect(screen.getByTitle("Sarah Lee")).toHaveTextContent("Sarah Lee");
+    await user.click(
+      screen.getByRole("button", { name: "Show all 2 participants for Pastoral Greetings" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Make lead" }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assignees: [
+        { id: "second", name: "Sarah Lee" },
+        { id: "lead", name: "Pastor John" },
+      ],
+    }, undefined);
+
+    rerender(
+      <DndContext onDragEnd={() => { }}>
+        <SortableContext
+          items={[elementDndId(initialElement.id)]}
+          strategy={verticalListSortingStrategy}
+        >
+          <ServicePlanElementRow
+            element={{
+              ...initialElement,
+              assignees: [
+                { id: "second", name: "Sarah Lee" },
+                { id: "lead", name: "Pastor John" },
+              ],
+            }}
+            canEdit
+            isEditing
+            onRemove={jest.fn()}
+            onUpdate={onUpdate}
+            onDurationChange={jest.fn()}
+            onStartTimeChange={jest.fn()}
+            assignedToHistoryValues={[]}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+
+    expect(screen.getByPlaceholderText("Led by")).toHaveValue("Sarah Lee");
+    expect(screen.getByTitle("Pastor John")).toHaveTextContent("Pastor John");
   });
 
   it("keeps the details trigger available for one long-named participant and zero people", async () => {
@@ -1464,7 +1607,7 @@ describe("assignees and their microphones", () => {
   it("clears the lead name without promoting the next assignee", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
-    renderRow({
+    const { rerender } = renderRow({
       onUpdate,
       element: {
         ...baseElement,
@@ -1474,7 +1617,6 @@ describe("assignees and their microphones", () => {
         ],
       },
     });
-
     await user.click(screen.getByRole("button", { name: "Clear" }));
 
     await waitFor(() => {
@@ -1485,6 +1627,35 @@ describe("assignees and their microphones", () => {
         ],
       });
     });
+
+    rerender(
+      <DndContext onDragEnd={() => { }}>
+        <SortableContext
+          items={[elementDndId(baseElement.id)]}
+          strategy={verticalListSortingStrategy}
+        >
+          <ServicePlanElementRow
+            element={{
+              ...baseElement,
+              assignees: [
+                { id: "lead", name: "" },
+                { id: "additional", name: "Abigail" },
+              ],
+            }}
+            canEdit
+            isEditing
+            onRemove={jest.fn()}
+            onUpdate={onUpdate}
+            onDurationChange={jest.fn()}
+            onStartTimeChange={jest.fn()}
+            assignedToHistoryValues={[]}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+
+    expect(screen.getByPlaceholderText("Led by")).toHaveValue("");
+    expect(screen.getByTitle("Abigail")).toHaveTextContent("Abigail");
   });
 
   it("offers a microphone to only one person at a time", async () => {

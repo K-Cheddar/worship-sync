@@ -58,6 +58,7 @@ import {
   isTeamLeadForForm,
   selectIntakeNotifyRecipients,
 } from "./server/intakeNotifyRecipients.js";
+import { deliveryKey as notificationDeliveryKey } from "./server/notificationLedger.js";
 import {
   NOTIFICATION_CATEGORY_KEYS,
   isNotificationEnabled,
@@ -1317,6 +1318,9 @@ export const queryDocs = async (
             filter.value.includes(item[filter.field])
           );
         }
+        if (operator === ">") {
+          return item[filter.field] > filter.value;
+        }
         return false;
       }),
     )
@@ -2392,7 +2396,10 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
 
 // Addresses to notify for a form's submissions: derived from designated leads
 // on the form's teams, minus anyone who muted intake notifications. Never a
-// stored recipient list, so it follows live roster ownership.
+// stored recipient list, so it follows live roster ownership. Since the
+// 2026-09-01 recipient change, administrators and other Teams editors who are
+// not designated leads are intentionally excluded; do not broaden this pool
+// without an explicit product decision about the audience.
 const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
   const memberships = (await listMembershipsForChurch(churchId)).filter(
     (membership) => membership.status === "active",
@@ -3151,6 +3158,22 @@ export const setSendEmailForServerTests = (fn) => {
     );
   }
   sendEmailForServerTests = typeof fn === "function" ? fn : null;
+};
+
+export const setIntakeNotifyRecipientsForServerTests = (recipients) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeNotifyRecipientsForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setIntakeNotifyRecipientsForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  intakeNotifyRecipientsForServerTests = Array.isArray(recipients)
+    ? [...recipients]
+    : null;
 };
 
 const upsertProfileFromVerifiedToken = async (
@@ -5247,21 +5270,26 @@ export const seedEmailCodeChallengeForServerTests = async ({
 // --- Team intake submission digest ----------------------------------------
 // New submissions are coalesced into one email per form so a burst of responses
 // (a freshly-shared form) doesn't spam editors. The throttle is a per-form timer
-// keyed by formId; a `pendingDigestSince` marker persisted on the form doc makes
-// it restart-tolerant — a lost timer is recovered on the next submission (the
-// window is treated as already elapsed and flushed). The only uncovered edge is
-// a restart followed by no further submissions, which degrades to "no email,"
-// never to a wrong or duplicated one. Single-instance only (see Teams arch).
+// keyed by formId; a `pendingDigestSince` marker persisted on the form doc is
+// recovered at startup and by a bounded periodic query. Per-recipient delivery
+// records allow transient provider failures to retry without repeating sends
+// already accepted by the provider.
 const INTAKE_DIGEST_WINDOW_MS =
   Number(process.env.AUTH_INTAKE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
+const INTAKE_DIGEST_RECOVERY_INTERVAL_MS = 60 * 1000;
+const INTAKE_DIGEST_RECOVERY_BATCH_LIMIT = 100;
+const INTAKE_DIGEST_MAX_ATTEMPTS = 3;
 const intakeDigestTimers = new Map();
 const intakeDigestInFlight = new Set();
+let intakeNotifyRecipientsForServerTests = null;
+let intakeDigestRecoveryTimer = null;
+let intakeDigestRecoveryInFlight = false;
 
 const clearIntakeDigestMarker = (formId) =>
   setDoc(
     COLLECTIONS.teamIntakeForms,
     formId,
-    { pendingDigestSince: null },
+    { pendingDigestSince: null, pendingDigestAttempts: {} },
     { merge: true },
   );
 
@@ -5269,17 +5297,11 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
   const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
   if (!form?.pendingDigestSince) return;
   const since = form.pendingDigestSince;
-  // Do all the fallible work *before* clearing the marker. If recipient
-  // lookup, the submissions query, or rendering throws, the marker survives
-  // and the batch is retried on the next submission (or restart flush) — a
-  // transient failure degrades to "late," never "lost." Individual send
-  // failures are swallowed below, so one bad address can't block the rest or
-  // strand the marker.
-  const recipients = await listIntakeNotifyRecipients(
-    form.churchId,
-    form.teamIds || [],
-  );
+  const recipients =
+    intakeNotifyRecipientsForServerTests ||
+    (await listIntakeNotifyRecipients(form.churchId, form.teamIds || []));
   if (recipients.length === 0) {
+    logAuthEvent("info", "intake.digest.no_recipients", { formId });
     await clearIntakeDigestMarker(formId);
     return;
   }
@@ -5303,40 +5325,88 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
   const subject = `${submitterNames.length} new ${form.name || "intake"} ${
     submitterNames.length === 1 ? "response" : "responses"
   }`;
-  // One email per recipient: keeps addresses private and matches sendEmail's
-  // single-`to` contract.
-  await Promise.all(
-    recipients.map((to) =>
-      sendEmail({
+  const successful = [];
+  let retrying = 0;
+  const attempts = { ...(form.pendingDigestAttempts || {}) };
+  for (const to of recipients) {
+    const key = notificationDeliveryKey({
+      recipient: to,
+      event: "intake.digest",
+      subject: formId,
+      occurrence: since,
+    });
+    const ledgerId = hashValue(`${form.churchId}|${key}`);
+    if (await getDoc(COLLECTIONS.notificationDeliveries, ledgerId)) {
+      successful.push(to);
+      continue;
+    }
+    const attemptKey = hashValue(to.trim().toLowerCase());
+    const attemptCount = Number(attempts[attemptKey] || 0);
+    if (attemptCount >= INTAKE_DIGEST_MAX_ATTEMPTS) {
+      logAuthEvent("warn", "intake.digest.retry_exhausted", {
+        formId,
+        attemptCount,
+      });
+      continue;
+    }
+    try {
+      // One email per recipient keeps addresses private.
+      await sendEmail({
         to,
         subject,
         textBody: text,
         htmlBody: html,
         tags: { type: "intake_digest" },
-      }).catch((error) =>
-        logAuthEvent("warn", "intake.digest.send-error", {
-          formId,
-          errorMessage: error?.message || "send failed",
-        }),
-      ),
-    ),
-  );
-  // Cleared only after a successful send pass; submissions arriving after this
-  // open a fresh window via scheduleIntakeSubmissionDigest.
-  await clearIntakeDigestMarker(formId);
+      });
+      // Record only after provider success, so ordinary retries never resend
+      // recipients whose delivery was already accepted.
+      await setDoc(
+        COLLECTIONS.notificationDeliveries,
+        ledgerId,
+        {
+          deliveryKey: key,
+          recipient: to,
+          event: "intake.digest",
+          subject: formId,
+          occurrence: since,
+          churchId: form.churchId,
+          createdAt: nowIso(),
+        },
+        { merge: true },
+      );
+      successful.push(to);
+      delete attempts[attemptKey];
+      logAuthEvent("info", "intake.digest.delivery_succeeded", { formId });
+    } catch (error) {
+      attempts[attemptKey] = attemptCount + 1;
+      retrying += 1;
+      logAuthEvent("warn", "intake.digest.delivery_failed", {
+        formId,
+        attemptCount: attemptCount + 1,
+        errorName: error?.name || "Error",
+      });
+    }
+  }
+  if (retrying > 0) {
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestAttempts: attempts,
+    });
+  }
+  const exhausted = recipients.length - successful.length - retrying;
+  if (successful.length + exhausted === recipients.length) {
+    await clearIntakeDigestMarker(formId);
+  }
 };
 
-// Re-entrancy guard: because the marker is held until the send finishes, a
-// submission landing mid-send can hit the "flush-now" path. Bail if a send for
-// this form is already running so we never double-send. (Single-instance, so an
-// in-memory set suffices.) Residual edge: a submission saved between this send's
-// query and its marker-clear isn't included and isn't re-marked — that one
-// notification is delayed to the next batch only if another submission follows,
-// otherwise dropped. A rare, single-item loss, vs. the whole-batch loss this
-// replaced.
-const sendIntakeSubmissionDigest = async (formId) => {
+// Re-entrancy guard prevents same-process timers and submissions from sending
+// one form concurrently. The pending marker remains durable until delivery
+// succeeds for each eligible recipient or its bounded retries are exhausted.
+export const sendIntakeSubmissionDigest = async (formId) => {
   intakeDigestTimers.delete(formId);
-  if (intakeDigestInFlight.has(formId)) return;
+  if (intakeDigestInFlight.has(formId)) {
+    armIntakeDigestTimer(formId);
+    return;
+  }
   intakeDigestInFlight.add(formId);
   try {
     await sendIntakeSubmissionDigestInner(formId);
@@ -5345,15 +5415,17 @@ const sendIntakeSubmissionDigest = async (formId) => {
   }
 };
 
-const armIntakeDigestTimer = (formId) => {
+const armIntakeDigestTimer = (formId, delayMs = INTAKE_DIGEST_WINDOW_MS) => {
+  const existing = intakeDigestTimers.get(formId);
+  if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     sendIntakeSubmissionDigest(formId).catch((error) =>
       logAuthEvent("warn", "intake.digest.error", {
         formId,
-        errorMessage: error?.message || "digest failed",
+        errorName: error?.name || "Error",
       }),
     );
-  }, INTAKE_DIGEST_WINDOW_MS);
+  }, Math.max(0, delayMs));
   if (typeof timer.unref === "function") timer.unref();
   intakeDigestTimers.set(formId, timer);
 };
@@ -5361,9 +5433,18 @@ const armIntakeDigestTimer = (formId) => {
 const scheduleIntakeSubmissionDigest = async (
   formId,
   submittedAt = nowIso(),
+  knownForm = null,
 ) => {
-  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  const form = knownForm || (await getDoc(COLLECTIONS.teamIntakeForms, formId));
   if (!form) return;
+  if (intakeDigestInFlight.has(formId)) {
+    logAuthEvent("info", "intake.digest.scheduled", {
+      formId,
+      action: "in-flight-rearm",
+    });
+    armIntakeDigestTimer(formId);
+    return;
+  }
   const action = decideDigestAction({
     pendingSince: form.pendingDigestSince,
     hasArmedTimer: intakeDigestTimers.has(formId),
@@ -5371,6 +5452,7 @@ const scheduleIntakeSubmissionDigest = async (
     windowMs: INTAKE_DIGEST_WINDOW_MS,
   });
   if (action === "noop") return;
+  logAuthEvent("info", "intake.digest.scheduled", { formId, action });
   if (action === "flush-now") {
     await sendIntakeSubmissionDigest(formId);
     return;
@@ -5384,7 +5466,59 @@ const scheduleIntakeSubmissionDigest = async (
     );
   }
   // "open-window" and "arm-timer" both schedule the send.
-  armIntakeDigestTimer(formId);
+  const remainingWindowMs =
+    action === "arm-timer"
+      ? Math.max(
+          0,
+          INTAKE_DIGEST_WINDOW_MS -
+            (Date.now() - new Date(form.pendingDigestSince).getTime()),
+        )
+      : INTAKE_DIGEST_WINDOW_MS;
+  armIntakeDigestTimer(formId, remainingWindowMs);
+};
+
+export const recoverPendingIntakeSubmissionDigests = async () => {
+  if (intakeDigestRecoveryInFlight) return;
+  intakeDigestRecoveryInFlight = true;
+  try {
+    const forms = await queryDocs(
+      COLLECTIONS.teamIntakeForms,
+      [{ field: "pendingDigestSince", op: ">", value: "" }],
+      { limit: INTAKE_DIGEST_RECOVERY_BATCH_LIMIT },
+    );
+    if (forms.length > 0) {
+      logAuthEvent("info", "intake.digest.recovery_scan", {
+        pendingFormCount: forms.length,
+      });
+    }
+    await Promise.all(
+      forms.map((form) =>
+        scheduleIntakeSubmissionDigest(
+          form.id || form.formId,
+          form.pendingDigestSince,
+          form,
+        ),
+      ),
+    );
+  } catch (error) {
+    logAuthEvent("warn", "intake.digest.recovery_failed", {
+      errorName: error?.name || "Error",
+    });
+  } finally {
+    intakeDigestRecoveryInFlight = false;
+  }
+};
+
+export const startIntakeSubmissionDigestRecovery = () => {
+  if (intakeDigestRecoveryTimer) return;
+  void recoverPendingIntakeSubmissionDigests();
+  intakeDigestRecoveryTimer = setInterval(
+    () => void recoverPendingIntakeSubmissionDigests(),
+    INTAKE_DIGEST_RECOVERY_INTERVAL_MS,
+  );
+  if (typeof intakeDigestRecoveryTimer.unref === "function") {
+    intakeDigestRecoveryTimer.unref();
+  }
 };
 
 // --- Schedule response digest ---------------------------------------------

@@ -64,7 +64,7 @@ export const useOptionalTransfers = () => useContext(TransferContext);
 
 const stageLabel = (status: CanvaTransferStatus) => ({
   pending: "Starting Canva import…",
-  exporting: "Requesting or preparing Canva export",
+  exporting: "Requesting Canva export",
   processing: "Processing exported media",
   finalizing: "Saving presentation slides",
   completed: "Import complete",
@@ -115,9 +115,17 @@ const TransferPanel = ({ transfers, setTransfers }: {
           const pagePercent = item.pages.length ? Math.floor(completedPages / item.pages.length * 100) : 0;
           const percent = item.status === "completed" ? 100 : Math.min(95, pagePercent);
           const currentExportPage = item.pages.find((page) => item.pageStatus[page] === "exporting");
+          const currentWaitingPage = item.pages.find((page) => item.pageStatus[page] === "waiting");
           const currentProcessingPage = item.pages.find((page) => item.pageStatus[page] === "processing" || item.pageStatus[page] === "saving");
-          const progressLabel = currentExportPage
-            ? `Exporting page ${currentExportPage} of ${item.pages.length}`
+          const isTerminal = ["completed", "partial", "failed", "cancelled"].includes(item.status);
+          const progressLabel = isTerminal
+            ? item.customItemError ? "Media imported; custom item needs attention" : stageLabel(item.status)
+            : item.customItemError
+              ? "Media imported; custom item needs attention"
+            : currentExportPage
+            ? `Requesting Canva export · page ${currentExportPage} of ${item.pages.length}`
+            : currentWaitingPage
+              ? `Waiting for Canva to prepare export · page ${currentWaitingPage} of ${item.pages.length}`
             : currentProcessingPage
               ? `Processing page ${currentProcessingPage} of ${item.pages.length}`
               : stageLabel(item.status);
