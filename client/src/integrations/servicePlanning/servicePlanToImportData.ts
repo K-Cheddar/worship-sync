@@ -27,6 +27,7 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
+import type { ChurchResource } from "../../types/churchResource";
 import {
   getServicePlanElementAssigneeNames,
   getServicePlanElementAssignees,
@@ -36,12 +37,17 @@ import {
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
 import {
+  getServicePlanChurchResourceId,
   getServicePlanResourceDisplayLabel,
   getServicePlanResourceNotes,
   getServicePlanResourceText,
 } from "../../pages/Services/servicePlanResources";
 
-const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): EventData => {
+const elementToRow = (
+  element: ServicePlanElement,
+  sourcePlanKey: string | undefined,
+  churchResourcesById: Map<string, ChurchResource>,
+): EventData => {
   const title = richTextToPlainText(element.title).trim();
   const assigneeNames = getServicePlanElementAssigneeNames(element);
   const assigneeRefs = getServicePlanElementAssignees(element)
@@ -103,7 +109,10 @@ const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): Even
       return {
         id: resource.id,
         type: resource.type,
-        title: getServicePlanResourceDisplayLabel(resource),
+        title: getServicePlanResourceDisplayLabel(
+          resource,
+          churchResourcesById.get(getServicePlanChurchResourceId(resource)),
+        ),
         ...(resource.url?.trim() ? { url: resource.url.trim() } : {}),
         ...(detail.trim() ? { detail: detail.trim() } : {}),
       };
@@ -159,18 +168,32 @@ const elementToRow = (element: ServicePlanElement, sourcePlanKey?: string): Even
   };
 };
 
-const sectionToRows = (section: ServicePlanSection, sourcePlanKey?: string) => ({
+const sectionToRows = (
+  section: ServicePlanSection,
+  sourcePlanKey: string | undefined,
+  churchResourcesById: Map<string, ChurchResource>,
+) => ({
   sectionName: section.name,
-  rows: section.elements.map((element) => elementToRow(element, sourcePlanKey)),
+  rows: section.elements.map((element) =>
+    elementToRow(element, sourcePlanKey, churchResourcesById),
+  ),
 });
 
 export const servicePlanToImportData = (
   plan: Pick<ServicePlan, "name" | "sections"> & Partial<Pick<ServicePlan, "planKey">>,
-): ServicePlanningImportData => ({
-  planLabel: plan.name?.trim() || "Service plan",
-  ...(plan.planKey ? { sourcePlanKey: plan.planKey } : {}),
-  sections: plan.sections.map((section) => sectionToRows(section, plan.planKey)),
-  // A saved plan carries no scraped roster. The Controller supplies assignments
-  // from the Teams schedule instead — see servicePlanTeamAssignments.ts.
-  teamAssignments: [],
-});
+  churchResources: ChurchResource[] = [],
+): ServicePlanningImportData => {
+  const churchResourcesById = new Map(
+    churchResources.map((resource) => [resource.id, resource]),
+  );
+  return {
+    planLabel: plan.name?.trim() || "Service plan",
+    ...(plan.planKey ? { sourcePlanKey: plan.planKey } : {}),
+    sections: plan.sections.map((section) =>
+      sectionToRows(section, plan.planKey, churchResourcesById),
+    ),
+    // A saved plan carries no scraped roster. The Controller supplies assignments
+    // from the Teams schedule instead — see servicePlanTeamAssignments.ts.
+    teamAssignments: [],
+  };
+};

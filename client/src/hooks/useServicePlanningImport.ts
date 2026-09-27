@@ -1,4 +1,4 @@
-import { useCallback, useContext } from "react";
+import { useCallback, useContext, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
 import { getServicePlanningImportDataFromUrl } from "../containers/Overlays/eventParser";
@@ -62,6 +62,10 @@ import {
 } from "../utils/servicePlanningSyncKeys";
 import { persistItemListServiceOutline } from "../utils/itemListImports";
 import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
+import { getChurchResource } from "../api/auth";
+import type { ChurchResource } from "../types/churchResource";
+import { getServicePlanElementContentResources } from "../types/servicePlan";
+import { getServicePlanChurchResourceId } from "../pages/Services/servicePlanResources";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -124,8 +128,12 @@ export const useServicePlanningImport = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
-  const { churchIntegrations, churchIntegrationsStatus } =
+  const { churchIntegrations, churchIntegrationsStatus, churchId } =
     useContext(GlobalInfoContext) || {};
+  const churchResourceLookupCacheRef = useRef<{
+    churchId: string;
+    byId: Map<string, Promise<ChurchResource | undefined>>;
+  }>({ churchId: "", byId: new Map() });
   const allItems = useSelector((s: RootState) => s.allItems.list);
   const selectedItemList = useSelector(
     (s: RootState) =>
@@ -222,7 +230,50 @@ export const useServicePlanningImport = () => {
       // not loaded yet. Existing mapping rules are still honored when present.
       const sp = churchIntegrations?.servicePlanning
         ?? createDefaultChurchIntegrations().servicePlanning;
-      const importData = servicePlanToImportData(plan);
+      if (churchResourceLookupCacheRef.current.churchId !== churchId) {
+        churchResourceLookupCacheRef.current = {
+          churchId: churchId || "",
+          byId: new Map(),
+        };
+      }
+      const resourceLookupCache = churchResourceLookupCacheRef.current;
+      const resourceIds = [
+        ...new Set(
+          plan.sections.flatMap((section) =>
+            section.elements.flatMap((element) =>
+              getServicePlanElementContentResources(element)
+                .map(getServicePlanChurchResourceId)
+                .filter(Boolean),
+            ),
+          ),
+        ),
+      ];
+      const churchResources = churchId
+        ? await Promise.all(
+            resourceIds.map((resourceId) => {
+              let resourcePromise = resourceLookupCache.byId.get(resourceId);
+              if (!resourcePromise) {
+                resourcePromise = getChurchResource(churchId, resourceId)
+                  .then(({ resource }) => resource)
+                  .catch((error: unknown) => {
+                    const status = (error as { status?: number } | null)?.status;
+                    if (status !== 404) {
+                      resourceLookupCache.byId.delete(resourceId);
+                    }
+                    return undefined;
+                  });
+                resourceLookupCache.byId.set(resourceId, resourcePromise);
+              }
+              return resourcePromise;
+            }),
+          )
+        : [];
+      const importData = servicePlanToImportData(
+        plan,
+        churchResources.filter(
+          (resource): resource is ChurchResource => Boolean(resource),
+        ),
+      );
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
       const customDocumentLibrary = state.allDocs.allFreeFormDocs
@@ -247,7 +298,7 @@ export const useServicePlanningImport = () => {
         preview,
       };
     },
-    [churchIntegrations, store],
+    [churchId, churchIntegrations, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
