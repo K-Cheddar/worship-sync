@@ -47,6 +47,8 @@ const createSmsConsentCancellationCapability = () => {
   return { challengeId, cancellationToken };
 };
 
+const INVALID_PHONE_MESSAGE = "Enter a valid 10-digit U.S. phone number.";
+
 const SmsOptIn = () => {
   const { churchId = "" } = useParams<{ churchId: string }>();
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -76,7 +78,7 @@ const SmsOptIn = () => {
 
     const nextPhoneError = isValidUsPhone(phoneNumber)
       ? ""
-      : "Enter a valid 10-digit U.S. phone number.";
+      : INVALID_PHONE_MESSAGE;
     const nextConsentError = consent
       ? ""
       : "Check the box to agree to receive SMS messages.";
@@ -248,7 +250,8 @@ const SmsOptIn = () => {
             ) : null}
             {!churchId ? (
               <p className="text-sm text-gray-300">
-                Open the SMS opt-in link provided by your church to continue.
+                To sign up, open the SMS opt-in link provided by your church.
+                You can continue without SMS below.
               </p>
             ) : null}
           </div>
@@ -390,8 +393,15 @@ const SmsOptIn = () => {
                 inputMode="tel"
                 value={phoneNumber}
                 onChange={(value) => {
-                  setPhoneNumber(formatUsPhoneInput(String(value)));
-                  setPhoneError("");
+                  const nextPhoneNumber = formatUsPhoneInput(String(value));
+                  const hasFullPhoneNumber =
+                    nextPhoneNumber.replace(/\D/g, "").length >= 10;
+                  setPhoneNumber(nextPhoneNumber);
+                  setPhoneError(
+                    hasFullPhoneNumber && !isValidUsPhone(nextPhoneNumber)
+                      ? INVALID_PHONE_MESSAGE
+                      : "",
+                  );
                   setErrorMessage("");
                 }}
                 errorText={phoneError}
@@ -435,7 +445,12 @@ const SmsOptIn = () => {
                   variant="primary"
                   className="w-full cursor-pointer justify-center"
                   isLoading={isSubmitting}
-                  disabled={isSubmitting || !isValidUsPhone(phoneNumber) || !consent}
+                  disabled={
+                    isSubmitting ||
+                    !churchId ||
+                    !isValidUsPhone(phoneNumber) ||
+                    !consent
+                  }
                 >
                   Opt in to SMS
                 </Button>
