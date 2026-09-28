@@ -1003,8 +1003,8 @@ export const createItemListFromExisting = async ({
     });
     const newOverlays: string[] = [];
     for (const overlayId of response.overlays) {
-      const { _id, _rev, ...overlayDetails }: DBOverlay | undefined =
-        await db.get(`overlay-${overlayId}`);
+      const overlay = (await db.get(`overlay-${overlayId}`)) as DBOverlay;
+      const { _id, _rev, ...overlayDetails } = overlay;
 
       const newId = generateRandomId();
       const copiedOverlay = {

@@ -695,7 +695,7 @@ export const formatAllSongs = async (
       .map((row) => row.doc as DBItem);
 
     for (const song of allSongs) {
-      const retrievedSong: DBItem | undefined = await db.get(song._id);
+      const retrievedSong = (await db.get(song._id)) as DBItem;
       const formattedItem = formatItemInfo(retrievedSong, cloud);
       const formattedSong = formatSong(formattedItem);
       const updatedItem = {
@@ -709,9 +709,7 @@ export const formatAllSongs = async (
         bibleInfo: formattedSong.bibleInfo,
         updatedAt: new Date().toISOString(),
       };
-      if (retrievedSong) {
-        await db.put(updatedItem);
-      }
+      await db.put(updatedItem);
     }
   } catch (error) {
     console.error("Failed to format all songs", error);

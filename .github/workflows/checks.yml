@@ -3,7 +3,7 @@ name: Checks
 on:
   pull_request:
   push:
-    branches: [in-progress, staging]
+    branches: [staging]
   workflow_dispatch:
 
 permissions:
@@ -103,7 +103,13 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: client/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install root dependencies
+        id: install_root
+        run: npm ci
 
       - name: Install client dependencies
         id: install_client
@@ -113,7 +119,7 @@ jobs:
         run: npm run lint:check --prefix client
 
       - name: Run TypeScript check
-        if: always() && steps.install_client.outcome == 'success'
+        if: always() && steps.install_root.outcome == 'success' && steps.install_client.outcome == 'success'
         run: npm run type-check --prefix client
 
   heroku_build:
@@ -150,7 +156,12 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: client/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
 
       - name: Install client dependencies
         run: npm ci --prefix client
