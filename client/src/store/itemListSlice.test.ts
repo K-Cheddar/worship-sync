@@ -5,6 +5,7 @@ import itemListReducer, {
   removeItemFromList,
   removeItemFromListById,
   addItemToItemList,
+  ensureCanvaItemInItemList,
   initiateItemList,
   setItemListIsLoading,
   setHasPendingUpdate,
@@ -427,6 +428,39 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.isLoading).toBe(true);
       store.dispatch(setHasPendingUpdate(true));
       expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
+    it("keeps an existing Canva outline row and its path identity on retries", () => {
+      const existing = createServiceItem({ name: "Custom deck", _id: "canva-op", listId: "stable-list-id" });
+      const store = createStore({
+        itemList: {
+          list: [existing],
+          isLoading: false,
+          selectedItemListId: "stable-list-id",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: ["stable-list-id"],
+          isInitialized: true,
+        },
+      });
+
+      store.dispatch(ensureCanvaItemInItemList(createServiceItem({ name: "Retry", _id: "canva-op" })));
+      store.dispatch(ensureCanvaItemInItemList(createServiceItem({ name: "Retry again", _id: "canva-op" })));
+
+      expect(store.getState().itemList.list).toEqual([existing]);
+      expect(store.getState().itemList.list[0].listId).toBe("stable-list-id");
+    });
+
+    it("adds one missing Canva outline row across repeated retries", () => {
+      const store = createStore();
+      const item = createServiceItem({ name: "Custom deck", _id: "canva-op" });
+
+      store.dispatch(ensureCanvaItemInItemList(item));
+      const listId = store.getState().itemList.list[0].listId;
+      store.dispatch(ensureCanvaItemInItemList(item));
+
+      expect(store.getState().itemList.list).toHaveLength(1);
+      expect(store.getState().itemList.list[0].listId).toBe(listId);
     });
   });
 });

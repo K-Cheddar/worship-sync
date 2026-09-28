@@ -17,6 +17,7 @@ import {
   type PreparedVideoSurfaceState,
 } from "../utils/preparedVideoSurfaceState";
 import type {
+  PreparedVideoMetricValue,
   PreparedVideoMetrics,
   PreparedVideoSourceInfo,
 } from "../types/electron";
@@ -176,18 +177,20 @@ const PreparedSurface = ({
 
 const unavailableMetrics = (reason: string): PreparedVideoMetrics => ({
   status: "ipc_unavailable",
-  memory: { status: "unsupported", reason },
+  memory: {
+    private: { status: "unsupported", reason },
+    workingSet: { status: "unsupported", reason },
+  },
   cpu: { status: "unsupported", reason },
   reason,
 });
 
 const formatMetricValue = (
-  metric: PreparedVideoMetrics | undefined,
-  key: "memory" | "cpu",
+  value: PreparedVideoMetricValue | undefined,
+  unit: "MB" | "%",
 ): string => {
-  const value = metric?.[key];
   if (value?.status === "available" && typeof value.value === "number") {
-    if (key === "memory") {
+    if (unit === "MB") {
       return `${new Intl.NumberFormat("en-US", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
@@ -195,7 +198,7 @@ const formatMetricValue = (
     }
     return `${value.value.toFixed(1)}%`;
   }
-  return value?.reason || metric?.reason || "not measured yet";
+  return value?.reason || "not measured yet";
 };
 
 const PreparedVideoSurfaces = () => {
@@ -238,11 +241,13 @@ const PreparedVideoSurfaces = () => {
     void window.electronAPI?.isDev().then(setIsDevElectron);
     void refreshSources();
     void refreshMetrics();
+    const unsubscribe = window.electronAPI?.onPreparedVideoMetrics?.(setProcessMetric);
+    void window.electronAPI?.subscribePreparedVideoMetrics?.().catch(() => undefined);
+    return () => {
+      unsubscribe?.();
+      void window.electronAPI?.unsubscribePreparedVideoMetrics?.().catch(() => undefined);
+    };
   }, [refreshMetrics, refreshSources]);
-  useEffect(() => {
-    const id = window.setInterval(() => void refreshMetrics(), 2_000);
-    return () => window.clearInterval(id);
-  }, [refreshMetrics]);
 
   if (!window.electronAPI || isDevElectron === false) return <main className="p-8">Prepared-surface diagnostics are available only in Electron development mode.</main>;
   const chooseCount = (count: number) => setSelected(selectPreparedVideoSources(eligible, count).map((item) => item.source));
@@ -263,7 +268,7 @@ const PreparedVideoSurfaces = () => {
     </div>
     <label className="block text-sm">Hidden strategy <select className="ml-2 text-black" value={strategy} onChange={(event) => setStrategy(event.target.value as HiddenStrategy)}><option value="opacity">opacity 0, composited</option><option value="offscreen">offscreen</option></select></label>
     <p className="text-sm">selected: {selectedCount} · preparing: {preparingCount} · ready: {readyCount} · error: {errorCount}</p>
-    <p className="text-sm">renderer memory: {formatMetricValue(processMetric, "memory")} · CPU: {formatMetricValue(processMetric, "cpu")} · metric status: {processMetric?.status || "not measured yet"}</p>
+    <p className="text-sm">renderer private RAM: {formatMetricValue(processMetric?.memory.private, "MB")} · working set: {formatMetricValue(processMetric?.memory.workingSet, "MB")} · CPU: {formatMetricValue(processMetric?.cpu, "%")} · metric status: {processMetric?.status || "not measured yet"}</p>
     <div className="max-h-64 overflow-auto rounded bg-slate-900 p-3 text-sm">
       {eligible.map((item) => <label key={item.source} className="block"><input type="checkbox" checked={selected.includes(item.source)} onChange={() => setSelected((current) => current.includes(item.source) ? current.filter((source) => source !== item.source) : [...current, item.source])} /> {item.sourceType} ({getPreparedVideoSourceLabel(item)}) — {item.source}</label>)}
       {!eligible.length && PREPARED_VIDEO_EMPTY_STATE_MESSAGE}

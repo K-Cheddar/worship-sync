@@ -22,8 +22,68 @@ import { preferencesSlice } from "../../store/preferencesSlice";
 import { timersSlice } from "../../store/timersSlice";
 import itemListsReducer from "../../store/itemListsSlice";
 import type { Box } from "../../types";
+import { subscribeLocalVideoRealtime } from "../../utils/localVideoRealtimeRelay";
+import {
+  __resetLocalVideoDiagnosticsForTests,
+} from "../../utils/localVideoDiagnostics";
 
 jest.unmock("../../hooks/useCachedMediaUrl");
+jest.mock("../../utils/authStorage", () => ({
+  ...jest.requireActual("../../utils/authStorage"),
+  getOrCreateDeviceId: jest.fn(() => "local-device"),
+}));
+jest.mock("../../utils/localVideoInput", () => ({
+  ...jest.requireActual("../../utils/localVideoInput"),
+  resolveLocalVideoInputBinding: jest.fn((sourceId: string) => ({
+    sourceId,
+    deviceId: `device-${sourceId}`,
+    deviceLabel: "USB Capture",
+  })),
+}));
+jest.mock("../../utils/localVideoCapturePool", () => {
+  const actual = jest.requireActual<typeof import("../../utils/localVideoCapturePool")>(
+    "../../utils/localVideoCapturePool",
+  );
+  return {
+    ...actual,
+    acquireWarmLocalVideoCapture: jest.fn(() =>
+      Promise.reject(new actual.LocalVideoCaptureOwnedError()),
+    ),
+    releaseWarmLocalVideoCapture: jest.fn(() => Promise.resolve()),
+  };
+});
+jest.mock("../../utils/localVideoRealtimeRelay", () => {
+  const actual = jest.requireActual<typeof import("../../utils/localVideoRealtimeRelay")>(
+    "../../utils/localVideoRealtimeRelay",
+  );
+  return {
+    ...actual,
+    supportsLocalVideoRealtimeRelay: jest.fn(() => true),
+    subscribeLocalVideoRealtime: jest.fn(
+      (...args: Parameters<typeof actual.subscribeLocalVideoRealtime>) => {
+        const [sourceId, , options] = args;
+        const diagnostics = jest.requireActual<
+          typeof import("../../utils/localVideoDiagnostics")
+        >("../../utils/localVideoDiagnostics");
+        const diagnosticViewId = options?.diagnosticViewId;
+        const outputId = diagnosticViewId
+          ? diagnostics
+              .__getLocalVideoDiagnosticsForTests()
+              .get(sourceId)
+              ?.views.get(diagnosticViewId)?.outputId
+          : undefined;
+        return {
+          stop: jest.fn(),
+          setVolume: jest.fn(),
+          setAudioEnabled: jest.fn(),
+          diagnosticOutputId: outputId,
+        };
+      },
+    ),
+  };
+});
+
+const mockSubscribeRealtime = jest.mocked(subscribeLocalVideoRealtime);
 
 const AUX_ID = "ctrl_lobby";
 
@@ -149,6 +209,7 @@ describe("Aux Controller preview video continuity", () => {
   );
 
   beforeEach(() => {
+    jest.clearAllMocks();
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
       value: jest.fn().mockResolvedValue(undefined),
@@ -172,6 +233,8 @@ describe("Aux Controller preview video continuity", () => {
   });
 
   afterEach(() => {
+    localStorage.removeItem("worshipsync_local_video_debug");
+    __resetLocalVideoDiagnosticsForTests();
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
       value: originalPlay,
@@ -285,7 +348,6 @@ describe("Aux Controller preview video continuity", () => {
     expect(seek).not.toHaveBeenCalled();
     expect(play).toHaveBeenCalledTimes(1);
     expect(load.mock.contexts).not.toContain(stagedVideo);
-
     await user.click(screen.getByRole("button", { name: "Stop mirroring" }));
 
     expect(stagedCard).toHaveAttribute("hidden");
@@ -303,4 +365,138 @@ describe("Aux Controller preview video continuity", () => {
       "Staged video",
     );
   });
+
+  it("keeps Aux local-video subscriptions at the same baseline across mirror cycles", async () => {
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+    const user = userEvent.setup();
+    const store = createStore();
+    store.dispatch(
+      setOutputTransmitting({ outputId: "projector", value: true }),
+    );
+    store.dispatch(
+      setOutputTransmitting({ outputId: "out_lobby", value: true }),
+    );
+    store.dispatch(
+      updatePresentation({
+        type: "local-video",
+        name: "Main camera",
+        slide: null,
+        localVideoInput: {
+          sourceId: "main-local-video",
+          deviceLabel: "Main USB Capture",
+          ownerDeviceId: "local-device",
+          ownerLabel: "Booth",
+        },
+        outputIds: ["projector"],
+      }),
+    );
+    store.dispatch(
+      updatePresentation({
+        ...slide(
+          "Staged video",
+          "staged-video",
+          "https://media.test/staged.mp4",
+        ),
+        outputIds: ["out_lobby"],
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    const projectorCard = screen.getByTestId("aux-projector-preview");
+    const stagedCard = screen.getByTestId("aux-staged-preview");
+    const projectorLocalVideo = within(projectorCard).getByTestId(
+      "current-lane-local-video",
+    );
+    const stagedVideo = (await within(stagedCard).findByTestId(
+      "hls-video-player",
+    )) as HTMLVideoElement;
+    const load = HTMLMediaElement.prototype.load as jest.Mock;
+    await waitFor(() => expect(load.mock.contexts).toContain(stagedVideo));
+    load.mockClear();
+    let playhead = 0;
+    const seek = jest.fn((value: number) => {
+      playhead = value;
+    });
+    Object.defineProperty(stagedVideo, "currentTime", {
+      configurable: true,
+      get: () => playhead,
+      set: seek,
+    });
+    fireEvent.loadedMetadata(stagedVideo);
+    playhead = 18.25;
+    seek.mockClear();
+    await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalled());
+    const projectorBaseline = activeRealtimeOutputCount(
+      "main-local-video",
+      "projector",
+    );
+    expect(projectorBaseline).toBeGreaterThan(0);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await user.click(screen.getByRole("button", { name: "Mirror Main" }));
+      expect(stagedCard).not.toHaveAttribute("hidden");
+      expect(within(projectorCard).getByTestId("current-lane-local-video")).toBe(
+        projectorLocalVideo,
+      );
+      expect(within(stagedCard).getByTestId("hls-video-player")).toBe(
+        stagedVideo,
+      );
+      expect(stagedVideo.currentTime).toBeCloseTo(18.25, 2);
+      expect(seek).not.toHaveBeenCalled();
+      expect(load.mock.contexts).not.toContain(stagedVideo);
+      await waitForRealtimeOutputCount("main-local-video", "projector", 0);
+
+      await user.click(screen.getByRole("button", { name: "Stop mirroring" }));
+      expect(stagedCard).toHaveAttribute("hidden");
+      expect(within(projectorCard).getByTestId("current-lane-local-video")).toBe(
+        projectorLocalVideo,
+      );
+      expect(within(stagedCard).getByTestId("hls-video-player")).toBe(
+        stagedVideo,
+      );
+      expect(stagedVideo.currentTime).toBeCloseTo(18.25, 2);
+      expect(seek).not.toHaveBeenCalled();
+      expect(load.mock.contexts).not.toContain(stagedVideo);
+      await waitForRealtimeOutputCount(
+        "main-local-video",
+        "projector",
+        projectorBaseline,
+      );
+      expect(projectorCard).toBe(screen.getByTestId("aux-projector-preview"));
+    }
+  }, 30_000);
 });
+
+const activeRealtimeOutputCount = (sourceId: string, outputId: string) =>
+  mockSubscribeRealtime.mock.results.filter(({ type, value }, index) => {
+    if (
+      type !== "return" ||
+      mockSubscribeRealtime.mock.calls[index]?.[0] !== sourceId ||
+      !jest.isMockFunction(value.stop) ||
+      value.stop.mock.calls.length > 0
+    ) {
+      return false;
+    }
+    return (
+      (value as typeof value & { diagnosticOutputId?: string })
+        .diagnosticOutputId === outputId
+    );
+  }).length;
+
+const waitForRealtimeOutputCount = async (
+  sourceId: string,
+  outputId: string,
+  expectedCount: number,
+) =>
+  waitFor(
+    () =>
+      expect(activeRealtimeOutputCount(sourceId, outputId)).toBe(expectedCount),
+    { timeout: 1_000 },
+  );

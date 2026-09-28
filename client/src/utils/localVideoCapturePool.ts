@@ -12,7 +12,10 @@ import { reportLocalVideoIssue } from "./localVideoIssues";
 import { publishLocalVideoMedia } from "./localVideoMediaRelay";
 import { publishLocalVideoPreview } from "./localVideoPreviewRelay";
 import { publishLocalVideoRealtime } from "./localVideoRealtimeRelay";
-import { DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE } from "./localVideoQuality";
+import {
+  DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE,
+  DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE,
+} from "./localVideoQuality";
 import { publishLocalVideoCaptureQuality } from "./localVideoCaptureQualityRelay";
 import {
   localVideoDiagnosticsEnabled,
@@ -151,7 +154,7 @@ const openCapture = async (
     deviceId: { exact: binding.deviceId },
     width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
     height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
-    frameRate: { ideal: 60 },
+    frameRate: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE },
   };
   const stream =
     desktopCapture?.stream ??

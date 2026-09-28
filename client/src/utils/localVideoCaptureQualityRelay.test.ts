@@ -94,6 +94,102 @@ describe("localVideoCaptureQualityRelay", () => {
     expect(FakeBroadcastChannel.channels).toHaveLength(0);
   });
 
+  it("lets a small preview alone settle to 720p30", async () => {
+    const videoTrack = {
+      applyConstraints: jest.fn().mockResolvedValue(undefined),
+    };
+    const stopPublisher = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream);
+    const preview = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      640,
+      360,
+      { frameRate: 30, windowRole: "projector-preview" },
+    );
+
+    await advanceTimers(9_999);
+    expect(videoTrack.applyConstraints).not.toHaveBeenCalled();
+    await advanceTimers(1);
+    expect(videoTrack.applyConstraints).toHaveBeenCalledWith({
+      width: { ideal: 1_280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 },
+    });
+
+    preview.stop();
+    stopPublisher();
+  });
+
+  it("combines the highest resolution and frame-rate demand independently", async () => {
+    const videoTrack = {
+      applyConstraints: jest.fn().mockResolvedValue(undefined),
+    };
+    const stopPublisher = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream);
+    const largePreview = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      3_840,
+      2_160,
+      { frameRate: 30, windowRole: "projector-preview" },
+    );
+    const audience = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      640,
+      360,
+      { frameRate: 60, windowRole: "projector" },
+    );
+
+    await advanceTimers(250);
+    expect(videoTrack.applyConstraints).toHaveBeenCalledWith({
+      width: { ideal: 3_840 },
+      height: { ideal: 2_160 },
+      frameRate: { ideal: 60 },
+    });
+
+    largePreview.stop();
+    audience.stop();
+    stopPublisher();
+  });
+
+  it("downgrades resolution and frame rate after a high-demand consumer leaves", async () => {
+    const videoTrack = {
+      applyConstraints: jest.fn().mockResolvedValue(undefined),
+    };
+    const stopPublisher = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream);
+    const preview = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      640,
+      360,
+      { frameRate: 30, windowRole: "projector-preview" },
+    );
+    const audience = subscribeLocalVideoCaptureQuality(
+      "source-1",
+      1_920,
+      1_080,
+      { frameRate: 60, windowRole: "projector" },
+    );
+
+    await advanceTimers(250);
+    expect(videoTrack.applyConstraints).not.toHaveBeenCalled();
+
+    audience.stop();
+    await advanceTimers(9_999);
+    expect(videoTrack.applyConstraints).not.toHaveBeenCalled();
+    await advanceTimers(1);
+    expect(videoTrack.applyConstraints).toHaveBeenCalledWith({
+      width: { ideal: 1_280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 },
+    });
+
+    preview.stop();
+    stopPublisher();
+  });
+
   it("updates capture demand when a display moves or resizes", async () => {
     const videoTrack = {
       applyConstraints: jest.fn().mockResolvedValue(undefined),

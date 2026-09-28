@@ -86,6 +86,8 @@ class FakeMediaRecorder {
   private emit(type: string, event: Event & { data?: Blob }) {
     this.listeners.get(type)?.forEach((listener) => listener(event));
   }
+
+  fail = () => this.emit("error", new Event("error"));
 }
 
 type SourceBufferListener = () => void;
@@ -120,9 +122,17 @@ class FakeSourceBuffer {
 }
 
 class FakeMediaSource {
+  static instances: FakeMediaSource[] = [];
   static isTypeSupported = jest.fn(() => true);
   readyState: ReadyState = "open";
   sourceBuffer = new FakeSourceBuffer();
+  endOfStream = jest.fn(() => {
+    this.readyState = "ended";
+  });
+
+  constructor() {
+    FakeMediaSource.instances.push(this);
+  }
 
   addEventListener(type: string, listener: () => void) {
     if (type === "sourceopen") queueMicrotask(listener);
@@ -139,6 +149,7 @@ describe("localVideoMediaRelay", () => {
     jest.clearAllMocks();
     FakeBroadcastChannel.channels = [];
     FakeMediaRecorder.instances = [];
+    FakeMediaSource.instances = [];
     Object.defineProperty(globalThis, "BroadcastChannel", {
       configurable: true,
       value: FakeBroadcastChannel,
@@ -280,6 +291,38 @@ describe("localVideoMediaRelay", () => {
     stopPublisher();
   });
 
+  it("restarts the compatibility recorder after an error while a display remains subscribed", async () => {
+    const stopPublisher = publishLocalVideoMedia("source-recorder-retry", {} as MediaStream);
+    const displayChannel = new FakeBroadcastChannel(
+      "worshipsync-local-video-media-v1",
+    );
+    displayChannel.postMessage({
+      type: "subscribe",
+      sourceId: "source-recorder-retry",
+      subscriberId: "display-retry",
+    });
+    await waitFor(() => expect(FakeMediaRecorder.instances).toHaveLength(1));
+
+    FakeMediaRecorder.instances[0].fail();
+    displayChannel.postMessage({
+      type: "subscribe",
+      sourceId: "source-recorder-retry",
+      subscriberId: "display-retry",
+    });
+
+    await waitFor(() => expect(FakeMediaRecorder.instances).toHaveLength(2));
+    expect(FakeMediaRecorder.instances[1].start).toHaveBeenCalledWith(50);
+
+    displayChannel.postMessage({
+      type: "unsubscribe",
+      sourceId: "source-recorder-retry",
+      subscriberId: "display-retry",
+    });
+    await waitFor(() => expect(FakeMediaRecorder.instances[1].stop).toHaveBeenCalled());
+    displayChannel.close();
+    stopPublisher();
+  });
+
   it("keeps an audience display close to the live edge", async () => {
     const stream = {} as MediaStream;
     const stopPublisher = publishLocalVideoMedia("source-1", stream);
@@ -306,6 +349,23 @@ describe("localVideoMediaRelay", () => {
     expect(video.currentTime).toBeCloseTo(1.41, 2);
 
     stopSubscriber();
+    stopPublisher();
+  });
+
+  it("releases MSE buffers and object URLs when a display unsubscribes", async () => {
+    const stopPublisher = publishLocalVideoMedia("source-mse-cleanup", {} as MediaStream);
+    const stopSubscriber = subscribeLocalVideoMedia(
+      "source-mse-cleanup",
+      document.createElement("video"),
+    );
+
+    await waitFor(() => expect(FakeMediaSource.instances).toHaveLength(1));
+    const mediaSource = FakeMediaSource.instances[0];
+    await waitFor(() => expect(mediaSource.sourceBuffer.mode).toBe("sequence"));
+    stopSubscriber();
+
+    expect(mediaSource.endOfStream).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local-video-relay");
     stopPublisher();
   });
 

@@ -8,6 +8,7 @@ type LocalVideoInputLayerProps = {
   shouldAnimate?: boolean;
   playAudio?: boolean;
   volume?: number;
+  isActive?: boolean;
   captureEnabled?: boolean;
   receiveHighQuality?: boolean;
   publishPreview?: boolean;
@@ -25,6 +26,7 @@ const LocalVideoInputLayer = ({
   shouldAnimate = false,
   playAudio = false,
   volume = 1,
+  isActive = true,
   captureEnabled,
   receiveHighQuality,
   publishPreview,
@@ -64,6 +66,7 @@ const LocalVideoInputLayer = ({
         input={input}
         playAudio={playAudio && visible}
         volume={volume}
+        isActive={isActive}
         captureEnabled={captureEnabled}
         receiveHighQuality={receiveHighQuality}
         publishPreview={publishPreview}

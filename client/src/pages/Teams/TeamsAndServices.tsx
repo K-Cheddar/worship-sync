@@ -39,6 +39,7 @@ import {
 } from "./teamsRoutePersistence";
 
 const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
+const TeamsMessagesPage = lazy(() => import("./pages/TeamsMessagesPage"));
 const TeamsFormsPage = lazy(() => import("./pages/TeamsFormsPage"));
 const TeamsMembersPage = lazy(() => import("./pages/TeamsMembersPage"));
 const TeamsPositionsPage = lazy(() => import("./pages/TeamsPositionsPage"));
@@ -171,6 +172,14 @@ const TeamsAndServicesRoutes = () => (
   <Routes>
     <Route element={<TeamsAndServicesLayout />}>
       <Route index element={<TeamsAndServicesIndexRedirect />} />
+      <Route
+        path="messages"
+        element={
+          <TeamsSectionRoute>
+            <TeamsMessagesPage />
+          </TeamsSectionRoute>
+        }
+      />
       <Route
         path={teamsNavSections[0].routePath}
         element={

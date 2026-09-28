@@ -1,6 +1,6 @@
 import type { filteredItemsListType } from "./FilteredItems";
 
-export const COLLAPSED_FILTERED_ITEM_ROW_HEIGHT = 44;
+export const COLLAPSED_FILTERED_ITEM_ROW_HEIGHT = 40;
 export const FILTERED_ITEM_ROW_GAP = 8;
 export const EXTERNAL_STATUS_ROW_HEIGHT = 72;
 export const EXTERNAL_RESULT_ROW_HEIGHT = 148;
@@ -10,7 +10,7 @@ export const EXTERNAL_RESULT_ROW_HEIGHT = 148;
 // height avoids a visible jump between the estimated and measured layout.
 const TITLE_LINE_HEIGHT = 24; // text-base line box
 const ARTIST_LINE_HEIGHT = 22; // text-sm line + gap-0.5
-const ROW_VERTICAL_PADDING = 12; // py-1.5 (top + bottom)
+const ROW_VERTICAL_PADDING = 8; // py-1 (top + bottom)
 const ROW_BORDER = 2; // 1px border top + bottom
 const ACTION_ROW_HEIGHT = 28; // "Add to outline" button line
 

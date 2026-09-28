@@ -7,6 +7,7 @@ import {
   GraduationCap,
   LayoutTemplate,
   Mic2,
+  MessageSquareText,
   Settings2,
   UserRoundCog,
   Users,
@@ -79,6 +80,14 @@ export const teamsNavSections: TeamsNavSection[] = [
     label: "Forms",
     description: "Share intake forms and review submissions.",
     icon: ClipboardList,
+    domain: "teams",
+  },
+  {
+    path: "/teams-and-services/messages",
+    routePath: "messages",
+    label: "Messages",
+    description: "Preview and manually send volunteer SMS.",
+    icon: MessageSquareText,
     domain: "teams",
   },
 ];

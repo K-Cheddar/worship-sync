@@ -2,10 +2,12 @@ import {
   getItemTypeLabel,
   borderColorMap,
   iconColorMap,
+  svgMap,
   overlayBorderColorMap,
   overlayTextColorMap,
   overlayTypeLabelMap,
 } from "./itemTypeMaps";
+import { CalendarClock, File, Music, Timer } from "lucide-react";
 
 describe("getItemTypeLabel", () => {
   it("returns 'item' for undefined", () => {
@@ -48,6 +50,17 @@ describe("iconColorMap", () => {
       expect(iconColorMap.has(type)).toBe(true);
       expect(iconColorMap.get(type)).toMatch(/^#[0-9a-fA-F]{6}$/);
     });
+  });
+
+  it("uses the established icons and colors for the library table types", () => {
+    expect(svgMap.get("song")).toBe(Music);
+    expect(iconColorMap.get("song")).toBe("#3b82f6");
+    expect(svgMap.get("free")).toBe(File);
+    expect(iconColorMap.get("free")).toBe("#f97316");
+    expect(svgMap.get("timer")).toBe(Timer);
+    expect(iconColorMap.get("timer")).toBe("#ec4899");
+    expect(svgMap.get("service-time")).toBe(CalendarClock);
+    expect(iconColorMap.get("service-time")).toBe("#8b5cf6");
   });
 });
 

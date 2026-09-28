@@ -15,8 +15,10 @@ type ProjectorPresentationPreviewProps = {
   isMobile?: boolean;
   previewScale?: number;
   fillWidth?: boolean;
+  centerPreview?: boolean;
   readOnly?: boolean;
   isVisible?: boolean;
+  suspendPreviewMedia?: boolean;
   toggleIsTransmitting: () => void;
   /** Output this tile shows; defaults to the built-in surface. */
   outputId?: string;
@@ -34,8 +36,10 @@ const ProjectorPresentationPreview = memo(
     isMobile,
     previewScale,
     fillWidth,
+    centerPreview,
     readOnly = false,
     isVisible = true,
+    suspendPreviewMedia = false,
     toggleIsTransmitting,
     outputId = "projector",
     name = "Projector",
@@ -84,8 +88,10 @@ const ProjectorPresentationPreview = memo(
         showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
+        centerPreview={centerPreview}
         footer={previewFooter}
         isVisible={isVisible}
+        suspendPreviewMedia={suspendPreviewMedia}
       />
     );
   },

@@ -17,14 +17,14 @@ import { plainTextToRichText } from "../../types/richText";
 
 describe("service-plan content resources", () => {
   it.each([
-    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    "https://youtu.be/dQw4w9WgXcQ?t=30",
-  ])("detects YouTube links: %s", (url) => {
+    ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+    ["https://youtu.be/dQw4w9WgXcQ?t=30", "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30"],
+  ])("detects YouTube links: %s", (url, normalizedUrl) => {
     expect(createServicePlanLinkResource({ title: "Video", url })).toMatchObject({
       type: "youtube",
       provider: "youtube",
       mediaId: "dQw4w9WgXcQ",
-      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      url: normalizedUrl,
     });
   });
 

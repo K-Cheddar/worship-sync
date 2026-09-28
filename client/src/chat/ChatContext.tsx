@@ -127,6 +127,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [draftsByDay, setDraftsByDay] = useState<Record<string, string>>({});
   const [retrySequence, setRetrySequence] = useState(0);
   const [typingUsers, setTypingUsers] = useState<ChatTyper[]>([]);
+  const contextRef = useRef(context);
+  const churchIdRef = useRef(churchId);
+  const contextSyncRequestRef = useRef<Promise<void> | null>(null);
   const requestIdRef = useRef(0);
   const isOpenRef = useRef(false);
   const liveStreamReadyRef = useRef(false);
@@ -153,6 +156,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const typingActiveRef = useRef(false);
   const lastTypingHeartbeatRef = useRef(0);
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  contextRef.current = context;
+  churchIdRef.current = churchId;
 
   useEffect(() => {
     isOpenRef.current = isOpen;
@@ -232,6 +238,57 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     });
   }, []);
 
+  const synchronizeContext = useCallback(() => {
+    if (!eligible || !churchId || !context) return Promise.resolve();
+    if (contextSyncRequestRef.current) return contextSyncRequestRef.current;
+
+    const requestedChurchId = churchId;
+    const requestedContext = context;
+    const request = getChatContext(requestedChurchId, localTimeZone())
+      .then(({ context: nextContext }) => {
+        if (
+          churchIdRef.current !== requestedChurchId ||
+          contextRef.current !== requestedContext ||
+          nextContext.todayKey === requestedContext.todayKey
+        ) {
+          return;
+        }
+
+        contextRef.current = nextContext;
+        activeRoomRef.current = `${requestedChurchId}:${nextContext.todayKey}`;
+        liveStreamReadyRef.current = false;
+        initialMessagesReceivedRef.current = false;
+        todayFallbackRef.current = null;
+        knownMessageIdsRef.current.clear();
+        knownMessagesRef.current.clear();
+        setContext(nextContext);
+        setSelectedDayKey(nextContext.todayKey);
+      })
+      .catch(() => {
+        // Context refresh is opportunistic; the active chat stream can continue.
+      })
+      .finally(() => {
+        if (contextSyncRequestRef.current === request) {
+          contextSyncRequestRef.current = null;
+        }
+      });
+
+    contextSyncRequestRef.current = request;
+    return request;
+  }, [churchId, context, eligible]);
+
+  useEffect(() => {
+    if (!eligible || !context) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void synchronizeContext();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () =>
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+  }, [context, eligible, synchronizeContext]);
+
   useEffect(
     () => () => {
       if (typingIdleTimerRef.current) {
@@ -270,8 +327,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     }
     reactionToastRef.current = null;
     if (context) setSelectedDayKey(context.todayKey);
+    void synchronizeContext();
     setIsOpen(true);
-  }, [context, removeToast]);
+  }, [context, removeToast, synchronizeContext]);
 
   const upsertMessage = useCallback((message: ChatMessage) => {
     knownMessageIdsRef.current.add(message.messageId);
@@ -437,6 +495,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     initialMessagesReceivedRef.current = false;
     todayFallbackRef.current = null;
     activeRoomRef.current = "";
+    contextRef.current = null;
+    contextSyncRequestRef.current = null;
     knownMessageIdsRef.current.clear();
     knownMessagesRef.current.clear();
     setContext(null);
@@ -448,6 +508,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     void getChatContext(churchId, localTimeZone())
       .then(({ context: nextContext }) => {
         if (cancelled) return;
+        contextRef.current = nextContext;
         setContext(nextContext);
         activeRoomRef.current = `${churchId}:${nextContext.todayKey}`;
         setSelectedDayKey(nextContext.todayKey);
@@ -473,6 +534,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (!eligible || !context?.todayKey) return;
     let stopped = false;
+    const roomKey = `${churchId}:${context.todayKey}`;
     let abortController: AbortController | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -494,6 +556,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           dayKey: context.todayKey,
           signal: abortController.signal,
           onEvent: (event: ChatStreamEvent) => {
+            if (stopped || activeRoomRef.current !== roomKey) return;
             if (event.type === "connected") {
               attempt = 0;
               setConnectionStatus("connected");

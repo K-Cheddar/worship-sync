@@ -52,6 +52,11 @@ const basePlan: ServicePlan = {
   ],
 };
 
+const librarySongs: ServiceItem[] = [
+  { _id: "song-1", name: "Great Are You Lord", type: "song", listId: "library-song-1" },
+  { _id: "song-2", name: "Build My Life", type: "song", listId: "library-song-2" },
+];
+
 describe("buildServicePlanOutlineItems", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -85,7 +90,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(mockCreateNewHeading).toHaveBeenCalledWith(
@@ -117,7 +122,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(result.items.filter((item) => item.type === "song").map((item) => item._id))
@@ -152,7 +157,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
       customDocuments,
     });
     const documentItems = first.items.filter((item) => item.type === "free");
@@ -167,8 +172,8 @@ describe("buildServicePlanOutlineItems", () => {
     expect(documentItems.map(({ _id }) => _id)).toEqual(["document-1", "document-2"]);
     expect(documentItems.every((item) => !("slides" in item))).toBe(true);
     expect(documentItems.map(({ listId }) => listId)).toEqual([
-      "el-documents::custom-document:document-1",
-      "el-documents::custom-document:document-2",
+      "el-documents::attachment:doc-ref-1",
+      "el-documents::attachment:doc-ref-2",
     ]);
     expect(first.updatedSections[0].elements[0].pushedOutlineListIds).toEqual(
       first.items.slice(1).map(({ listId }) => listId),
@@ -179,12 +184,76 @@ describe("buildServicePlanOutlineItems", () => {
       plan: { ...plan, sections: first.updatedSections },
       currentList: first.items,
       db: undefined,
-      songs: [],
+      songs: librarySongs,
       customDocuments,
     });
 
     expect(second.items).toEqual([]);
     expect(second.insertedCount).toBe(0);
+  });
+
+  it("stops before creating live items when the selected outline has changed", async () => {
+    await expect(buildServicePlanOutlineItems({
+      plan: basePlan,
+      currentList: [],
+      db: undefined,
+      songs: librarySongs,
+      isContextCurrent: () => false,
+    })).rejects.toThrow("The selected outline changed");
+
+    expect(mockCreateNewHeading).not.toHaveBeenCalled();
+    expect(mockCreateBibleItem).not.toHaveBeenCalled();
+  });
+
+  it("imports mixed and repeated attachment occurrences in saved operator order idempotently", async () => {
+    const plan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          id: "el-ordered",
+          type: "free",
+          title: plainTextToRichText("Mixed set"),
+          songRefs: [
+            { id: "song-occurrence-a", kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+            { id: "song-occurrence-b", kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+          ],
+          scriptureRefs: [{ id: "scripture-occurrence", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+          resources: [
+            { id: "doc-a", type: "custom-document", title: "First", data: { customDocumentId: "document-1" } },
+            { id: "doc-b", type: "custom-document", title: "Second", data: { customDocumentId: "document-2" } },
+          ],
+          contentOrder: ["doc-b", "song-occurrence-b", "scripture-occurrence", "song-occurrence-a", "doc-a"],
+        }],
+      }],
+    };
+    const customDocuments = [
+      { _id: "document-1", name: "First", type: "free" as const },
+      { _id: "document-2", name: "Second", type: "free" as const },
+    ];
+    const first = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: librarySongs,
+      customDocuments,
+    });
+    expect(first.items.slice(1).map((item) => item.type)).toEqual([
+      "free", "song", "bible", "song", "free",
+    ]);
+    expect(first.items.slice(1).map((item) => item._id)).toEqual([
+      "document-2", "song-1", "bible-John-3", "song-1", "document-1",
+    ]);
+    expect(new Set(first.items.slice(1).map((item) => item.listId)).size).toBe(5);
+
+    const second = await buildServicePlanOutlineItems({
+      plan: { ...plan, sections: first.updatedSections },
+      currentList: first.items,
+      db: undefined,
+      songs: librarySongs,
+      customDocuments,
+    });
+    expect(second.items).toEqual([]);
   });
 
   it("reports unavailable custom documents without creating blank placeholders", async () => {
@@ -210,7 +279,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
       customDocuments: [],
     });
 
@@ -225,16 +294,20 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     expect(result.skippedTitles).toEqual(["Unwritten Song"]);
   });
 
-  it("pushes a pending song the library has gained since the import", async () => {
-    // The plan still says pending, but the song plainly exists now — dropping
-    // it here would leave it off the screen for no reason anyone can see.
+  it("does not substitute a same-titled library song for an unresolved saved-plan attachment", async () => {
     const result = await buildServicePlanOutlineItems({
-      plan: basePlan,
+      plan: {
+        ...basePlan,
+        sections: [{
+          ...basePlan.sections[0],
+          elements: [basePlan.sections[0].elements[1]],
+        }],
+      },
       currentList: [],
       db: undefined,
       songs: [
@@ -247,12 +320,8 @@ describe("buildServicePlanOutlineItems", () => {
       ],
     });
 
-    expect(result.skippedTitles).toEqual([]);
-    expect(result.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ _id: "song-7", name: "Unwritten Song", type: "song" }),
-      ]),
-    );
+    expect(result.skippedTitles).toEqual(["Unwritten Song"]);
+    expect(result.items).toEqual([]);
   });
 
   it("creates a blank free-form placeholder for a type with no real content reference", async () => {
@@ -260,7 +329,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     expect(mockCreateNewFreeForm).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Baptism Testimony" }),
@@ -273,7 +342,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     const [section] = result.updatedSections;
     expect(section.elements[0].pushedOutlineListId).toBeTruthy();
@@ -287,7 +356,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     // 2 content items inserted (song + free-form placeholder); pending song skipped.
     expect(result.insertedCount).toBe(2);
@@ -313,7 +382,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: alreadyPushedPlan,
       currentList,
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(mockCreateNewHeading).not.toHaveBeenCalled();
@@ -348,7 +417,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: mixedPlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(result.items.map((item) => item._id)).toEqual([
@@ -386,7 +455,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: twoSongPlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     // The operator drops the first song from the live list, then pushes again.
     const listAfterDelete = first.items.filter((item) => item._id !== "song-1");
@@ -395,7 +464,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: { ...twoSongPlan, sections: first.updatedSections },
       currentList: listAfterDelete,
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(second.items.map((item) => item._id)).toEqual(["heading-Worship", "song-1"]);
@@ -412,13 +481,13 @@ describe("buildServicePlanOutlineItems", () => {
       plan: songPlan,
       currentList: [],
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
     const second = await buildServicePlanOutlineItems({
       plan: { ...songPlan, sections: first.updatedSections },
       currentList: first.items,
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(second.items).toEqual([]);
@@ -447,7 +516,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: noNewWorkPlan,
       currentList,
       db: undefined,
-      songs: [],
+      songs: librarySongs,
     });
 
     expect(mockCreateNewHeading).toHaveBeenCalledTimes(1);

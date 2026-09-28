@@ -23,21 +23,23 @@ export type UseServicePlanAutosaveOptions<
   changeVersion: number;
   baseRevision: number;
   buildPayload: () => TPayload | null;
-  save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
+  save: (payload: TPayload, baseRevision: number, operationId?: string) => Promise<TDoc>;
   getConflictPlan: (error: unknown) => TDoc | null;
   /**
    * True when `doc` is this editor's payload after the server persisted it.
    * Used to acknowledge a lost HTTP response whose 409/GET body is our write,
    * without treating a second editor's document as a successful save.
    */
-  isOwnWrite?: (doc: TDoc, payload: TPayload) => boolean;
+  isOwnWrite?: (doc: TDoc, payload: TPayload, operationId?: string) => boolean;
   /**
    * Load the persisted document after an uncertain save failure so we can ack
    * a committed write instead of retrying the same stale POST.
    */
   loadLatest?: () => Promise<TDoc | null>;
   onSaved: (plan: TDoc) => void;
+  onSaveAcknowledged?: (savedVersion: number) => void;
   onConflict: (latestPlan: TDoc) => void;
+  onDiagnostic?: (event: string, details: Record<string, unknown>) => void;
 };
 
 const AUTOSAVE_DELAY_MS = 1_200;
@@ -96,7 +98,9 @@ export const useServicePlanAutosave = <
   isOwnWrite,
   loadLatest,
   onSaved,
+  onSaveAcknowledged,
   onConflict,
+  onDiagnostic,
 }: UseServicePlanAutosaveOptions<TDoc, TPayload>) => {
   const [state, setState] = useState<ServicePlanAutosaveState>("saved");
   const changeVersionRef = useRef(changeVersion);
@@ -109,10 +113,14 @@ export const useServicePlanAutosave = <
   const isOwnWriteRef = useRef(isOwnWrite);
   const loadLatestRef = useRef(loadLatest);
   const onSavedRef = useRef(onSaved);
+  const onSaveAcknowledgedRef = useRef(onSaveAcknowledged);
   const onConflictRef = useRef(onConflict);
+  const onDiagnosticRef = useRef(onDiagnostic);
   const timerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const inFlightRef = useRef<Promise<boolean> | null>(null);
+  const requestSequenceRef = useRef(0);
+  const inFlightRequestIdRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const resetKeyRef = useRef(resetKey);
   /** Bumped whenever we switch plans. A save that resolves after a switch
@@ -126,6 +134,7 @@ export const useServicePlanAutosave = <
    * as another editor just because `inFlightRef` was cleared.
    */
   const expectedAckRevisionRef = useRef<number | null>(null);
+  const operationIdRef = useRef<string | null>(null);
   /** Successful writes keyed by the generation that sent them, so a pending
    * flush for a plan we already left can reuse that response's revision. */
   const saveAckByGenerationRef = useRef(
@@ -138,7 +147,7 @@ export const useServicePlanAutosave = <
     payload: TPayload;
     baseRevision: number;
     version: number;
-    save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
+    save: (payload: TPayload, baseRevision: number, operationId?: string) => Promise<TDoc>;
   } | null>(null);
 
   changeVersionRef.current = changeVersion;
@@ -149,7 +158,9 @@ export const useServicePlanAutosave = <
   isOwnWriteRef.current = isOwnWrite;
   loadLatestRef.current = loadLatest;
   onSavedRef.current = onSaved;
+  onSaveAcknowledgedRef.current = onSaveAcknowledged;
   onConflictRef.current = onConflict;
+  onDiagnosticRef.current = onDiagnostic;
 
   // Stable: only touches refs, so effects can depend on it without re-running.
   const clearTimers = useCallback(() => {
@@ -177,7 +188,13 @@ export const useServicePlanAutosave = <
     const loadLatestFn = loadLatestRef.current;
     const isOwnWriteFn = isOwnWriteRef.current;
     const sentRevision = revisionRef.current;
+    const operationId = operationIdRef.current || (operationIdRef.current =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const expectedNextRevision = sentRevision + 1;
+    const requestId = ++requestSequenceRef.current;
+    inFlightRequestIdRef.current = requestId;
     expectedAckRevisionRef.current = expectedNextRevision;
 
     const acknowledge = (savedPlan: TDoc) => {
@@ -192,7 +209,13 @@ export const useServicePlanAutosave = <
       retryCountRef.current = 0;
       pendingRef.current = null;
       expectedAckRevisionRef.current = null;
+      operationIdRef.current = null;
+      onDiagnosticRef.current?.("service_plan_save_acknowledged", {
+        operationId, sentRevision, actualRevision: nextRevision,
+        requestSequence: versionBeingSaved, acknowledgedAt: Date.now(),
+      });
       onSavedRef.current(savedPlan);
+      onSaveAcknowledgedRef.current?.(versionBeingSaved);
       setState(
         changeVersionRef.current > versionBeingSaved ? "dirty" : "saved",
       );
@@ -200,13 +223,17 @@ export const useServicePlanAutosave = <
     };
 
     const isAcknowledgedOwnWrite = (doc: TDoc) =>
-      Boolean(isOwnWriteFn?.(doc, payload)) &&
-      getDocumentRevision(doc) === expectedNextRevision;
+      Boolean(isOwnWriteFn?.(doc, payload, operationId)) &&
+      getDocumentRevision(doc) >= expectedNextRevision;
 
     setState("saving");
+    onDiagnosticRef.current?.("service_plan_save_started", {
+      operationId, expectedRevision: sentRevision, requestSequence: versionBeingSaved,
+      startedAt: Date.now(),
+    });
     const request = (async () => {
       try {
-        const savedPlan = await saveFn(payload, sentRevision);
+        const savedPlan = await saveFn(payload, sentRevision, operationId);
         return acknowledge(savedPlan);
       } catch (error) {
         const latestPlan = getConflictPlanRef.current(error);
@@ -215,6 +242,11 @@ export const useServicePlanAutosave = <
         }
         if (generation !== generationRef.current) return false;
         if (latestPlan) {
+          onDiagnosticRef.current?.("service_plan_save_conflict", {
+            operationId, expectedRevision: sentRevision,
+            actualRevision: getDocumentRevision(latestPlan), classification: "revision_conflict",
+            detectedAt: Date.now(),
+          });
           expectedAckRevisionRef.current = null;
           setState("conflict");
           onConflictRef.current(latestPlan);
@@ -231,8 +263,13 @@ export const useServicePlanAutosave = <
             if (
               remote &&
               getDocumentRevision(remote) > sentRevision &&
-              !isOwnWriteFn?.(remote, payload)
+              !isOwnWriteFn?.(remote, payload, operationId)
             ) {
+              onDiagnosticRef.current?.("service_plan_save_conflict", {
+                operationId, expectedRevision: sentRevision,
+                actualRevision: getDocumentRevision(remote), classification: "remote_revision_after_uncertain_save",
+                detectedAt: Date.now(),
+              });
               expectedAckRevisionRef.current = null;
               setState("conflict");
               onConflictRef.current(remote);
@@ -256,7 +293,13 @@ export const useServicePlanAutosave = <
         }
         return false;
       } finally {
-        inFlightRef.current = null;
+        // A plan switch detaches this request and lets the next plan install
+        // its own request in the shared ref. Only the request that still owns
+        // the slot may clear it when it settles.
+        if (inFlightRequestIdRef.current === requestId) {
+          inFlightRef.current = null;
+          inFlightRequestIdRef.current = null;
+        }
       }
     })();
     inFlightRef.current = request;
@@ -324,6 +367,7 @@ export const useServicePlanAutosave = <
     savedVersionRef.current = changeVersionRef.current;
     retryCountRef.current = 0;
     expectedAckRevisionRef.current = null;
+    operationIdRef.current = null;
     setState("saved");
   }, []);
 
@@ -339,10 +383,12 @@ export const useServicePlanAutosave = <
     () => expectedAckRevisionRef.current,
     [],
   );
+  const getActiveOperationId = useCallback(() => operationIdRef.current, []);
 
   const markConflict = useCallback(() => {
     clearTimers();
     expectedAckRevisionRef.current = null;
+    operationIdRef.current = null;
     setState("conflict");
   }, [clearTimers]);
 
@@ -356,6 +402,7 @@ export const useServicePlanAutosave = <
     // Any in-flight request now belongs to the previous plan.
     generationRef.current += 1;
     inFlightRef.current = null;
+    inFlightRequestIdRef.current = null;
     // Editor route changes reset their local draft counter to zero. Do not
     // snapshot the render's value here: an incoming route response must never
     // acknowledge a click that happened while it was settling.
@@ -365,6 +412,7 @@ export const useServicePlanAutosave = <
     // would still be the plan we just left.
     revisionRef.current = 0;
     expectedAckRevisionRef.current = null;
+    operationIdRef.current = null;
     retryCountRef.current = 0;
     setState("saved");
     // resetKey intentionally identifies a different plan, not a new save ack.
@@ -455,6 +503,7 @@ export const useServicePlanAutosave = <
       const inFlight = inFlightRef.current;
       generationRef.current += 1;
       inFlightRef.current = null;
+      inFlightRequestIdRef.current = null;
       flushPendingForPreviousPlan(inFlight, leavingGeneration);
     },
     [clearTimers, flushPendingForPreviousPlan],
@@ -467,6 +516,7 @@ export const useServicePlanAutosave = <
     acceptRemoteRevision,
     getRevision,
     getInFlightExpectedRevision,
+    getActiveOperationId,
     markConflict,
   };
 };

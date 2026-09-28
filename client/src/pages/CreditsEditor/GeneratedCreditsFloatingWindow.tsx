@@ -45,6 +45,15 @@ const StatusBadge = ({ status }: { status: GeneratedCreditItemStatus }) => {
     );
   }
 
+  if (status === "preserved") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-900/60 px-1 py-0.5 text-[10px] font-medium text-amber-200">
+        <AlertCircle size={10} />
+        Manual value preserved
+      </span>
+    );
+  }
+
   if (status === "error") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded bg-red-900/60 px-1 py-0.5 text-[10px] font-medium text-red-200">
@@ -243,6 +252,11 @@ const GeneratedCreditsFloatingWindow = () => {
                         text.
                       </div>
                     )}
+                    {item.manualOverride ? (
+                      <p className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
+                        This credit already contains operator text. Generation kept it and did not apply the proposed value.
+                      </p>
+                    ) : null}
                     {item.error ? (
                       <div className="text-xs text-red-300">{item.error}</div>
                     ) : null}

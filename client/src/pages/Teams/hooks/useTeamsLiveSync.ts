@@ -10,7 +10,7 @@ export type TeamsStreamEvent =
   | { type: "connected"; churchId?: string }
   | { type: "schedule-updated"; schedule: TeamSchedule }
   | { type: "schedule-removed"; scheduleId: string }
-  | { type: "service-plan-updated"; servicePlan: ServicePlan }
+  | { type: "service-plan-updated"; servicePlan: ServicePlan; saveOperationId?: string }
   | { type: "service-plan-removed"; planKey: string }
   | { type: "service-plan-template-updated"; template: ServicePlanTemplate }
   | { type: "service-plan-template-removed"; templateId: string }
@@ -19,6 +19,7 @@ export type TeamsStreamEvent =
 export type ServicePlanUpdatedEvent = {
   type: "service-plan-updated";
   servicePlan: ServicePlan;
+  saveOperationId?: string;
 };
 
 export type ServicePlanTemplateUpdatedEvent = {

@@ -623,26 +623,31 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               if (!open) setCanvaSourceMedia(null);
             }}
             onImageComplete={(info) => {
-              const media = c.addNewBackground(info);
-              if (media) notifyStorageUsageChanged();
-              return media;
+              return c.addCanvaImage(info).then((media) => {
+                notifyStorageUsageChanged();
+                return media;
+              });
             }}
             onVideoComplete={(info) => {
-              const media = c.addMuxVideo(info);
-              if (media) notifyStorageUsageChanged();
-              return media;
+              return c.addCanvaVideo(info).then((media) => {
+                notifyStorageUsageChanged();
+                return media;
+              });
             }}
             onImageRefresh={async (...args) => {
-              await c.refreshCanvaImage(...args);
+              const refreshed = await c.refreshCanvaImage(...args);
               notifyStorageUsageChanged();
+              return refreshed;
             }}
             onVideoRefresh={async (...args) => {
-              await c.refreshCanvaVideo(...args);
+              const refreshed = await c.refreshCanvaVideo(...args);
               notifyStorageUsageChanged();
+              return refreshed;
             }}
             onUnprocessedAssetCleanup={c.cleanupCanvaAsset}
             onCreateDeckItem={c.createCanvaDeckItemFromMedia}
             existingMedia={c.list}
+            getCurrentMedia={c.getCurrentMediaList}
             sourceMedia={canvaSourceMedia}
           />
         ) : null}

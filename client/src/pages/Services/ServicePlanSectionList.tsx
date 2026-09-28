@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { ArrowLeft, GripVertical, MoreHorizontal, Trash2, X } from "lucide-react";
 import {
   DndContext,
@@ -163,6 +163,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
     elementId: string,
     songRef: ServicePlanSongReference,
   ) => void;
+  onReviewImportAmbiguity?: (elementId: string) => void;
   /** When an item is dragging, section cards must not also translate — the preview array is the layout. */
   lockSortableLayout?: boolean;
 };
@@ -213,6 +214,7 @@ const SortableSectionCard = ({
   onOpenAssignment,
   onOpenContent,
   onOpenSongDetails,
+  onReviewImportAmbiguity,
   lockSortableLayout = false,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
@@ -363,6 +365,7 @@ const SortableSectionCard = ({
                   onOpenAssignment={(trigger) => onOpenAssignment(element.id, trigger)}
                   onOpenContent={(trigger) => onOpenContent(element.id, trigger)}
                   onOpenSongDetails={(songRef) => onOpenSongDetails(element.id, songRef)}
+                  onReviewImportAmbiguity={onReviewImportAmbiguity ? () => onReviewImportAmbiguity(element.id) : undefined}
                 />
               ))}
             </div>
@@ -413,6 +416,10 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   structureOnly?: boolean;
   /** Id on the scroll container, so a caller can scroll a row into view. */
   scrollId?: string;
+  /** Ref for a caller that coordinates scrolling within this list only. */
+  scrollContainerRef?: Ref<HTMLDivElement>;
+  /** Optional control positioned over this list, outside its scrolling content. */
+  followLiveControl?: ReactNode;
   ariaLabel?: string;
   sectionLabelColor?: string;
   sectionBorderColor?: string;
@@ -422,6 +429,7 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   onOpenAssignment?: (elementId: string, trigger?: HTMLElement) => void;
   onOpenContent?: (elementId: string, trigger?: HTMLElement) => void;
   allSongDocs?: DBItem[];
+  onReviewImportAmbiguity?: (elementId: string) => void;
 };
 
 /**
@@ -459,12 +467,15 @@ const ServicePlanSectionList = ({
   resolvedSongRefs = EMPTY_RESOLVED_SONG_REFS,
   structureOnly = false,
   scrollId,
+  scrollContainerRef,
+  followLiveControl,
   ariaLabel = "Service plan",
   sectionLabelColor = "#f97316",
   sectionBorderColor = "#f97316",
   header,
   onOpenAssignment: onOpenAssignmentProp,
   onOpenContent: onOpenContentProp,
+  onReviewImportAmbiguity,
   allSongDocs = [],
   ...liveRowState
 }: ServicePlanSectionListProps) => {
@@ -871,21 +882,29 @@ const ServicePlanSectionList = ({
     >
       <div className="flex min-h-0 min-w-0 flex-1 gap-3">
         <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-          <div
-            id={scrollId}
-            ref={planListRef}
-            role="region"
-            aria-label={ariaLabel}
-            className="scrollbar-variable min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto"
-          >
-            {header}
-            <ServicePlanElementColumnHeader
-              isEditing={isEditing}
-              showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
-              showAssignedColumn={!structureOnly}
-            />
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            <div
+              id={scrollId}
+              ref={(element) => {
+                planListRef.current = element;
+                if (typeof scrollContainerRef === "function") {
+                  scrollContainerRef(element);
+                } else if (scrollContainerRef) {
+                  scrollContainerRef.current = element;
+                }
+              }}
+              role="region"
+              aria-label={ariaLabel}
+              className="scrollbar-variable min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto"
+            >
+              {header}
+              <ServicePlanElementColumnHeader
+                isEditing={isEditing}
+                showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
+                showAssignedColumn={!structureOnly}
+              />
 
-            {displayedSections.map((section) => (
+              {displayedSections.map((section) => (
               <SortableSectionCard
                 key={section.id}
                 section={section}
@@ -971,10 +990,13 @@ const ServicePlanSectionList = ({
                   setSongDetailsEditing(false);
                   setSongDetailsRef({ elementId, songRef });
                 }}
+                onReviewImportAmbiguity={onReviewImportAmbiguity}
                 {...liveRowState}
               />
-            ))}
+              ))}
 
+            </div>
+            {followLiveControl}
           </div>
         </SortableContext>
         {isDesktopPanel && (activePanelElement || songDetails) ? (

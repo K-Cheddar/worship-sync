@@ -1,6 +1,7 @@
 import {
   applyLocalVideoCaptureProfile,
   getLocalVideoRealtimeBitrate,
+  getLocalVideoCaptureFrameRateForRole,
   resolveLocalVideoCaptureProfile,
 } from "./localVideoQuality";
 import {
@@ -27,13 +28,31 @@ describe("localVideoQuality", () => {
     ).toEqual({ id: "1440p", width: 2_560, height: 1_440 });
   });
 
-  it("does not add two 1280x720 consumers into a 1440p demand", () => {
+  it("uses 720p for 640x360 demand", () => {
+    expect(
+      resolveLocalVideoCaptureProfile([{ width: 640, height: 360 }]).id,
+    ).toBe("720p");
+  });
+
+  it("uses 720p for multiple 1280x720 consumers", () => {
     expect(
       resolveLocalVideoCaptureProfile([
         { width: 1_280, height: 720 },
         { width: 1_280, height: 720 },
       ]).id,
+    ).toBe("720p");
+  });
+
+  it("uses 1080p for a 1080p output", () => {
+    expect(
+      resolveLocalVideoCaptureProfile([{ width: 1_920, height: 1_080 }]).id,
     ).toBe("1080p");
+  });
+
+  it("uses 2160p for a 4K output", () => {
+    expect(
+      resolveLocalVideoCaptureProfile([{ width: 3_840, height: 2_160 }]).id,
+    ).toBe("2160p");
   });
 
   it("does not request 4K work for a 1440p output", () => {
@@ -46,10 +65,17 @@ describe("localVideoQuality", () => {
     expect(resolveLocalVideoCaptureProfile([]).id).toBe("1080p");
   });
 
-  it("keeps a stable 1080p floor instead of renegotiating capture cards to 720p", () => {
+  it("allows a 720p consumer to select 720p", () => {
     expect(
       resolveLocalVideoCaptureProfile([{ width: 1_280, height: 720 }]),
-    ).toEqual({ id: "1080p", width: 1_920, height: 1_080 });
+    ).toEqual({ id: "720p", width: 1_280, height: 720 });
+  });
+
+  it("uses low frame rate for previews and audience frame rate for outputs", () => {
+    expect(getLocalVideoCaptureFrameRateForRole("projector-preview")).toBe(30);
+    expect(getLocalVideoCaptureFrameRateForRole("editor")).toBe(30);
+    expect(getLocalVideoCaptureFrameRateForRole("projector")).toBe(60);
+    expect(getLocalVideoCaptureFrameRateForRole("unknown")).toBe(60);
   });
 
   it("caps oversized output requests at 4K", () => {
@@ -75,12 +101,12 @@ describe("localVideoQuality", () => {
       getVideoTracks: () => [{ applyConstraints, getSettings }],
     } as unknown as MediaStream;
 
-    await applyLocalVideoCaptureProfile(stream, 2_560, 1_440, "camera-1");
+    await applyLocalVideoCaptureProfile(stream, 2_560, 1_440, "camera-1", 30);
 
     expect(applyConstraints).toHaveBeenCalledWith({
       width: { ideal: 2_560 },
       height: { ideal: 1_440 },
-      frameRate: { ideal: 60 },
+      frameRate: { ideal: 30 },
     });
     expect(__getLocalVideoDiagnosticsForTests().get("camera-1")?.constraints).toEqual(
       expect.objectContaining({ succeeded: true, after: { width: 1_280, height: 720 } }),

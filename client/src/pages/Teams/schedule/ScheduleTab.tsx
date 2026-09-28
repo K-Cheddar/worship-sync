@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -18,6 +19,7 @@ import {
   LayoutGrid,
   Link2,
   MoreHorizontal,
+  MessageSquareText,
   Send,
   Plus,
   Printer,
@@ -30,6 +32,7 @@ import {
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import Modal from "../../../components/Modal/Modal";
+import Drawer from "../../../components/Drawer/Drawer";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
@@ -67,6 +70,11 @@ import {
   updateTeamScheduleAssignmentSwap,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
+  getNotificationIntents,
+  getNotificationIntentPreview,
+  prepareReplacementNotificationIntent,
+  resolveReplacementNotificationIntent,
+  sendNotificationIntent,
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
@@ -113,6 +121,7 @@ import {
   type TeamScheduleGuest,
   type TeamScheduleOccurrence,
   type TeamScheduleShadowKind,
+  type NotificationIntent,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -153,7 +162,9 @@ import {
   serializeAssignmentCell,
   serviceDateBlockedOut,
   shadowKindLabel,
+  defaultScheduleMembersSort,
   type MemberServingHistory,
+  type ScheduleMembersSort as ScheduleMembersSortState,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
 import {
@@ -191,6 +202,7 @@ import {
 } from "./scheduleMemberPickerUtils";
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
+import ScheduleMessagesPanel from "./ScheduleMessagesPanel";
 import {
   ScheduleAssignmentProvider,
   type ScheduleAssignmentHandlers,
@@ -706,12 +718,126 @@ const ScheduleTab = ({
     }
   }, [showForm]);
   const [membersPanelOpen, setMembersPanelOpen] = useState(true);
+  const [expandedMemberIds, setExpandedMemberIds] = useState<string[]>([]);
+  const [membersSort, setMembersSort] = useState<ScheduleMembersSortState>(
+    defaultScheduleMembersSort,
+  );
   // Cell keys auto-fill placed someone into within the last ~900ms, purely to
   // drive a brief highlight as the animation reveals picks one at a time.
   const [justFilledCellKeys, setJustFilledCellKeys] = useState<Set<string>>(
     () => new Set(),
   );
   const [autoFilling, setAutoFilling] = useState(false);
+  const [scheduleNotificationIntents, setScheduleNotificationIntents] = useState<NotificationIntent[]>([]);
+  const [scheduleNotificationNextCursor, setScheduleNotificationNextCursor] = useState("");
+  const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
+  const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
+  const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
+  const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
+  const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const wasScheduleMessagesOpenRef = useRef(false);
+  const wasMembersDrawerOpenRef = useRef(false);
+  useEffect(() => {
+    let active = true;
+    setScheduleNotificationIntents([]);
+    setScheduleNotificationNextCursor("");
+    if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
+    setLoadingScheduleNotifications(true);
+    void getNotificationIntents(churchId, { scheduleId: selectedScheduleId })
+      .then((response) => { if (active) { setScheduleNotificationIntents(response.intents || []); setScheduleNotificationNextCursor(response.nextCursor || ""); } })
+      .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
+      .finally(() => { if (active) setLoadingScheduleNotifications(false); });
+    return () => { active = false; };
+  }, [canEdit, churchId, selectedSchedule?.assignments, selectedSchedule?.responses, selectedScheduleId, showToast]);
+
+  const loadOlderScheduleNotifications = async () => {
+    if (!scheduleNotificationNextCursor || loadingScheduleNotifications || !selectedScheduleId) return;
+    setLoadingScheduleNotifications(true);
+    try {
+      const response = await getNotificationIntents(churchId, { scheduleId: selectedScheduleId, cursor: scheduleNotificationNextCursor });
+      setScheduleNotificationIntents((current) => [...current, ...(response.intents || [])]);
+      setScheduleNotificationNextCursor(response.nextCursor || "");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not load older schedule message history.");
+    } finally {
+      setLoadingScheduleNotifications(false);
+    }
+  };
+
+  const scheduleNotificationCounts = useMemo(() => {
+    const responded = scheduleNotificationIntents.filter((intent) => {
+      if (intent.intentType === "replacement_request") return Boolean(intent.replacementResolvedAt);
+      const response = selectedSchedule?.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
+      return response?.memberId === intent.memberId && ["accepted", "declined"].includes(response.response);
+    }).length;
+    return {
+      requested: scheduleNotificationIntents.length,
+      accepted: scheduleNotificationIntents.filter((intent) => ["accepted", "sent", "delivered"].includes(intent.attemptStatus || "")).length,
+      delivered: scheduleNotificationIntents.filter((intent) => intent.attemptStatus === "delivered").length,
+      failed: scheduleNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
+      uncertain: scheduleNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
+      responded,
+      waiting: scheduleNotificationIntents.length - responded,
+      optedOut: scheduleNotificationIntents.filter((intent) => intent.previewError?.toLowerCase().includes("opted out")).length,
+    };
+  }, [scheduleNotificationIntents, selectedSchedule?.responses]);
+  const pendingScheduleMessageCount = scheduleNotificationIntents.filter((intent) =>
+    ["preview", "ready"].includes(intent.status),
+  ).length;
+  const scheduleMessagesRequiringAttention = scheduleNotificationIntents.filter(
+    (intent) =>
+      ["preview", "ready"].includes(intent.status) ||
+      ["failed", "undelivered"].includes(intent.attemptStatus || "") ||
+      intent.status === "unknown" ||
+      intent.attemptOutcome === "unknown",
+  ).length;
+
+  const handleSendScheduleIntent = async (intent: NotificationIntent) => {
+    if (!canEdit || sendingNotificationIntentId) return;
+    setSendingNotificationIntentId(intent.intentId);
+    try {
+      const preview = await getNotificationIntentPreview(churchId, intent.intentId);
+      if (!preview.preview.eligible) {
+        showToast("This volunteer is no longer eligible for SMS. Review the current assignment and consent.", "error");
+        return;
+      }
+      const memberName = data.members.find((member) => member.memberId === intent.memberId);
+      const recipient = memberName ? `${memberName.firstName} ${memberName.lastName}`.trim() : "this volunteer";
+      if (!window.confirm(`Send one SMS to ${recipient} at ${preview.preview.phoneNumberSnapshot}?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"}.`)) return;
+      const result = await sendNotificationIntent(churchId, intent.intentId, preview.preview.approvalVersion);
+      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+      setScheduleNotificationIntents(latest.intents || []);
+      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this schedule message.");
+      try {
+        const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+        setScheduleNotificationIntents(latest.intents || []);
+        setScheduleNotificationNextCursor(latest.nextCursor || "");
+      } catch { /* Keep the last known queue visible. */ }
+    } finally {
+      setSendingNotificationIntentId("");
+    }
+  };
+
+  const handleResolveReplacementIntent = async (intent: NotificationIntent) => {
+    if (!canEdit || intent.replacementResolvedAt || ["sending", "unknown"].includes(intent.status)) return;
+    if (!window.confirm("Close this replacement invitation and allow the administrator to choose another candidate? The schedule assignment will not change.")) return;
+    setSendingNotificationIntentId(intent.intentId);
+    try {
+      await resolveReplacementNotificationIntent(churchId, intent.intentId);
+      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
+      setScheduleNotificationIntents(latest.intents || []);
+      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      showToast("Invitation closed. The schedule remains unchanged.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
+    } finally {
+      setSendingNotificationIntentId("");
+    }
+  };
   const [autoFillConfirmOpen, setAutoFillConfirmOpen] = useState(false);
   // Auto-fill applies an optimistic batch before its one network save settles.
   // Keep navigation protected for that entire interval so leaving cannot strand
@@ -755,6 +881,36 @@ const ScheduleTab = ({
   // session; until then the layout tracks the viewport (see the effect below).
   const hasExplicitLayoutPreference = useRef(hasStoredTeamScheduleAdminLayout());
   const isNarrowViewport = useMediaQuery("(max-width: 1023px)");
+  const scheduleWorkspaceRef = useRef<HTMLElement | null>(null);
+  const [scheduleWorkspaceWidth, setScheduleWorkspaceWidth] = useState(0);
+  const shouldOverlayMembers =
+    isNarrowViewport ||
+    (scheduleWorkspaceWidth > 0 && scheduleWorkspaceWidth < 1120);
+
+  useEffect(() => {
+    if (scheduleMessagesOpen) {
+      wasScheduleMessagesOpenRef.current = true;
+    } else if (wasScheduleMessagesOpenRef.current) {
+      scheduleActionsTriggerRef.current?.focus();
+      wasScheduleMessagesOpenRef.current = false;
+    }
+  }, [scheduleMessagesOpen]);
+  useEffect(() => {
+    if (shouldOverlayMembers && membersPanelOpen) {
+      wasMembersDrawerOpenRef.current = true;
+    } else if (shouldOverlayMembers && wasMembersDrawerOpenRef.current) {
+      membersDrawerTriggerRef.current?.focus();
+      wasMembersDrawerOpenRef.current = false;
+    }
+  }, [membersPanelOpen, shouldOverlayMembers]);
+
+  useLayoutEffect(() => {
+    if (scheduleWorkspaceWidth > 0) {
+      setMembersPanelOpen(scheduleWorkspaceWidth >= 1120);
+    } else if (isNarrowViewport) {
+      setMembersPanelOpen(false);
+    }
+  }, [isNarrowViewport, scheduleWorkspaceWidth]);
 
   // With no stored preference, follow the viewport so a mid-session resize across
   // the breakpoint swaps to the layout that reads best at that width.
@@ -1239,6 +1395,7 @@ const ScheduleTab = ({
       if (!(target instanceof Element)) return;
       if (target.closest("[data-schedule-assignment-menu]")) return;
       if (target.closest("[data-schedule-members-panel]")) return;
+      if (target.closest("[data-schedule-members-trigger]")) return;
       if (target.closest("[data-schedule-cell-trigger]")) return;
       clearActiveSlot();
     };
@@ -1327,6 +1484,24 @@ const ScheduleTab = ({
     scheduleColumns.length > 0 &&
     scheduleOccurrences.length > 0,
   );
+
+  useLayoutEffect(() => {
+    const element = scheduleWorkspaceRef.current;
+    if (
+      !canShowScheduleWorkspace ||
+      showForm ||
+      !element ||
+      typeof ResizeObserver === "undefined"
+    ) {
+      return;
+    }
+    setScheduleWorkspaceWidth(element.clientWidth);
+    const observer = new ResizeObserver(([entry]) => {
+      setScheduleWorkspaceWidth(entry.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [canShowScheduleWorkspace, selectedScheduleId, showForm]);
 
   // Distinguishes "still loading this schedule's assignments" from the genuine
   // empty states, so an operator never reads a mid-fetch grid as an unstaffed
@@ -2772,6 +2947,7 @@ const ScheduleTab = ({
     const assignmentCell =
       selectedSchedule?.assignments?.[activeSlot.occurrenceId]?.[activeSlot.columnKey];
     const primaryMemberId = getCellPrimaryMemberId(assignmentCell);
+    const response = selectedSchedule?.responses?.[activeSlot.occurrenceId]?.[activeSlot.columnKey]?.response;
     const primaryMember = scheduleDisplayMembers.find(
       (item) => item.memberId === primaryMemberId,
     );
@@ -2795,6 +2971,7 @@ const ScheduleTab = ({
         : "Empty",
       positionId: column.positionId,
       currentPrimaryMemberId: primaryMemberId,
+      isVacantOrDeclined: !primaryMemberId || response === "declined",
       currentAssigneeIsGuest: Boolean(primaryMember?.scheduleGuest),
       hasCurrentAssignee: Boolean(primaryMemberId),
       currentShadows,
@@ -2808,7 +2985,13 @@ const ScheduleTab = ({
     scheduleOccurrences,
     scheduleDisplayMembers,
     selectedSchedule?.assignments,
+    selectedSchedule?.responses,
   ]);
+  const memberAssignmentMode = Boolean(canEdit && activeSlot);
+
+  useEffect(() => {
+    setExpandedMemberIds([]);
+  }, [activeSlotMeta?.positionId, memberAssignmentMode]);
 
   const activeSlotRecommendationStats = useMemo(() => {
     const stats = new Map<string, ScheduleMemberRecommendationStats>();
@@ -3093,6 +3276,42 @@ const ScheduleTab = ({
       sourceServiceId: moveSource?.serviceId,
       sourcePositionSlotKey: moveSource?.positionSlotKey,
     });
+  };
+
+  const handlePrepareReplacementInvite = async (memberId: string) => {
+    if (!canEdit || !activeSlot || !activeSlotMeta || !selectedSchedule || preparingReplacementMemberId) return;
+    if (!activeSlotMeta.isVacantOrDeclined) {
+      showToast("Replacement invitations are available for empty or declined slots.", "warning");
+      return;
+    }
+    const issue = activeSlotGetIssue(memberId);
+    const warning = activeSlotGetWarning(memberId);
+    const assignedElsewhere = getActiveSlotMoveSource(memberId);
+    const crossTeamWarning = getCrossTeamConflictWarning(memberId, activeSlot.occurrenceId);
+    const hardWarnings = ["Marked this service unavailable on intake", "Blocked out", "Unavailable this week of the month"];
+    if (issue || assignedElsewhere || crossTeamWarning || hardWarnings.some((value) => warning.includes(value))) {
+      showToast(issue || (assignedElsewhere ? "This volunteer is already assigned to another position in this service." : crossTeamWarning || warning), "warning");
+      return;
+    }
+    setPreparingReplacementMemberId(memberId);
+    showToast("Preparing a replacement invitation for review…", "neutral");
+    try {
+      await prepareReplacementNotificationIntent(churchId, {
+        scheduleId: selectedSchedule.scheduleId,
+        occurrenceId: activeSlot.occurrenceId,
+        cellKey: activeSlot.columnKey,
+        memberId,
+      });
+      const response = await getNotificationIntents(churchId, { scheduleId: selectedSchedule.scheduleId });
+      setScheduleNotificationIntents(response.intents || []);
+      setScheduleNotificationNextCursor(response.nextCursor || "");
+      setScheduleMessagesOpen(true);
+      showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not prepare this replacement invitation.");
+    } finally {
+      setPreparingReplacementMemberId("");
+    }
   };
 
   const activeSlotGetIssue = useCallback(
@@ -4029,6 +4248,58 @@ const ScheduleTab = ({
   );
 
 
+  const renderScheduleMembersPanel = (drawer = false) => (
+    <ScheduleMembersPanel
+      open={membersPanelOpen}
+      drawer={drawer}
+      expandedMemberIds={expandedMemberIds}
+      onExpandedMemberIdsChange={setExpandedMemberIds}
+      membersSort={membersSort}
+      onMembersSortChange={setMembersSort}
+      onOpenChange={setMembersPanelOpen}
+      mode={memberAssignmentMode ? "assign" : "browse"}
+      activeTeamMembers={activeTeamMembers}
+      schedulePositions={schedulePositions}
+      scheduleStartDate={scheduleDateBounds.startDate}
+      scheduleEndDate={scheduleDateBounds.endDate}
+      scheduleAssignmentCounts={scheduleAssignmentCounts}
+      memberServingHistory={memberServingHistory}
+      recommendationStats={activeSlotRecommendationStats}
+      duplicateFirstNames={duplicateScheduleFirstNames}
+      highlightedMemberIdSet={highlightedMemberIdSet}
+      onToggleHighlight={toggleHighlightedMember}
+      memberPositionFilterIds={memberPositionFilterIds}
+      onMemberPositionFilterChange={setMemberPositionFilterIds}
+      membersPanelQuery={membersPanelQuery}
+      onMembersPanelQueryChange={setMembersPanelQuery}
+      assignmentQuery={assignmentQuery}
+      onAssignmentQueryChange={setAssignmentQuery}
+      slotContext={
+        activeSlotMeta
+          ? {
+            positionLabel: activeSlotMeta.positionLabel,
+            occurrenceLabel: activeSlotMeta.occurrenceLabel,
+            currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
+            positionId: activeSlotMeta.positionId,
+            currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
+          }
+          : undefined
+      }
+      onClearSlot={clearActiveSlot}
+      onSelectMember={canEdit
+        ? (memberId) => {
+          if (drawer) setMembersPanelOpen(false);
+          handleActiveSlotMemberSelect(memberId);
+        }
+        : () => undefined}
+      getIssue={activeSlotGetIssue}
+      getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
+      getWarning={activeSlotGetWarning}
+      canEditMember={canEditMember}
+      onEditMember={handleEditMemberFromPanel}
+    />
+  );
+
   const scheduleEditForm = (
     <ScheduleEditForm
       draftKey={draftKey}
@@ -4086,13 +4357,13 @@ const ScheduleTab = ({
                 </div>
               ) : null}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
-                <div className="flex flex-wrap items-end gap-2">
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
                   {/* Narrowing the picker to one team is remembered per church,
                       so an operator who only runs Praise Team doesn't scroll
                       past every other team's months on each visit. */}
                   {activeTeams.length > 1 ? (
                     <Select
-                      className="min-w-40"
+                      className="w-full sm:min-w-40 sm:w-auto"
                       label="Filter schedules by team"
                       hideLabel
                       value={scheduleTeamFilter || ""}
@@ -4101,7 +4372,7 @@ const ScheduleTab = ({
                     />
                   ) : null}
                   <Select
-                    className="min-w-48"
+                    className="w-full sm:min-w-48 sm:w-auto"
                     label="Open schedule"
                     hideLabel
                     // Bind to the record, not the hydrated schedule, so the name
@@ -4196,6 +4467,31 @@ const ScheduleTab = ({
                       menuItems={[
                         {
                           element: (
+                            <span className="flex min-w-0 flex-col gap-0.5">
+                              <span className="flex items-center gap-2">
+                                <MessageSquareText className="h-4 w-4" aria-hidden />
+                                Messages
+                                {scheduleMessagesRequiringAttention > 0 ? (
+                                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
+                                    {scheduleMessagesRequiringAttention}
+                                  </span>
+                                ) : null}
+                              </span>
+                              {scheduleNotificationIntents.length > 0 ? (
+                                <span className="pl-6 text-xs text-gray-400">
+                                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
+                                </span>
+                              ) : null}
+                            </span>
+                          ),
+                          onClick: () => {
+                            if (shouldOverlayMembers) setMembersPanelOpen(false);
+                            setScheduleMessagesOpen(true);
+                          },
+                          "aria-expanded": scheduleMessagesOpen,
+                        },
+                        {
+                          element: (
                             <span className="flex items-center gap-2">
                               <Pencil className="h-4 w-4" aria-hidden />
                               Edit schedule
@@ -4218,6 +4514,7 @@ const ScheduleTab = ({
                           variant="tertiary"
                           svg={MoreHorizontal}
                           iconSize="sm"
+                          ref={scheduleActionsTriggerRef}
                           aria-label="More schedule options"
                         />
                       }
@@ -4229,24 +4526,62 @@ const ScheduleTab = ({
           </section>
 
           {canShowScheduleWorkspace ? (
-            <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
+            <section
+              ref={scheduleWorkspaceRef}
+              className={cn(panelClassName, scheduleWorkspacePanelClassName)}
+            >
               <div className="shrink-0">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div
+                    role="group"
+                    aria-label="Team schedule identity"
+                    className="flex min-w-0 flex-1 items-center gap-2"
+                  >
                     <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
                       <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
-                      Team schedule
+                      <span className="truncate">Team schedule</span>
                     </h2>
                     {/* The picker shows only the schedule name, and teams reuse the
                         same names — name the team the grid belongs to. */}
                     {selectedTeam ? (
-                      <span className="flex min-w-0 items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
+                      <span className="flex min-w-0 shrink items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
                         <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
                         <span className="truncate">{selectedTeam.name}</span>
                       </span>
                     ) : null}
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <div
+                    role="group"
+                    aria-label="Team schedule controls"
+                    className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  >
+                    {selectedSchedule && shouldOverlayMembers ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={Users}
+                        iconSize="sm"
+                        ref={membersDrawerTriggerRef}
+                        data-schedule-members-trigger
+                        aria-controls="schedule-members-panel"
+                        aria-expanded={membersPanelOpen}
+                        aria-pressed={membersPanelOpen}
+                        aria-label="Members"
+                        title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
+                        className={cn(
+                          "gap-1.5",
+                          membersPanelOpen
+                            ? "bg-gray-700 text-white"
+                            : "text-gray-300",
+                        )}
+                        onClick={() => {
+                          if (!membersPanelOpen) setScheduleMessagesOpen(false);
+                          setMembersPanelOpen((open) => !open);
+                        }}
+                      >
+                        <span className="hidden sm:inline">Members</span>
+                      </Button>
+                    ) : null}
                     {/* Desktop: Organize + Layout sit labeled in the toolbar.
                         Narrow: both move into the overflow menu to save space. */}
                     {!isNarrowViewport ? (
@@ -4980,6 +5315,8 @@ const ScheduleTab = ({
                     }
                     getWarning={activeSlotGetWarning}
                     onSelectMember={handleActiveSlotMemberSelect}
+                    onPrepareReplacementInvite={activeSlotMeta?.isVacantOrDeclined ? handlePrepareReplacementInvite : undefined}
+                    preparingReplacementMemberId={preparingReplacementMemberId}
                     onAssignmentAction={handleActiveSlotAssignmentAction}
                     swapRecommendations={activeSlotSwapRecommendations}
                     onApplySwapRecommendation={(recommendation) =>
@@ -5014,47 +5351,43 @@ const ScheduleTab = ({
                     pendingSubmenu={pendingPickerSubmenu}
                     inputRef={pickerInputRef}
                   />
-                  <ScheduleMembersPanel
-                    open={membersPanelOpen}
-                    onOpenChange={setMembersPanelOpen}
-                    mode={canEdit && activeSlot ? "assign" : "browse"}
-                    activeTeamMembers={activeTeamMembers}
-                    schedulePositions={schedulePositions}
-                    scheduleStartDate={scheduleDateBounds.startDate}
-                    scheduleEndDate={scheduleDateBounds.endDate}
-                    scheduleAssignmentCounts={scheduleAssignmentCounts}
-                    memberServingHistory={memberServingHistory}
-                    recommendationStats={activeSlotRecommendationStats}
-                    duplicateFirstNames={duplicateScheduleFirstNames}
-                    highlightedMemberIdSet={highlightedMemberIdSet}
-                    onToggleHighlight={toggleHighlightedMember}
-                    memberPositionFilterIds={memberPositionFilterIds}
-                    onMemberPositionFilterChange={setMemberPositionFilterIds}
-                    membersPanelQuery={membersPanelQuery}
-                    onMembersPanelQueryChange={setMembersPanelQuery}
-                    assignmentQuery={assignmentQuery}
-                    onAssignmentQueryChange={setAssignmentQuery}
-                    slotContext={
-                      activeSlotMeta
-                        ? {
-                          positionLabel: activeSlotMeta.positionLabel,
-                          occurrenceLabel: activeSlotMeta.occurrenceLabel,
-                          currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
-                          positionId: activeSlotMeta.positionId,
-                          currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
-                        }
-                        : undefined
-                    }
-                    onClearSlot={clearActiveSlot}
-                    onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
-                    getIssue={activeSlotGetIssue}
-                    getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
-                    getWarning={activeSlotGetWarning}
-                    canEditMember={canEditMember}
-                    onEditMember={handleEditMemberFromPanel}
-                  />
+                  {!shouldOverlayMembers ? renderScheduleMembersPanel() : null}
                 </div>
               </ScheduleAssignmentProvider>
+              {shouldOverlayMembers ? (
+                <Drawer
+                  isOpen={membersPanelOpen}
+                  onClose={() => setMembersPanelOpen(false)}
+                  title="Members"
+                  position="right"
+                  size="xl"
+                  showBackdrop
+                  className="!max-w-[min(32rem,90vw)] max-sm:!max-w-full"
+                  contentPadding="p-3"
+                >
+                  {renderScheduleMembersPanel(true)}
+                </Drawer>
+              ) : null}
+              {canEdit && selectedSchedule ? (
+                <ScheduleMessagesPanel
+                  open={scheduleMessagesOpen}
+                  onOpenChange={setScheduleMessagesOpen}
+                  intents={scheduleNotificationIntents}
+                  members={data.members}
+                  duplicateFirstNames={duplicateScheduleFirstNames}
+                  counts={scheduleNotificationCounts}
+                  loading={loadingScheduleNotifications}
+                  nextCursor={scheduleNotificationNextCursor}
+                  sendingIntentId={sendingNotificationIntentId}
+                  getVolunteerResponse={(intent) => {
+                    const response = selectedSchedule.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
+                    return response?.memberId === intent.memberId ? response.response : "waiting";
+                  }}
+                  onSend={(intent) => void handleSendScheduleIntent(intent)}
+                  onCloseInvitation={(intent) => void handleResolveReplacementIntent(intent)}
+                  onLoadOlder={() => void loadOlderScheduleNotifications()}
+                />
+              ) : null}
               {canEdit ? (
                 <SchedulePasteRowDialog
                   open={pasteRowOpen}

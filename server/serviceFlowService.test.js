@@ -57,6 +57,21 @@ test("rich text keeps center/right alignment and drops anything else", () => {
   );
 });
 
+test("rich text preserves stable source-managed note block IDs", () => {
+  assert.deepEqual(
+    normalizeRichTextDocument({
+      blocks: [
+        { type: "paragraph", id: "source-note-1", spans: [{ text: "Imported note" }] },
+      ],
+    }),
+    {
+      blocks: [
+        { type: "paragraph", id: "source-note-1", spans: [{ text: "Imported note" }] },
+      ],
+    },
+  );
+});
+
 test("rich text keeps the fixed size scale and drops anything outside it", () => {
   assert.deepEqual(
     normalizeRichTextDocument({

@@ -245,6 +245,56 @@ describe("buildServicePlanningPreview scripture matching", () => {
   });
 });
 
+describe("buildServicePlanningPreview stable saved-plan overlay identity", () => {
+  it("keeps overlay source identities with assignees when their order changes", () => {
+    const overlayConfig: ServicePlanningConfig = {
+      ...servicePlanning,
+      elementRules: [{
+        ...servicePlanning.elementRules[0],
+        overlaySyncEnabled: true,
+        outlineSync: { enabled: false, itemType: "none" },
+        multiOverlay: { mode: "split" },
+      }],
+    };
+    const build = (assignees: Array<{ id: string; name: string }>) =>
+      buildServicePlanningPreview({
+        importData: {
+          planLabel: "Service",
+          sections: [{ sectionName: "Worship", rows: [{
+            ...baseRow,
+            sourcePlanKey: "plan-1@2026-09-25",
+            sourcePlanElementId: "element-1",
+            assigneeNames: assignees.map(({ name }) => name),
+            assigneeRefs: assignees,
+          }] }],
+          teamAssignments: [],
+        },
+        servicePlanning: overlayConfig,
+        overlays: [],
+        songLibrary: [],
+        activeOutlineList: [],
+      }).overlayPlan;
+
+    const first = build([
+      { id: "assignee-a", name: "Avery" },
+      { id: "assignee-b", name: "Morgan" },
+    ]);
+    const reordered = build([
+      { id: "assignee-b", name: "Morgan" },
+      { id: "assignee-a", name: "Avery" },
+    ]);
+
+    expect(first.map((item) => item.sourceCandidateId)).toEqual([
+      "element-1:assignee:assignee-a",
+      "element-1:assignee:assignee-b",
+    ]);
+    expect(reordered.map((item) => item.sourceCandidateId)).toEqual([
+      "element-1:assignee:assignee-b",
+      "element-1:assignee:assignee-a",
+    ]);
+  });
+});
+
 describe("buildServicePlanningPreview custom documents", () => {
   const document = (id: string, name: string): ServiceItem => ({
     _id: id,

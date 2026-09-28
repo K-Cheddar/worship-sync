@@ -81,6 +81,27 @@ describe("flushMediaLibraryDocToPouch", () => {
     );
   });
 
+  it("uses the latest state when a Canva save reaches the Pouch write", async () => {
+    const startingMedia = [{ id: "canva-page", name: "Old page" }] as MediaType[];
+    let latestMedia = startingMedia;
+    const db = {
+      get: jest.fn().mockImplementation(async () => {
+        latestMedia = [
+          { id: "canva-page", name: "Newer page revision" } as MediaType,
+          { id: "ordinary-upload", name: "Concurrent upload" } as MediaType,
+        ];
+        return { _id: "media", _rev: "1-media", list: [], folders: [] };
+      }),
+      put: jest.fn().mockResolvedValue({ ok: true, id: "media", rev: "2-media" }),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+
+    const result = await flushMediaLibraryDocToPouch(db, startingMedia, [], () => ({ list: latestMedia, folders: [] }));
+
+    expect(result).toEqual({ ok: true });
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ list: latestMedia }));
+  });
+
   it("does not write when the supplied database is no longer active", async () => {
     const staleDb = {
       get: jest.fn(),

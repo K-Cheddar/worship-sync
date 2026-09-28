@@ -27,6 +27,7 @@ import {
   resolveRequestBootstrap,
   requireTeamsViewSession,
   assertServerCsrf,
+  startIntakeSubmissionDigestRecovery,
   setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
@@ -1022,6 +1023,10 @@ app.post(
   "/api/webhooks/twilio/sms-status",
   authHandlers.handleSmsStatusWebhook,
 );
+app.post(
+  "/api/webhooks/twilio/sms-inbound",
+  authHandlers.handleSmsInboundWebhook,
+);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.post(
   "/api/auth/notification-preferences",
@@ -1390,6 +1395,38 @@ app.get(
   authHandlers.getTeamsBootstrap,
 );
 app.get(
+  "/api/churches/:churchId/notification-intents",
+  authHandlers.listIntents,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/:intentId/preview",
+  authHandlers.getIntentPreview,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/:intentId/send",
+  authHandlers.sendIntent,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/prepare",
+  authHandlers.prepareAvailabilityBatch,
+);
+app.get(
+  "/api/churches/:churchId/notification-batches/:batchId",
+  authHandlers.getAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/:batchId/dispatch",
+  authHandlers.dispatchAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/replacement-invitation",
+  authHandlers.prepareReplacementInvitation,
+);
+app.post(
+  "/api/churches/:churchId/notification-intents/:intentId/resolve-replacement",
+  authHandlers.resolveReplacementInvitation,
+);
+app.get(
   "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",
   authHandlers.getTeamIntakeSmsAttempts,
 );
@@ -1412,6 +1449,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-intake/recipients/:recipientId/link",
   authHandlers.getTeamIntakeRecipientLink,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId/recipients/:recipientId/sms-preview",
+  authHandlers.prepareTeamIntakeRecipientSms,
 );
 app.post(
   "/api/churches/:churchId/team-intake/recipients/:recipientId/sms",
@@ -3939,7 +3980,11 @@ if (isDevelopment) {
 
   https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
     console.log("HTTPS server running at https://local.worshipsync.net:5000");
+    startIntakeSubmissionDigestRecovery();
   });
 } else {
-  app.listen(port, () => console.log(`Listening on port ${port}`));
+  app.listen(port, () => {
+    console.log(`Listening on port ${port}`);
+    startIntakeSubmissionDigestRecovery();
+  });
 }

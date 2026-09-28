@@ -5,9 +5,13 @@ import {
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
 
+export type LibraryFilter = "all" | "song" | "free" | "timer";
+
 type AllItems = {
   list: ServiceItem[];
   isAllItemsLoading: boolean;
+  libraryFilter: LibraryFilter;
+  librarySearchValue: string;
   songSearchValue: string;
   freeFormSearchValue: string;
   timerSearchValue: string;
@@ -17,6 +21,8 @@ type AllItems = {
 const initialState: AllItems = {
   list: [],
   isAllItemsLoading: true,
+  libraryFilter: "all",
+  librarySearchValue: "",
   songSearchValue: "",
   freeFormSearchValue: "",
   timerSearchValue: "",
@@ -104,6 +110,15 @@ export const allItemsSlice = createSlice({
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
+    setLibraryFilter: (
+      state,
+      action: PayloadAction<AllItems["libraryFilter"]>,
+    ) => {
+      state.libraryFilter = action.payload;
+    },
+    setLibrarySearchValue: (state, action: PayloadAction<string>) => {
+      state.librarySearchValue = action.payload;
+    },
     setSongSearchValue: (state, action: PayloadAction<string>) => {
       state.songSearchValue = action.payload;
     },
@@ -124,6 +139,8 @@ export const {
   initiateAllItemsList,
   updateAllItemsListFromRemote,
   setIsInitialized,
+  setLibraryFilter,
+  setLibrarySearchValue,
   setSongSearchValue,
   setFreeFormSearchValue,
   setTimerSearchValue,

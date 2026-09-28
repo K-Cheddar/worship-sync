@@ -27,6 +27,7 @@ export const isPublicSharePathname = (pathname: string): boolean => {
   if (/^\/services\/[^/]+$/.test(path)) return true;
   if (/^\/schedule-response\/[^/]+$/.test(path)) return true;
   if (/^\/teams\/schedule\/[^/]+$/.test(path)) return true;
+  if (/^\/a\/[^/]+$/.test(path)) return true;
   if (path === "/teams/intake" || /^\/teams\/intake\/[^/]+$/.test(path)) {
     return true;
   }

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useStore } from "react-redux";
 import { Cable, ExternalLink, Folder, MonitorUp } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -14,6 +15,7 @@ import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import {
   syncMediaFromRemote,
   addItemToMediaList,
+  removeItemFromMediaList,
   setMediaListAndFolders,
   updateMediaItemFields,
 } from "../../store/mediaSlice";
@@ -100,9 +102,9 @@ import {
   setActiveItem,
   updateSlides,
 } from "../../store/itemSlice";
-import { addItemToItemList } from "../../store/itemListSlice";
+import { addItemToItemList, ensureCanvaItemInItemList } from "../../store/itemListSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
-import { createNewFreeForm } from "../../utils/itemUtil";
+import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
@@ -112,8 +114,9 @@ import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
-import { getCanvaMediaSource } from "./canvaMediaSource";
+import { getCanvaMediaSource, hasValidCanvaRefreshMetadata } from "./canvaMediaSource";
 import {
+  hasSupersededMediaReferences,
   replaceMediaReferencesForReplacement,
 } from "../../utils/mediaReferenceSweep";
 import { commitCanvaMediaReplacement } from "../../utils/canvaMediaReplacement";
@@ -151,6 +154,7 @@ export function useMediaLibraryController({
   onStorageUsageChanged,
 }: UseMediaLibraryControllerArgs = {}) {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
   const location = useLocation();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
@@ -208,8 +212,11 @@ export function useMediaLibraryController({
   } = useSelector((state: RootState) => state.media);
   const currentMediaListRef = useRef(list);
   const currentMediaFoldersRef = useRef(folders);
+  const canvaItemCreationsRef = useRef(new Map<string, Promise<string>>());
+  const providerCleanupInFlightRef = useRef(new Map<string, Promise<boolean>>());
   currentMediaListRef.current = list;
   currentMediaFoldersRef.current = folders;
+  const getCurrentMediaList = useCallback(() => store.getState().media.list, [store]);
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const isLoading = item.isLoading;
 
@@ -1063,10 +1070,38 @@ export function useMediaLibraryController({
       ) {
         return true;
       }
-      const failed = await deleteFromProviders([row]);
-      return failed.length === 0;
+      const cleanupKey = getCanvaProviderCleanupKey(row);
+      const pending = providerCleanupInFlightRef.current.get(cleanupKey);
+      if (pending) return pending;
+      const cleanup = (async () => {
+        const identity = getCanvaProviderIdentity(row);
+        if (identity) {
+          const isReferenced = (rows: MediaType[]) => rows.some((mediaItem) =>
+            getCanvaProviderIdentity(mediaItem) === identity,
+          );
+          if (isReferenced(getCurrentMediaList())) return false;
+          if (!db) return false;
+          try {
+            const persisted = await db.get("media") as unknown as { list?: MediaType[] };
+            if (isReferenced(persisted.list || [])) return false;
+          } catch {
+            // Without an authoritative Media read, keep the asset for a later retry.
+            return false;
+          }
+        }
+        const failed = await deleteFromProviders([row]);
+        return failed.length === 0;
+      })();
+      providerCleanupInFlightRef.current.set(cleanupKey, cleanup);
+      try {
+        return await cleanup;
+      } finally {
+        if (providerCleanupInFlightRef.current.get(cleanupKey) === cleanup) {
+          providerCleanupInFlightRef.current.delete(cleanupKey);
+        }
+      }
     },
-    [deleteFromProviders],
+    [db, deleteFromProviders, getCurrentMediaList],
   );
 
   const showProviderCleanupRetry = useCallback((rows: MediaType[]) => {
@@ -1085,24 +1120,51 @@ export function useMediaLibraryController({
   }, []);
 
   const cleanupCanvaAsset = useCallback(
-    async (asset: CanvaImportedAsset) =>
-      deleteCanvaProvider(mediaFromCanvaAsset(asset)),
-    [deleteCanvaProvider],
+    async (asset: CanvaImportedAsset) => {
+      const row = mediaFromCanvaAsset(asset);
+      const identity = getCanvaProviderIdentity(row);
+      if (!identity || !db) return false;
+      const isReferenced = (rows: MediaType[]) => rows.some((mediaItem) =>
+        getCanvaProviderIdentity(mediaItem) === identity,
+      );
+      try {
+        const persisted = await db.get("media") as unknown as { list?: MediaType[] };
+        if (isReferenced(persisted.list || [])) return true;
+      } catch {
+        return false;
+      }
+      if (isReferenced(getCurrentMediaList())) return false;
+      return deleteCanvaProvider(row);
+    },
+    [db, deleteCanvaProvider, getCurrentMediaList],
   );
 
   const commitCanvaReplacement = useCallback(
     async (oldMedia: MediaType, newMedia: MediaType) => {
       if (!db) throw new Error("Could not save Canva media replacement.");
-      const folders = currentMediaFoldersRef.current;
+      const folders = store.getState().media.folders;
+      const currentList = getCurrentMediaList();
+      const latestOldMedia = currentList.find((mediaItem) => mediaItem.id === oldMedia.id);
+      if (!latestOldMedia) throw new Error("The Canva refresh target is no longer in Media. Refresh Media and try again.");
+      const oldSource = getCanvaMediaSource(latestOldMedia);
+      const newSource = getCanvaMediaSource(newMedia);
+      if (!oldSource || !newSource || oldSource.designId !== newSource.designId || oldSource.format !== newSource.format || oldSource.revision >= newSource.revision) {
+        throw new Error("This Canva refresh is out of date. The newer Media version was kept.");
+      }
       await commitCanvaMediaReplacement({
-        oldMedia,
+        oldMedia: latestOldMedia,
         newMedia,
-        currentList: currentMediaListRef.current,
+        currentList,
         folders,
         replaceReferences: async (replacement) =>
           replaceMediaReferencesForReplacement(db, replacement),
+        hasSupersededReferences: async (from, to) =>
+          hasSupersededMediaReferences(db, from, to),
         flushMedia: (nextList, nextFolders) =>
-          flushMediaLibraryDocToPouch(db, nextList, nextFolders),
+          flushMediaLibraryDocToPouch(db, nextList, nextFolders, () => ({
+            list: store.getState().media.list,
+            folders: store.getState().media.folders,
+          })),
         deleteProvider: deleteCanvaProvider,
         applyList: (nextList, nextFolders) => {
           currentMediaListRef.current = nextList;
@@ -1117,13 +1179,31 @@ export function useMediaLibraryController({
           dispatch(replaceMediaReferencesInPreferences(replacement));
         },
         onCleanupFailure: showProviderCleanupRetry,
+        canCommit: () => {
+          const latest = getCurrentMediaList().find((mediaItem) => mediaItem.id === latestOldMedia.id);
+          const latestSource = latest && getCanvaMediaSource(latest);
+          return Boolean(latest && latest.updatedAt === latestOldMedia.updatedAt &&
+            getCanvaProviderIdentity(latest) === getCanvaProviderIdentity(latestOldMedia) &&
+            latestSource?.revision === oldSource.revision);
+        },
+        getCurrentList: getCurrentMediaList,
+        getCurrentFolders: () => store.getState().media.folders,
+        readPersistedMedia: async () => {
+          const persisted = await db.get("media");
+          return {
+            list: [...((persisted as unknown as { list?: MediaType[] }).list || [])],
+            folders: [...((persisted as unknown as { folders?: MediaFolder[] }).folders || [])],
+          };
+        },
       });
     },
     [
       db,
       deleteCanvaProvider,
       dispatch,
+      getCurrentMediaList,
       showProviderCleanupRetry,
+      store,
     ],
   );
 
@@ -1510,7 +1590,7 @@ export function useMediaLibraryController({
     }
     if (
       canvaImportKey &&
-      list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
+      getCurrentMediaList().some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
     ) {
       notifyMediaAction("That Canva page is already in Media.", "error");
       return undefined;
@@ -1566,14 +1646,23 @@ export function useMediaLibraryController({
   };
 
   const createCanvaDeckItemFromMedia = useCallback(
-    async (pages: MediaType[], designTitle: string) => {
-      if (!db || pages.length === 0) return;
+    async (
+      pages: MediaType[],
+      designTitle: string,
+      options: { navigateToItem?: boolean; idempotencyKey?: string } = {},
+    ) => {
+      const key = options.idempotencyKey;
+      const create = async (): Promise<string> => {
+      if (!db) throw new Error("The custom item could not be saved because Media is unavailable.");
+      if (pages.length === 0) throw new Error("No imported media is available for the custom item.");
       // Prefer live list entries so refreshed Canva backgrounds are current.
+      const latestMedia = getCurrentMediaList();
       const resolvedPages = pages.map(
-        (page) => list.find((mediaItem) => mediaItem.id === page.id) ?? page,
+        (page) => latestMedia.find((mediaItem) => mediaItem.id === page.id) ?? page,
       );
       try {
         const newItem = await createNewFreeForm({
+          ...(options.idempotencyKey ? { id: options.idempotencyKey } : {}),
           name: designTitle || "Canva presentation",
           text: "",
           list: allItemsList,
@@ -1596,25 +1685,37 @@ export function useMediaLibraryController({
           _id: newItem._id,
           listId: "",
         };
-        dispatch(setActiveItem(newItem));
-        const addedAction = dispatch(addItemToItemList(listItem));
-        dispatch(upsertItemInAllItemsList(listItem));
-        navigate(
-          getControllerItemPath(
-            { _id: newItem._id, listId: addedAction.payload.listId },
-            controllerBasePath,
-          ),
+        if (options.navigateToItem !== false) dispatch(setActiveItem(newItem));
+        dispatch(ensureCanvaItemInItemList(listItem));
+        const outlineItem = store.getState().undoable.present.itemList.list.find(
+          (entry) => entry._id === newItem._id,
         );
-        showToast(
-          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
-          "success",
+        if (!outlineItem) throw new Error("Could not confirm the custom item was added to the outline.");
+        if (!store.getState().allItems.list.some((entry) => entry._id === newItem._id)) {
+          dispatch(upsertItemInAllItemsList(listItem));
+        }
+        const itemPath = getControllerItemPath(
+          { _id: newItem._id, listId: outlineItem.listId },
+          controllerBasePath,
         );
-      } catch {
+        if (options.navigateToItem !== false) {
+          navigate(itemPath);
+          showToast(
+            `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
+            "success",
+          );
+        }
+        return itemPath;
+      } catch (error) {
         showToast(
           "Canva media was imported, but the custom item could not be created. Try Create custom item from Media.",
           "error",
         );
+        throw error;
       }
+      };
+
+      return runCanvaCustomItemCreationOnce(canvaItemCreationsRef.current, key, create);
     },
     [
       allItemsList,
@@ -1623,8 +1724,9 @@ export function useMediaLibraryController({
       defaultFreeFormBackgroundBrightness,
       defaultFreeFormFontMode,
       dispatch,
-      list,
+      getCurrentMediaList,
       navigate,
+      store,
       showToast,
     ],
   );
@@ -1648,7 +1750,7 @@ export function useMediaLibraryController({
     }
     if (
       canvaImportKey &&
-      list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
+      getCurrentMediaList().some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
     ) {
       notifyMediaAction("That Canva video is already in Media.", "error");
       return;
@@ -1688,12 +1790,51 @@ export function useMediaLibraryController({
     return newMedia;
   };
 
+  const persistCanvaMedia = async (mediaItem: MediaType | undefined) => {
+    if (!mediaItem) throw new Error("The Canva media could not be added to Media.");
+    if (!db) {
+      dispatch(removeItemFromMediaList(mediaItem.id));
+      throw new Error("Media storage is unavailable. The Canva media was not saved.");
+    }
+    const result = await flushMediaLibraryDocToPouch(db, getCurrentMediaList(), store.getState().media.folders, () => ({
+      list: getCurrentMediaList(),
+      folders: store.getState().media.folders,
+    }));
+    if (!result.ok) {
+      try {
+        const persisted = await db.get("media") as unknown as {
+          list?: MediaType[];
+          folders?: MediaFolder[];
+        };
+        const persistedList = persisted.list || [];
+        const persistedItem = persistedList.find((item) => item.id === mediaItem.id);
+        dispatch(setMediaListAndFolders({
+          list: [...persistedList],
+          folders: [...(persisted.folders || store.getState().media.folders)],
+        }));
+        if (persistedItem) return persistedItem;
+      } catch {
+        // Keep the optimistic row and provider asset until persistence can be checked again.
+        throw new Error("The Canva media save could not be confirmed. The asset was kept for reconciliation.");
+      }
+      throw new Error("Could not save the Canva media to Media.");
+    }
+    return mediaItem;
+  };
+
+  const addCanvaImage = async (info: mediaInfoType) => persistCanvaMedia(addNewBackground(info));
+  const addCanvaVideo = async (info: MuxUploadResult) => persistCanvaMedia(addMuxVideo(info));
+
   const refreshCanvaImage = useCallback(
     async (info: mediaInfoType, mediaId: string) => {
-      const current = currentMediaListRef.current.find(
+      const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
-      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      if (!current) throw new Error("The Canva refresh target is no longer in Media. Refresh Media and try again.");
+      const source = info.canvaSource;
+      if (!hasValidCanvaRefreshMetadata(source, info.canvaImportKey, "png") || !info.public_id || !info.secure_url) {
+        throw new Error("Canva returned incomplete image metadata. The existing Media version was kept.");
+      }
       const thumbnail =
         cloud?.image(info.public_id).resize(fill().width(250)).toURL() ||
         info.thumbnail_url ||
@@ -1722,16 +1863,21 @@ export function useMediaLibraryController({
         canvaSource: info.canvaSource,
       };
       await commitCanvaReplacement(current, nextMedia);
+      return true;
     },
-    [churchId, cloud, commitCanvaReplacement],
+    [churchId, cloud, commitCanvaReplacement, getCurrentMediaList],
   );
 
   const refreshCanvaVideo = useCallback(
     async (info: MuxUploadResult, mediaId: string) => {
-      const current = currentMediaListRef.current.find(
+      const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
-      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      if (!current) throw new Error("The Canva refresh target is no longer in Media. Refresh Media and try again.");
+      const source = info.canvaSource;
+      if (!hasValidCanvaRefreshMetadata(source, info.canvaImportKey, "mp4") || !info.assetId || !info.playbackId || !info.playbackUrl) {
+        throw new Error("Canva returned incomplete video metadata. The existing Media version was kept.");
+      }
       const nextMedia: MediaType = {
         ...current,
         updatedAt: new Date().toISOString(),
@@ -1757,8 +1903,9 @@ export function useMediaLibraryController({
         canvaSource: info.canvaSource,
       };
       await commitCanvaReplacement(current, nextMedia);
+      return true;
     },
-    [churchId, commitCanvaReplacement],
+    [churchId, commitCanvaReplacement, getCurrentMediaList],
   );
 
   const requestMediaUpload = useCallback(() => {
@@ -1847,6 +1994,8 @@ export function useMediaLibraryController({
     uploadProgress,
     requestMediaUpload,
     addNewBackground,
+    addCanvaImage,
+    addCanvaVideo,
     createCanvaDeckItemFromMedia,
     addMuxVideo,
     refreshCanvaImage,
@@ -1864,6 +2013,7 @@ export function useMediaLibraryController({
     setNewFolderOpen,
     folders,
     list,
+    getCurrentMediaList,
     parentForNewFolder,
     applyFoldersAndList,
     folderRenameOpen,

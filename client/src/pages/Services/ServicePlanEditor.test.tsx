@@ -44,6 +44,7 @@ import {
 } from "../../types/richText";
 import { calendarDateInTimeZone } from "../../utils/teamScheduleOccurrences";
 import * as generalUtils from "../../utils/generalUtils";
+import { flushServicePlanRecoveryDraftWrites, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
 
 jest.mock("../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`, so the
@@ -182,6 +183,7 @@ const nextOccurrence: TeamScheduleOccurrence = {
 };
 
 type RenderEditorProps = {
+  userId?: string;
   service?: TeamService;
   occurrence?: TeamScheduleOccurrence;
   members?: TeamRosterMember[];
@@ -212,6 +214,7 @@ type RenderEditorProps = {
 };
 
 const editorTree = ({
+  userId = "test-user-id",
   service = oneTimeService,
   occurrence: occurrenceProp = occurrence,
   members = [],
@@ -229,7 +232,7 @@ const editorTree = ({
 }: RenderEditorProps = {}) => (
   <GlobalInfoContext.Provider
     value={
-      createMockGlobalContext({ churchId: "church-1" }) as ContextType<
+      createMockGlobalContext({ churchId: "church-1", userId }) as ContextType<
         typeof GlobalInfoContext
       >
     }
@@ -256,6 +259,20 @@ const editorTree = ({
 );
 
 const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
+
+const mockPlanLayout = () => jest
+  .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+  .mockReturnValue({
+    x: 0,
+    y: 0,
+    width: 800,
+    height: 600,
+    top: 0,
+    right: 800,
+    bottom: 600,
+    left: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
 
 describe("collectServicePlanTeamNoteLabels", () => {
   it("returns sorted unique non-empty team note labels", () => {
@@ -370,6 +387,11 @@ describe("ServicePlanEditor", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    flushServicePlanRecoveryDraftWrites();
+    sessionStorage.clear();
+    for (const key of Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))) {
+      if (key?.startsWith("worship-sync:service-plan-draft:")) localStorage.removeItem(key);
+    }
     localStorage.removeItem("worshipsyncServicePlanImportSource");
     localStorage.removeItem("worshipsyncServicePublicNotesTeam");
     mockAllSongDocs = [];
@@ -1017,7 +1039,7 @@ describe("ServicePlanEditor", () => {
     expect(mockSaveServicePlan.mock.calls[0][2].baseRevision).not.toBe(50);
   });
 
-  it("offers Reload latest only for a concurrent-edit conflict", async () => {
+  it("offers field review only for a concurrent-edit conflict", async () => {
     const user = userEvent.setup();
     const latestPlan = {
       planId: "church-1::service-1@2026-07-26",
@@ -1068,7 +1090,41 @@ describe("ServicePlanEditor", () => {
     expect(
       await screen.findByText("Plan changed elsewhere", undefined, { timeout: 2_500 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reload latest" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(screen.getAllByText(/Their item/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    mockGetServicePlan.mockResolvedValueOnce({
+      success: true,
+      servicePlan: {
+        ...latestPlan,
+        revision: 10,
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Newest item") }],
+        }],
+      },
+    });
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
+    expect(await screen.findByText("Newest item")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply merged plan" })).toBeDisabled();
+
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    mockSaveServicePlan.mockRejectedValueOnce(new Error("temporary network failure"));
+    await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
+    expect(await screen.findByText("Retrying save…", undefined, { timeout: 4_000 })).toBeInTheDocument();
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).not.toBeNull();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(3), { timeout: 8_000 });
+    await waitFor(() => {
+      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).toBeNull();
+    });
   });
 
   it("does not offer Reload latest after a generic save failure", async () => {
@@ -1105,6 +1161,85 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reload latest" })).not.toBeInTheDocument();
     expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
+  });
+
+  it("keeps recovery private across an account switch in the same tab", async () => {
+    const currentPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 2,
+      sections: [{ id: "section-1", name: "Worship", elements: [] }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: currentPlan });
+    saveServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey, {
+      savedAt: Date.now(),
+      base: currentPlan,
+      local: { ...currentPlan, name: "Private recovered plan" },
+    });
+
+    const view = render(editorTree({ userId: "test-user-id" }));
+    expect(await screen.findByText("Unsaved plan changes are available from this tab.")).toBeInTheDocument();
+
+    view.rerender(editorTree({ userId: "another-user-id" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Unsaved plan changes are available from this tab.")).not.toBeInTheDocument();
+    });
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey)).not.toBeNull();
+  });
+
+  it("restores after an existing edit and retains the snapshot through a failed save and retry", async () => {
+    const user = userEvent.setup();
+    const original: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 1,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Welcome") }],
+      }],
+    };
+    let latest = original;
+    let saveCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({ success: true, servicePlan: latest }));
+    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, payload) => {
+      saveCount += 1;
+      if (saveCount === 2) throw new Error("temporary network failure");
+      latest = { ...latest, ...payload, planKey, revision: (latest.revision || 0) + 1 } as ServicePlan;
+      return { success: true, servicePlan: latest };
+    });
+    saveServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey, {
+      savedAt: Date.now(),
+      base: original,
+      local: {
+        ...original,
+        sections: [{
+          ...original.sections[0],
+          elements: [{ ...original.sections[0].elements[0], title: plainTextToRichText("Welcome now") }],
+        }],
+      },
+    });
+
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.type(screen.getByLabelText(/^Title/i), " now");
+    await user.click(screen.getByRole("button", { name: "Restore draft" }));
+
+    expect(await screen.findByText("Retrying save…", undefined, { timeout: 6_000 })).toBeInTheDocument();
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).not.toBeNull();
+    await waitFor(() => expect(saveCount).toBeGreaterThanOrEqual(3), { timeout: 8_000 });
+    expect(await screen.findByDisplayValue("Welcome now")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).toBeNull();
+    });
   });
 
   it("applies a saved template to an empty plan", async () => {
@@ -1458,6 +1593,35 @@ describe("ServicePlanEditor", () => {
     // Regression: imported elements previously landed with no start time at
     // all (only "Start from scratch" seeded the timing anchor).
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
+  });
+
+  it("offers one optional review prompt after an external import adds ambiguous items", async () => {
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sunday Service",
+      sections: [{
+        sectionName: "Program",
+        rows: [{
+          elementType: "Special Feature",
+          title: "Unknown free-text Title",
+          ledBy: "",
+          note: "Source note",
+        }],
+      }],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Import from Service Planning/i }));
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: { value: "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc" },
+    });
+    await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
+
+    expect(await screen.findByText("1 imported item needs a quick interpretation review.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review items" }));
+    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(2);
+    expect(screen.getAllByText("Source note")).toHaveLength(2);
   });
 
   it("imports a Planning Center PDF file and remembers that source", async () => {
@@ -2135,7 +2299,7 @@ Opening Song to begin the worship experience.
     await user.type(screen.getByLabelText(/^Title/i), "!");
     expect(screen.getByLabelText(/^Title/i)).toHaveValue("Living Hope!");
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Living Hope/i }),
+      screen.getByRole("button", { name: /Show all 1 participant for Living Hope/i }),
     );
     expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
     await user.click(screen.getByRole("button", { name: /Close side panel/i }));
@@ -2466,7 +2630,7 @@ Opening Song to begin the worship experience.
     }
   });
 
-  it("preserves an unsaved draft and raises the existing conflict state on resume", async () => {
+  it("preserves an unsaved draft and merges an independent remote change on resume", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
     let resolveSave: (() => void) | null = null;
@@ -2535,12 +2699,12 @@ Opening Song to begin the worship experience.
       });
 
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      const finishSave = resolveSave as (() => void) | null;
+      if (finishSave) await act(async () => finishSave());
       expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
       expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
-      expect(screen.getByText("Plan changed elsewhere")).toBeInTheDocument();
-      expect(
-        await screen.findByRole("button", { name: "Reload latest" }),
-      ).toBeInTheDocument();
+      expect(await screen.findByText("Remote version")).toBeInTheDocument();
+      expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
     } finally {
       const finishSave = resolveSave as (() => void) | null;
       if (finishSave) {
@@ -2870,6 +3034,7 @@ Opening Song to begin the worship experience.
     const keepInView = jest
       .spyOn(generalUtils, "keepElementInView")
       .mockReturnValue(true);
+    const layout = mockPlanLayout();
 
     const user = userEvent.setup();
     renderEditor({ occurrence: todayOccurrence });
@@ -2905,6 +3070,325 @@ Opening Song to begin the worship experience.
       );
     });
     keepInView.mockRestore();
+    layout.mockRestore();
+  });
+
+  it("follows by default and resumes the same live row inside the plan list", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const livePlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+          { id: "song", type: "free", title: plainTextToRichText("Opening song") },
+        ],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
+    const layout = mockPlanLayout();
+    const user = userEvent.setup();
+
+    renderEditor({ occurrence: todayOccurrence });
+    await waitFor(() => expect(keepInView).toHaveBeenCalled());
+    expect(keepInView.mock.calls[0][0].parent).toHaveAttribute("id", "service-plan-list");
+    const initialCallCount = keepInView.mock.calls.length;
+
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+    const planRegion = screen.getByRole("region", { name: "Service plan" });
+    fireEvent.pointerDown(planRegion);
+    fireEvent.scroll(planRegion);
+    const followButton = await screen.findByRole("button", { name: /Follow live/i });
+    await user.click(followButton);
+    await waitFor(() => {
+      expect(keepInView).toHaveBeenCalledTimes(initialCallCount + 1);
+    });
+    expect(screen.queryByRole("button", { name: /Follow live/i })).not.toBeInTheDocument();
+
+    const resumedCallCount = keepInView.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
+    expect(keepInView).toHaveBeenCalledTimes(resumedCallCount);
+    keepInView.mockRestore();
+    layout.mockRestore();
+  });
+
+  it("preserves the editing viewport and shows Follow live when the live row is outside the plan viewport", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const livePlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+
+    let rowTop = 140;
+    const getRect = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.id === "service-plan-list") {
+        return { x: 0, y: 100, width: 600, height: 200, top: 100, bottom: 300, left: 0, right: 600, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.id === "service-plan-element-welcome") {
+        return { x: 0, y: rowTop, width: 500, height: 30, top: rowTop, bottom: rowTop + 30, left: 0, right: 500, toJSON: () => ({}) } as DOMRect;
+      }
+      return { x: 0, y: 0, width: 0, height: 0, top: 0, bottom: 0, left: 0, right: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockImplementation(({ child, parent }) => {
+      rowTop = 140;
+      parent.scrollTop = 140;
+      return true;
+    });
+    const user = userEvent.setup();
+
+    try {
+      renderEditor({ occurrence: todayOccurrence });
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
+      const planList = screen.getByRole("region", { name: "Service plan" });
+      Object.defineProperty(planList, "clientHeight", { configurable: true, value: 200 });
+
+      await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+      rowTop = 20;
+      planList!.scrollTop = 480;
+      await user.click(screen.getByRole("button", { name: /^Done$/i }));
+
+      expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+      expect(planList!.scrollTop).toBe(480);
+      expect(rowTop).toBe(20);
+      expect(keepInView).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("button", { name: /Follow live/i }));
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
+      expect(rowTop).toBe(140);
+      expect(planList!.scrollTop).toBe(140);
+    } finally {
+      getRect.mockRestore();
+      keepInView.mockRestore();
+    }
+  });
+
+  it("reconciles on return to Plan and keeps an explicit pause across tabs", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const initialPlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+          { id: "song", type: "free", title: plainTextToRichText("Opening song") },
+        ],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: initialPlan });
+    let resolveLiveUpdate: ((result: { success: true; servicePlan: ServicePlan }) => void) | null = null;
+    mockUpdateServicePlanPublicLive.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveLiveUpdate = resolve;
+    })).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveLiveUpdate = resolve;
+    }));
+    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+    const layout = mockPlanLayout();
+    const user = userEvent.setup();
+
+    renderEditor({ occurrence: todayOccurrence });
+    await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
+    const makeSongLive = await screen.findByRole("button", { name: /Make Opening song live/i });
+
+    await user.click(makeSongLive);
+    await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("tab", { name: "Setlist" }));
+    await act(async () => resolveLiveUpdate?.({
+      success: true,
+      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "song" } },
+    }));
+    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
+    await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
+    expect(keepInView.mock.calls[1][0].child).toHaveAttribute("id", "service-plan-element-song");
+
+    fireEvent.wheel(screen.getByRole("region", { name: "Service plan" }));
+    expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+    const makeWelcomeLive = await screen.findByRole("button", { name: /Make Welcome live/i });
+    await user.click(makeWelcomeLive);
+    await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("tab", { name: "Setlist" }));
+    await act(async () => resolveLiveUpdate?.({
+      success: true,
+      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "welcome" } },
+    }));
+    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
+    expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+    expect(keepInView).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole("button", { name: /Follow live/i }));
+    await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(3));
+    expect(keepInView.mock.calls[2][0].child).toHaveAttribute("id", "service-plan-element-welcome");
+    keepInView.mockRestore();
+    layout.mockRestore();
+  });
+
+  it("waits for a collapsed live section's expansion before scrolling", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const initialPlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [
+        {
+          id: "section-1",
+          name: "Welcome",
+          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+        },
+        {
+          id: "section-2",
+          name: "Worship",
+          elements: [{ id: "song", type: "free", title: plainTextToRichText("Opening song") }],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: initialPlan });
+    mockUpdateServicePlanPublicLive.mockResolvedValue({
+      success: true,
+      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "song" } },
+    });
+    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+    const layout = mockPlanLayout();
+    let transitionRunning = false;
+    const originalGetAnimations = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "getAnimations");
+    Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+      configurable: true,
+      value: () => transitionRunning ? [{ playState: "running" }] : [],
+    });
+
+    try {
+      renderEditor({ occurrence: todayOccurrence });
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
+      const makeSongLive = screen.getByRole("button", { name: /Make Opening song live/i });
+      const collapseButtons = screen.getAllByRole("button", { name: "Collapse section" });
+      fireEvent.click(collapseButtons[1]);
+
+      transitionRunning = true;
+      fireEvent.click(makeSongLive);
+      await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalled());
+      await act(async () => {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      });
+      expect(keepInView).toHaveBeenCalledTimes(1);
+
+      transitionRunning = false;
+      fireEvent.transitionEnd(screen.getByRole("region", { name: "Service plan" }));
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
+      expect(keepInView.mock.calls[1][0].child).toHaveAttribute("id", "service-plan-element-song");
+    } finally {
+      keepInView.mockRestore();
+      layout.mockRestore();
+      if (originalGetAnimations) {
+        Object.defineProperty(HTMLElement.prototype, "getAnimations", originalGetAnimations);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).getAnimations;
+      }
+    }
+  });
+
+  it("starts a new follow cycle when the selected occurrence changes", async () => {
+    const planFor = (target: TeamScheduleOccurrence): ServicePlan => {
+      const planKey = `${target.serviceId}@${target.startsAt.slice(0, 10)}`;
+      return {
+        planId: `church-1::${planKey}`,
+        churchId: "church-1",
+        planKey,
+        serviceId: target.serviceId,
+        date: target.startsAt.slice(0, 10),
+        name: target.name || "Easter Sunday",
+        startsAt: target.startsAt,
+        publicLive: { mode: "manual", currentElementId: "welcome" },
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+        }],
+      };
+    };
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: planFor(occurrence) })
+      .mockResolvedValueOnce({ success: true, servicePlan: planFor(nextOccurrence) });
+    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+    const layout = mockPlanLayout();
+    const { rerender } = render(editorTree({ occurrence }));
+
+    await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
+    rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
+    keepInView.mockRestore();
+    layout.mockRestore();
   });
 
   it("publishes when copying a share link for an unpublished plan", async () => {

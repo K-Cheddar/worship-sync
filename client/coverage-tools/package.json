@@ -1,0 +1,8 @@
+{
+  "name": "worship-sync-coverage-tools",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "istanbul-lib-coverage": "^3.2.2"
+  }
+}

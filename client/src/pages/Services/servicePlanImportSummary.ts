@@ -1,5 +1,11 @@
-import { richTextToPlainText } from "../../types/richText";
 import {
+  normalizeRichTextDocument,
+  richTextSemanticEqual,
+  richTextSemanticValue,
+  richTextToPlainText,
+} from "../../types/richText";
+import {
+  getServicePlanElementAssignees,
   getServicePlanElementAssigneeNames,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
@@ -41,15 +47,75 @@ export type ServicePlanImportSummary = {
 const itemName = (element: ServicePlanElement) =>
   richTextToPlainText(element.title).trim() || "Untitled item";
 
-const serializesEqual = (left: unknown, right: unknown) =>
-  JSON.stringify(left) === JSON.stringify(right);
+const normalizedText = (value: string | undefined) =>
+  (value || "").replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
+
+const normalizedLyrics = (value: string) =>
+  value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const normalizedStartTime = (value: string | undefined) => {
+  const time = normalizedText(value);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time);
+  if (!match) return time;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+};
+
+const richTextValue = (value: ServicePlanElement["notes"]) =>
+  richTextSemanticValue(value);
+
+const richTextEqual = (
+  left: ServicePlanElement["notes"],
+  right: ServicePlanElement["notes"],
+) => richTextSemanticEqual(left, right);
+
+const songRefValue = (ref: ReturnType<typeof getServicePlanElementSongRefs>[number]) =>
+  ref.kind === "library"
+    ? ["library", ref.songId, normalizedText(ref.songName).toLocaleLowerCase(), normalizedText(ref.key).toLocaleUpperCase()]
+    : ["pending", normalizedText(ref.title).toLocaleLowerCase(), normalizedLyrics(ref.lyricsText), normalizedText(ref.key).toLocaleUpperCase()];
+
+const songsEqual = (
+  left: ReturnType<typeof getServicePlanElementSongRefs>,
+  right: ReturnType<typeof getServicePlanElementSongRefs>,
+) => JSON.stringify(left.map(songRefValue)) === JSON.stringify(right.map(songRefValue));
+
+const scriptureValue = (ref: ReturnType<typeof getServicePlanElementScriptureRefs>[number]) =>
+  [normalizedText(ref.book).toLocaleLowerCase(), normalizedText(ref.chapter),
+    normalizedText(ref.verseRange), normalizedText(ref.version).toLocaleLowerCase()];
+
+const scripturesEqual = (
+  left: ReturnType<typeof getServicePlanElementScriptureRefs>,
+  right: ReturnType<typeof getServicePlanElementScriptureRefs>,
+) => JSON.stringify(left.map(scriptureValue)) === JSON.stringify(right.map(scriptureValue));
+
+const comparableInterpretation = (element: ServicePlanElement) => {
+  const ambiguity = element.importAmbiguity;
+  if (!ambiguity) return null;
+  return {
+    status: ambiguity.status,
+    authorizationPending: Boolean(ambiguity.authorizationPending),
+    reasons: ambiguity.reasons.map(normalizedText),
+    songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint }) => ({
+      incoming: songRefValue(incoming),
+      candidateOccurrenceIds: [...candidateOccurrenceIds].sort(),
+      sourceFingerprint,
+    })),
+    parts: ambiguity.parts.map(({ kind, value, destination, sourceField, managed }) => ({
+      kind,
+      value: normalizedText(value),
+      destination,
+      sourceField: sourceField || "title",
+      managed: managed && { kind: managed.kind, fingerprint: managed.fingerprint },
+    })),
+  };
+};
 
 const comparableTeamNotes = (element: ServicePlanElement) =>
   (element.teamNotes || [])
-    .map(({ id: _id, ...note }) => note)
-    .sort((left, right) =>
-      JSON.stringify(left).localeCompare(JSON.stringify(right)),
-    );
+    .filter((note) => note.scope !== "role")
+    .map((note) => ({
+      label: normalizedText(note.label),
+      note: richTextValue(note.note),
+    }));
 
 const optionalValue = (value: string | undefined, emptyLabel: string) =>
   value?.trim() || emptyLabel;
@@ -70,89 +136,223 @@ const formatDuration = (element: ServicePlanElement) => {
 const formatTiming = (element: ServicePlanElement) =>
   `${optionalValue(element.startTime, "No start time")} · ${formatDuration(element)}`;
 
+const formatRichTextForReview = (value: ServicePlanElement["notes"]) => {
+  const blocks = normalizeRichTextDocument(value).blocks;
+  return blocks.map((block) => {
+    const blockStyles = [
+      block.align && block.align !== "left" ? `${block.align}-aligned` : "",
+      block.size ? `${block.size} text` : "",
+      block.type === "list-item"
+        ? `${block.listStyle === "ordered" ? "numbered" : "bulleted"} list${block.indent ? `, level ${block.indent + 1}` : ""}${block.listStart && block.listStart !== 1 ? `, starts at ${block.listStart}` : ""}`
+        : "",
+    ].filter(Boolean);
+    const spans = block.spans.reduce<Array<{ text: string; styles: string[] }>>((result, span) => {
+      const styles = [
+        span.bold ? "bold" : "",
+        span.italic ? "italic" : "",
+        span.underline ? "underlined" : "",
+        span.color ? `color ${span.color}` : "",
+      ].filter(Boolean);
+      const previous = result.at(-1);
+      if (previous && JSON.stringify(previous.styles) === JSON.stringify(styles)) {
+        previous.text += span.text;
+      } else {
+        result.push({ text: span.text, styles });
+      }
+      return result;
+    }, []);
+    const content = spans.map(({ text, styles }) =>
+      styles.length ? `[${styles.join(", ")}: ${text}]` : text,
+    ).join("");
+    return `${blockStyles.length ? `[${blockStyles.join(", ")}] ` : ""}${content}`;
+  }).join("\n") || "No text";
+};
+
 const formatNotes = (element: ServicePlanElement) => {
   const values = [
     ...(richTextToPlainText(element.notes).trim()
-      ? [`Shared: ${richTextToPlainText(element.notes).trim()}`]
+      ? [`Shared: ${formatRichTextForReview(element.notes)}`]
       : []),
     ...(element.teamNotes || [])
       .map((note) => {
         const text = richTextToPlainText(note.note).trim();
-        return text ? `${note.label}: ${text}` : "";
+        return text ? `${note.label}: ${formatRichTextForReview(note.note)}` : "";
       })
       .filter(Boolean),
   ];
   return values.join(" · ") || "No notes";
 };
 
+const formatSongRef = (songRef: ReturnType<typeof getServicePlanElementSongRefs>[number]) => {
+  const name = songRef.kind === "library" ? songRef.songName : songRef.title;
+  const details = [songRef.key ? `Key ${songRef.key}` : ""];
+  if (songRef.kind === "pending") {
+    const lyrics = normalizedLyrics(songRef.lyricsText).replace(/\n/g, " / ");
+    details.push(lyrics ? `Lyrics: ${lyrics.slice(0, 60)}${lyrics.length > 60 ? "…" : ""}` : "No lyrics");
+  }
+  return `${name}${details.filter(Boolean).length ? ` (${details.filter(Boolean).join(" · ")})` : ""}`;
+};
+
 const formatSong = (element: ServicePlanElement) => {
   const refs = getServicePlanElementSongRefs(element);
   if (!refs.length) return "No song";
-  return refs.map((songRef) =>
-    songRef.kind === "library" ? songRef.songName : songRef.title,
-  ).join(", ");
+  return refs.map(formatSongRef).join(", ");
+};
+
+const describeSongReferenceDifference = (
+  current: ServicePlanElement,
+  next: ServicePlanElement,
+) => {
+  const beforeRefs = getServicePlanElementSongRefs(current);
+  const afterRefs = getServicePlanElementSongRefs(next);
+  const sharedLength = Math.min(beforeRefs.length, afterRefs.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const before = beforeRefs[index];
+    const after = afterRefs[index];
+    if (JSON.stringify(songRefValue(before)) === JSON.stringify(songRefValue(after))) continue;
+    if (before.kind === "library" && after.kind === "library" && before.songId !== after.songId) {
+      return "linked library song changed";
+    }
+    if (before.kind !== after.kind) return "song reference type changed";
+    if (before.kind === "pending" && after.kind === "pending" &&
+      normalizedLyrics(before.lyricsText) !== normalizedLyrics(after.lyricsText)) {
+      return "lyrics changed";
+    }
+    return "song reference details changed";
+  }
+  return beforeRefs.length === afterRefs.length
+    ? "song reference details changed"
+    : "number of song references changed";
+};
+
+const formatInterpretation = (element: ServicePlanElement) => {
+  const ambiguity = element.importAmbiguity;
+  if (!ambiguity) return "No review record";
+  const parts = ambiguity.parts
+    .map((part) => `${part.kind}: ${part.value} → ${part.destination}`)
+    .join("; ");
+  const songMappings = (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds }) =>
+    `song link review: ${formatSongRef(incoming)} (${candidateOccurrenceIds.length} linked matches; current links preserved)`,
+  ).join("; ");
+  return `${ambiguity.status}${parts ? ` · ${parts}` : ""}${songMappings ? ` · ${songMappings}` : ""}`;
+};
+
+const formatSourceChanges = (element: ServicePlanElement) => {
+  const state = element.servicePlanningImport;
+  if (!state) return "Not tracked";
+  if (!state.pendingFields.length) return "Up to date";
+  return state.pendingFields.map((field) =>
+    `${field}: ${normalizedText(state.applied[field]) || "empty"} → ${normalizedText(state.observed[field]) || "empty"}`,
+  ).join("; ");
 };
 
 const formatScripture = (element: ServicePlanElement) =>
   getServicePlanElementScriptureRefs(element)
-    .map((scriptureRef) => scriptureRef.label)
+    .map((scriptureRef) => {
+      const structured = `${scriptureRef.book} ${scriptureRef.chapter}${scriptureRef.verseRange ? `:${scriptureRef.verseRange}` : ""}${scriptureRef.version ? ` · ${scriptureRef.version}` : ""}`;
+      return scriptureRef.label && normalizedText(scriptureRef.label) !== normalizedText(structured)
+        ? `${scriptureRef.label} (${structured})`
+        : scriptureRef.label || structured;
+    })
     .join(", ") || "No scripture";
+
+const describeScriptureReferenceDifference = (
+  current: ServicePlanElement,
+  next: ServicePlanElement,
+) => {
+  const beforeRefs = getServicePlanElementScriptureRefs(current);
+  const afterRefs = getServicePlanElementScriptureRefs(next);
+  const sharedLength = Math.min(beforeRefs.length, afterRefs.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const before = beforeRefs[index];
+    const after = afterRefs[index];
+    if (normalizedText(before.book) !== normalizedText(after.book)) return "Bible book changed";
+    if (normalizedText(before.chapter) !== normalizedText(after.chapter)) return "chapter changed";
+    if (normalizedText(before.verseRange) !== normalizedText(after.verseRange)) return "verse range changed";
+    if (normalizedText(before.version) !== normalizedText(after.version)) return "Bible version changed";
+  }
+  return beforeRefs.length === afterRefs.length
+    ? "scripture reference details changed"
+    : "number of scripture references changed";
+};
 
 const changedFields = (
   current: ServicePlanElement,
   next: ServicePlanElement,
 ): ServicePlanImportFieldChange[] => {
   const fields: ServicePlanImportFieldChange[] = [];
-  if (!serializesEqual(current.title, next.title)) {
+  if (!richTextEqual(current.title, next.title)) {
     fields.push({
       label: "Title",
-      before: itemName(current),
-      after: itemName(next),
+      before: formatRichTextForReview(current.title),
+      after: formatRichTextForReview(next.title),
     });
   }
-  if (!serializesEqual(
-    getServicePlanElementSongRefs(current),
-    getServicePlanElementSongRefs(next),
-  )) {
+  if (!songsEqual(getServicePlanElementSongRefs(current), getServicePlanElementSongRefs(next))) {
+    const before = formatSong(current);
+    const after = formatSong(next);
     fields.push({
       label: "Song",
-      before: formatSong(current),
-      after: formatSong(next),
+      before,
+      after: before === after ? `${after} (${describeSongReferenceDifference(current, next)})` : after,
     });
   }
-  if (!serializesEqual(
-    getServicePlanElementScriptureRefs(current),
-    getServicePlanElementScriptureRefs(next),
-  )) {
+  if (!scripturesEqual(getServicePlanElementScriptureRefs(current), getServicePlanElementScriptureRefs(next))) {
+    const before = formatScripture(current);
+    const after = formatScripture(next);
     fields.push({
       label: "Scripture",
-      before: formatScripture(current),
-      after: formatScripture(next),
+      before,
+      after: before === after ? `${after} (${describeScriptureReferenceDifference(current, next)})` : after,
     });
   }
-  if (current.sourceElementTypeRaw !== next.sourceElementTypeRaw) {
+  if (normalizedText(current.sourceElementTypeRaw).toLocaleLowerCase() !==
+    normalizedText(next.sourceElementTypeRaw).toLocaleLowerCase()) {
     fields.push({
       label: "Source type",
       before: optionalValue(current.sourceElementTypeRaw, "None"),
       after: optionalValue(next.sourceElementTypeRaw, "None"),
     });
   }
-  const currentAssignees = getServicePlanElementAssigneeNames(current).join(", ");
-  const nextAssignees = getServicePlanElementAssigneeNames(next).join(", ");
-  if (
-    currentAssignees !== nextAssignees ||
-    current.sourceLedByRaw !== next.sourceLedByRaw
-  ) {
+  if (JSON.stringify(comparableInterpretation(current)) !== JSON.stringify(comparableInterpretation(next))) {
+    fields.push({
+      label: "Import interpretation",
+      before: formatInterpretation(current),
+      after: formatInterpretation(next),
+    });
+  }
+  const currentImportState = current.servicePlanningImport;
+  const nextImportState = next.servicePlanningImport;
+  if (currentImportState && nextImportState &&
+    formatSourceChanges(current) !== formatSourceChanges(next)) {
+    fields.push({
+      label: "Source changes",
+      before: formatSourceChanges(current),
+      after: formatSourceChanges(next),
+    });
+  }
+  const currentAssignees = getServicePlanElementAssigneeNames(current).map(normalizedText);
+  const nextAssignees = getServicePlanElementAssigneeNames(next).map(normalizedText);
+  const assignmentIdentity = (element: ServicePlanElement) =>
+    getServicePlanElementAssignees(element)
+      .filter((assignee) => assignee.name?.trim() || assignee.memberId)
+      .map((assignee) => [normalizedText(assignee.name), assignee.memberId || ""]);
+  const sameAssignment = JSON.stringify(assignmentIdentity(current)) ===
+    JSON.stringify(assignmentIdentity(next));
+  if (!sameAssignment) {
     fields.push({
       label: "Assigned to",
-      before: optionalValue(currentAssignees, "Unassigned"),
-      after: optionalValue(nextAssignees, "Unassigned"),
+      before: optionalValue(currentAssignees.join(", "), "Unassigned"),
+      after: optionalValue(nextAssignees.join(", "), "Unassigned") +
+        (JSON.stringify(currentAssignees) === JSON.stringify(nextAssignees)
+          ? " (person link changed)"
+          : ""),
     });
   }
   if (
-    current.startTime !== next.startTime ||
-    current.durationSeconds !== next.durationSeconds ||
-    current.durationMinutes !== next.durationMinutes
+    normalizedStartTime(current.startTime) !== normalizedStartTime(next.startTime) ||
+    (current.durationSeconds ?? (current.durationMinutes ?? 0) * 60) !==
+      (next.durationSeconds ?? (next.durationMinutes ?? 0) * 60)
   ) {
     fields.push({
       label: "Time or duration",
@@ -161,8 +361,8 @@ const changedFields = (
     });
   }
   if (
-    !serializesEqual(current.notes, next.notes) ||
-    !serializesEqual(comparableTeamNotes(current), comparableTeamNotes(next))
+    !richTextEqual(current.notes, next.notes) ||
+    JSON.stringify(comparableTeamNotes(current)) !== JSON.stringify(comparableTeamNotes(next))
   ) {
     fields.push({
       label: "Notes",

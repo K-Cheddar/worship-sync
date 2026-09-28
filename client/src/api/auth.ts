@@ -35,6 +35,9 @@ import type {
   CurrentServiceWorkspaceSectionPatch,
   EmailCodeChallengeFields,
   MemberNotifications,
+  NotificationIntent,
+  NotificationIntentType,
+  NotificationBatch,
   MemberPermissions,
   NotificationCategory,
   NotificationPreference,
@@ -59,6 +62,7 @@ import type {
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
+  SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
   TeamSchedule,
@@ -1180,6 +1184,7 @@ export type TeamIntakeFormPayload = {
   name: string;
   startDate: string;
   endDate: string;
+  responseDeadline?: string;
   availabilityServices: TeamIntakeForm["availabilityServices"];
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
@@ -1217,6 +1222,106 @@ export const getTeamsBootstrap = async (churchId: string) =>
   apiFetch<TeamsBootstrap>(
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
   );
+
+export const getNotificationIntents = async (
+  churchId: string,
+  filter: { formId?: string; scheduleId?: string; limit?: number; cursor?: string } = {},
+) => {
+  const query = new URLSearchParams();
+  if (filter.formId) query.set("formId", filter.formId);
+  if (filter.scheduleId) query.set("scheduleId", filter.scheduleId);
+  if (filter.limit) query.set("limit", String(filter.limit));
+  if (filter.cursor) query.set("cursor", filter.cursor);
+  return apiFetch<{ success: boolean; intents: NotificationIntent[]; nextCursor: string; limit: number }>(
+    `api/churches/${churchId}/notification-intents${query.size ? `?${query.toString()}` : ""}`,
+  );
+};
+
+export const getNotificationIntentPreview = async (
+  churchId: string,
+  intentId: string,
+) => apiFetch<{
+  success: boolean;
+  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
+}>(`api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/preview`, {
+  method: "POST",
+  body: JSON.stringify({}),
+});
+
+export const prepareTeamIntakeRecipientSms = async (
+  churchId: string,
+  formId: string,
+  recipientId: string,
+) => apiFetch<{
+  success: boolean;
+  recipient: TeamIntakeRecipient;
+  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
+}>(`api/churches/${churchId}/team-intake/forms/${encodeURIComponent(formId)}/recipients/${encodeURIComponent(recipientId)}/sms-preview`, {
+  method: "POST",
+  body: JSON.stringify({}),
+});
+
+export const prepareReplacementNotificationIntent = async (
+  churchId: string,
+  body: { scheduleId: string; occurrenceId: string; cellKey: string; memberId: string },
+) => apiFetch<{ success: boolean; intent: NotificationIntent }>(
+  `api/churches/${churchId}/notification-intents/replacement-invitation`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
+export const resolveReplacementNotificationIntent = async (
+  churchId: string,
+  intentId: string,
+) => apiFetch<{ success: boolean; intent: NotificationIntent }>(
+  `api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/resolve-replacement`,
+  { method: "POST", body: JSON.stringify({}) },
+);
+
+export const prepareAvailabilityNotificationBatch = async (
+  churchId: string,
+  body: {
+    intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+    formId: string;
+    memberIds: string[];
+    requestKey: string;
+  },
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/prepare`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const getAvailabilityNotificationBatch = async (
+  churchId: string,
+  batchId: string,
+) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
+  `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}`,
+);
+
+export const dispatchAvailabilityNotificationBatch = async (
+  churchId: string,
+  batchId: string,
+  approvalVersion: string,
+) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
+  `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
+  { method: "POST", body: JSON.stringify({ confirmed: true, approvalVersion }) },
+);
+
+export const sendNotificationIntent = async (
+  churchId: string,
+  intentId: string,
+  approvalVersion: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    intent?: NotificationIntent;
+    attempt?: SmsDeliveryAttempt;
+    outcome?: "failed" | "unknown";
+    errorMessage?: string;
+  }>(`api/churches/${churchId}/notification-intents/${intentId}/send`, {
+    method: "POST",
+    body: JSON.stringify({ confirmed: true, approvalVersion }),
+  });
 
 export const getTeamIntakeSmsAttempts = async (
   churchId: string,
@@ -1320,10 +1425,11 @@ export const revokeTeamIntakeRecipient = async (
 export const sendTeamIntakeRecipientSms = async (
   churchId: string,
   recipientId: string,
+  approvalVersion: string,
 ) =>
   apiFetch<{
     success: boolean;
-    recipient: TeamIntakeRecipient;
+    recipient?: TeamIntakeRecipient;
     attempt: SmsDeliveryAttempt;
     message: {
       encoding: "gsm7" | "ucs2";
@@ -1331,9 +1437,9 @@ export const sendTeamIntakeRecipientSms = async (
       unitCount: number;
       segmentCount: number;
     };
-  }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
+}>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ confirmed: true, approvalVersion }),
   });
 
 export const applyTeamIntakeSubmission = async (
@@ -2147,7 +2253,7 @@ export const getServicePlanAssignments = async (
 export const saveServicePlan = async (
   churchId: string,
   planKey: string,
-  body: ServicePlanPayload,
+  body: ServicePlanPayload & { saveOperationId?: string },
 ) =>
   apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`,

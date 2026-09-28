@@ -1,6 +1,7 @@
 import {
   canvaSourcesMatch,
   getCanvaMediaSource,
+  hasValidCanvaRefreshMetadata,
   isCanvaSourceCurrent,
   parseCanvaImportKey,
 } from "./canvaMediaSource";
@@ -47,5 +48,19 @@ describe("Canva media source identity", () => {
     expect(canvaSourcesMatch(oldSource, newSource)).toBe(true);
     expect(isCanvaSourceCurrent(oldSource, 101)).toBe(false);
     expect(isCanvaSourceCurrent(newSource, 101)).toBe(true);
+  });
+
+  it("accepts only refresh keys that agree with required Canva metadata", () => {
+    const source = {
+      designId: "DAF_design_1",
+      designTitle: "Sunday Welcome",
+      revision: 101,
+      format: "png" as const,
+      pageNumbers: [2, 1],
+    };
+    expect(hasValidCanvaRefreshMetadata(source, "canva:DAF_design_1:rev:101:png:1,2", "png")).toBe(true);
+    expect(hasValidCanvaRefreshMetadata({ ...source, revision: Number.NaN }, "canva:DAF_design_1:rev:NaN:png:1,2", "png")).toBe(false);
+    expect(hasValidCanvaRefreshMetadata(source, "canva:DAF_design_1:rev:101:mp4:1,2", "png")).toBe(false);
+    expect(hasValidCanvaRefreshMetadata({ ...source, pageNumbers: [] }, "canva:DAF_design_1:rev:101:png:", "png")).toBe(false);
   });
 });

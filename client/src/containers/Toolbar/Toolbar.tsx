@@ -50,6 +50,7 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
+import ContentHiddenStatus from "./ContentHiddenStatus";
 
 type sections =
   | "configurations"
@@ -456,7 +457,10 @@ const Toolbar = ({
               className="flex w-full min-w-0 items-center"
               data-testid="toolbar-primary-row"
             >
-              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable">
+              <div
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable"
+                data-testid="toolbar-scroll-controls"
+              >
                 <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
                   <Menu variant="default" />
                 </div>
@@ -464,6 +468,7 @@ const Toolbar = ({
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
               </div>
+              <ContentHiddenStatus />
             </div>
             {mode === "edit" && (
               <>
@@ -483,20 +488,26 @@ const Toolbar = ({
         <div className={cn(className, "flex items-stretch")}>
           <div className="flex min-w-0 flex-1 flex-col">
             <div
-              className="scrollbar-variable flex min-w-0 items-center gap-1 overflow-x-auto px-2"
+              className="flex min-w-0 items-center"
               data-testid="toolbar-primary-row"
             >
-              <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
-                <Menu variant="overlay" />
+              <div
+                className="scrollbar-variable flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2"
+                data-testid="toolbar-scroll-controls"
+              >
+                <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
+                  <Menu variant="overlay" />
+                </div>
+                {modeToggle}
+                <MediaSurfaceDiagnostics />
+                {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
+                <ToolbarOverlay
+                  toolbarRow={mode === "edit" ? "primary" : "present"}
+                  quickLinksDrawerOpen={quickLinksDrawerOpen}
+                  onQuickLinksOpenChange={setQuickLinksDrawerOpen}
+                />
               </div>
-              {modeToggle}
-              <MediaSurfaceDiagnostics />
-              {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
-              <ToolbarOverlay
-                toolbarRow={mode === "edit" ? "primary" : "present"}
-                quickLinksDrawerOpen={quickLinksDrawerOpen}
-                onQuickLinksOpenChange={setQuickLinksDrawerOpen}
-              />
+              <ContentHiddenStatus />
             </div>
             {mode === "edit" && (
               <>

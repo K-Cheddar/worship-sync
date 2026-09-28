@@ -2,6 +2,7 @@ import {
   createSections,
   createNewSong,
   createNewFreeForm,
+  runCanvaCustomItemCreationOnce,
   createNewBible,
   createNewTimer,
   updateFormattedSections,
@@ -31,6 +32,25 @@ jest.mock("./overflow", () => ({
 }));
 
 describe("itemUtil", () => {
+  it("shares concurrent Canva custom-item retries for the same operation key", async () => {
+    const inFlight = new Map<string, Promise<string>>();
+    let finish!: (path: string) => void;
+    const create = jest.fn(() => new Promise<string>((resolve) => { finish = resolve; }));
+
+    const attempts = [1, 2, 3].map(() =>
+      runCanvaCustomItemCreationOnce(inFlight, "canva-operation-1", create),
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    finish("/controller/item-canva-operation-1");
+    await expect(Promise.all(attempts)).resolves.toEqual([
+      "/controller/item-canva-operation-1",
+      "/controller/item-canva-operation-1",
+      "/controller/item-canva-operation-1",
+    ]);
+    expect(inFlight.has("canva-operation-1")).toBe(false);
+  });
+
   describe("createSections", () => {
     it("parses unformatted lyrics by double newline and creates sections", () => {
       const result = createSections({
@@ -470,6 +490,76 @@ Let Your fire fall`;
       expect(textBox?.words).toContain("Welcome and greeting");
     });
 
+    it("reuses the full existing custom-item document without replacing edited slides or media", async () => {
+      const persistedSlide = {
+        id: "edited-slide",
+        boxes: [{ background: "https://example.test/user-edited.png", mediaInfo: { id: "edited-media" } }],
+      };
+      const existingDoc = {
+        _id: "canva-operation-1",
+        _rev: "2-existing",
+        type: "free",
+        name: "Edited by user",
+        background: "https://example.test/user-edited.png",
+        slides: [persistedSlide],
+      };
+      const db = {
+        get: jest.fn().mockResolvedValue(existingDoc),
+        put: jest.fn(),
+      };
+
+      const item = await createNewFreeForm({
+        id: "canva-operation-1",
+        name: "Sunday Canva deck",
+        text: "",
+        list: [],
+        db: db as never,
+        background: "https://example.test/new-import.png",
+        brightness: 100,
+        emptyBodyText: true,
+        slideDefs: [{ name: "Page 1", background: "https://example.test/new-import.png" }],
+      });
+
+      expect(db.put).not.toHaveBeenCalled();
+      expect(item.name).toBe("Edited by user");
+      expect(item.background).toBe("https://example.test/user-edited.png");
+      expect(item.slides).toEqual([persistedSlide]);
+      expect(item._id).toBe("canva-operation-1");
+    });
+
+    it("retries the same Canva operation after its database document was created", async () => {
+      let savedDocument: Record<string, unknown> | undefined;
+      const db = {
+        get: jest.fn(async () => {
+          if (savedDocument) return savedDocument;
+          throw Object.assign(new Error("missing"), { status: 404 });
+        }),
+        put: jest.fn(async (document: Record<string, unknown>) => {
+          savedDocument = document;
+          return { ok: true, id: "canva-operation-2", rev: "1-created" };
+        }),
+      };
+      const create = (background: string) => createNewFreeForm({
+        id: "canva-operation-2",
+        name: "Retry deck",
+        text: "",
+        list: [],
+        db: db as never,
+        background,
+        brightness: 100,
+        emptyBodyText: true,
+        slideDefs: [{ name: "Page 1", background, mediaInfo: { id: `media-${background}` } as MediaType }],
+      });
+
+      const first = await create("https://example.test/original.png");
+      const retry = await create("https://example.test/changed.png");
+
+      expect(db.put).toHaveBeenCalledTimes(1);
+      expect(retry._id).toBe(first._id);
+      expect(retry.slides).toEqual(first.slides);
+      expect(retry.slides[0].boxes[0].mediaInfo?.id).toBe("media-https://example.test/original.png");
+    });
+
     it("with emptyBodyText does not put the item name in the first slide body", async () => {
       const list: ServiceItem[] = [];
       const item = await createNewFreeForm({
@@ -616,6 +706,36 @@ Let Your fire fall`;
       expect(item.type).toBe("timer");
       expect(item.timerInfo?.timerType).toBe("countdown");
       expect(item.timerInfo?.countdownTime).toBe("12:00");
+    });
+
+    it("stores the timer document before returning the created item", async () => {
+      const db = {
+        get: jest.fn().mockRejectedValue({ status: 404 }),
+        put: jest.fn().mockResolvedValue({ ok: true, id: "Durable Timer" }),
+      } as unknown as PouchDB.Database;
+
+      const item = await createNewTimer({
+        name: "Durable Timer",
+        list: [],
+        db,
+        hostId: "host-1",
+        duration: 300,
+        countdownTime: "00:00",
+        timerType: "timer",
+        background: "navy",
+        brightness: 100,
+      });
+
+      expect(db.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: "Durable Timer",
+          name: "Durable Timer",
+          type: "timer",
+          background: "navy",
+          timerInfo: expect.objectContaining({ id: "Durable Timer" }),
+        }),
+      );
+      expect(item._id).toBe("Durable Timer");
     });
   });
 

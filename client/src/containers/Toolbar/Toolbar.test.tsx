@@ -125,6 +125,11 @@ jest.mock("./ToolbarElements/MediaSurfaceDiagnostics", () => ({
   ),
 }));
 
+jest.mock("./ContentHiddenStatus", () => ({
+  __esModule: true,
+  default: () => <div role="status" data-testid="toolbar-status-area">Content Hidden</div>,
+}));
+
 jest.mock("../../components/Drawer/Drawer", () => ({
   __esModule: true,
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
@@ -255,6 +260,21 @@ describe("Toolbar", () => {
     expect(screen.queryByText("Undo")).not.toBeInTheDocument();
     expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
     expect(screen.getByTestId("compact-user")).toBeInTheDocument();
+  });
+
+  it.each([
+    { name: "presentation", renderLayout: () => renderToolbar({ access: "full", itemType: "song" }) },
+    { name: "auxiliary", renderLayout: () => renderToolbar({ access: "full", itemType: "song", variant: "aux" }) },
+    { name: "overlay", renderLayout: () => renderToolbarOverlay({ access: "full" }) },
+  ])("keeps the $name content status outside horizontally scrolling controls", ({ renderLayout }) => {
+    renderLayout();
+    const status = screen.getByTestId("toolbar-status-area");
+    expect(status).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("toolbar-scroll-controls")).queryByTestId(
+        "toolbar-status-area",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps undo and full toolbar content in Edit mode", () => {

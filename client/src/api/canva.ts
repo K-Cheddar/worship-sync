@@ -67,6 +67,7 @@ export type CanvaImportResult = {
   assets: CanvaImportedAsset[];
   skippedCount: number;
   revision: number;
+  failedPages?: Array<{ page: number; error: string }>;
 };
 
 type JsonInit = Omit<RequestInit, "body"> & {

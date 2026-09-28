@@ -71,6 +71,10 @@ export type OverlaySyncPlanItem = {
   title: string;
   ledBy: string;
   personIndex: number;
+  sourcePlanKey?: string;
+  sourcePlanElementId?: string;
+  sourceCandidateId?: string;
+  sourceValues?: { name?: string; title?: string; event?: string };
   rawNameToken: string;
   action: "update" | "clone" | "create" | "skip";
   placementOnly?: boolean;

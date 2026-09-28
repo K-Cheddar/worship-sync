@@ -1,6 +1,7 @@
 import { servicePlanToImportData } from "./servicePlanToImportData";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlanElement } from "../../types/servicePlan";
+import type { ChurchResource } from "../../types/churchResource";
 
 const element = (overrides: Partial<ServicePlanElement>): ServicePlanElement => ({
   id: "element-1",
@@ -15,6 +16,47 @@ const planWith = (elements: ServicePlanElement[], name = "Sabbath Service") => (
 });
 
 describe("servicePlanToImportData", () => {
+  it("resolves church-file references to their current resource names", () => {
+    const resource: ChurchResource = {
+      id: "church-file-1",
+      churchId: "church-1",
+      name: "Communion Instructions",
+      kind: "document",
+      storage: {
+        key: "files/communion.pdf",
+        fileName: "communion.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 120,
+        uploadedAt: "2026-01-01T00:00:00.000Z",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          resources: [{
+            id: "plan-resource-1",
+            type: "document",
+            title: "Church resource",
+            data: { resourceId: "church-file-1" },
+          }],
+        }),
+      ]),
+      [resource],
+    );
+
+    expect(sections[0].rows[0].contentResources).toEqual([
+      {
+        id: "plan-resource-1",
+        type: "document",
+        title: "Communion Instructions",
+      },
+    ]);
+  });
+
   it("prefers the raw scraped source strings over the derived enum", () => {
     const { sections } = servicePlanToImportData(
       planWith([
@@ -43,7 +85,7 @@ describe("servicePlanToImportData", () => {
         element({
           sourceLedByRaw: "Dana R.",
           assignees: [
-            { id: "a1", name: "Dana Robinson" },
+            { id: "a1", memberId: "member-1", name: "Dana Robinson" },
             { id: "a2", name: "Morgan Lee" },
             { id: "a3", name: "Taylor Smith" },
           ],
@@ -55,6 +97,11 @@ describe("servicePlanToImportData", () => {
       ledBy: "Dana Robinson, Morgan Lee, Taylor Smith",
       sourceLedByRaw: "Dana R.",
       assigneeNames: ["Dana Robinson", "Morgan Lee", "Taylor Smith"],
+      assigneeRefs: [
+        { id: "a1", memberId: "member-1", name: "Dana Robinson" },
+        { id: "a2", name: "Morgan Lee" },
+        { id: "a3", name: "Taylor Smith" },
+      ],
     });
   });
 

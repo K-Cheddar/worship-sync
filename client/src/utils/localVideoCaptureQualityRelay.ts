@@ -1,6 +1,8 @@
 import {
   DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE,
+  DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE,
   type LocalVideoCaptureProfile,
+  resolveLocalVideoCaptureFrameRate,
   resolveLocalVideoCaptureProfile,
 } from "./localVideoQuality";
 import {
@@ -16,7 +18,10 @@ const HEARTBEAT_MS = 2_000;
 const SUBSCRIBER_TTL_MS = 6_000;
 const PROFILE_UPGRADE_DEBOUNCE_MS = 250;
 const PROFILE_DOWNGRADE_GRACE_MS = 10_000;
-const MAX_FRAME_RATE = 60;
+const normalizeFrameRate = (value: number | undefined) =>
+  resolveLocalVideoCaptureFrameRate(
+    value === undefined ? [] : [value],
+  );
 
 type CaptureQualityMessage = {
   type: "subscribe" | "unsubscribe" | "publisher-ready";
@@ -24,6 +29,7 @@ type CaptureQualityMessage = {
   subscriberId?: string;
   targetWidth?: number;
   targetHeight?: number;
+  frameRate?: number;
   cssWidth?: number;
   cssHeight?: number;
   devicePixelRatio?: number;
@@ -37,6 +43,7 @@ type CaptureQualitySubscriber = {
   lastSeenAt: number;
   targetWidth: number;
   targetHeight: number;
+  frameRate?: number;
   cssWidth?: number;
   cssHeight?: number;
   devicePixelRatio?: number;
@@ -48,6 +55,7 @@ type CaptureQualitySubscriber = {
 
 export type LocalVideoCaptureQualityDetails = Pick<
   CaptureQualitySubscriber,
+  | "frameRate"
   | "cssWidth"
   | "cssHeight"
   | "devicePixelRatio"
@@ -101,9 +109,12 @@ export const publishLocalVideoCaptureQuality = (
   let currentProfile = DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE;
   let desiredProfile = DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE;
   let pendingProfile = DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE;
+  let currentFrameRate: number = DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE;
+  let desiredFrameRate: number = DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE;
+  let pendingFrameRate: number = DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE;
   let profileChangeRunning = false;
   let profileTimer: number | undefined;
-  const failedProfiles = new Set<LocalVideoCaptureProfile["id"]>();
+  const failedProfiles = new Set<string>();
 
   const postReady = () => {
     if (active) {
@@ -122,6 +133,13 @@ export const publishLocalVideoCaptureQuality = (
       })),
     );
 
+  const resolveRequiredFrameRate = () =>
+    resolveLocalVideoCaptureFrameRate(
+      [...subscribers.values()].map((subscriber) =>
+        normalizeFrameRate(subscriber.frameRate),
+      ),
+    );
+
   const recordQualityDiagnostics = () => {
     recordLocalVideoQualityProfile(sourceId, resolveRequiredProfile());
     subscribers.forEach((subscriber, subscriberId) =>
@@ -129,6 +147,7 @@ export const publishLocalVideoCaptureQuality = (
         subscriberId,
         targetWidth: subscriber.targetWidth,
         targetHeight: subscriber.targetHeight,
+        frameRate: subscriber.frameRate,
         cssWidth: subscriber.cssWidth,
         cssHeight: subscriber.cssHeight,
         devicePixelRatio: subscriber.devicePixelRatio,
@@ -149,20 +168,24 @@ export const publishLocalVideoCaptureQuality = (
     try {
       while (
         active &&
-        desiredProfile.id !== currentProfile.id &&
-        !failedProfiles.has(desiredProfile.id)
+        (desiredProfile.id !== currentProfile.id ||
+          desiredFrameRate !== currentFrameRate) &&
+        !failedProfiles.has(`${desiredProfile.id}:${desiredFrameRate}`)
       ) {
         const nextProfile = desiredProfile;
+        const nextFrameRate = desiredFrameRate;
+        const nextConfigurationKey = `${nextProfile.id}:${nextFrameRate}`;
         const requestedConstraints = {
           width: { ideal: nextProfile.width },
           height: { ideal: nextProfile.height },
-          frameRate: { ideal: MAX_FRAME_RATE },
+          frameRate: { ideal: nextFrameRate },
         };
         const diagnosticsEnabled = localVideoDiagnosticsEnabled();
         const before = diagnosticsEnabled ? videoTrack.getSettings?.() : undefined;
         try {
           await videoTrack.applyConstraints(requestedConstraints);
           currentProfile = nextProfile;
+          currentFrameRate = nextFrameRate;
           if (diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile: nextProfile, requestedConstraints, before, succeeded: true, after: videoTrack.getSettings?.() });
         } catch {
           if (diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile: nextProfile, requestedConstraints, before, succeeded: false, after: videoTrack.getSettings?.() });
@@ -170,7 +193,7 @@ export const publishLocalVideoCaptureQuality = (
           // renegotiation even though their existing stream is healthy. Keep
           // that closest available mode and avoid retry/toast churn until the
           // capture is reopened.
-          failedProfiles.add(nextProfile.id);
+          failedProfiles.add(nextConfigurationKey);
         }
       }
     } finally {
@@ -180,20 +203,26 @@ export const publishLocalVideoCaptureQuality = (
 
   const scheduleProfileUpdate = () => {
     pendingProfile = resolveRequiredProfile();
+    pendingFrameRate = resolveRequiredFrameRate();
     if (profileTimer !== undefined) window.clearTimeout(profileTimer);
-    if (pendingProfile.id === desiredProfile.id) {
+    if (
+      pendingProfile.id === desiredProfile.id &&
+      pendingFrameRate === desiredFrameRate
+    ) {
       profileTimer = undefined;
       return;
     }
-    const isDowngrade =
-      profilePixelCount(pendingProfile) < profilePixelCount(desiredProfile);
+    const isUpgrade =
+      profilePixelCount(pendingProfile) > profilePixelCount(desiredProfile) ||
+      pendingFrameRate > desiredFrameRate;
     profileTimer = window.setTimeout(
       () => {
         profileTimer = undefined;
         desiredProfile = pendingProfile;
+        desiredFrameRate = pendingFrameRate;
         void applyDesiredProfile();
       },
-      isDowngrade ? PROFILE_DOWNGRADE_GRACE_MS : PROFILE_UPGRADE_DEBOUNCE_MS,
+      isUpgrade ? PROFILE_UPGRADE_DEBOUNCE_MS : PROFILE_DOWNGRADE_GRACE_MS,
     );
   };
 
@@ -212,6 +241,7 @@ export const publishLocalVideoCaptureQuality = (
         lastSeenAt: Date.now(),
         targetWidth: normalizeDimension(message.targetWidth),
         targetHeight: normalizeDimension(message.targetHeight),
+        frameRate: normalizeFrameRate(message.frameRate),
         cssWidth: normalizeDimension(message.cssWidth),
         cssHeight: normalizeDimension(message.cssHeight),
         devicePixelRatio: message.devicePixelRatio,
@@ -226,7 +256,8 @@ export const publishLocalVideoCaptureQuality = (
       if (
         !previous ||
         previous.targetWidth !== next.targetWidth ||
-        previous.targetHeight !== next.targetHeight
+        previous.targetHeight !== next.targetHeight ||
+        previous.frameRate !== next.frameRate
       ) {
         scheduleProfileUpdate();
       }
@@ -299,6 +330,7 @@ export const subscribeLocalVideoCaptureQuality = (
       targetWidth,
       targetHeight,
       ...details,
+      frameRate: normalizeFrameRate(details.frameRate),
     } satisfies CaptureQualityMessage);
   };
 

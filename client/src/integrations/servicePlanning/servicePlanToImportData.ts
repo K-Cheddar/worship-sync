@@ -27,6 +27,7 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
+import type { ChurchResource } from "../../types/churchResource";
 import {
   getServicePlanElementAssigneeNames,
   getServicePlanElementAssignees,
@@ -36,14 +37,26 @@ import {
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
 import {
+  getServicePlanChurchResourceId,
   getServicePlanResourceDisplayLabel,
   getServicePlanResourceNotes,
   getServicePlanResourceText,
 } from "../../pages/Services/servicePlanResources";
 
-const elementToRow = (element: ServicePlanElement): EventData => {
+const elementToRow = (
+  element: ServicePlanElement,
+  sourcePlanKey: string | undefined,
+  churchResourcesById: Map<string, ChurchResource>,
+): EventData => {
   const title = richTextToPlainText(element.title).trim();
   const assigneeNames = getServicePlanElementAssigneeNames(element);
+  const assigneeRefs = getServicePlanElementAssignees(element)
+    .filter((assignee) => Boolean(assignee.name?.trim()))
+    .map((assignee) => ({
+      id: assignee.id,
+      ...(assignee.memberId ? { memberId: assignee.memberId } : {}),
+      name: assignee.name!.trim(),
+    }));
   const notes = element.notes
     ? richTextToFormattedPlainText(element.notes).trim()
     : "";
@@ -96,7 +109,10 @@ const elementToRow = (element: ServicePlanElement): EventData => {
       return {
         id: resource.id,
         type: resource.type,
-        title: getServicePlanResourceDisplayLabel(resource),
+        title: getServicePlanResourceDisplayLabel(
+          resource,
+          churchResourcesById.get(getServicePlanChurchResourceId(resource)),
+        ),
         ...(resource.url?.trim() ? { url: resource.url.trim() } : {}),
         ...(detail.trim() ? { detail: detail.trim() } : {}),
       };
@@ -120,10 +136,12 @@ const elementToRow = (element: ServicePlanElement): EventData => {
   const sourceLedByRaw = element.sourceLedByRaw?.trim() || "";
 
   const base: EventData = {
+    ...(sourcePlanKey ? { sourcePlanKey, sourcePlanElementId: element.id } : {}),
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
     ledBy: assigneeNames.join(", ") || sourceLedByRaw,
     ...(assigneeNames.length ? { assigneeNames } : {}),
+    ...(assigneeRefs.length ? { assigneeRefs } : {}),
     ...(contentTitle ? { contentTitle } : {}),
     ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(element.sourceLedByAssignments?.length
@@ -150,17 +168,32 @@ const elementToRow = (element: ServicePlanElement): EventData => {
   };
 };
 
-const sectionToRows = (section: ServicePlanSection) => ({
+const sectionToRows = (
+  section: ServicePlanSection,
+  sourcePlanKey: string | undefined,
+  churchResourcesById: Map<string, ChurchResource>,
+) => ({
   sectionName: section.name,
-  rows: section.elements.map(elementToRow),
+  rows: section.elements.map((element) =>
+    elementToRow(element, sourcePlanKey, churchResourcesById),
+  ),
 });
 
 export const servicePlanToImportData = (
-  plan: Pick<ServicePlan, "name" | "sections">,
-): ServicePlanningImportData => ({
-  planLabel: plan.name?.trim() || "Service plan",
-  sections: plan.sections.map(sectionToRows),
-  // A saved plan carries no scraped roster. The Controller supplies assignments
-  // from the Teams schedule instead — see servicePlanTeamAssignments.ts.
-  teamAssignments: [],
-});
+  plan: Pick<ServicePlan, "name" | "sections"> & Partial<Pick<ServicePlan, "planKey">>,
+  churchResources: ChurchResource[] = [],
+): ServicePlanningImportData => {
+  const churchResourcesById = new Map(
+    churchResources.map((resource) => [resource.id, resource]),
+  );
+  return {
+    planLabel: plan.name?.trim() || "Service plan",
+    ...(plan.planKey ? { sourcePlanKey: plan.planKey } : {}),
+    sections: plan.sections.map((section) =>
+      sectionToRows(section, plan.planKey, churchResourcesById),
+    ),
+    // A saved plan carries no scraped roster. The Controller supplies assignments
+    // from the Teams schedule instead — see servicePlanTeamAssignments.ts.
+    teamAssignments: [],
+  };
+};

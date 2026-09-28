@@ -17,7 +17,7 @@ const RESERVED_BOARD_SEGMENTS = new Set(["controller", "display"]);
 const LINK_PREVIEW_CRAWLER_PATTERN =
   /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|TelegramBot|SkypeUriPreview|Googlebot|bingbot|Applebot|Embedly|Quora Link Preview|outbrain|Pinterest|redditbot|Showyoubot|DuckDuckBot|MetaInspector|iframely/i;
 
-/** @typedef {"invite" | "sms-opt-in" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "board" | "board-present"} PublicShareKind */
+/** @typedef {"invite" | "sms-opt-in" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "team-intake-recipient" | "board" | "board-present"} PublicShareKind */
 
 /** @type {Record<PublicShareKind, { title: string, description: string }>} */
 const META_BY_KIND = {
@@ -44,6 +44,10 @@ const META_BY_KIND = {
   "team-intake": {
     title: "Team signup | WorshipSync",
     description: "Share your details and availability.",
+  },
+  "team-intake-recipient": {
+    title: "Availability request | WorshipSync",
+    description: "Respond to a personal availability request.",
   },
   board: {
     title: "Discussion board | WorshipSync",
@@ -140,6 +144,17 @@ export const matchPublicShareRoute = (pathname, search = "") => {
       kind: "team-schedule",
       canonicalPath: `/teams/schedule/${param}`,
       hashTarget: `/#/teams/schedule/${param}${querySuffix}`,
+      param,
+    };
+  }
+
+  match = path.match(/^\/a\/([^/]+)$/);
+  if (match) {
+    const param = match[1];
+    return {
+      kind: "team-intake-recipient",
+      canonicalPath: `/a/${param}`,
+      hashTarget: `/#/a/${param}${querySuffix}`,
       param,
     };
   }

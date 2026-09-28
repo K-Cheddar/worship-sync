@@ -175,6 +175,8 @@ type ScheduleAssignmentPickerProps = {
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   getWarning?: (memberId: string) => string;
   onSelectMember: (memberId: string) => void;
+  onPrepareReplacementInvite?: (memberId: string) => void;
+  preparingReplacementMemberId?: string;
   onAssignmentAction?: (memberId: string, action: MemberAssignmentAction) => void;
   swapRecommendations?: ScheduleAssignmentSwapRecommendation[];
   onApplySwapRecommendation?: (
@@ -222,6 +224,8 @@ const ScheduleAssignmentPicker = memo(({
   getAssignmentActionIssues,
   getWarning,
   onSelectMember,
+  onPrepareReplacementInvite,
+  preparingReplacementMemberId = "",
   onAssignmentAction,
   swapRecommendations = [],
   onApplySwapRecommendation,
@@ -636,12 +640,13 @@ const ScheduleAssignmentPicker = memo(({
           {showPositionGroupDivider ? (
             <ScheduleMemberPositionGroupDivider />
           ) : null}
+          <div className="flex items-center gap-1">
           <button
             role="option"
             aria-selected={highlighted}
             type="button"
             className={cn(
-              "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
+              "flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
               highlighted && "bg-gray-800",
             )}
             onMouseDown={(event) => {
@@ -661,6 +666,12 @@ const ScheduleAssignmentPicker = memo(({
             {row.desiresPosition ? <WantsThisIcon /> : null}
             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
           </button>
+          {row.eligible && onPrepareReplacementInvite ? (
+            <button type="button" disabled={Boolean(preparingReplacementMemberId)} className="shrink-0 rounded px-2 py-1 text-xs text-sky-200 hover:bg-gray-800 disabled:opacity-50" aria-label={`Prepare replacement invitation for ${memberLabel}`} onMouseDown={(event) => { event.preventDefault(); onPrepareReplacementInvite(row.member.memberId); }}>
+              {preparingReplacementMemberId === row.member.memberId ? "Preparing…" : "Invite"}
+            </button>
+          ) : null}
+          </div>
         </div>
       );
     }
@@ -670,12 +681,13 @@ const ScheduleAssignmentPicker = memo(({
         {showPositionGroupDivider ? (
           <ScheduleMemberPositionGroupDivider />
         ) : null}
+        <div className="flex items-center gap-1">
         <button
           role="option"
           aria-selected={highlighted}
           type="button"
           className={cn(
-            "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+            "flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
             highlighted && "bg-gray-800",
           )}
           onMouseDown={(event) => {
@@ -694,6 +706,12 @@ const ScheduleAssignmentPicker = memo(({
           {row.warning ? <WarningBadge label={row.warning} /> : null}
           {row.desiresPosition ? <WantsThisIcon /> : null}
         </button>
+        {row.eligible && onPrepareReplacementInvite ? (
+          <button type="button" disabled={Boolean(preparingReplacementMemberId)} className="shrink-0 rounded px-2 py-1 text-xs text-sky-200 hover:bg-gray-800 disabled:opacity-50" aria-label={`Prepare replacement invitation for ${memberLabel}`} onMouseDown={(event) => { event.preventDefault(); onPrepareReplacementInvite(row.member.memberId); }}>
+            {preparingReplacementMemberId === row.member.memberId ? "Preparing…" : "Invite"}
+          </button>
+        ) : null}
+        </div>
       </div>
     );
   };

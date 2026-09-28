@@ -73,6 +73,24 @@ const emptySelectedMedia = {
 let mockSelectedMedia: typeof emptySelectedMedia = emptySelectedMedia;
 let mockSelectedMediaIds = new Set<string>();
 
+jest.mock("../../../context/transferContext", () => ({
+  useTransfers: () => ({
+    transfers: [],
+    startCanvaTransfer: jest.fn(),
+    updateUploadTransfer: jest.fn(),
+  }),
+  useOptionalTransfers: () => null,
+}));
+
+jest.mock("react-redux", () => ({
+  ...jest.requireActual("react-redux"),
+  useStore: () => ({
+    getState: () => mockState,
+    dispatch: mockDispatch,
+    subscribe: () => () => undefined,
+  }),
+}));
+
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),

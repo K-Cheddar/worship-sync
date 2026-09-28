@@ -4,7 +4,7 @@ import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { putCreditDoc } from "../utils/dbUtils";
 import { getTeamsBootstrap } from "../api/auth";
-import { selectCredit, updateCredit } from "../store/creditsSlice";
+import { selectCredit, updateCreditFromGeneration } from "../store/creditsSlice";
 import {
   completeGeneratedCreditItem,
   completeGeneratedCredits,
@@ -35,6 +35,7 @@ type PlannedGeneratedCreditUpdate = {
   credit: CreditsInfo;
   previousText: string;
   sourceLabel: string;
+  preserveManual: boolean;
 };
 
 const waitForCreditGenerationStep = () =>
@@ -44,8 +45,9 @@ const waitForCreditGenerationStep = () =>
 
 const normalizeGeneratedCreditText = (text: string) =>
   text
-    .split(/,|&/)
+    .split("\n")
     .map((item: string) => item.trim())
+    .filter(Boolean)
     .join("\n");
 
 function praiseTeamSortKey(role: string): number {
@@ -104,6 +106,9 @@ export function useGenerateCreditsFromOverlays() {
     (state) =>
       state.servicePlanningImport?.serviceOutline?.preview.teamAssignments ??
       [],
+  );
+  const servicePlanKey = useSelector(
+    (state) => state.servicePlanningImport?.servicePlanKey ?? undefined,
   );
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -173,6 +178,7 @@ export function useGenerateCreditsFromOverlays() {
             positions: teamsBootstrap.positions || [],
             members: teamsBootstrap.members || [],
             teams: teamsBootstrap.teams || [],
+            servicePlanKey,
           });
           schedule = credits.entries;
           scheduleUnavailable = credits.scheduleUnavailable;
@@ -286,11 +292,26 @@ export function useGenerateCreditsFromOverlays() {
         updatedList.flatMap((credit) => {
           const detail = generatedDetails.get(credit.id);
           if (!detail) return [];
+          const existing = list.find((candidate) => candidate.id === credit.id);
+          const preserveManual = Boolean(
+            existing?.generatedTextOverridden
+            || (existing?.generatedBaselineText !== undefined
+              ? existing.text !== existing.generatedBaselineText
+              : Boolean(existing?.text.trim())),
+          );
           return [
             {
-              credit,
+              credit: preserveManual
+                ? credit
+                : {
+                    ...credit,
+                    generatedBaselineText: credit.text,
+                    generatedSource: detail.sourceLabel,
+                    generatedTextOverridden: false,
+                  },
               sourceLabel: detail.sourceLabel,
               previousText: previousCreditTextById.get(credit.id) ?? "",
+              preserveManual,
             },
           ];
         });
@@ -309,12 +330,13 @@ export function useGenerateCreditsFromOverlays() {
         startGeneratedCredits({
           generatedAt: new Date().toISOString(),
           items: [
-            ...plannedUpdates.map(({ credit, previousText, sourceLabel }) => ({
+            ...plannedUpdates.map(({ credit, previousText, sourceLabel, preserveManual }) => ({
               creditId: credit.id,
               creditHeading: credit.heading,
               sourceLabel,
               previousText,
               nextText: credit.text,
+              manualOverride: preserveManual,
             })),
             ...missedScheduleItems,
           ],
@@ -330,17 +352,24 @@ export function useGenerateCreditsFromOverlays() {
         Awaited<ReturnType<typeof putCreditDoc>>
       >[] = [];
       let hadPersistenceError = false;
-      for (const { credit, previousText } of plannedUpdates) {
+      for (const { credit, previousText, preserveManual } of plannedUpdates) {
         dispatch(setGeneratedCreditActive(credit.id));
         dispatch(selectCredit(credit.id));
         await waitForCreditGenerationStep();
 
-        const hasChanged = previousText !== credit.text;
-        if (hasChanged) {
-          dispatch(updateCredit(credit));
+        if (preserveManual) {
+          dispatch(completeGeneratedCreditItem({ creditId: credit.id, status: "preserved" }));
+          continue;
         }
 
-        if (db && outlineIdForCredits && hasChanged) {
+        const hasChanged = previousText !== credit.text;
+        const previousCredit = list.find((candidate) => candidate.id === credit.id);
+        const hasMetadataChange = previousCredit?.generatedBaselineText !== credit.generatedBaselineText
+          || previousCredit?.generatedSource !== credit.generatedSource
+          || previousCredit?.generatedTextOverridden !== false;
+        dispatch(updateCreditFromGeneration({ ...credit, generatedSource: credit.generatedSource || "Generated credits" }));
+
+        if (db && outlineIdForCredits && (hasChanged || hasMetadataChange)) {
           try {
             const doc = await putCreditDoc(db, outlineIdForCredits, credit);
             if (doc) docsToBroadcast.push(doc);
@@ -398,6 +427,7 @@ export function useGenerateCreditsFromOverlays() {
     db,
     outlineIdForCredits,
     teamAssignments,
+    servicePlanKey,
   ]);
 
   return {

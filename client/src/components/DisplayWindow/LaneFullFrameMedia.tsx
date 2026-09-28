@@ -34,6 +34,7 @@ type LaneFullFrameMediaProps = {
   transitionSendTimestamp?: number;
   isEditor?: boolean;
   localVideo?: {
+    active: boolean;
     playAudio: boolean;
     captureEnabled: boolean;
     receiveHighQuality: boolean;
@@ -274,6 +275,7 @@ const LaneFullFrameMedia = ({
 
   const input: LocalVideoInputPresentation = media.input;
   const local = localVideo ?? {
+    active: true,
     playAudio: false,
     captureEnabled: false,
     receiveHighQuality: false,
@@ -294,6 +296,7 @@ const LaneFullFrameMedia = ({
     >
       <LocalVideoInputView
         input={input}
+        isActive={local.active}
         playAudio={local.playAudio && !isPrevious && local.contentVisible}
         volume={volume}
         captureEnabled={local.captureEnabled && !isPrevious}

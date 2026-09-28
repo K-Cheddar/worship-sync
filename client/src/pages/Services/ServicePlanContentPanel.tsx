@@ -1,6 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   AudioLines,
   Download,
   BookOpen,
@@ -66,6 +68,7 @@ import {
   getServicePlanChurchResourceId,
   getServicePlanResourceDataString,
   getServicePlanResourceDisplayLabel,
+  getServicePlanResourceTypeLabel,
   getServicePlanCustomDocumentDisplayLabel,
   getServicePlanResourceRichNotes,
   getServicePlanResourceText,
@@ -74,6 +77,7 @@ import {
   isServicePlanChurchResourceReference,
 } from "./servicePlanResources";
 import type { ChurchResource } from "../../types/churchResource";
+import generateRandomId from "../../utils/generateRandomId";
 
 type ResourceEditorMode = "url" | "text" | "generic";
 const EMPTY_SERVICE_PLAN_RESOURCES: ServicePlanContentResource[] = [];
@@ -186,20 +190,16 @@ const ServicePlanContentPanel = ({
   const songs = getServicePlanElementSongRefs(element);
   const scriptures = getServicePlanElementScriptureRefs(element);
   const persistedResources = element.resources ?? EMPTY_SERVICE_PLAN_RESOURCES;
-  const normalizedContentResourceIds = useMemo(
-    () => new Set(getServicePlanElementContentResources(element).map((resource) => resource.id)),
-    [element],
-  );
   const displayResources = useMemo(
-    () => persistedResources.filter((resource) => normalizedContentResourceIds.has(resource.id)),
-    [persistedResources, normalizedContentResourceIds],
+    () => getServicePlanElementContentResources(element),
+    [element],
   );
   const resources = persistedResources;
   const customDocumentResources = displayResources.filter(
     (resource) => resource.type === "custom-document",
   );
   const otherResources = displayResources.filter(
-    (resource) => resource.type !== "custom-document",
+    (resource) => !["song", "scripture", "custom-document"].includes(resource.type),
   );
   const attachedCustomDocumentIds = customDocumentResources
     .map(getServicePlanCustomDocumentId)
@@ -228,12 +228,28 @@ const ServicePlanContentPanel = ({
         .some((value) => value.toLowerCase().includes(query)),
     );
   }, [churchResourceSearch, churchResources]);
+  const updateContent = (changes: Partial<ServicePlanElement>) => {
+    return onUpdate(changes);
+  };
+  const moveAttachment = (resourceId: string, direction: -1 | 1) => {
+    const ordered = [...displayResources];
+    const index = ordered.findIndex((resource) => resource.id === resourceId);
+    const destination = index + direction;
+    if (index < 0 || destination < 0 || destination >= ordered.length) return;
+    [ordered[index], ordered[destination]] = [ordered[destination], ordered[index]];
+    updateContent({ contentOrder: ordered.map((resource) => resource.id) });
+  };
   const updateSongs = (next: ServicePlanSongReference[]) =>
-    onUpdate({ songRef: undefined, songRefs: next });
+    updateContent({
+      songRef: undefined,
+      songRefs: next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
+    });
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
-    onUpdate({ scriptureRef: undefined, scriptureRefs: next });
-  const updateResources = (next: ServicePlanContentResource[]) =>
-    onUpdate({ resources: next });
+    updateContent({
+      scriptureRef: undefined,
+      scriptureRefs: next.map((scriptureRef) => scriptureRef.id ? scriptureRef : { ...scriptureRef, id: generateRandomId() }),
+    });
+  const updateResources = (next: ServicePlanContentResource[]) => updateContent({ resources: next });
 
   const loadChurchResources = async () => {
     const requestId = ++churchResourcePickerRequestRef.current;
@@ -656,6 +672,20 @@ const ServicePlanContentPanel = ({
 
   return (
     <div className="space-y-4" aria-label={`Content for ${itemLabel}`}>
+      {allowEdit && displayResources.length > 1 ? (
+        <section className="space-y-2" aria-label="Presentation attachment order">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Presentation order</h3>
+          <ol className="space-y-1">
+            {displayResources.map((resource, index) => (
+              <li key={resource.id} className="flex min-w-0 items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1">
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-200">{getServicePlanResourceTypeLabel(resource.type)}: {getServicePlanResourceDisplayLabel(resource)}</span>
+                <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-6 w-6" svg={ArrowUp} aria-label={`Move ${resource.title} earlier`} disabled={index === 0} onClick={() => moveAttachment(resource.id, -1)} />
+                <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-6 w-6" svg={ArrowDown} aria-label={`Move ${resource.title} later`} disabled={index === displayResources.length - 1} onClick={() => moveAttachment(resource.id, 1)} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Songs</h3>
         {songs.length ? songs.map((song, index) => {

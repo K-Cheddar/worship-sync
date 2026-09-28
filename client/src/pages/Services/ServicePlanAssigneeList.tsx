@@ -357,18 +357,13 @@ const ServicePlanAssigneeList = ({
             <div
               key={assignee.id}
               className={cn(
-                "inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
+                "relative inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border py-1.5 pl-2 pr-10 md:w-auto md:gap-1 md:py-1 md:pl-1.5 md:pr-9",
                 allowEdit ? "flex-wrap" : "flex-nowrap",
                 isUnassigned
                   ? "border-gray-700/50 bg-gray-900/40"
                   : "border-gray-700/60 bg-gray-950/50",
               )}
             >
-              <UserRound
-                className="size-3.5 shrink-0 text-gray-400"
-                aria-hidden
-              />
-
               {allowEdit ? (
                 <DebouncedAssigneeNameField
                   label="Assigned to"
@@ -452,6 +447,7 @@ const ServicePlanAssigneeList = ({
                         className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
                         svg={X}
                         aria-label={`Remove ${microphone.name} from ${label}`}
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation();
                           updateAssignee(assignee.id, {
@@ -612,16 +608,17 @@ const ServicePlanAssigneeList = ({
                   variant="tertiary"
                   iconSize="sm"
                   padding="p-0.5"
-                  className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
+                  className="absolute right-1 top-1 h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
                   svg={Trash2}
                   aria-label={
                     isUnassigned
                       ? `Remove ${label} from ${itemLabel}`
                       : `Remove ${label} from ${itemLabel}, keeping their microphones`
                   }
-                  onClick={() =>
-                    onChange(releaseServicePlanAssignee(assignees, assignee.id))
-                  }
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onChange(releaseServicePlanAssignee(assignees, assignee.id));
+                  }}
                 />
               ) : null}
             </div>

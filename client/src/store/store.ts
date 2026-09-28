@@ -1388,6 +1388,7 @@ listenerMiddleware.startListening({
       allItemsSlice.actions.updateAllItemsListFromRemote,
       allItemsSlice.actions.setSongSearchValue,
       allItemsSlice.actions.setFreeFormSearchValue,
+      allItemsSlice.actions.setTimerSearchValue,
       allItemsSlice.actions.setIsInitialized,
     );
     return (

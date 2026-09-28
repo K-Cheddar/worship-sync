@@ -415,6 +415,14 @@ type GlobalInfoContextType = {
    * this so they don't attach before auth and get cancelled by the rules.
    */
   sharedDataReady: boolean;
+  /** True only while this renderer has a live Firebase Realtime Database connection. */
+  realtimeConnected?: boolean;
+  /**
+   * Last Firebase-confirmed manual Hide Content state per stream output.
+   * `confirmed` becomes false while presentation listeners are reconnecting;
+   * values are kept in memory only so operators can retain the warning.
+   */
+  contentHiddenByOutput?: Record<string, { hidden: boolean; confirmed: boolean }>;
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
@@ -529,6 +537,13 @@ export const globalHostId = getStableHostId();
 const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [isSharedDataReady, setIsSharedDataReady] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [contentHiddenByOutput, setContentHiddenByOutput] = useState<
+    Record<string, { hidden: boolean; confirmed: boolean }>
+  >({});
+  const contentHiddenStatusScopeRef = useRef<string | null>(null);
+  const presentationListenerGenerationRef = useRef(0);
+  const contentHiddenFreshnessCleanupRef = useRef<() => void>(() => {});
   const [authenticatedSharedDataScope, setAuthenticatedSharedDataScope] =
     useState<string | null>(null);
   const [sharedDataTokenRemintNonce, setSharedDataTokenRemintNonce] =
@@ -645,7 +660,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsRemintAttemptsRef = useRef(0);
   const churchIntegrationsHasLiveSnapshotRef = useRef(false);
   const churchIntegrationsSlowRecoveryAttemptRef = useRef(0);
-  const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
   const presenceSurface = useMemo(
@@ -705,7 +719,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
-    hasSeenRealtimeConnectedRef.current = false;
     wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
 
@@ -805,6 +818,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
 
   const clearPresentationFirebaseListeners = useCallback(() => {
+    presentationListenerGenerationRef.current += 1;
+    contentHiddenFreshnessCleanupRef.current();
     const subs = onValueRef.current;
     if (subs) {
       (Object.keys(subs) as (keyof typeof subs)[]).forEach((key) => {
@@ -1953,8 +1968,150 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
+    const listenerGeneration = ++presentationListenerGenerationRef.current;
+    contentHiddenFreshnessCleanupRef.current();
+    let cancelled = false;
+    const observedHiddenByOutput = new Map<string, boolean>();
+    const readSequenceByOutput = new Map<string, number>();
+    const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const activeReadControllers = new Map<string, AbortController>();
+    const cancelFreshnessWork = () => {
+      cancelled = true;
+      retryTimers.forEach(clearTimeout);
+      retryTimers.clear();
+      activeReadControllers.forEach((controller) => controller.abort());
+      activeReadControllers.clear();
+    };
+    contentHiddenFreshnessCleanupRef.current = cancelFreshnessWork;
+
+    const readServerHiddenState = async (
+      outputId: string,
+      path: string,
+      attempt = 0,
+    ): Promise<void> => {
+      if (attempt === 0) {
+        const pendingRetry = retryTimers.get(outputId);
+        if (pendingRetry) clearTimeout(pendingRetry);
+        retryTimers.delete(outputId);
+      }
+      const sequence = (readSequenceByOutput.get(outputId) ?? 0) + 1;
+      readSequenceByOutput.set(outputId, sequence);
+      try {
+        const authUser = getSharedDataAuth().currentUser;
+        const databaseUrl = firebaseDb?.app.options.databaseURL;
+        if (!authUser || !databaseUrl) throw new Error("Firebase read unavailable");
+
+        const token = await authUser.getIdToken();
+        if (
+          cancelled ||
+          listenerGeneration !== presentationListenerGenerationRef.current ||
+          readSequenceByOutput.get(outputId) !== sequence
+        ) {
+          return;
+        }
+        const encodedPath = path
+          .split("/")
+          .map((segment) => encodeURIComponent(segment))
+          .join("/");
+        const url = new URL(
+          `${encodedPath}.json`,
+          `${databaseUrl.replace(/\/$/, "")}/`,
+        );
+        url.searchParams.set("auth", token);
+        activeReadControllers.get(outputId)?.abort();
+        const controller = new AbortController();
+        activeReadControllers.set(outputId, controller);
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        let response: Response;
+        try {
+          response = await fetch(url.toString(), {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+          if (activeReadControllers.get(outputId) === controller) {
+            activeReadControllers.delete(outputId);
+          }
+        }
+        if (!response.ok) throw new Error(`Firebase read failed (${response.status})`);
+        const value: unknown = await response.json();
+        if (
+          cancelled ||
+          listenerGeneration !== presentationListenerGenerationRef.current ||
+          !globalFireDbInfo.isConnected ||
+          readSequenceByOutput.get(outputId) !== sequence
+        ) {
+          return;
+        }
+        setContentHiddenByOutput((current) => ({
+          ...current,
+          [outputId]: { hidden: value === true, confirmed: true },
+        }));
+      } catch {
+        if (
+          cancelled ||
+          listenerGeneration !== presentationListenerGenerationRef.current ||
+          !globalFireDbInfo.isConnected ||
+          readSequenceByOutput.get(outputId) !== sequence ||
+          attempt >= 2
+        ) {
+          return;
+        }
+        const retryTimer = setTimeout(() => {
+          if (retryTimers.get(outputId) === retryTimer) {
+            retryTimers.delete(outputId);
+          }
+          void readServerHiddenState(outputId, path, attempt + 1);
+        }, attempt === 0 ? 500 : 2000);
+        retryTimers.set(outputId, retryTimer);
+      }
+    };
+    const applyListenerState = (
+      outputId: string,
+      hidden: boolean,
+      path: string,
+      initial = false,
+    ) => {
+      const wasObserved = observedHiddenByOutput.has(outputId);
+      const previousObserved = observedHiddenByOutput.get(outputId);
+      observedHiddenByOutput.set(outputId, hidden);
+      setContentHiddenByOutput((current) => {
+        const existing = current[outputId];
+        // Listener events can be cached or optimistic. Keep the retained
+        // state until the narrow server read confirms a replacement.
+        if (existing) {
+          return {
+            ...current,
+            [outputId]: { ...existing, confirmed: false },
+          };
+        }
+        return { ...current, [outputId]: { hidden, confirmed: false } };
+      });
+      if (
+        globalFireDbInfo.isConnected &&
+        (initial || !wasObserved || previousObserved !== hidden)
+      ) {
+        void readServerHiddenState(outputId, path);
+      }
+    };
+
+    const isNewScope = contentHiddenStatusScopeRef.current !== sharedDataSessionScope;
+    contentHiddenStatusScopeRef.current = sharedDataSessionScope;
+    setContentHiddenByOutput((current) =>
+      isNewScope
+        ? {}
+        : Object.fromEntries(
+            Object.entries(current).map(([id, status]) => [
+              id,
+              { ...status, confirmed: false },
+            ]),
+          ),
+    );
     if (!firebaseDb || !isSharedDataScopeReady) {
       clearPresentationFirebaseListeners();
+      cancelFreshnessWork();
       return;
     }
 
@@ -1977,16 +2134,103 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           firebaseDb,
           updatePath,
           (snapshot) => {
+            if (listenerGeneration !== presentationListenerGenerationRef.current) return;
             if (!snapshot.exists()) {
               if (key === "serviceTimes") {
                 updateFromRemote({ serviceTimes: [] });
+              }
+              if (key === "stream_itemContentBlocked") {
+                updateFromRemote({ stream_itemContentBlocked: false });
+                applyListenerState("stream", false, updatePath, true);
+              }
+              if (key === "outputs") {
+                setContentHiddenByOutput((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).filter(([id]) => id === "stream"),
+                  ),
+                );
+                observedHiddenByOutput.clear();
               }
               return;
             }
             const data = snapshot.val();
             updateFromRemote({ [key]: data });
+            if (key === "outputs") {
+              const outputs = nestSlashPathOutputs(data) as Record<
+                string,
+                { type?: string; itemContentBlocked?: unknown }
+              >;
+              const nextStatuses = Object.fromEntries(
+                Object.entries(outputs)
+                  .filter(([, output]) => output?.type === "stream")
+                  .map(([id, output]) => [
+                    id,
+                    {
+                      hidden: output.itemContentBlocked === true,
+                    },
+                  ]),
+              );
+              const streamOutputIds = new Set(Object.keys(nextStatuses));
+              setContentHiddenByOutput((current) => ({
+                ...Object.fromEntries(
+                  Object.entries(current).filter(
+                    ([id]) => id === "stream" || streamOutputIds.has(id),
+                  ),
+                ),
+              }));
+              for (const [id, status] of Object.entries(nextStatuses)) {
+                applyListenerState(
+                  id,
+                  status.hidden,
+                  getChurchDataPath(
+                    churchId,
+                    "presentation",
+                    "outputs",
+                    id,
+                    "itemContentBlocked",
+                  ),
+                  !observedHiddenByOutput.has(id),
+                );
+              }
+            }
+            if (key === "stream_itemContentBlocked") {
+              applyListenerState(
+                "stream",
+                Boolean(data),
+                updatePath,
+                !observedHiddenByOutput.has("stream"),
+              );
+            }
           },
-          { label: `presentation:${String(key)}` },
+          {
+            label: `presentation:${String(key)}`,
+            onPermissionDenied: () => {
+              if (key !== "outputs" && key !== "stream_itemContentBlocked") {
+                return;
+              }
+              if (key === "outputs") {
+                observedHiddenByOutput.clear();
+                setContentHiddenByOutput((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).map(([id, status]) => [
+                      id,
+                      id === "stream" ? status : { ...status, confirmed: false },
+                    ]),
+                  ),
+                );
+              } else {
+                observedHiddenByOutput.delete("stream");
+                setContentHiddenByOutput((current) =>
+                  current.stream
+                    ? {
+                        ...current,
+                        stream: { ...current.stream, confirmed: false },
+                      }
+                    : current,
+                );
+              }
+            },
+          },
         );
       }
     }
@@ -1994,6 +2238,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     churchId,
     firebaseDb,
     isSharedDataScopeReady,
+    sharedDataSessionScope,
     updateFromRemote,
     clearPresentationFirebaseListeners,
   ]);
@@ -2047,7 +2292,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // Monitor connection state and handle reconnection
   useEffect(() => {
     if (!firebaseDb || !isSharedDataScopeReady) {
-      hasSeenRealtimeConnectedRef.current = false;
+      setRealtimeConnected(false);
       wasRealtimeConnectedRef.current = false;
       return;
     }
@@ -2056,14 +2301,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
       globalFireDbInfo.isConnected = isConnected;
+      setRealtimeConnected(isConnected);
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;
+        contentHiddenFreshnessCleanupRef.current();
+        setContentHiddenByOutput((current) =>
+          Object.fromEntries(
+            Object.entries(current).map(([id, status]) => [
+              id,
+              { ...status, confirmed: false },
+            ]),
+          ),
+        );
         return;
       }
 
+      // Reattach on the first online transition too: an initial listener
+      // snapshot may have been delivered from local state before the server
+      // connection was established.
       const shouldRefreshPresentationListeners =
-        hasSeenRealtimeConnectedRef.current && !wasRealtimeConnectedRef.current;
-      hasSeenRealtimeConnectedRef.current = true;
+        !wasRealtimeConnectedRef.current;
       wasRealtimeConnectedRef.current = true;
 
       if (shouldRefreshPresentationListeners) {
@@ -2096,6 +2353,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     return () => {
       globalFireDbInfo.isConnected = false;
+      setRealtimeConnected(false);
       unsubscribe();
       unsubscribeOffset();
     };
@@ -2998,6 +3256,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       notificationPreferences,
       setNotificationPreference,
       sharedDataReady: isSharedDataScopeReady,
+      realtimeConnected,
+      contentHiddenByOutput:
+        contentHiddenStatusScopeRef.current === sharedDataSessionScope
+          ? contentHiddenByOutput
+          : {},
     }),
     [
       loginState,
@@ -3064,6 +3327,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       notificationPreferences,
       setNotificationPreference,
       isSharedDataScopeReady,
+      realtimeConnected,
+      contentHiddenByOutput,
+      sharedDataSessionScope,
     ]
   );
 

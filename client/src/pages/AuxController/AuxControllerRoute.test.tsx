@@ -110,6 +110,7 @@ const renderRoute = (
       controllerProfiles: controllerProfilesSlice.reducer,
       servicePlanningImport: servicePlanningImportReducer,
       displayOutputs: () => ({ list: [], isLoaded: true }),
+      allItems: () => ({ libraryFilter: "all" }),
       presentation: () => ({ outputs: {} }),
       undoable: () => ({
         present: {

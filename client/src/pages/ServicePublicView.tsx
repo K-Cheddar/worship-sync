@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Eye, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import Button from "../components/Button/Button";
@@ -33,6 +33,7 @@ import {
 } from "./servicePublicNotesRole";
 import { publicPageScrollClassName } from "./Teams/teamsStyles";
 import { normalizeHexColor } from "../utils/richTextColorContrast";
+import useFollowLiveScroll from "../hooks/useFollowLiveScroll";
 import {
   getServicePlanRoleNoteTeamName,
   getServicePlanRoleNoteRoleName,
@@ -49,7 +50,6 @@ const servicePublicItemDomId = (itemId: string) => `service-item-${itemId}`;
  * (live item far from the current position) can easily run past a fixed
  * 1s window and have its own tail end mistaken for a manual scroll.
  */
-const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 300;
 const SERVICE_PUBLIC_THEME_STORAGE_KEY = "worshipsyncServicePublicTheme";
 type ServicePublicTheme = "dark" | "light";
 
@@ -71,8 +71,13 @@ const persistServicePublicTheme = (theme: ServicePublicTheme) => {
   }
 };
 
-const scrollServicePublicItemNearTop = (itemId: string) => {
-  document.getElementById(servicePublicItemDomId(itemId))?.scrollIntoView({
+const getServicePublicItem = (container: HTMLElement, itemId: string) => {
+  const item = document.getElementById(servicePublicItemDomId(itemId));
+  return item instanceof HTMLElement && container.contains(item) ? item : null;
+};
+
+const scrollServicePublicItemNearTop = (item: HTMLElement) => {
+  item.scrollIntoView({
     behavior: "smooth",
     block: "start",
   });
@@ -195,6 +200,7 @@ const PublicResourceReferences = ({
     ...((resource.type === "text" || resource.type === "generic") && resource.detail
       ? { textContent: resource.detail }
       : {}),
+    ...(resource.richTextContent ? { richTextContent: resource.richTextContent } : {}),
   });
 
   return (
@@ -371,12 +377,12 @@ const ServicePublicView = ({
   const [clientNow, setClientNow] = useState(() => Date.now());
   const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
   const [selectedRoles, setSelectedRoles] = useState(() => readServicePublicNotesRole());
-  const [isFollowingLive, setIsFollowingLive] = useState(true);
   const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const followedLiveItemIdRef = useRef<string | null>(null);
-  const suppressFollowPauseUntilRef = useRef(0);
-  const pointerScrollIntentUntilRef = useRef(0);
+  const servicePlanScrollRef = useRef<HTMLElement | null>(null);
+  const setServicePlanScrollContainer = useCallback((element: HTMLElement | null) => {
+    servicePlanScrollRef.current = element;
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
@@ -412,68 +418,20 @@ const ServicePublicView = ({
     [clientNow, serverOffsetMs, snapshot],
   );
   const currentItemId = progress?.current?.item.id ?? null;
-
-  const scrollCurrentNearTop = (itemId: string) => {
-    suppressFollowPauseUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
-    scrollServicePublicItemNearTop(itemId);
-  };
-
-  const pauseLiveFollow = () => {
-    setIsFollowingLive((following) => (following ? false : following));
-  };
-
-  const handlePageScroll = () => {
-    if (Date.now() < suppressFollowPauseUntilRef.current) {
-      // Still inside our own smooth-scroll animation: extend the window so
-      // it keeps covering the animation for as long as it keeps producing
-      // scroll events, rather than expiring mid-animation on a fixed clock.
-      suppressFollowPauseUntilRef.current =
-        Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
-      return;
-    }
-    // A live-item change can make the browser adjust its scroll anchor before
-    // the follow effect starts. That scroll is not a viewer choosing to leave
-    // the live item, so only pause for a scroll preceded by pointer intent
-    // (such as dragging the scrollbar). Wheel, touch, and keyboard input pause
-    // directly through their own handlers below.
-    if (Date.now() >= pointerScrollIntentUntilRef.current) return;
-    pointerScrollIntentUntilRef.current = 0;
-    pauseLiveFollow();
-  };
-
-  const notePointerScrollIntent = () => {
-    pointerScrollIntentUntilRef.current = Date.now() + 1_000;
-  };
-
-  const handlePageKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) {
-      pauseLiveFollow();
-    }
-  };
-
-  // Follow the live item near the top of the public page when it advances,
-  // until the viewer scrolls away and pauses follow.
-  useEffect(() => {
-    if (!currentItemId) {
-      followedLiveItemIdRef.current = null;
-      return;
-    }
-    if (!isFollowingLive) return;
-    if (followedLiveItemIdRef.current === currentItemId) return;
-    followedLiveItemIdRef.current = currentItemId;
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(() => {
-        suppressFollowPauseUntilRef.current =
-          Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
-        scrollServicePublicItemNearTop(currentItemId);
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      window.cancelAnimationFrame(innerFrame);
-    };
-  }, [currentItemId, isFollowingLive]);
+  const {
+    isFollowingLive,
+    pauseLiveFollow,
+    handleScroll,
+    notePointerScrollIntent,
+    handleKeyDown,
+    resumeFollowing,
+  } = useFollowLiveScroll({
+    itemId: currentItemId,
+    resetKey: snapshot.service.shareId,
+    containerRef: servicePlanScrollRef,
+    getItem: getServicePublicItem,
+    scrollToItem: scrollServicePublicItemNearTop,
+  });
 
   const teamLabels = useMemo(() => {
     if (snapshot.service.viewMode === "general") return [];
@@ -598,10 +556,7 @@ const ServicePublicView = ({
   };
 
   const jumpToCurrent = () => {
-    if (!currentItemId) return;
-    followedLiveItemIdRef.current = currentItemId;
-    setIsFollowingLive(true);
-    scrollCurrentNearTop(currentItemId);
+    resumeFollowing();
   };
 
   const { service } = snapshot;
@@ -1035,12 +990,13 @@ const ServicePublicView = ({
   if (embedded) {
     return (
       <div
+        ref={setServicePlanScrollContainer}
         className={cn(chrome.page, "rounded-xl")}
-        onScroll={handlePageScroll}
+        onScroll={handleScroll}
         onWheel={pauseLiveFollow}
         onTouchMove={pauseLiveFollow}
         onPointerDown={notePointerScrollIntent}
-        onKeyDown={handlePageKeyDown}
+        onKeyDown={handleKeyDown}
       >
         {body}
       </div>
@@ -1049,12 +1005,13 @@ const ServicePublicView = ({
 
   return (
     <main
+      ref={setServicePlanScrollContainer}
       className={cn(publicPageScrollClassName, "overflow-x-hidden", chrome.page)}
-      onScroll={handlePageScroll}
+      onScroll={handleScroll}
       onWheel={pauseLiveFollow}
       onTouchMove={pauseLiveFollow}
       onPointerDown={notePointerScrollIntent}
-      onKeyDown={handlePageKeyDown}
+      onKeyDown={handleKeyDown}
     >
       {body}
     </main>

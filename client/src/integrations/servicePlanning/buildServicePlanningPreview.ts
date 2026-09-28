@@ -22,6 +22,7 @@ import { findBestServicePlanningSongMatch } from "./findServicePlanningSongMatch
 import { cleanPlanningTitle } from "./cleanPlanningTitle";
 import { parseBibleReference, type ParsedBibleRef } from "./parseBibleReference";
 import { findParticipantTemplateForSync } from "./servicePlanningOverlayClone";
+import { type ServicePlanOverlaySource } from "./servicePlanningOverlayClone";
 import { isOutlineCandidatePresentInList } from "../../utils/servicePlanningOutlineImport";
 import type { OverlayInfo, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
@@ -34,6 +35,9 @@ import type {
 } from "../../types/servicePlanningImport";
 
 const OVERLAY_PATCH_FIELDS = ["name", "title", "event"] as const;
+
+const candidateSourceId = (elementId: string, sourceIdentity?: string, personIndex = 0) =>
+  `${elementId}:${sourceIdentity || personIndex}`;
 
 /** Normalize an overlay event for exact-duplicate comparison. */
 export const normalizeOverlayEvent = (event?: string): string =>
@@ -236,6 +240,12 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
+          sourcePlanKey: block.source.sourcePlanKey,
+          sourcePlanElementId: block.source.sourcePlanElementId,
+          sourceCandidateId: block.source.sourcePlanElementId
+            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
+            : undefined,
+          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "skip",
           patch: { ...candidate.patch },
@@ -250,6 +260,13 @@ export const buildServicePlanningPreview = ({
         candidate.patch.event,
         overlays,
         previewUsedOverlayIds,
+        block.source.sourcePlanKey && block.source.sourcePlanElementId
+          ? {
+              planKey: block.source.sourcePlanKey,
+              elementId: block.source.sourcePlanElementId,
+              candidateId: candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex),
+            } satisfies ServicePlanOverlaySource
+          : undefined,
       );
       if (target) {
         previewUsedOverlayIds.add(target.id);
@@ -263,6 +280,12 @@ export const buildServicePlanningPreview = ({
             title: block.source.title,
             ledBy: block.source.ledBy,
             personIndex: candidate.personIndex,
+            sourcePlanKey: block.source.sourcePlanKey,
+            sourcePlanElementId: block.source.sourcePlanElementId,
+            sourceCandidateId: block.source.sourcePlanElementId
+              ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
+              : undefined,
+            sourceValues: { ...candidate.patch },
             rawNameToken: candidate.rawNameToken,
             action: "update",
             placementOnly: true,
@@ -284,6 +307,12 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
+          sourcePlanKey: block.source.sourcePlanKey,
+          sourcePlanElementId: block.source.sourcePlanElementId,
+          sourceCandidateId: block.source.sourcePlanElementId
+            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
+            : undefined,
+          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "update",
           targetOverlayId: target.id,
@@ -309,6 +338,12 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
+          sourcePlanKey: block.source.sourcePlanKey,
+          sourcePlanElementId: block.source.sourcePlanElementId,
+          sourceCandidateId: block.source.sourcePlanElementId
+            ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
+            : undefined,
+          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "clone",
           targetOverlayId: template.id,
@@ -329,6 +364,12 @@ export const buildServicePlanningPreview = ({
         title: block.source.title,
         ledBy: block.source.ledBy,
         personIndex: candidate.personIndex,
+        sourcePlanKey: block.source.sourcePlanKey,
+        sourcePlanElementId: block.source.sourcePlanElementId,
+        sourceCandidateId: block.source.sourcePlanElementId
+          ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
+          : undefined,
+        sourceValues: { ...candidate.patch },
         rawNameToken: candidate.rawNameToken,
         action: "create",
         patch: { ...candidate.patch },

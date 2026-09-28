@@ -5,6 +5,8 @@ import {
 } from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { useContext } from "react";
 
 type PresentationQuickLinks = ComponentProps<
   typeof PresentationPreview
@@ -17,6 +19,7 @@ type StreamPresentationPreviewProps = {
   fillWidth?: boolean;
   readOnly?: boolean;
   isVisible?: boolean;
+  suspendPreviewMedia?: boolean;
   toggleIsTransmitting: () => void;
   /** Output this tile shows; defaults to the built-in surface. */
   outputId?: string;
@@ -36,6 +39,7 @@ const StreamPresentationPreview = memo(
     fillWidth,
     readOnly = false,
     isVisible = true,
+    suspendPreviewMedia = false,
     toggleIsTransmitting,
     variant,
     showFocusedStreamControls,
@@ -43,6 +47,8 @@ const StreamPresentationPreview = memo(
     name = "Stream",
     footer,
   }: StreamPresentationPreviewProps) => {
+    const globalInfo = useContext(GlobalInfoContext);
+    const hiddenStatus = globalInfo?.contentHiddenByOutput?.[outputId];
     const info = useSelector(
       (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
     );
@@ -82,11 +88,20 @@ const StreamPresentationPreview = memo(
           (variant === "overlayStreamFocus" && showFocusedStreamControls)
         }
         isMobile={isMobile}
-        streamItemContentBlocked={streamItemContentBlocked}
+        streamItemContentBlocked={hiddenStatus?.hidden ?? streamItemContentBlocked}
+        showContentHiddenIndicator={Boolean(hiddenStatus)}
+        contentHiddenUnconfirmed={
+          Boolean(hiddenStatus?.hidden) &&
+          (!hiddenStatus?.confirmed || !globalInfo?.realtimeConnected)
+        }
+        contentHiddenUnconfirmedLabel={
+          globalInfo?.realtimeConnected ? "Syncing" : "Offline"
+        }
         previewScale={previewScale}
         fillWidth={fillWidth}
         footer={footer}
         isVisible={isVisible}
+        suspendPreviewMedia={suspendPreviewMedia}
       />
     );
   },

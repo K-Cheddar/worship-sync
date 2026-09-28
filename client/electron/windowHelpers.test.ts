@@ -1,6 +1,8 @@
 import { BrowserWindow, shell } from "electron";
 import {
+  createAppWindowWebPreferences,
   createDisplayWindow,
+  getBackgroundThrottlingForRole,
   isLikelyAuthPopupCompletionUrl,
   setupSharedSessionWindowOpenHandler,
   shouldUseSharedSessionChildWindow,
@@ -82,6 +84,43 @@ describe("createDisplayWindow", () => {
   });
 });
 
+describe("createAppWindowWebPreferences", () => {
+  it("keeps controller and ordinary child windows eligible for background throttling", () => {
+    expect(
+      createAppWindowWebPreferences("C:/app/dist-electron/main", "controller")
+        .backgroundThrottling,
+    ).toBe(true);
+    expect(
+      createAppWindowWebPreferences(
+        "C:/app/dist-electron/main",
+        "same-app-child",
+      ).backgroundThrottling,
+    ).toBe(true);
+    expect(
+      createAppWindowWebPreferences(
+        "C:/app/dist-electron/main",
+        "incidental-popup",
+      ).backgroundThrottling,
+    ).toBe(true);
+    expect(getBackgroundThrottlingForRole("incidental-popup")).toBe(true);
+  });
+
+  it("keeps audience output and active capture host windows unthrottled", () => {
+    expect(
+      createAppWindowWebPreferences(
+        "C:/app/dist-electron/main",
+        "audience-output",
+      ).backgroundThrottling,
+    ).toBe(false);
+    expect(
+      createAppWindowWebPreferences(
+        "C:/app/dist-electron/main",
+        "capture-host",
+      ).backgroundThrottling,
+    ).toBe(false);
+  });
+});
+
 describe("shouldUseSharedSessionChildWindow", () => {
   it("allows same-app file URLs to share the session partition", () => {
     expect(
@@ -158,6 +197,7 @@ describe("setupSharedSessionWindowOpenHandler", () => {
         overrideBrowserWindowOptions: expect.objectContaining({
           webPreferences: expect.objectContaining({
             partition: "persist:worshipsync",
+            backgroundThrottling: true,
           }),
         }),
       }),

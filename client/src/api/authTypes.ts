@@ -607,6 +607,8 @@ export type TeamIntakeForm = {
   name: string;
   startDate: string;
   endDate: string;
+  /** Last date volunteers may submit; older forms fall back to endDate. */
+  responseDeadline?: string;
   availabilityServices: TeamIntakeAvailabilityService[];
   availabilityOccurrences: TeamIntakeAvailabilityOccurrence[];
   // Teams whose positions this form collects availability for. Empty means the
@@ -667,17 +669,119 @@ export type SmsDeliveryAttemptStatus =
   | "undelivered"
   | "failed";
 
+export type NotificationIntentType =
+  | "availability_request"
+  | "availability_reminder"
+  | "assignment_notification"
+  | "assignment_confirmation"
+  | "schedule_change"
+  | "replacement_request";
+
+export type NotificationIntentStatus =
+  | "preview"
+  | "ready"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "unknown"
+  | "suppressed";
+
+export type NotificationIntent = {
+  intentId: string;
+  churchId: string;
+  intentType: NotificationIntentType;
+  sourceType: "team_schedule" | "team_intake_recipient";
+  sourceId: string;
+  sourceVersion: string;
+  memberId: string;
+  formId?: string;
+  recipientId?: string;
+  batchId?: string;
+  reminderRound?: number;
+  occurrenceId: string;
+  cellKey?: string;
+  idempotencyKey?: string;
+  channel: "sms";
+  message?: string;
+  messagePreview?: string;
+  status: NotificationIntentStatus;
+  attemptId?: string;
+  createdAt: string;
+  updatedAt: string;
+  sentAt?: string;
+  previewEligible?: boolean;
+  previewError?: string;
+  attemptStatus?: SmsDeliveryAttemptStatus;
+  attemptOutcome?: string;
+  respondedAt?: string;
+  responded?: boolean;
+  replacementResolvedAt?: string;
+  approvalVersion?: string;
+  segmentCount?: number;
+  maskedPhoneNumber?: string;
+  phoneNumberSnapshot?: string;
+};
+
+export type NotificationBatchRecipient = {
+  memberId: string;
+  memberName: string;
+  recipientId?: string;
+  maskedPhoneNumber?: string;
+  eligibilityStatus?: SmsMemberEligibilityStatus | "";
+  eligible: boolean;
+  exclusionReason?: string;
+  intentId?: string;
+  status: NotificationIntentStatus | "excluded";
+  attemptId?: string;
+  attemptStatus?: SmsDeliveryAttemptStatus | "";
+  attemptOutcome?: string;
+  segmentCount: number;
+  message?: string;
+  approvalVersion?: string;
+  phoneNumberSnapshot?: string;
+};
+
+export type NotificationBatch = {
+  batchId: string;
+  churchId: string;
+  formId: string;
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+  reminderRound: number;
+  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
+  selectedMemberIds: string[];
+  recipients: NotificationBatchRecipient[];
+  intentIds: string[];
+  approvalVersion: string;
+  summary: {
+    requested: number;
+    selected: number;
+    eligible: number;
+    awaitingDispatch: number;
+    alreadySent: number;
+    excluded: number;
+    totalSegments: number;
+    sent: number;
+    delivered: number;
+    failed: number;
+    uncertain: number;
+    responded: number;
+    waiting: number;
+    optedOut: number;
+  };
+};
+
 export type SmsDeliveryAttempt = {
   attemptId: string;
   churchId: string;
-  recipientType: "team_intake";
+  recipientType: "team_intake" | "notification_intent";
   recipientId: string;
   /** Present on new attempts; legacy records are scoped by recipient lookup. */
   formId?: string;
   memberId: string;
   provider: string;
-  purpose: "initial" | "reminder";
+  purpose: "initial" | "reminder" | NotificationIntentType;
   status: SmsDeliveryAttemptStatus;
+  outcome?: "confirmed" | "unknown" | "not_sent";
   failureCode?: string;
   failureMessage?: string;
   createdAt: string;

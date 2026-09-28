@@ -459,6 +459,9 @@ export const creditInfoFromDoc = (doc: DBCredit): CreditsInfo => ({
   heading: doc.heading,
   text: doc.text,
   hidden: doc.hidden,
+  generatedBaselineText: doc.generatedBaselineText,
+  generatedSource: doc.generatedSource,
+  generatedTextOverridden: doc.generatedTextOverridden,
 });
 
 export const getCreditsByIds = async (
@@ -582,6 +585,9 @@ export const putCreditDoc = async (
     existing.heading = credit.heading;
     existing.text = credit.text;
     existing.hidden = credit.hidden;
+    existing.generatedBaselineText = credit.generatedBaselineText;
+    existing.generatedSource = credit.generatedSource;
+    existing.generatedTextOverridden = credit.generatedTextOverridden;
     existing.updatedAt = new Date().toISOString();
     const result = await db.put(existing);
     return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };
@@ -689,7 +695,7 @@ export const formatAllSongs = async (
       .map((row) => row.doc as DBItem);
 
     for (const song of allSongs) {
-      const retrievedSong: DBItem | undefined = await db.get(song._id);
+      const retrievedSong = (await db.get(song._id)) as DBItem;
       const formattedItem = formatItemInfo(retrievedSong, cloud);
       const formattedSong = formatSong(formattedItem);
       const updatedItem = {
@@ -703,9 +709,7 @@ export const formatAllSongs = async (
         bibleInfo: formattedSong.bibleInfo,
         updatedAt: new Date().toISOString(),
       };
-      if (retrievedSong) {
-        await db.put(updatedItem);
-      }
+      await db.put(updatedItem);
     }
   } catch (error) {
     console.error("Failed to format all songs", error);

@@ -4,6 +4,7 @@ import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneRenderMediaOptions,
 } from "../DisplayBoxTransitionStage";
+import { requestElectronMediaSurfaceDiagnostics } from "../../../utils/electronMediaSurfaceDiagnostics";
 
 const mockPoolCandidates = [
   {
@@ -200,7 +201,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
 
     const first = snapshot("prepared-a", "A", "remote:prepared-a");
     const second = snapshot("prepared-b", "B", "remote:prepared-b");
-    const { rerender } = render(
+  const { rerender } = render(
       <DisplayBoxTransitionStage
         snapshot={first}
         shouldAnimate
@@ -213,7 +214,8 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         }}
         renderLane={renderLane}
       />,
-    );
+  );
+  requestElectronMediaSurfaceDiagnostics();
 
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:prepared-a")).toHaveAttribute(

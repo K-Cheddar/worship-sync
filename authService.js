@@ -1,10 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import {
-  FieldPath,
-  FieldValue,
-  Timestamp,
-} from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
@@ -62,6 +58,7 @@ import {
   isTeamLeadForForm,
   selectIntakeNotifyRecipients,
 } from "./server/intakeNotifyRecipients.js";
+import { deliveryKey as notificationDeliveryKey } from "./server/notificationLedger.js";
 import {
   NOTIFICATION_CATEGORY_KEYS,
   isNotificationEnabled,
@@ -97,6 +94,11 @@ import {
 } from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
+import { createNotificationIntentHandlers } from "./server/notificationIntents.js";
+import {
+  createSmsInboundWebhookHandler,
+  resolveTwilioInboundCallbackUrl,
+} from "./server/smsInboundWebhook.js";
 import {
   getSmsProviderForConfig,
   normalizeTwilioStatus,
@@ -189,6 +191,9 @@ export const COLLECTIONS = {
   securityEvents: "securityEvents",
   // Idempotency ledger for notification sends; see server/notificationLedger.js.
   notificationDeliveries: "notificationDeliveries",
+  notificationIntents: "notificationIntents",
+  notificationBatches: "notificationBatches",
+  smsInboundCommands: "smsInboundCommands",
   smsConsents: "smsConsents",
   churchMessagingConfigs: "churchMessagingConfigs",
   smsDeliveryAttempts: "smsDeliveryAttempts",
@@ -544,6 +549,9 @@ const memoryState = {
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   notificationDeliveries: new Map(),
+  notificationIntents: new Map(),
+  notificationBatches: new Map(),
+  smsInboundCommands: new Map(),
   smsConsents: new Map(),
   churchMessagingConfigs: new Map(),
   smsDeliveryAttempts: new Map(),
@@ -612,6 +620,9 @@ const collectionMap = {
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
+  [COLLECTIONS.notificationIntents]: memoryState.notificationIntents,
+  [COLLECTIONS.notificationBatches]: memoryState.notificationBatches,
+  [COLLECTIONS.smsInboundCommands]: memoryState.smsInboundCommands,
   [COLLECTIONS.smsConsents]: memoryState.smsConsents,
   [COLLECTIONS.churchMessagingConfigs]: memoryState.churchMessagingConfigs,
   [COLLECTIONS.smsDeliveryAttempts]: memoryState.smsDeliveryAttempts,
@@ -878,43 +889,75 @@ const createEmailTags = (tags = {}) =>
 let sendEmailForServerTests = null;
 
 const sendEmail = async (payload = {}) => {
-  if (
-    process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
-    typeof sendEmailForServerTests === "function"
-  ) {
-    return sendEmailForServerTests(payload);
-  }
+  const { timeoutMs, ...emailPayload } = payload;
+  const controller = timeoutMs ? new AbortController() : null;
+  let timeoutHandle;
+  const send = async () => {
+    if (
+      process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+      typeof sendEmailForServerTests === "function"
+    ) {
+      return sendEmailForServerTests({
+        ...emailPayload,
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    }
 
-  const {
-    to,
-    subject,
-    textBody,
-    htmlBody,
-    tags = {},
-    replyTo,
-    fromEmail,
-  } = payload;
-  if (resendClient && resendFromEmail) {
-    const resendPayload = {
-      from: fromEmail || resendNotificationFromEmail || resendFromEmail,
-      to: [to],
+    const {
+      to,
       subject,
-      text: textBody,
-      html: htmlBody,
-      tags: createEmailTags(tags),
-    };
-    const normalizedReplyTo = String(replyTo || "").trim();
-    if (normalizedReplyTo) {
-      resendPayload.reply_to = normalizedReplyTo;
+      textBody,
+      htmlBody,
+      tags = {},
+      replyTo,
+      fromEmail,
+      idempotencyKey,
+    } = emailPayload;
+    if (resendClient && resendFromEmail) {
+      const resendPayload = {
+        from: fromEmail || resendNotificationFromEmail || resendFromEmail,
+        to: [to],
+        subject,
+        text: textBody,
+        html: htmlBody,
+        tags: createEmailTags(tags),
+      };
+      const normalizedReplyTo = String(replyTo || "").trim();
+      if (normalizedReplyTo) {
+        resendPayload.reply_to = normalizedReplyTo;
+      }
+      const response = await resendClient.emails.send(
+        resendPayload,
+        idempotencyKey || controller
+          ? {
+              ...(idempotencyKey ? { idempotencyKey } : {}),
+              ...(controller ? { signal: controller.signal } : {}),
+            }
+          : undefined,
+      );
+      if (response.error) {
+        throw new Error(response.error.message || "Could not send email.");
+      }
+      return response.data || null;
     }
-    const response = await resendClient.emails.send(resendPayload);
-    if (response.error) {
-      throw new Error(response.error.message || "Could not send email.");
-    }
-    return response.data || null;
+    logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
+    return null;
+  };
+
+  if (!timeoutMs) return send();
+  const timeout = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort();
+      const error = new Error("Email provider request timed out.");
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([send(), timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-  logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
-  return null;
 };
 
 const buildPairingSetupUrl = (kind, token) => {
@@ -1031,7 +1074,8 @@ const requireFirebaseAdmin = () => {
   return firebaseRuntime.auth;
 };
 
-const requireFirestore = () => firestoreTestOverride || firebaseRuntime?.db || null;
+const requireFirestore = () =>
+  firestoreTestOverride || firebaseRuntime?.db || null;
 
 let authReadObserverForServerTests = null;
 
@@ -1041,7 +1085,8 @@ export const setAuthReadObserverForServerTests = (observer) => {
       "setAuthReadObserverForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
     );
   }
-  authReadObserverForServerTests = typeof observer === "function" ? observer : null;
+  authReadObserverForServerTests =
+    typeof observer === "function" ? observer : null;
 };
 
 export const setServerFirestoreForTests = (db) => {
@@ -1160,7 +1205,12 @@ export const getDoc = async (collectionName, id) => {
   return item ? { id, ...item } : null;
 };
 
-export const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
+export const setDoc = async (
+  collectionName,
+  id,
+  data,
+  { merge = false } = {},
+) => {
   const db = requireFirestore();
   if (db) {
     await db.collection(collectionName).doc(id).set(data, { merge });
@@ -1268,7 +1318,11 @@ export const queryDocs = async (
   filters = [],
   { limit = 100 } = {},
 ) => {
-  authReadObserverForServerTests?.({ type: "queryDocs", collectionName, filters });
+  authReadObserverForServerTests?.({
+    type: "queryDocs",
+    collectionName,
+    filters,
+  });
   const db = requireFirestore();
   if (db) {
     let query = db.collection(collectionName);
@@ -1291,7 +1345,13 @@ export const queryDocs = async (
         const operator = filter.op || "==";
         if (operator === "==") return item[filter.field] === filter.value;
         if (operator === "in") {
-          return Array.isArray(filter.value) && filter.value.includes(item[filter.field]);
+          return (
+            Array.isArray(filter.value) &&
+            filter.value.includes(item[filter.field])
+          );
+        }
+        if (operator === ">") {
+          return item[filter.field] > filter.value;
         }
         return false;
       }),
@@ -1445,7 +1505,10 @@ const updateInviteForResend = async ({
         throw httpError(404, "Invite not found.");
       }
       if (expectedTokenHash && current.tokenHash !== expectedTokenHash) {
-        throw httpError(409, "This invite changed while the resend was starting.");
+        throw httpError(
+          409,
+          "This invite changed while the resend was starting.",
+        );
       }
       if (current.status === "accepted" || current.acceptedAt) {
         throw httpError(400, "Accepted invites cannot be resent.");
@@ -1482,11 +1545,7 @@ const updateInviteForResend = async ({
   return { id: inviteId, ...updated };
 };
 
-const clearPendingInviteToken = async ({
-  churchId,
-  inviteId,
-  tokenHash,
-}) => {
+const clearPendingInviteToken = async ({ churchId, inviteId, tokenHash }) => {
   const db = requireFirestore();
   if (db) {
     await db.runTransaction(async (transaction) => {
@@ -1494,10 +1553,7 @@ const clearPendingInviteToken = async ({
       const snapshot = await transaction.get(inviteRef);
       if (!snapshot.exists) return;
       const current = snapshot.data();
-      if (
-        current.churchId === churchId &&
-        current.tokenHash === tokenHash
-      ) {
+      if (current.churchId === churchId && current.tokenHash === tokenHash) {
         transaction.update(inviteRef, { pendingResendToken: null });
       }
     });
@@ -1505,10 +1561,7 @@ const clearPendingInviteToken = async ({
   }
 
   const current = collectionMap[COLLECTIONS.invites].get(inviteId);
-  if (
-    current?.churchId === churchId &&
-    current.tokenHash === tokenHash
-  ) {
+  if (current?.churchId === churchId && current.tokenHash === tokenHash) {
     collectionMap[COLLECTIONS.invites].set(inviteId, {
       ...current,
       pendingResendToken: null,
@@ -1608,22 +1661,27 @@ const upsertSmsConsent = async (
       });
       return { consentId, challenge, shouldSend: true };
     }
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
+    await setDoc(
+      COLLECTIONS.smsConsents,
       consentId,
-      churchId,
-      phoneNumber: normalizedPhoneNumber,
-      phoneHash: hashValue(normalizedPhoneNumber),
-      status: "pending",
-      source: "web_form",
-      consentVersion: SMS_CONSENT_VERSION,
-      consentText: SMS_CONSENT_TEXT,
-      consentSubmittedAt: submittedAt,
-      ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
-      ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
-      optedOutAt: existing?.optedOutAt || null,
-      createdAt: existing?.createdAt || submittedAt,
-      ...challengeFields,
-    }, { merge: false });
+      {
+        consentId,
+        churchId,
+        phoneNumber: normalizedPhoneNumber,
+        phoneHash: hashValue(normalizedPhoneNumber),
+        status: "pending",
+        source: "web_form",
+        consentVersion: SMS_CONSENT_VERSION,
+        consentText: SMS_CONSENT_TEXT,
+        consentSubmittedAt: submittedAt,
+        ...(existing?.consentedAt ? { consentedAt: existing.consentedAt } : {}),
+        ...(existing?.verifiedAt ? { verifiedAt: existing.verifiedAt } : {}),
+        optedOutAt: existing?.optedOutAt || null,
+        createdAt: existing?.createdAt || submittedAt,
+        ...challengeFields,
+      },
+      { merge: false },
+    );
     return { consentId, challenge, shouldSend: true };
   });
 };
@@ -1668,13 +1726,17 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
       if (!result.ok) {
         const attempts = Number(record?.verificationAttempts || 0) + 1;
         if (challengeMatches && record?.verificationCodeHash) {
-          transaction.set(consentRef, {
-            verificationAttempts: attempts,
-            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
-              ? { verificationCodeHash: null }
-              : {}),
-            updatedAt: nowIso(),
-          }, { merge: true });
+          transaction.set(
+            consentRef,
+            {
+              verificationAttempts: attempts,
+              ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+                ? { verificationCodeHash: null }
+                : {}),
+              updatedAt: nowIso(),
+            },
+            { merge: true },
+          );
         }
         return {
           status:
@@ -1682,19 +1744,23 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
         };
       }
       const verifiedAt = nowIso();
-      transaction.set(consentRef, {
-        status: "opted_in",
-        ...(record?.status === "opted_in"
-          ? { verificationConfirmedAt: verifiedAt }
-          : { consentedAt: verifiedAt, verifiedAt }),
-        verificationCodeHash: null,
-        verificationCodeSalt: null,
-        verificationExpiresAt: null,
-        verificationChallengeId: null,
-        verificationCancellationTokenHash: null,
-        verificationCancellationExpiresAt: null,
-        updatedAt: verifiedAt,
-      }, { merge: true });
+      transaction.set(
+        consentRef,
+        {
+          status: "opted_in",
+          ...(record?.status === "opted_in"
+            ? { verificationConfirmedAt: verifiedAt }
+            : { consentedAt: verifiedAt, verifiedAt }),
+          verificationCodeHash: null,
+          verificationCodeSalt: null,
+          verificationExpiresAt: null,
+          verificationChallengeId: null,
+          verificationCancellationTokenHash: null,
+          verificationCancellationExpiresAt: null,
+          updatedAt: verifiedAt,
+        },
+        { merge: true },
+      );
       return { status: "verified", verifiedAt };
     });
 
@@ -1713,30 +1779,40 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
     if (!result.ok) {
       if (challengeMatches && record?.verificationCodeHash) {
         const attempts = Number(record.verificationAttempts || 0) + 1;
-        await setDoc(COLLECTIONS.smsConsents, consentId, {
-          verificationAttempts: attempts,
-          ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
-            ? { verificationCodeHash: null }
-            : {}),
-          updatedAt: nowIso(),
-        }, { merge: true });
+        await setDoc(
+          COLLECTIONS.smsConsents,
+          consentId,
+          {
+            verificationAttempts: attempts,
+            ...(attempts >= SMS_CONSENT_MAX_ATTEMPTS
+              ? { verificationCodeHash: null }
+              : {}),
+            updatedAt: nowIso(),
+          },
+          { merge: true },
+        );
       }
       invalid();
     }
     const verifiedAt = nowIso();
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
-      status: "opted_in",
-      ...(record?.status === "opted_in"
-        ? { verificationConfirmedAt: verifiedAt }
-        : { consentedAt: verifiedAt, verifiedAt }),
-      verificationCodeHash: null,
-      verificationCodeSalt: null,
-      verificationExpiresAt: null,
-      verificationChallengeId: null,
-      verificationCancellationTokenHash: null,
-      verificationCancellationExpiresAt: null,
-      updatedAt: verifiedAt,
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.smsConsents,
+      consentId,
+      {
+        status: "opted_in",
+        ...(record?.status === "opted_in"
+          ? { verificationConfirmedAt: verifiedAt }
+          : { consentedAt: verifiedAt, verifiedAt }),
+        verificationCodeHash: null,
+        verificationCodeSalt: null,
+        verificationExpiresAt: null,
+        verificationChallengeId: null,
+        verificationCancellationTokenHash: null,
+        verificationCancellationExpiresAt: null,
+        updatedAt: verifiedAt,
+      },
+      { merge: true },
+    );
     return { consentId, verifiedAt };
   });
 };
@@ -1802,14 +1878,19 @@ const cancelSmsConsentVerification = async ({
       ) {
         return { confirmed: false };
       }
-      transaction.set(consentRef, {
-        ...cancelledChallengeFields,
-        lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
-        lastCancelledVerificationTokenExpiresAt:
-          record.verificationCancellationExpiresAt,
-        verificationCancelledAt: nowTimestamp,
-        updatedAt: nowTimestamp,
-      }, { merge: true });
+      transaction.set(
+        consentRef,
+        {
+          ...cancelledChallengeFields,
+          lastCancelledVerificationTokenHash:
+            record.verificationCancellationTokenHash,
+          lastCancelledVerificationTokenExpiresAt:
+            record.verificationCancellationExpiresAt,
+          verificationCancelledAt: nowTimestamp,
+          updatedAt: nowTimestamp,
+        },
+        { merge: true },
+      );
       return { confirmed: true, alreadyCancelled: false, consentId };
     });
   }
@@ -1839,14 +1920,20 @@ const cancelSmsConsentVerification = async ({
     ) {
       return { confirmed: false };
     }
-    await setDoc(COLLECTIONS.smsConsents, consentId, {
-      ...cancelledChallengeFields,
-      lastCancelledVerificationTokenHash: record.verificationCancellationTokenHash,
-      lastCancelledVerificationTokenExpiresAt:
-        record.verificationCancellationExpiresAt,
-      verificationCancelledAt: nowTimestamp,
-      updatedAt: nowTimestamp,
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.smsConsents,
+      consentId,
+      {
+        ...cancelledChallengeFields,
+        lastCancelledVerificationTokenHash:
+          record.verificationCancellationTokenHash,
+        lastCancelledVerificationTokenExpiresAt:
+          record.verificationCancellationExpiresAt,
+        verificationCancelledAt: nowTimestamp,
+        updatedAt: nowTimestamp,
+      },
+      { merge: true },
+    );
     return { confirmed: true, alreadyCancelled: false, consentId };
   });
 };
@@ -1981,40 +2068,74 @@ const readDesktopAuthRequestForSecret = async ({
 /** Firestore TTL: policy on `devicePairingRequests.ttlExpireAt` (Timestamp) — configure in Firebase console. */
 const devicePairingTtlExpireAt = (expiresAtIso) =>
   Timestamp.fromDate(
-    new Date(new Date(expiresAtIso).getTime() + DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS),
+    new Date(
+      new Date(expiresAtIso).getTime() + DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS,
+    ),
   );
 
 const isDevicePairingRequestExpired = (request) =>
-  Boolean(request?.expiresAt) && new Date(request.expiresAt).getTime() <= Date.now();
+  Boolean(request?.expiresAt) &&
+  new Date(request.expiresAt).getTime() <= Date.now();
 
 const expireDevicePairingRequestIfNeeded = async (request) => {
   if (!request || !isDevicePairingRequestExpired(request)) return request;
   if (request.status !== DEVICE_PAIRING_STATUS_EXPIRED) {
-    await setDoc(COLLECTIONS.devicePairingRequests, request.id, {
-      status: DEVICE_PAIRING_STATUS_EXPIRED,
-      expiredAt: nowIso(),
-      pairingTokenPlaintext: null,
-      ttlExpireAt: Timestamp.fromDate(new Date(Date.now() + DESKTOP_AUTH_DOC_PURGE_AFTER_MS)),
-    }, { merge: true });
+    await setDoc(
+      COLLECTIONS.devicePairingRequests,
+      request.id,
+      {
+        status: DEVICE_PAIRING_STATUS_EXPIRED,
+        expiredAt: nowIso(),
+        pairingTokenPlaintext: null,
+        ttlExpireAt: Timestamp.fromDate(
+          new Date(Date.now() + DESKTOP_AUTH_DOC_PURGE_AFTER_MS),
+        ),
+      },
+      { merge: true },
+    );
   }
-  return { ...request, status: DEVICE_PAIRING_STATUS_EXPIRED, pairingTokenPlaintext: null };
+  return {
+    ...request,
+    status: DEVICE_PAIRING_STATUS_EXPIRED,
+    pairingTokenPlaintext: null,
+  };
 };
 
 const validateDevicePairingRequestForExchange = (request, requestSecret) => {
-  if (!request) throw httpError(404, "This device pairing request was not found. Generate a new QR code.");
-  if (request.secretHash !== hashValue(requestSecret)) throw httpError(403, "This device pairing request is not valid.");
+  if (!request)
+    throw httpError(
+      404,
+      "This device pairing request was not found. Generate a new QR code.",
+    );
+  if (request.secretHash !== hashValue(requestSecret))
+    throw httpError(403, "This device pairing request is not valid.");
   if (request.status !== DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE) {
-    throw httpError(409, "This device pairing request is not ready for exchange.");
+    throw httpError(
+      409,
+      "This device pairing request is not ready for exchange.",
+    );
   }
-  if (!request.pairingId) throw httpError(409, "This device pairing request is missing its pairing record.");
+  if (!request.pairingId)
+    throw httpError(
+      409,
+      "This device pairing request is missing its pairing record.",
+    );
 };
 
-const readDevicePairingRequestForSecret = async ({ requestId, requestSecret }) => {
+const readDevicePairingRequestForSecret = async ({
+  requestId,
+  requestSecret,
+}) => {
   const request = await expireDevicePairingRequestIfNeeded(
     await getDoc(COLLECTIONS.devicePairingRequests, requestId),
   );
-  if (!request) throw httpError(404, "This device pairing request was not found. Generate a new QR code.");
-  if (request.secretHash !== hashValue(requestSecret)) throw httpError(403, "This device pairing request is not valid.");
+  if (!request)
+    throw httpError(
+      404,
+      "This device pairing request was not found. Generate a new QR code.",
+    );
+  if (request.secretHash !== hashValue(requestSecret))
+    throw httpError(403, "This device pairing request is not valid.");
   return request;
 };
 
@@ -2027,15 +2148,31 @@ const createWorkstationPairingRecord = ({ churchId, createdByUid, body }) => {
   const platformType = body?.platformType || "electron";
   const serviceWorkspaceAccess = Boolean(body?.serviceWorkspaceAccess);
   if (!label) throw httpError(400, "A workstation label is required.");
-  if (!APP_ACCESS_VALUES.has(appAccess)) throw httpError(400, "That workstation access level is not valid.");
-  if (platformType !== "electron" && platformType !== "web") throw httpError(400, "That workstation platform is not valid.");
+  if (!APP_ACCESS_VALUES.has(appAccess))
+    throw httpError(400, "That workstation access level is not valid.");
+  if (platformType !== "electron" && platformType !== "web")
+    throw httpError(400, "That workstation platform is not valid.");
   const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
   const pairingId = createId("workstationPairing");
-  return { rawToken, collection: COLLECTIONS.workstationPairings, pairing: {
-    pairingId, churchId, label, appAccess, platformType, serviceWorkspaceAccess,
-    tokenHash: hashValue(rawToken), status: "pending", expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
-    createdAt: nowIso(), createdByUid, redeemedAt: null, workstationDeviceId: null,
-  }};
+  return {
+    rawToken,
+    collection: COLLECTIONS.workstationPairings,
+    pairing: {
+      pairingId,
+      churchId,
+      label,
+      appAccess,
+      platformType,
+      serviceWorkspaceAccess,
+      tokenHash: hashValue(rawToken),
+      status: "pending",
+      expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
+      createdAt: nowIso(),
+      createdByUid,
+      redeemedAt: null,
+      workstationDeviceId: null,
+    },
+  };
 };
 
 const createDisplayPairingRecord = ({ churchId, createdByUid, body }) => {
@@ -2043,23 +2180,41 @@ const createDisplayPairingRecord = ({ churchId, createdByUid, body }) => {
   const surfaceType = body?.surfaceType || "display";
   const rawOutputId = String(body?.outputId || "").trim();
   if (!label) throw httpError(400, "A display label is required.");
-  if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId)) throw httpError(400, "That display output is not valid.");
+  if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId))
+    throw httpError(400, "That display output is not valid.");
   const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
   const pairingId = createId("displayPairing");
-  return { rawToken, collection: COLLECTIONS.displayPairings, pairing: {
-    pairingId, churchId, label, surfaceType, outputId: rawOutputId || null,
-    tokenHash: hashValue(rawToken), status: "pending", expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
-    createdAt: nowIso(), createdByUid, redeemedAt: null, displayDeviceId: null,
-  }};
+  return {
+    rawToken,
+    collection: COLLECTIONS.displayPairings,
+    pairing: {
+      pairingId,
+      churchId,
+      label,
+      surfaceType,
+      outputId: rawOutputId || null,
+      tokenHash: hashValue(rawToken),
+      status: "pending",
+      expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
+      createdAt: nowIso(),
+      createdByUid,
+      redeemedAt: null,
+      displayDeviceId: null,
+    },
+  };
 };
 
 const devicePairingApprovalChains = new Map();
 const serializeDevicePairingApproval = async (requestId, fn) => {
-  const previous = devicePairingApprovalChains.get(requestId) || Promise.resolve();
+  const previous =
+    devicePairingApprovalChains.get(requestId) || Promise.resolve();
   const next = previous.catch(() => undefined).then(fn);
   devicePairingApprovalChains.set(requestId, next);
-  try { return await next; } finally {
-    if (devicePairingApprovalChains.get(requestId) === next) devicePairingApprovalChains.delete(requestId);
+  try {
+    return await next;
+  } finally {
+    if (devicePairingApprovalChains.get(requestId) === next)
+      devicePairingApprovalChains.delete(requestId);
   }
 };
 
@@ -2273,7 +2428,10 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
 
 // Addresses to notify for a form's submissions: derived from designated leads
 // on the form's teams, minus anyone who muted intake notifications. Never a
-// stored recipient list, so it follows live roster ownership.
+// stored recipient list, so it follows live roster ownership. Since the
+// 2026-09-01 recipient change, administrators and other Teams editors who are
+// not designated leads are intentionally excluded; do not broaden this pool
+// without an explicit product decision about the audience.
 const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
   const memberships = (await listMembershipsForChurch(churchId)).filter(
     (membership) => membership.status === "active",
@@ -2812,58 +2970,175 @@ const redeemDisplayPairingMemory = async (token) => {
   };
 };
 
-const redeemDevicePairingRequestMemory = async ({ requestId, requestSecret, platformType }) => {
+const redeemDevicePairingRequestMemory = async ({
+  requestId,
+  requestSecret,
+  platformType,
+}) => {
   const request = await expireDevicePairingRequestIfNeeded(
     await getDoc(COLLECTIONS.devicePairingRequests, requestId),
   );
   validateDevicePairingRequestForExchange(request, requestSecret);
-  const pairingCollection = request.kind === "workstation"
-    ? COLLECTIONS.workstationPairings
-    : COLLECTIONS.displayPairings;
+  const pairingCollection =
+    request.kind === "workstation"
+      ? COLLECTIONS.workstationPairings
+      : COLLECTIONS.displayPairings;
   const pairing = await getDoc(pairingCollection, request.pairingId);
-  if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+  if (!pairing || pairing.status !== "pending")
+    throw httpError(400, "That pairing request is no longer valid.");
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-    await setDoc(pairingCollection, request.pairingId, { status: "expired" }, { merge: true });
+    await setDoc(
+      pairingCollection,
+      request.pairingId,
+      { status: "expired" },
+      { merge: true },
+    );
     throw httpError(400, "That pairing request expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId(request.kind);
-  const device = request.kind === "workstation"
-    ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
-    : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
-  const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+  const device =
+    request.kind === "workstation"
+      ? {
+          churchId: pairing.churchId,
+          label: pairing.label,
+          appAccess: pairing.appAccess,
+          platformType: platformType || pairing.platformType || "web",
+          serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
+          status: "active",
+          credentialHash: hashValue(credential),
+          createdAt: nowIso(),
+          lastSeenAt: nowIso(),
+          revokedAt: null,
+          revokedBy: null,
+          lastOperatorName: null,
+        }
+      : {
+          churchId: pairing.churchId,
+          label: pairing.label,
+          surfaceType: pairing.surfaceType,
+          outputId: pairing.outputId ?? null,
+          status: "active",
+          credentialHash: hashValue(credential),
+          createdAt: nowIso(),
+          lastSeenAt: nowIso(),
+          revokedAt: null,
+          revokedBy: null,
+        };
+  const deviceCollection =
+    request.kind === "workstation"
+      ? COLLECTIONS.workstationDevices
+      : COLLECTIONS.displayDevices;
   await setDoc(deviceCollection, deviceId, device);
-  await setDoc(pairingCollection, request.pairingId, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) }, { merge: true });
-  await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null }, { merge: true });
-  return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+  await setDoc(
+    pairingCollection,
+    request.pairingId,
+    {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      ...(request.kind === "workstation"
+        ? { workstationDeviceId: deviceId }
+        : { displayDeviceId: deviceId }),
+    },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.devicePairingRequests,
+    requestId,
+    { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null },
+    { merge: true },
+  );
+  return {
+    credential,
+    deviceId,
+    device,
+    pairingChurchId: pairing.churchId,
+    kind: request.kind,
+  };
 };
 
-const redeemDevicePairingRequestFirestore = async ({ requestId, requestSecret, platformType }) => {
+const redeemDevicePairingRequestFirestore = async ({
+  requestId,
+  requestSecret,
+  platformType,
+}) => {
   const db = requireFirestore();
   return db.runTransaction(async (transaction) => {
-    const requestRef = db.collection(COLLECTIONS.devicePairingRequests).doc(requestId);
+    const requestRef = db
+      .collection(COLLECTIONS.devicePairingRequests)
+      .doc(requestId);
     const requestSnap = await transaction.get(requestRef);
-    const request = requestSnap.exists ? { id: requestSnap.id, ...requestSnap.data() } : null;
+    const request = requestSnap.exists
+      ? { id: requestSnap.id, ...requestSnap.data() }
+      : null;
     validateDevicePairingRequestForExchange(request, requestSecret);
-    const pairingCollection = request.kind === "workstation" ? COLLECTIONS.workstationPairings : COLLECTIONS.displayPairings;
+    const pairingCollection =
+      request.kind === "workstation"
+        ? COLLECTIONS.workstationPairings
+        : COLLECTIONS.displayPairings;
     const pairingRef = db.collection(pairingCollection).doc(request.pairingId);
     const pairingSnap = await transaction.get(pairingRef);
     const pairing = pairingSnap.exists ? pairingSnap.data() : null;
-    if (!pairing || pairing.status !== "pending") throw httpError(400, "That pairing request is no longer valid.");
+    if (!pairing || pairing.status !== "pending")
+      throw httpError(400, "That pairing request is no longer valid.");
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
       throw httpError(400, "That pairing request expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId(request.kind);
-    const device = request.kind === "workstation"
-      ? { churchId: pairing.churchId, label: pairing.label, appAccess: pairing.appAccess, platformType: platformType || pairing.platformType || "web", serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess), status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null, lastOperatorName: null }
-      : { churchId: pairing.churchId, label: pairing.label, surfaceType: pairing.surfaceType, outputId: pairing.outputId ?? null, status: "active", credentialHash: hashValue(credential), createdAt: nowIso(), lastSeenAt: nowIso(), revokedAt: null, revokedBy: null };
-    const deviceCollection = request.kind === "workstation" ? COLLECTIONS.workstationDevices : COLLECTIONS.displayDevices;
+    const device =
+      request.kind === "workstation"
+        ? {
+            churchId: pairing.churchId,
+            label: pairing.label,
+            appAccess: pairing.appAccess,
+            platformType: platformType || pairing.platformType || "web",
+            serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
+            status: "active",
+            credentialHash: hashValue(credential),
+            createdAt: nowIso(),
+            lastSeenAt: nowIso(),
+            revokedAt: null,
+            revokedBy: null,
+            lastOperatorName: null,
+          }
+        : {
+            churchId: pairing.churchId,
+            label: pairing.label,
+            surfaceType: pairing.surfaceType,
+            outputId: pairing.outputId ?? null,
+            status: "active",
+            credentialHash: hashValue(credential),
+            createdAt: nowIso(),
+            lastSeenAt: nowIso(),
+            revokedAt: null,
+            revokedBy: null,
+          };
+    const deviceCollection =
+      request.kind === "workstation"
+        ? COLLECTIONS.workstationDevices
+        : COLLECTIONS.displayDevices;
     transaction.set(db.collection(deviceCollection).doc(deviceId), device);
-    transaction.update(pairingRef, { status: "redeemed", redeemedAt: nowIso(), ...(request.kind === "workstation" ? { workstationDeviceId: deviceId } : { displayDeviceId: deviceId }) });
-    transaction.update(requestRef, { status: "redeemed", redeemedAt: nowIso(), pairingTokenPlaintext: null });
-    return { credential, deviceId, device, pairingChurchId: pairing.churchId, kind: request.kind };
+    transaction.update(pairingRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      ...(request.kind === "workstation"
+        ? { workstationDeviceId: deviceId }
+        : { displayDeviceId: deviceId }),
+    });
+    transaction.update(requestRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      pairingTokenPlaintext: null,
+    });
+    return {
+      credential,
+      deviceId,
+      device,
+      pairingChurchId: pairing.churchId,
+      kind: request.kind,
+    };
   });
 };
 
@@ -2915,6 +3190,41 @@ export const setSendEmailForServerTests = (fn) => {
     );
   }
   sendEmailForServerTests = typeof fn === "function" ? fn : null;
+};
+
+export const setIntakeDigestProviderTimeoutForServerTests = (timeoutMs) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeDigestProviderTimeoutForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  intakeDigestProviderTimeoutForServerTests =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : null;
+};
+
+export const setIntakeNotifyRecipientsForServerTests = (recipients) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeNotifyRecipientsForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setIntakeNotifyRecipientsForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  intakeNotifyRecipientsForServerTests = Array.isArray(recipients)
+    ? [...recipients]
+    : null;
+};
+
+export const setIntakeDigestSchedulingFailureForServerTests = (shouldFail) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeDigestSchedulingFailureForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  intakeDigestSchedulingFailureForServerTests = Boolean(shouldFail);
 };
 
 const upsertProfileFromVerifiedToken = async (
@@ -4885,7 +5195,10 @@ export const seedSmsConsentForServerTests = async ({
   }
   const normalizedPhone = normalizeUsPhoneNumber(phoneNumber);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhone);
-  if (!consentId) throw new Error("seedSmsConsentForServerTests requires churchId and phoneNumber");
+  if (!consentId)
+    throw new Error(
+      "seedSmsConsentForServerTests requires churchId and phoneNumber",
+    );
   const record = {
     consentId,
     churchId,
@@ -5008,50 +5321,410 @@ export const seedEmailCodeChallengeForServerTests = async ({
 // --- Team intake submission digest ----------------------------------------
 // New submissions are coalesced into one email per form so a burst of responses
 // (a freshly-shared form) doesn't spam editors. The throttle is a per-form timer
-// keyed by formId; a `pendingDigestSince` marker persisted on the form doc makes
-// it restart-tolerant — a lost timer is recovered on the next submission (the
-// window is treated as already elapsed and flushed). The only uncovered edge is
-// a restart followed by no further submissions, which degrades to "no email,"
-// never to a wrong or duplicated one. Single-instance only (see Teams arch).
+// keyed by formId; a `pendingDigestSince` marker persisted on the form doc is
+// recovered at startup and by a bounded periodic query. Per-recipient delivery
+// records allow transient provider failures to retry without repeating sends
+// already accepted by the provider.
 const INTAKE_DIGEST_WINDOW_MS =
   Number(process.env.AUTH_INTAKE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
+const INTAKE_DIGEST_RECOVERY_INTERVAL_MS = 60 * 1000;
+const INTAKE_DIGEST_RECOVERY_BATCH_LIMIT = 100;
+const INTAKE_DIGEST_MAX_ATTEMPTS = 3;
+const INTAKE_DIGEST_LEASE_MS = 5 * 60 * 1000;
+const INTAKE_DIGEST_PROVIDER_TIMEOUT_MS = 4 * 60 * 1000;
+const INTAKE_DIGEST_SUBMISSION_PAGE_SIZE = 500;
 const intakeDigestTimers = new Map();
 const intakeDigestInFlight = new Set();
+let intakeNotifyRecipientsForServerTests = null;
+let intakeDigestProviderTimeoutForServerTests = null;
+let intakeDigestSchedulingFailureForServerTests = false;
+let intakeDigestRecoveryTimer = null;
+let intakeDigestRecoveryInFlight = false;
+let intakeDigestRecoveryCursor = null;
 
-const clearIntakeDigestMarker = (formId) =>
-  setDoc(
-    COLLECTIONS.teamIntakeForms,
-    formId,
-    { pendingDigestSince: null },
-    { merge: true },
+/**
+ * Add a submission to the current durable batch, or to the follow-up batch if
+ * another process has claimed the current one. Called from the submission's
+ * Firestore transaction so the submission and its notification work commit
+ * together.
+ */
+const prepareIntakeSubmissionBatch = (form, submission) => {
+  const claimed = Boolean(
+    form.pendingDigestBatchClosed || form.pendingDigestClaim?.queryStarted,
   );
+  const batchIdField = claimed
+    ? "pendingDigestNextBatchId"
+    : "pendingDigestBatchId";
+  const sinceField = claimed ? "pendingDigestNextSince" : "pendingDigestSince";
+  const legacyBatch = Boolean(
+    (form.pendingDigestClaim?.legacy ||
+      (!form.pendingDigestClaim &&
+        form.pendingDigestSince &&
+        !form.pendingDigestBatchId)) &&
+    !claimed,
+  );
+  const batchId =
+    form[batchIdField] ||
+    (!claimed ? form.pendingDigestClaim?.batchId : null) ||
+    (!claimed ? form.pendingDigestSince : null) ||
+    createId("intakeDigest");
+  const since = form[sinceField] || submission.submittedAt;
+  const batchUpdates = {
+    [batchIdField]: batchId,
+    [sinceField]: since,
+    ...(!claimed && legacyBatch ? { pendingDigestLegacy: true } : {}),
+    ...(claimed && !form.pendingDigestNextAttempts
+      ? { pendingDigestNextAttempts: {} }
+      : {}),
+  };
+  return {
+    batchUpdates,
+    taggedSubmission: { ...submission, digestBatchId: batchId },
+  };
+};
 
-const sendIntakeSubmissionDigestInner = async (formId) => {
-  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
-  if (!form?.pendingDigestSince) return;
-  const since = form.pendingDigestSince;
-  // Do all the fallible work *before* clearing the marker. If recipient
-  // lookup, the submissions query, or rendering throws, the marker survives
-  // and the batch is retried on the next submission (or restart flush) — a
-  // transient failure degrades to "late," never "lost." Individual send
-  // failures are swallowed below, so one bad address can't block the rest or
-  // strand the marker.
-  const recipients = await listIntakeNotifyRecipients(
-    form.churchId,
-    form.teamIds || [],
+const appendIntakeSubmissionToTransaction = ({
+  transaction,
+  formRef,
+  formSnapshot,
+  submissionRef,
+  submission,
+}) => {
+  const { batchUpdates, taggedSubmission } = prepareIntakeSubmissionBatch(
+    formSnapshot.data(),
+    submission,
   );
-  if (recipients.length === 0) {
-    await clearIntakeDigestMarker(formId);
+  transaction.set(submissionRef, taggedSubmission, { merge: false });
+  transaction.update(formRef, batchUpdates);
+  return taggedSubmission;
+};
+
+const persistTeamIntakeSubmission = async (submission) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, submission.formId);
+    if (!form) throw httpError(404, "Form not found.");
+    const { batchUpdates, taggedSubmission } = prepareIntakeSubmissionBatch(
+      form,
+      submission,
+    );
+    const updatedForm = {
+      ...form,
+      ...batchUpdates,
+    };
+    collectionMap[COLLECTIONS.teamIntakeForms].set(
+      submission.formId,
+      updatedForm,
+    );
+    collectionMap[COLLECTIONS.teamIntakeSubmissions].set(
+      submission.submissionId,
+      taggedSubmission,
+    );
+    return taggedSubmission;
+  }
+  return db.runTransaction(async (transaction) => {
+    const formRef = db
+      .collection(COLLECTIONS.teamIntakeForms)
+      .doc(submission.formId);
+    const submissionRef = db
+      .collection(COLLECTIONS.teamIntakeSubmissions)
+      .doc(submission.submissionId);
+    const formSnapshot = await transaction.get(formRef);
+    if (!formSnapshot.exists) throw httpError(404, "Form not found.");
+    return appendIntakeSubmissionToTransaction({
+      transaction,
+      formRef,
+      formSnapshot,
+      submissionRef,
+      submission,
+    });
+  });
+};
+
+export const persistIntakeSubmissionForServerTests = async (submission) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "persistIntakeSubmissionForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  return persistTeamIntakeSubmission(submission);
+};
+
+const claimIntakeDigest = async (formId) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (!form?.pendingDigestSince) return null;
+    if (form.pendingDigestClaim?.leaseUntil > Date.now()) return null;
+    const claim = {
+      claimId: createId("intakeDigestClaim"),
+      batchId: form.pendingDigestBatchId || form.pendingDigestSince,
+      since: form.pendingDigestSince,
+      attempts: form.pendingDigestAttempts || {},
+      queryStarted: Boolean(
+        form.pendingDigestBatchClosed || form.pendingDigestClaim?.queryStarted,
+      ),
+      legacy: Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
+      leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+    };
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: claim,
+    });
+    return claim;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const form = snapshot.data();
+    if (!form.pendingDigestSince) return null;
+    if (form.pendingDigestClaim?.leaseUntil > Date.now()) return null;
+    const existingClaim = form.pendingDigestClaim;
+    const claim = {
+      claimId: createId("intakeDigestClaim"),
+      batchId:
+        existingClaim?.batchId ||
+        form.pendingDigestBatchId ||
+        form.pendingDigestSince,
+      since: existingClaim?.since || form.pendingDigestSince,
+      attempts: existingClaim?.attempts || form.pendingDigestAttempts || {},
+      queryStarted: Boolean(existingClaim?.queryStarted),
+      legacy:
+        existingClaim?.legacy ??
+        Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
+      leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+    };
+    claim.queryStarted = Boolean(
+      claim.queryStarted || form.pendingDigestBatchClosed,
+    );
+    transaction.update(ref, { pendingDigestClaim: claim });
+    return claim;
+  });
+};
+
+const markIntakeDigestQueryStarted = async (formId, claim) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: { ...form.pendingDigestClaim, queryStarted: true },
+      pendingDigestBatchClosed: true,
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return false;
+    const current = snapshot.data().pendingDigestClaim;
+    if (current?.claimId !== claim.claimId) return false;
+    transaction.update(ref, {
+      pendingDigestClaim: { ...current, queryStarted: true },
+      pendingDigestBatchClosed: true,
+    });
+    return true;
+  });
+};
+
+const renewIntakeDigestClaim = async (formId, claim) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: {
+        ...form.pendingDigestClaim,
+        leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+      },
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return false;
+    const current = snapshot.data().pendingDigestClaim;
+    if (current?.claimId !== claim.claimId) return false;
+    transaction.update(ref, {
+      pendingDigestClaim: {
+        ...current,
+        leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+      },
+    });
+    return true;
+  });
+};
+
+const finishIntakeDigestClaim = async (
+  formId,
+  claim,
+  { attempts, complete },
+) => {
+  const db = requireFirestore();
+  const apply = (form) => {
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return null;
+    if (!complete) {
+      return {
+        pendingDigestClaim: null,
+        pendingDigestAttempts: attempts,
+      };
+    }
+    const nextSince = form.pendingDigestNextSince || null;
+    return {
+      pendingDigestSince: nextSince,
+      pendingDigestBatchId: nextSince ? form.pendingDigestNextBatchId : null,
+      pendingDigestBatchClosed: false,
+      pendingDigestAttempts: nextSince
+        ? form.pendingDigestNextAttempts || {}
+        : {},
+      pendingDigestLegacy: false,
+      pendingDigestNextSince: null,
+      pendingDigestNextBatchId: null,
+      pendingDigestNextAttempts: {},
+      pendingDigestClaim: null,
+    };
+  };
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    const updates = apply(form);
+    if (updates)
+      await updateDocFields(COLLECTIONS.teamIntakeForms, formId, updates);
+    if (complete && updates?.pendingDigestSince) {
+      armIntakeDigestTimer(
+        formId,
+        Math.max(
+          0,
+          INTAKE_DIGEST_WINDOW_MS -
+            (Date.now() - new Date(updates.pendingDigestSince).getTime()),
+        ),
+      );
+    }
     return;
   }
-  const allSubmissions = await queryDocs(
-    COLLECTIONS.teamIntakeSubmissions,
-    [{ field: "formId", value: formId }],
-    { limit: 500 },
+  const nextSince = await db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const form = snapshot.data();
+    const updates = apply(form);
+    if (!updates) return undefined;
+    transaction.update(ref, updates);
+    return updates.pendingDigestSince;
+  });
+  if (complete && nextSince) {
+    armIntakeDigestTimer(
+      formId,
+      Math.max(
+        0,
+        INTAKE_DIGEST_WINDOW_MS - (Date.now() - new Date(nextSince).getTime()),
+      ),
+    );
+  }
+};
+
+const queryIntakeDigestSubmissions = async (formId, claim) => {
+  const filters = [{ field: "formId", value: formId }];
+  if (!claim.legacy) {
+    filters.push({ field: "digestBatchId", value: claim.batchId });
+  }
+  const db = requireFirestore();
+  if (!db) {
+    return queryDocs(COLLECTIONS.teamIntakeSubmissions, filters, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  let query = db.collection(COLLECTIONS.teamIntakeSubmissions);
+  for (const filter of filters) {
+    query = query.where(filter.field, "==", filter.value);
+  }
+  const submissions = [];
+  let cursor = null;
+  while (true) {
+    let pageQuery = query
+      .orderBy(FieldPath.documentId())
+      .limit(INTAKE_DIGEST_SUBMISSION_PAGE_SIZE);
+    if (cursor) pageQuery = pageQuery.startAfter(cursor);
+    const snapshot = await pageQuery.get();
+    submissions.push(
+      ...snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    );
+    if (snapshot.docs.length < INTAKE_DIGEST_SUBMISSION_PAGE_SIZE) break;
+    cursor = snapshot.docs.at(-1);
+  }
+  return submissions;
+};
+
+const recordIntakeDigestDelivery = async (
+  formId,
+  claim,
+  ledgerId,
+  delivery,
+) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await setDoc(COLLECTIONS.notificationDeliveries, ledgerId, delivery, {
+      merge: true,
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const deliveryRef = db
+      .collection(COLLECTIONS.notificationDeliveries)
+      .doc(ledgerId);
+    const [formSnapshot, deliverySnapshot] = await Promise.all([
+      transaction.get(formRef),
+      transaction.get(deliveryRef),
+    ]);
+    if (
+      !formSnapshot.exists ||
+      formSnapshot.data().pendingDigestClaim?.claimId !== claim.claimId
+    ) {
+      return false;
+    }
+    if (!deliverySnapshot.exists) {
+      transaction.set(deliveryRef, delivery, { merge: true });
+    }
+    return true;
+  });
+};
+
+const sendIntakeSubmissionDigestInner = async (formId) => {
+  const claim = await claimIntakeDigest(formId);
+  if (!claim) return;
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  if (!form) return;
+  const since = claim.since;
+  const recipients =
+    intakeNotifyRecipientsForServerTests ||
+    (await listIntakeNotifyRecipients(form.churchId, form.teamIds || []));
+  if (recipients.length === 0) {
+    logAuthEvent("info", "intake.digest.no_recipients", { formId });
+    await finishIntakeDigestClaim(formId, claim, {
+      attempts: {},
+      complete: true,
+    });
+    return;
+  }
+  if (!(await markIntakeDigestQueryStarted(formId, claim))) return;
+  const allSubmissions = await queryIntakeDigestSubmissions(formId, claim);
+  const batchSubmissions = allSubmissions.filter((submission) =>
+    claim.legacy
+      ? (submission.submittedAt || "") >= since &&
+        (!submission.digestBatchId ||
+          submission.digestBatchId === claim.batchId)
+      : submission.digestBatchId === claim.batchId,
   );
-  const submitterNames = collectDigestSubmitterNames(allSubmissions, since);
+  const submitterNames = collectDigestSubmitterNames(batchSubmissions, since);
   if (submitterNames.length === 0) {
-    await clearIntakeDigestMarker(formId);
+    await finishIntakeDigestClaim(formId, claim, {
+      attempts: {},
+      complete: true,
+    });
     return;
   }
   const church = await getChurchById(form.churchId);
@@ -5064,40 +5737,102 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
   const subject = `${submitterNames.length} new ${form.name || "intake"} ${
     submitterNames.length === 1 ? "response" : "responses"
   }`;
-  // One email per recipient: keeps addresses private and matches sendEmail's
-  // single-`to` contract.
-  await Promise.all(
-    recipients.map((to) =>
-      sendEmail({
+  const successful = [];
+  let retrying = 0;
+  const attempts = { ...(claim.attempts || {}) };
+  let lostClaim = false;
+  for (const to of recipients) {
+    const key = notificationDeliveryKey({
+      recipient: to,
+      event: "intake.digest",
+      subject: formId,
+      occurrence: claim.batchId,
+    });
+    const ledgerId = hashValue(`${form.churchId}|${key}`);
+    if (await getDoc(COLLECTIONS.notificationDeliveries, ledgerId)) {
+      successful.push(to);
+      continue;
+    }
+    if (!(await renewIntakeDigestClaim(formId, claim))) {
+      lostClaim = true;
+      break;
+    }
+    const attemptKey = hashValue(to.trim().toLowerCase());
+    const attemptCount = Number(attempts[attemptKey] || 0);
+    if (attemptCount >= INTAKE_DIGEST_MAX_ATTEMPTS) {
+      logAuthEvent("warn", "intake.digest.retry_exhausted", {
+        formId,
+        attemptCount,
+      });
+      continue;
+    }
+    try {
+      // One email per recipient keeps addresses private.
+      // Resend honors this stable key if delivery succeeds but the process
+      // crashes before the Firestore ledger write (for up to 24 hours).
+      await sendEmail({
         to,
         subject,
         textBody: text,
         htmlBody: html,
         tags: { type: "intake_digest" },
-      }).catch((error) =>
-        logAuthEvent("warn", "intake.digest.send-error", {
-          formId,
-          errorMessage: error?.message || "send failed",
-        }),
-      ),
-    ),
-  );
-  // Cleared only after a successful send pass; submissions arriving after this
-  // open a fresh window via scheduleIntakeSubmissionDigest.
-  await clearIntakeDigestMarker(formId);
+        idempotencyKey: `intake-digest/${ledgerId}`,
+        timeoutMs:
+          intakeDigestProviderTimeoutForServerTests ||
+          INTAKE_DIGEST_PROVIDER_TIMEOUT_MS,
+      });
+      // A timeout or process stop can leave provider acceptance unknown.
+      // Resend honors this stable key for up to 24 hours; after that the
+      // provider outcome cannot be recovered from our delivery ledger alone.
+      // Record success only while this worker still owns the claim.
+      const recorded = await recordIntakeDigestDelivery(
+        formId,
+        claim,
+        ledgerId,
+        {
+          deliveryKey: key,
+          recipient: to,
+          event: "intake.digest",
+          subject: formId,
+          occurrence: claim.batchId,
+          churchId: form.churchId,
+          createdAt: nowIso(),
+        },
+      );
+      if (!recorded) {
+        lostClaim = true;
+        break;
+      }
+      successful.push(to);
+      delete attempts[attemptKey];
+      logAuthEvent("info", "intake.digest.delivery_succeeded", { formId });
+    } catch (error) {
+      attempts[attemptKey] = attemptCount + 1;
+      retrying += 1;
+      logAuthEvent("warn", "intake.digest.delivery_failed", {
+        formId,
+        attemptCount: attemptCount + 1,
+        errorName: error?.name || "Error",
+      });
+    }
+  }
+  if (lostClaim) return;
+  const exhausted = recipients.length - successful.length - retrying;
+  await finishIntakeDigestClaim(formId, claim, {
+    attempts,
+    complete: successful.length + exhausted === recipients.length,
+  });
 };
 
-// Re-entrancy guard: because the marker is held until the send finishes, a
-// submission landing mid-send can hit the "flush-now" path. Bail if a send for
-// this form is already running so we never double-send. (Single-instance, so an
-// in-memory set suffices.) Residual edge: a submission saved between this send's
-// query and its marker-clear isn't included and isn't re-marked — that one
-// notification is delayed to the next batch only if another submission follows,
-// otherwise dropped. A rare, single-item loss, vs. the whole-batch loss this
-// replaced.
-const sendIntakeSubmissionDigest = async (formId) => {
+// Re-entrancy guard prevents same-process timers and submissions from sending
+// one form concurrently. The pending marker remains durable until delivery
+// succeeds for each eligible recipient or its bounded retries are exhausted.
+export const sendIntakeSubmissionDigest = async (formId) => {
   intakeDigestTimers.delete(formId);
-  if (intakeDigestInFlight.has(formId)) return;
+  if (intakeDigestInFlight.has(formId)) {
+    armIntakeDigestTimer(formId);
+    return;
+  }
   intakeDigestInFlight.add(formId);
   try {
     await sendIntakeSubmissionDigestInner(formId);
@@ -5106,15 +5841,20 @@ const sendIntakeSubmissionDigest = async (formId) => {
   }
 };
 
-const armIntakeDigestTimer = (formId) => {
-  const timer = setTimeout(() => {
-    sendIntakeSubmissionDigest(formId).catch((error) =>
-      logAuthEvent("warn", "intake.digest.error", {
-        formId,
-        errorMessage: error?.message || "digest failed",
-      }),
-    );
-  }, INTAKE_DIGEST_WINDOW_MS);
+const armIntakeDigestTimer = (formId, delayMs = INTAKE_DIGEST_WINDOW_MS) => {
+  const existing = intakeDigestTimers.get(formId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(
+    () => {
+      sendIntakeSubmissionDigest(formId).catch((error) =>
+        logAuthEvent("warn", "intake.digest.error", {
+          formId,
+          errorName: error?.name || "Error",
+        }),
+      );
+    },
+    Math.max(0, delayMs),
+  );
   if (typeof timer.unref === "function") timer.unref();
   intakeDigestTimers.set(formId, timer);
 };
@@ -5122,9 +5862,21 @@ const armIntakeDigestTimer = (formId) => {
 const scheduleIntakeSubmissionDigest = async (
   formId,
   submittedAt = nowIso(),
+  knownForm = null,
 ) => {
-  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  if (intakeDigestSchedulingFailureForServerTests) {
+    throw new Error("Simulated intake digest scheduling failure");
+  }
+  const form = knownForm || (await getDoc(COLLECTIONS.teamIntakeForms, formId));
   if (!form) return;
+  if (intakeDigestInFlight.has(formId)) {
+    logAuthEvent("info", "intake.digest.scheduled", {
+      formId,
+      action: "in-flight-rearm",
+    });
+    armIntakeDigestTimer(formId);
+    return;
+  }
   const action = decideDigestAction({
     pendingSince: form.pendingDigestSince,
     hasArmedTimer: intakeDigestTimers.has(formId),
@@ -5132,20 +5884,117 @@ const scheduleIntakeSubmissionDigest = async (
     windowMs: INTAKE_DIGEST_WINDOW_MS,
   });
   if (action === "noop") return;
+  logAuthEvent("info", "intake.digest.scheduled", { formId, action });
   if (action === "flush-now") {
     await sendIntakeSubmissionDigest(formId);
     return;
   }
   if (action === "open-window") {
-    await setDoc(
-      COLLECTIONS.teamIntakeForms,
-      formId,
-      { pendingDigestSince: submittedAt },
-      { merge: true },
-    );
+    const batchId = createId("intakeDigest");
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestSince: submittedAt,
+      pendingDigestBatchId: batchId,
+      pendingDigestAttempts: {},
+    });
   }
   // "open-window" and "arm-timer" both schedule the send.
-  armIntakeDigestTimer(formId);
+  const remainingWindowMs =
+    action === "arm-timer"
+      ? Math.max(
+          0,
+          INTAKE_DIGEST_WINDOW_MS -
+            (Date.now() - new Date(form.pendingDigestSince).getTime()),
+        )
+      : INTAKE_DIGEST_WINDOW_MS;
+  armIntakeDigestTimer(formId, remainingWindowMs);
+};
+
+export const recoverPendingIntakeSubmissionDigests = async () => {
+  if (intakeDigestRecoveryInFlight) return;
+  intakeDigestRecoveryInFlight = true;
+  try {
+    const db = requireFirestore();
+    let forms;
+    if (db) {
+      let query = db
+        .collection(COLLECTIONS.teamIntakeForms)
+        .where("pendingDigestSince", ">", "")
+        .orderBy("pendingDigestSince")
+        .orderBy(FieldPath.documentId())
+        .limit(INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+      if (intakeDigestRecoveryCursor) {
+        query = query.startAfter(
+          intakeDigestRecoveryCursor.since,
+          intakeDigestRecoveryCursor.id,
+        );
+      }
+      const snapshot = await query.get();
+      forms = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const last = forms.at(-1);
+      intakeDigestRecoveryCursor =
+        forms.length === INTAKE_DIGEST_RECOVERY_BATCH_LIMIT && last
+          ? { since: last.pendingDigestSince, id: last.id }
+          : null;
+    } else {
+      forms = await queryDocs(
+        COLLECTIONS.teamIntakeForms,
+        [{ field: "pendingDigestSince", op: ">", value: "" }],
+        { limit: 100000 },
+      );
+      forms.sort(
+        (a, b) =>
+          a.pendingDigestSince.localeCompare(b.pendingDigestSince) ||
+          a.id.localeCompare(b.id),
+      );
+      if (intakeDigestRecoveryCursor) {
+        forms = forms.filter(
+          (form) =>
+            form.pendingDigestSince > intakeDigestRecoveryCursor.since ||
+            (form.pendingDigestSince === intakeDigestRecoveryCursor.since &&
+              form.id > intakeDigestRecoveryCursor.id),
+        );
+      }
+      const hasMore = forms.length > INTAKE_DIGEST_RECOVERY_BATCH_LIMIT;
+      forms = forms.slice(0, INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+      const last = forms.at(-1);
+      intakeDigestRecoveryCursor =
+        hasMore && last
+          ? { since: last.pendingDigestSince, id: last.id }
+          : null;
+    }
+    if (forms.length > 0) {
+      logAuthEvent("info", "intake.digest.recovery_scan", {
+        pendingFormCount: forms.length,
+      });
+    }
+    await Promise.all(
+      forms.map((form) =>
+        scheduleIntakeSubmissionDigest(
+          form.id || form.formId,
+          form.pendingDigestSince,
+          form,
+        ),
+      ),
+    );
+  } catch (error) {
+    logAuthEvent("warn", "intake.digest.recovery_failed", {
+      errorName: error?.name || "Error",
+    });
+  } finally {
+    intakeDigestRecoveryInFlight = false;
+  }
+};
+
+export const startIntakeSubmissionDigestRecovery = () => {
+  if (intakeDigestRecoveryTimer) return;
+  void recoverPendingIntakeSubmissionDigests();
+  intakeDigestRecoveryTimer = setInterval(
+    () => void recoverPendingIntakeSubmissionDigests(),
+    INTAKE_DIGEST_RECOVERY_INTERVAL_MS,
+  );
+  if (typeof intakeDigestRecoveryTimer.unref === "function") {
+    intakeDigestRecoveryTimer.unref();
+  }
 };
 
 // --- Schedule response digest ---------------------------------------------
@@ -5404,6 +6253,8 @@ const scheduleAssignmentResponseDigest = async (
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
+  appendIntakeSubmissionToTransaction,
+  persistTeamIntakeSubmission,
   scheduleAssignmentResponseDigest,
   addSecurityEvent,
   // Shared so member contact addresses normalize identically to account
@@ -5436,6 +6287,12 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsViewSession,
   getSessionActorUid,
   requireFirestore,
+  saveNotificationEventIntents: (...args) =>
+    notificationIntentHandlers.saveEventIntents(...args),
+  sendTeamIntakeNotificationIntent: (...args) =>
+    notificationIntentHandlers.sendTeamIntakeIntent(...args),
+  prepareTeamIntakeNotificationIntent: (...args) =>
+    notificationIntentHandlers.prepareTeamIntakeIntent(...args),
   setDoc,
   updateDocFields,
   updateDocMapKeys,
@@ -5470,8 +6327,53 @@ const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   getCallbackUrl: (req) => resolveTwilioStatusCallbackUrl({ request: req }),
 });
 
+const smsInboundWebhookHandler = createSmsInboundWebhookHandler({
+  COLLECTIONS,
+  getDoc,
+  hashValue,
+  nowIso,
+  queryDocs,
+  requireFirestore,
+  setDoc,
+  validateSignature: validateTwilioWebhookSignature,
+  getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
+  getCallbackUrl: () => resolveTwilioInboundCallbackUrl(),
+});
+
+const notificationIntentHandlers = createNotificationIntentHandlers({
+  COLLECTIONS,
+  assertCsrf,
+  createId,
+  deleteDoc,
+  getDoc,
+  hashValue,
+  httpError,
+  nowIso,
+  queryDocs,
+  requireFirestore,
+  requireTeamsEdit: requireTeamsEditSession,
+  getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
+    getDoc(
+      COLLECTIONS.smsConsents,
+      smsConsentIdForChurchPhone(churchId, phoneNumber),
+    ),
+  smsProviderFactory: getSmsProviderForConfig,
+  validateTwilioStatusCallbackUrl: () => resolveTwilioStatusCallbackUrl(),
+  setDoc,
+  prepareAvailabilityNotificationRecipients: (...args) =>
+    teamsAuthHandlers.prepareAvailabilityNotificationRecipients(...args),
+  resolveAvailabilityNotificationContext: (...args) =>
+    teamsAuthHandlers.resolveAvailabilityNotificationContext(...args),
+  resolveScheduleNotificationContext: (...args) =>
+    teamsAuthHandlers.resolveScheduleNotificationContext(...args),
+  validateReplacementCandidate: (...args) =>
+    teamsAuthHandlers.validateReplacementCandidate(...args),
+});
+
 export const authHandlers = {
   handleSmsStatusWebhook: smsStatusWebhookHandler,
+  handleSmsInboundWebhook: smsInboundWebhookHandler,
+  ...notificationIntentHandlers,
   async getAuthMe(req, res) {
     try {
       const humanBootstrap = await resolveHumanBootstrap(req);
@@ -6643,7 +7545,10 @@ export const authHandlers = {
         req.params?.churchId || req.body?.churchId || "",
       ).trim();
       if (!churchId) {
-        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+        throw httpError(
+          400,
+          "Use the SMS opt-in link provided by your church.",
+        );
       }
       const parsed = parseSmsConsentBody(req.body);
       if (!parsed.ok) {
@@ -6676,12 +7581,24 @@ export const authHandlers = {
           COLLECTIONS.churchMessagingConfigs,
           churchId,
         );
-        const delivery = await sendSmsConsentVerificationCode({
-          phoneNumber: parsed.phoneNumber,
-          code: challenge.code,
-          challengeId: challenge.challengeId,
-          config: messagingConfig,
-        });
+        let delivery;
+        try {
+          delivery = await sendSmsConsentVerificationCode({
+            phoneNumber: parsed.phoneNumber,
+            code: challenge.code,
+            challengeId: challenge.challengeId,
+            config: messagingConfig,
+          });
+        } catch (deliveryError) {
+          const message =
+            deliveryError?.code === "sms_provider_not_configured"
+              ? "SMS verification is not configured for this church yet. Please contact your church administrator."
+              : "Could not send the verification text right now. Please try again later or contact your church administrator.";
+          return res.status(deliveryError?.statusCode || 503).json({
+            success: false,
+            errorMessage: message,
+          });
+        }
         await markSmsConsentChallengeSent({
           consentId,
           provider: delivery?.provider,
@@ -6722,7 +7639,10 @@ export const authHandlers = {
         req.params?.churchId || req.body?.churchId || "",
       ).trim();
       if (!churchId) {
-        throw httpError(400, "Use the SMS opt-in link provided by your church.");
+        throw httpError(
+          400,
+          "Use the SMS opt-in link provided by your church.",
+        );
       }
       const parsed = parseSmsConsentVerificationBody(req.body);
       if (!parsed.ok) throw httpError(400, parsed.errorMessage);
@@ -6755,7 +7675,8 @@ export const authHandlers = {
         errorMessage:
           statusCode >= 500
             ? "Could not verify your SMS consent right now. Please try again."
-            : error.message || "That verification code is not valid or has expired.",
+            : error.message ||
+              "That verification code is not valid or has expired.",
       });
     }
   },
@@ -7012,7 +7933,10 @@ export const authHandlers = {
         { limit: 200 },
       );
       const pendingInvites = invites
-        .filter((invite) => invite.status === "pending" || invite.status === "expired")
+        .filter(
+          (invite) =>
+            invite.status === "pending" || invite.status === "expired",
+        )
         .sort(
           (a, b) =>
             new Date(b.lastSentAt || b.createdAt || 0).getTime() -
@@ -7282,7 +8206,8 @@ export const authHandlers = {
             ? `The previous invitation for ${email} expired.`
             : `An invitation for ${email} already exists.`,
         );
-        error.existingInvite = sanitizeInviteWithEffectiveStatus(existingInvite);
+        error.existingInvite =
+          sanitizeInviteWithEffectiveStatus(existingInvite);
         throw error;
       }
       reservedInvite = invite;
@@ -7349,7 +8274,9 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
-        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
+        ...(error.existingInvite
+          ? { existingInvite: error.existingInvite }
+          : {}),
       });
     }
   },
@@ -8083,49 +9010,119 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
-        ...(error.existingInvite ? { existingInvite: error.existingInvite } : {}),
+        ...(error.existingInvite
+          ? { existingInvite: error.existingInvite }
+          : {}),
       });
     }
   },
 
   async startDevicePairingRequest(req, res) {
     try {
-      enforceRateLimit({ scope: "device-pairing-start", key: getClientIp(req), limit: 12, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      enforceRateLimit({
+        scope: "device-pairing-start",
+        key: getClientIp(req),
+        limit: 12,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
       const kind = req.body?.kind;
       const platformType = req.body?.platformType || null;
-      if (kind !== "workstation" && kind !== "display") throw httpError(400, "A valid device type is required.");
-      if (kind === "workstation" && platformType !== "electron" && platformType !== "web") throw httpError(400, "A valid workstation platform is required.");
-      if (kind === "display" && platformType) throw httpError(400, "Displays do not use a workstation platform.");
+      if (kind !== "workstation" && kind !== "display")
+        throw httpError(400, "A valid device type is required.");
+      if (
+        kind === "workstation" &&
+        platformType !== "electron" &&
+        platformType !== "web"
+      )
+        throw httpError(400, "A valid workstation platform is required.");
+      if (kind === "display" && platformType)
+        throw httpError(400, "Displays do not use a workstation platform.");
       const requestId = createId("devicePairing");
       const requestSecret = randomSecret(24);
       const expiresAt = new Date(Date.now() + PAIRING_TTL_MS).toISOString();
       await setDoc(COLLECTIONS.devicePairingRequests, requestId, {
-        requestId, kind, platformType, secretHash: hashValue(requestSecret), status: DEVICE_PAIRING_STATUS_PENDING,
-        createdAt: nowIso(), expiresAt, ttlExpireAt: devicePairingTtlExpireAt(expiresAt), approvedAt: null,
-        approvedByUid: null, churchId: null, pairingId: null, expiredAt: null, failedAt: null,
+        requestId,
+        kind,
+        platformType,
+        secretHash: hashValue(requestSecret),
+        status: DEVICE_PAIRING_STATUS_PENDING,
+        createdAt: nowIso(),
+        expiresAt,
+        ttlExpireAt: devicePairingTtlExpireAt(expiresAt),
+        approvedAt: null,
+        approvedByUid: null,
+        churchId: null,
+        pairingId: null,
+        expiredAt: null,
+        failedAt: null,
       });
-      return res.json({ success: true, requestId, requestSecret, approvalUrl: buildDevicePairingApprovalUrl(requestId), status: DEVICE_PAIRING_STATUS_PENDING, expiresAt, pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not start device pairing." }); }
+      return res.json({
+        success: true,
+        requestId,
+        requestSecret,
+        approvalUrl: buildDevicePairingApprovalUrl(requestId),
+        status: DEVICE_PAIRING_STATUS_PENDING,
+        expiresAt,
+        pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not start device pairing.",
+      });
+    }
   },
 
   async getDevicePairingRequestStatus(req, res) {
     try {
       const requestId = String(req.body?.requestId || "").trim();
       const requestSecret = String(req.body?.requestSecret || "").trim();
-      if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
-      const request = await readDevicePairingRequestForSecret({ requestId, requestSecret });
-      const payload = { success: true, status: request.status || DEVICE_PAIRING_STATUS_PENDING, expiresAt: request.expiresAt };
+      if (!requestId || !requestSecret)
+        throw httpError(400, "Device pairing request and secret are required.");
+      const request = await readDevicePairingRequestForSecret({
+        requestId,
+        requestSecret,
+      });
+      const payload = {
+        success: true,
+        status: request.status || DEVICE_PAIRING_STATUS_PENDING,
+        expiresAt: request.expiresAt,
+      };
       return res.json(payload);
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not load device pairing status." }); }
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load device pairing status.",
+      });
+    }
   },
 
   async getDevicePairingRequest(req, res) {
     try {
       await requireHumanSession(req);
-      const request = await expireDevicePairingRequestIfNeeded(await getDoc(COLLECTIONS.devicePairingRequests, req.params.requestId));
-      if (!request) throw httpError(404, "This device pairing request was not found.");
-      return res.json({ success: true, request: { requestId: request.requestId, kind: request.kind, platformType: request.platformType || null, status: request.status, createdAt: request.createdAt, expiresAt: request.expiresAt } });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not load device pairing request." }); }
+      const request = await expireDevicePairingRequestIfNeeded(
+        await getDoc(COLLECTIONS.devicePairingRequests, req.params.requestId),
+      );
+      if (!request)
+        throw httpError(404, "This device pairing request was not found.");
+      return res.json({
+        success: true,
+        request: {
+          requestId: request.requestId,
+          kind: request.kind,
+          platformType: request.platformType || null,
+          status: request.status,
+          createdAt: request.createdAt,
+          expiresAt: request.expiresAt,
+        },
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load device pairing request.",
+      });
+    }
   },
 
   async approveDevicePairingRequest(req, res) {
@@ -8133,63 +9130,188 @@ export const authHandlers = {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const requestId = String(req.params.requestId || "").trim();
-      const issue = (request) => request.kind === "workstation"
-        ? createWorkstationPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: { ...req.body, platformType: request.platformType } })
-        : createDisplayPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const issue = (request) =>
+        request.kind === "workstation"
+          ? createWorkstationPairingRecord({
+              churchId: req.params.churchId,
+              createdByUid: admin.user.uid,
+              body: { ...req.body, platformType: request.platformType },
+            })
+          : createDisplayPairingRecord({
+              churchId: req.params.churchId,
+              createdByUid: admin.user.uid,
+              body: req.body,
+            });
       const db = requireFirestore();
       let issued;
       if (db) {
         issued = await db.runTransaction(async (transaction) => {
-          const requestRef = db.collection(COLLECTIONS.devicePairingRequests).doc(requestId);
+          const requestRef = db
+            .collection(COLLECTIONS.devicePairingRequests)
+            .doc(requestId);
           const snapshot = await transaction.get(requestRef);
-          if (!snapshot.exists) throw httpError(404, "This device pairing request was not found.");
+          if (!snapshot.exists)
+            throw httpError(404, "This device pairing request was not found.");
           const request = { id: snapshot.id, ...snapshot.data() };
-          if (isDevicePairingRequestExpired(request)) throw httpError(400, "This device pairing request has expired. Generate a new QR code.");
-          if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
+          if (isDevicePairingRequestExpired(request))
+            throw httpError(
+              400,
+              "This device pairing request has expired. Generate a new QR code.",
+            );
+          if (request.status !== DEVICE_PAIRING_STATUS_PENDING)
+            throw httpError(
+              409,
+              "This device pairing request has already been approved.",
+            );
           const result = issue(request);
-          transaction.create(db.collection(result.collection).doc(result.pairing.pairingId), result.pairing);
-          transaction.update(requestRef, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId, ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt) });
+          transaction.create(
+            db.collection(result.collection).doc(result.pairing.pairingId),
+            result.pairing,
+          );
+          transaction.update(requestRef, {
+            status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+            approvedAt: nowIso(),
+            approvedByUid: admin.user.uid,
+            churchId: req.params.churchId,
+            pairingId: result.pairing.pairingId,
+            ttlExpireAt: devicePairingTtlExpireAt(request.expiresAt),
+          });
           return { request, result };
         });
       } else {
         issued = await serializeDevicePairingApproval(requestId, async () => {
-          const request = await expireDevicePairingRequestIfNeeded(await getDoc(COLLECTIONS.devicePairingRequests, requestId));
-          if (!request) throw httpError(404, "This device pairing request was not found.");
-          if (request.status !== DEVICE_PAIRING_STATUS_PENDING) throw httpError(409, "This device pairing request has already been approved.");
+          const request = await expireDevicePairingRequestIfNeeded(
+            await getDoc(COLLECTIONS.devicePairingRequests, requestId),
+          );
+          if (!request)
+            throw httpError(404, "This device pairing request was not found.");
+          if (request.status !== DEVICE_PAIRING_STATUS_PENDING)
+            throw httpError(
+              409,
+              "This device pairing request has already been approved.",
+            );
           const result = issue(request);
-          await setDoc(result.collection, result.pairing.pairingId, result.pairing);
-          await setDoc(COLLECTIONS.devicePairingRequests, requestId, { status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE, approvedAt: nowIso(), approvedByUid: admin.user.uid, churchId: req.params.churchId, pairingId: result.pairing.pairingId }, { merge: true });
+          await setDoc(
+            result.collection,
+            result.pairing.pairingId,
+            result.pairing,
+          );
+          await setDoc(
+            COLLECTIONS.devicePairingRequests,
+            requestId,
+            {
+              status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+              approvedAt: nowIso(),
+              approvedByUid: admin.user.uid,
+              churchId: req.params.churchId,
+              pairingId: result.pairing.pairingId,
+            },
+            { merge: true },
+          );
           return { request, result };
         });
       }
-      await addSecurityEvent({ type: `${issued.request.kind}_device_pairing_approved`, churchId: req.params.churchId, userId: admin.user.uid, pairingId: issued.result.pairing.pairingId, requestId });
-      return res.json({ success: true, request: { requestId, kind: issued.request.kind, status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE } });
-    } catch (error) { return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message || "Could not approve device pairing." }); }
+      await addSecurityEvent({
+        type: `${issued.request.kind}_device_pairing_approved`,
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        pairingId: issued.result.pairing.pairingId,
+        requestId,
+      });
+      return res.json({
+        success: true,
+        request: {
+          requestId,
+          kind: issued.request.kind,
+          status: DEVICE_PAIRING_STATUS_AWAITING_EXCHANGE,
+        },
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not approve device pairing.",
+      });
+    }
   },
 
   async exchangeDevicePairingRequest(req, res) {
     try {
       const requestId = String(req.body?.requestId || "").trim();
       const requestSecret = String(req.body?.requestSecret || "").trim();
-      if (!requestId || !requestSecret) throw httpError(400, "Device pairing request and secret are required.");
-      enforceRateLimit({ scope: "device-pairing-exchange", key: `${getClientIp(req)}:${hashValue(requestId)}`, limit: 10, windowMs: 30 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      if (!requestId || !requestSecret)
+        throw httpError(400, "Device pairing request and secret are required.");
+      enforceRateLimit({
+        scope: "device-pairing-exchange",
+        key: `${getClientIp(req)}:${hashValue(requestId)}`,
+        limit: 10,
+        windowMs: 30 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
       const platformType = req.body?.platformType;
       const db = requireFirestore();
       const payload = db
-        ? await redeemDevicePairingRequestFirestore({ requestId, requestSecret, platformType })
-        : await enqueueMemoryPairingRedeem(hashValue(requestId), () => redeemDevicePairingRequestMemory({ requestId, requestSecret, platformType }));
+        ? await redeemDevicePairingRequestFirestore({
+            requestId,
+            requestSecret,
+            platformType,
+          })
+        : await enqueueMemoryPairingRedeem(hashValue(requestId), () =>
+            redeemDevicePairingRequestMemory({
+              requestId,
+              requestSecret,
+              platformType,
+            }),
+          );
       if (payload.kind === "workstation" && platformType === "web") {
         const church = await getChurchById(payload.pairingChurchId);
         if (church) {
-          const bootstrap = await establishWorkstationSession({ req, church, workstation: { deviceId: payload.deviceId, ...payload.device } });
-          await addSecurityEvent({ type: "workstation_pairing_redeemed", churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: "session" });
-          return res.json({ success: true, credential: payload.credential, sessionEstablished: true, bootstrap, device: sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+          const bootstrap = await establishWorkstationSession({
+            req,
+            church,
+            workstation: { deviceId: payload.deviceId, ...payload.device },
+          });
+          await addSecurityEvent({
+            type: "workstation_pairing_redeemed",
+            churchId: payload.pairingChurchId,
+            deviceId: payload.deviceId,
+            mode: "session",
+          });
+          return res.json({
+            success: true,
+            credential: payload.credential,
+            sessionEstablished: true,
+            bootstrap,
+            device: sanitizeWorkstationDeviceForClient({
+              deviceId: payload.deviceId,
+              ...payload.device,
+            }),
+          });
         }
       }
-      await addSecurityEvent({ type: `${payload.kind}_pairing_redeemed`, churchId: payload.pairingChurchId, deviceId: payload.deviceId, mode: payload.kind === "workstation" ? "credential" : undefined });
-      return res.json({ success: true, credential: payload.credential, device: payload.kind === "workstation" ? sanitizeWorkstationDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) : sanitizeDisplayDeviceForClient({ deviceId: payload.deviceId, ...payload.device }) });
+      await addSecurityEvent({
+        type: `${payload.kind}_pairing_redeemed`,
+        churchId: payload.pairingChurchId,
+        deviceId: payload.deviceId,
+        mode: payload.kind === "workstation" ? "credential" : undefined,
+      });
+      return res.json({
+        success: true,
+        credential: payload.credential,
+        device:
+          payload.kind === "workstation"
+            ? sanitizeWorkstationDeviceForClient({
+                deviceId: payload.deviceId,
+                ...payload.device,
+              })
+            : sanitizeDisplayDeviceForClient({
+                deviceId: payload.deviceId,
+                ...payload.device,
+              }),
+      });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: error.message });
+      return res
+        .status(error.statusCode || 500)
+        .json({ success: false, errorMessage: error.message });
     }
   },
 
@@ -8204,7 +9326,11 @@ export const authHandlers = {
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
-      const { rawToken, pairing } = createWorkstationPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const { rawToken, pairing } = createWorkstationPairingRecord({
+        churchId: req.params.churchId,
+        createdByUid: admin.user.uid,
+        body: req.body,
+      });
       await setDoc(COLLECTIONS.workstationPairings, pairing.pairingId, pairing);
       await addSecurityEvent({
         type: "workstation_pairing_created",
@@ -8456,7 +9582,11 @@ export const authHandlers = {
         windowMs: 60 * 60 * 1000,
         blockMs: 60 * 60 * 1000,
       });
-      const { rawToken, pairing } = createDisplayPairingRecord({ churchId: req.params.churchId, createdByUid: admin.user.uid, body: req.body });
+      const { rawToken, pairing } = createDisplayPairingRecord({
+        churchId: req.params.churchId,
+        createdByUid: admin.user.uid,
+        body: req.body,
+      });
       await setDoc(COLLECTIONS.displayPairings, pairing.pairingId, pairing);
       await addSecurityEvent({
         type: "display_pairing_created",

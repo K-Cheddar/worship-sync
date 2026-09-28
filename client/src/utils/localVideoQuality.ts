@@ -12,6 +12,14 @@ export type LocalVideoCaptureProfile = LocalVideoPixelSize & {
   id: "720p" | "1080p" | "1440p" | "2160p";
 };
 
+export const LOCAL_VIDEO_CAPTURE_FRAME_RATE = {
+  preview: 30,
+  audience: 60,
+} as const;
+
+export const DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE =
+  LOCAL_VIDEO_CAPTURE_FRAME_RATE.audience;
+
 const CAPTURE_PROFILES: LocalVideoCaptureProfile[] = [
   { id: "720p", width: 1_280, height: 720 },
   { id: "1080p", width: 1_920, height: 1_080 },
@@ -43,18 +51,35 @@ export const resolveLocalVideoCaptureProfile = (
     return DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE;
   }
   return (
-    CAPTURE_PROFILES.slice(1).find(
+    CAPTURE_PROFILES.find(
       (profile) =>
         required.width <= profile.width && required.height <= profile.height,
     ) ?? CAPTURE_PROFILES[CAPTURE_PROFILES.length - 1]
   );
 };
 
-const MAX_CAPTURE_FRAME_RATE = 60;
+/** Preview roles favor lower capture cost; unknown roles retain audience quality. */
+export const getLocalVideoCaptureFrameRateForRole = (windowRole?: string) =>
+  windowRole === "editor" || windowRole === "slide" || windowRole?.endsWith("-preview")
+    ? LOCAL_VIDEO_CAPTURE_FRAME_RATE.preview
+    : LOCAL_VIDEO_CAPTURE_FRAME_RATE.audience;
+
+export const resolveLocalVideoCaptureFrameRate = (demands: number[]): number =>
+  demands.length === 0
+    ? DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE
+    : Math.max(
+        ...demands.map((demand) =>
+          Number.isFinite(demand)
+            ? Math.min(DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE, Math.max(1, Math.round(demand)))
+            : DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE,
+        ),
+      );
+
+const MAX_CAPTURE_FRAME_RATE = DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE;
 
 const lastAppliedProfileByTrack = new WeakMap<
   MediaStreamTrack,
-  LocalVideoCaptureProfile["id"]
+  string
 >();
 
 /**
@@ -85,23 +110,25 @@ export const applyLocalVideoCaptureProfile = async (
   targetWidth: number,
   targetHeight: number,
   sourceId?: string,
+  targetFrameRate: number = DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE,
 ) => {
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack?.applyConstraints) return;
   const profile = resolveLocalVideoCaptureProfile([
     { width: targetWidth, height: targetHeight },
   ]);
-  if (lastAppliedProfileByTrack.get(videoTrack) === profile.id) return;
+  const profileKey = `${profile.id}:${targetFrameRate}`;
+  if (lastAppliedProfileByTrack.get(videoTrack) === profileKey) return;
   const requestedConstraints = {
     width: { ideal: profile.width },
     height: { ideal: profile.height },
-    frameRate: { ideal: MAX_CAPTURE_FRAME_RATE },
+    frameRate: { ideal: targetFrameRate },
   };
   const diagnosticsEnabled = Boolean(sourceId && localVideoDiagnosticsEnabled());
   const before = diagnosticsEnabled ? videoTrack.getSettings?.() : undefined;
   try {
     await videoTrack.applyConstraints(requestedConstraints);
-    lastAppliedProfileByTrack.set(videoTrack, profile.id);
+    lastAppliedProfileByTrack.set(videoTrack, profileKey);
     if (sourceId && diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile, requestedConstraints, before, succeeded: true, after: videoTrack.getSettings?.() });
   } catch {
     if (sourceId && diagnosticsEnabled) recordLocalVideoConstraints(sourceId, { profile, requestedConstraints, before, succeeded: false, after: videoTrack.getSettings?.() });

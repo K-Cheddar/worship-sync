@@ -9,6 +9,8 @@ describe("electronMediaSurfaceDiagnostics", () => {
       preparationSource: "server-manifest",
       manifestRevision: 3,
       manifestOutlineId: "outline-1",
+      poolCapacity: 14,
+      performanceClass: "normal",
       candidateCount: 8,
       candidateDetails: [],
       evictions: [],
@@ -32,6 +34,8 @@ describe("electronMediaSurfaceDiagnostics", () => {
       preparationSource: "server-manifest",
       manifestRevision: 3,
       manifestOutlineId: "outline-1",
+      poolCapacity: 14,
+      performanceClass: "normal",
     });
   });
 });

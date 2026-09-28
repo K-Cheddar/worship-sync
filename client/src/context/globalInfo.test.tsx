@@ -25,6 +25,7 @@ import {
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
 const onValueErrorCallbacks = new Map<string, (error: unknown) => void>();
+const onValueCallbackHistory = new Map<string, Array<(snapshot: any) => void>>();
 
 const refMock = jest.fn(
   (_db: unknown, path: string) =>
@@ -39,6 +40,9 @@ const onValueMock = jest.fn(
     onError?: (error: unknown) => void
   ) => {
     onValueCallbacks.set(target.path, callback);
+    const callbacks = onValueCallbackHistory.get(target.path) || [];
+    callbacks.push(callback);
+    onValueCallbackHistory.set(target.path, callbacks);
     if (onError) {
       onValueErrorCallbacks.set(target.path, onError);
     }
@@ -46,7 +50,14 @@ const onValueMock = jest.fn(
   }
 );
 const setMock = jest.fn();
-const getDatabaseMock = jest.fn(() => ({ name: "firebase-db" }));
+const getDatabaseMock = jest.fn(() => ({
+  name: "firebase-db",
+  app: { options: { databaseURL: "https://test.firebaseio.com" } },
+}));
+const mockSharedDataUser = {
+  getIdToken: jest.fn(() => Promise.resolve("test-id-token")),
+};
+const mockSharedDataAuth = { currentUser: mockSharedDataUser };
 const signInWithCustomTokenMock = jest.fn<any, any[]>(() => Promise.resolve({}));
 const signOutMock = jest.fn<any, any[]>(() => Promise.resolve());
 const signInWithEmailAndPasswordMock = jest.fn<any, any[]>(() => Promise.resolve({}));
@@ -108,7 +119,7 @@ jest.mock("../api/auth", () => ({
 
 jest.mock("../firebase/apps", () => ({
   getHumanAuth: jest.fn(() => mockHumanAuth),
-  getSharedDataAuth: jest.fn(() => ({})),
+  getSharedDataAuth: jest.fn(() => mockSharedDataAuth),
   getSharedDataDatabase: jest.fn(() => ({ name: "firebase-db" })),
 }));
 
@@ -303,6 +314,12 @@ const ContextProbe = () => {
   return (
     <div>
       <div data-testid="session-kind">{context.sessionKind || "none"}</div>
+      <div data-testid="realtime-connected">
+        {context.realtimeConnected ? "yes" : "no"}
+      </div>
+      <div data-testid="content-hidden-snapshots">
+        {JSON.stringify(context.contentHiddenByOutput)}
+      </div>
       <div data-testid="church-id">{context.churchId || "none"}</div>
       <div data-testid="operator-name">{context.operatorName || "none"}</div>
       <div data-testid="auth-status">{context.authServerStatus}</div>
@@ -444,6 +461,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     mockDispatch.mockClear();
     onValueCallbacks.clear();
     onValueErrorCallbacks.clear();
+    onValueCallbackHistory.clear();
     refMock.mockClear();
     onValueMock.mockClear();
     setMock.mockClear();
@@ -510,6 +528,13 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       getDatabaseMock()
     );
     (firebaseApps.getSharedDataDatabase as jest.Mock).mockClear();
+    mockSharedDataUser.getIdToken.mockClear();
+    mockSharedDataUser.getIdToken.mockResolvedValue("test-id-token");
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(false),
+    }) as jest.Mock;
   });
 
   it("does not sign shared-data auth out while initial bootstrap is loading", async () => {
@@ -795,7 +820,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
-    renderProvider();
+    renderProvider(<ContextProbe />);
 
     const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
 
@@ -814,21 +839,336 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("yes");
 
-    expect(countStreamInfoSubscriptions()).toBe(initialSubscriptionCount);
+    await waitFor(() =>
+      expect(countStreamInfoSubscriptions()).toBeGreaterThan(
+        initialSubscriptionCount,
+      ),
+    );
 
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("no");
     act(() => {
       onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
     });
+    expect(screen.getByTestId("realtime-connected")).toHaveTextContent("yes");
 
     await waitFor(() =>
       expect(countStreamInfoSubscriptions()).toBeGreaterThan(
         initialSubscriptionCount,
       )
     );
+  });
+
+  it("retains only Firebase-confirmed stream states across listener reconnection", async () => {
+    localStorage.setItem("loggedIn", "true");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+    renderProvider(<ContextProbe />);
+
+    const blockedPath = "churches/church-1/data/presentation/stream_itemContentBlocked";
+    const outputsPath = "churches/church-1/data/presentation/outputs";
+    await waitFor(() => expect(onValueCallbacks.has(blockedPath)).toBe(true));
+    expect(onValueCallbacks.has(outputsPath)).toBe(true);
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent("{}");
+
+    act(() => {
+      onValueCallbacks.get(blockedPath)?.(snapshotFor(true));
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({
+          "out-lobby": { type: "stream", itemContentBlocked: true },
+          "out-projector": { type: "projector", itemContentBlocked: true },
+        }),
+      );
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"stream":{"hidden":true,"confirmed":false}',
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).not.toHaveTextContent(
+      "out-projector",
+    );
+
+    const outputsSubscriptionCount = () =>
+      onValueMock.mock.calls.filter(([target]) => target.path === outputsPath).length;
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+
+    const oldSubscriptionCount = outputsSubscriptionCount();
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+    await waitFor(() =>
+      expect(outputsSubscriptionCount()).toBeGreaterThan(oldSubscriptionCount),
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+
+    (global.fetch as jest.Mock).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(false),
+    }));
+    act(() => {
+      onValueCallbacks.get(blockedPath)?.(snapshotFor(false));
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: false } }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-lobby":{"hidden":false,"confirmed":true}',
+      ),
+    );
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":false,"confirmed":false}',
+    );
+  });
+
+  it("reconciles cached stream snapshots independently against fresh server values", async () => {
+    localStorage.setItem("loggedIn", "true");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+    renderProvider(<ContextProbe />);
+
+    const outputsPath = "churches/church-1/data/presentation/outputs";
+    await waitFor(() => expect(onValueCallbacks.has(outputsPath)).toBe(true));
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(true)));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get(outputsPath) || []).length).toBeGreaterThan(1),
+    );
+
+    const firstRead = createDeferred<Response>();
+    const secondRead = createDeferred<Response>();
+    const responseByOutput: Record<string, boolean> = {
+      "out-lobby": false,
+      "out-youth": true,
+    };
+    (global.fetch as jest.Mock).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("out-lobby")) return firstRead.promise;
+      if (url.includes("out-youth")) return secondRead.promise;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(responseByOutput["out-lobby"]),
+      });
+    });
+
+    act(() =>
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({
+          "out-lobby": { type: "stream", itemContentBlocked: true },
+          "out-youth": { type: "stream", itemContentBlocked: true },
+        }),
+      ),
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-youth":{"hidden":true,"confirmed":false}',
+    );
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    const requestedPaths = (global.fetch as jest.Mock).mock.calls.map(([input]) =>
+      new URL(String(input)),
+    );
+    expect(requestedPaths.map((url) => url.pathname)).toEqual(
+      expect.arrayContaining([
+        "/churches/church-1/data/presentation/outputs/out-lobby/itemContentBlocked.json",
+        "/churches/church-1/data/presentation/outputs/out-youth/itemContentBlocked.json",
+      ]),
+    );
+    requestedPaths.forEach((url) =>
+      expect(url.searchParams.get("auth")).toBe("test-id-token"),
+    );
+    await act(async () => {
+      firstRead.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(responseByOutput["out-lobby"]),
+      } as Response);
+      await firstRead.promise;
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-lobby":{"hidden":false,"confirmed":true}',
+      ),
+    );
+    await act(async () => {
+      secondRead.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(responseByOutput["out-youth"]),
+      } as Response);
+      await secondRead.promise;
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-youth":{"hidden":true,"confirmed":true}',
+      ),
+    );
+
+    responseByOutput["out-lobby"] = true;
+    act(() =>
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({
+          "out-lobby": { type: "stream", itemContentBlocked: false },
+          "out-youth": { type: "stream", itemContentBlocked: true },
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-lobby":{"hidden":true,"confirmed":true}',
+      ),
+    );
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(false)));
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-youth":{"hidden":true,"confirmed":false}',
+    );
+  });
+
+  it("keeps failed authoritative reads unconfirmed and ignores obsolete callbacks", async () => {
+    localStorage.setItem("loggedIn", "true");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+    renderProvider(<ContextProbe />);
+
+    const outputsPath = "churches/church-1/data/presentation/outputs";
+    await waitFor(() => expect(onValueCallbacks.has(outputsPath)).toBe(true));
+    const originalOutputsCallback = onValueCallbacks.get(outputsPath);
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(true)));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get(outputsPath) || []).length).toBeGreaterThan(1),
+    );
+
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("server unavailable"));
+    act(() =>
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: true } }),
+      ),
+    );
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(false)));
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(true)));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get(outputsPath) || []).length).toBeGreaterThan(2),
+    );
+
+    const newOutputsCallback = onValueCallbacks.get(outputsPath);
+    act(() => {
+      originalOutputsCallback?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: false } }),
+      );
+      newOutputsCallback?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: true } }),
+      );
+    });
+    expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+      '"out-lobby":{"hidden":true,"confirmed":false}',
+    );
+  });
+
+  it("clears retained hidden status when church or authenticated user scope changes", async () => {
+    localStorage.setItem("loggedIn", "true");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+    renderProvider(<ContextProbe />);
+
+    const outputsPath = "churches/church-1/data/presentation/outputs";
+    await waitFor(() => expect(onValueCallbacks.has(outputsPath)).toBe(true));
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(true)));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get(outputsPath) || []).length).toBeGreaterThan(1),
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(true),
+    });
+    act(() =>
+      onValueCallbacks.get(outputsPath)?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: true } }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-lobby":{"hidden":true,"confirmed":true}',
+      ),
+    );
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      churchId: "church-2",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+    await waitFor(() => expect(screen.getByTestId("church-id")).toHaveTextContent("church-2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent("{}"),
+    );
+    await waitFor(() =>
+      expect(onValueCallbacks.has("churches/church-2/data/presentation/outputs")).toBe(true),
+    );
+    act(() => onValueCallbacks.get(".info/connected")?.(snapshotFor(true)));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get("churches/church-2/data/presentation/outputs") || []).length)
+        .toBeGreaterThan(1),
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(true),
+    });
+    act(() =>
+      onValueCallbacks.get("churches/church-2/data/presentation/outputs")?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: true } }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent(
+        '"out-lobby":{"hidden":true,"confirmed":true}',
+      ),
+    );
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      churchId: "church-2",
+      user: { ...loggedInHumanBootstrap.user, uid: "u2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+    await waitFor(() =>
+      expect((onValueCallbackHistory.get("churches/church-2/data/presentation/outputs") || []).length)
+        .toBeGreaterThan(1),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("content-hidden-snapshots")).toHaveTextContent("{}"),
+    );
+    act(() =>
+      onValueCallbackHistory.get(outputsPath)?.[0]?.(
+        snapshotFor({ "out-lobby": { type: "stream", itemContentBlocked: true } }),
+      ),
+    );
+    expect(screen.getByTestId("content-hidden-snapshots")).not.toHaveTextContent("out-lobby");
   });
 
   it("retries presentation listeners on permission_denied without reminting shared realtime auth", async () => {

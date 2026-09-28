@@ -1,19 +1,37 @@
 import type { Box } from "../types";
 import type { ElectronMediaCandidateSourceKind } from "./electronMediaSurfaceDiagnostics";
 
-/**
- * Provisional per-output Electron policy. Protected current/transition media
- * may exceed this soft budget so a live transition is never evicted.
- */
+export type ElectronMediaSurfacePerformanceClass =
+  | "constrained"
+  | "normal"
+  | "high-performance";
+
+/** Protected current/transition media can exceed these soft budgets. */
 export const ELECTRON_MEDIA_SURFACE_POLICY = {
-  // The budget is a resource safety ceiling, not a target preparation count.
-  // It leaves room for a normal multi-video service without making preparation
-  // unbounded on renderers with limited media resources.
-  defaultBudget: 24,
-} as const;
+  constrained: 8,
+  normal: 14,
+  "high-performance": 24,
+} as const satisfies Record<ElectronMediaSurfacePerformanceClass, number>;
+
+export type ElectronMediaSurfaceBudget = {
+  performanceClass: ElectronMediaSurfacePerformanceClass;
+  budget: number;
+};
+
+/** A caller-supplied override is the integration point for a future governor. */
+export const resolveElectronMediaSurfaceBudget = (
+  performanceClass: ElectronMediaSurfacePerformanceClass = "normal",
+  budgetOverride?: number,
+): ElectronMediaSurfaceBudget => ({
+  performanceClass,
+  budget:
+    budgetOverride != null && Number.isFinite(budgetOverride)
+    ? Math.max(0, Math.floor(budgetOverride))
+    : ELECTRON_MEDIA_SURFACE_POLICY[performanceClass],
+});
 
 export const DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET =
-  ELECTRON_MEDIA_SURFACE_POLICY.defaultBudget;
+  ELECTRON_MEDIA_SURFACE_POLICY.normal;
 
 export type ElectronMediaSurfaceCandidate = {
   mediaKey: string;
@@ -83,13 +101,16 @@ export const selectElectronMediaSurfaceCandidates = ({
   currentMediaKey,
   currentItemId,
   protectedMediaKeys = [],
-  maxSurfaces = DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET,
+  maxSurfaces,
+  performanceClass = "normal",
 }: {
   candidates: ElectronMediaSurfaceCandidate[];
   currentMediaKey?: string;
   currentItemId?: string;
   protectedMediaKeys?: string[];
+  /** Legacy name retained for callers; treated as a soft budget override. */
   maxSurfaces?: number;
+  performanceClass?: ElectronMediaSurfacePerformanceClass;
 }): ElectronMediaSurfaceCandidate[] => {
   const unique = new Map<string, ElectronMediaSurfaceCandidate>();
   candidates.forEach((candidate) => {
@@ -100,6 +121,7 @@ export const selectElectronMediaSurfaceCandidates = ({
   });
 
   const protectedSet = new Set(protectedMediaKeys.filter(Boolean));
+  if (currentMediaKey) protectedSet.add(currentMediaKey);
   const currentItemIndex = candidates.find(
     (candidate) => candidate.itemId === currentItemId,
   )?.itemIndex;
@@ -124,7 +146,10 @@ export const selectElectronMediaSurfaceCandidates = ({
     return left.mediaKey.localeCompare(right.mediaKey);
   });
 
-  const budget = Math.max(0, Math.floor(maxSurfaces));
+  const { budget } = resolveElectronMediaSurfaceBudget(
+    performanceClass,
+    maxSurfaces,
+  );
   const selected = prioritized.slice(0, budget);
   const selectedKeys = new Set(selected.map((candidate) => candidate.mediaKey));
   prioritized.forEach((candidate) => {
