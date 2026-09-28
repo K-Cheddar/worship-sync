@@ -1,3 +1,387 @@
+# [2.38.0](https://github.com/K-Cheddar/worship-sync/compare/v2.37.1...v2.38.0) (2026-09-24)
+
+
+### Bug Fixes
+
+* **auth:** use method-aware sign-in errors ([d8129eb](https://github.com/K-Cheddar/worship-sync/commit/d8129eb76fab80fc8fdd10a585dc6645009378ca))
+* **aux-controller:** preserve alternate mirror previews ([3257ded](https://github.com/K-Cheddar/worship-sync/commit/3257ded8704b44a2573855566a0bbf7a54b5379e))
+* **controller:** remove speculative next badge ([c361f8b](https://github.com/K-Cheddar/worship-sync/commit/c361f8bb251ef5c5d9bccca3c2165d47c7867e67))
+* Minor improvements for media ([d0e9290](https://github.com/K-Cheddar/worship-sync/commit/d0e9290b1c2d35121c16ae8ba691429b05e90f9d))
+* **previews:** restore two-column display layout ([8b58469](https://github.com/K-Cheddar/worship-sync/commit/8b58469ea307f603d8afd08e3b1ee289a14cfa64))
+* **rich-text:** restore updates after strict mode replay ([ed41372](https://github.com/K-Cheddar/worship-sync/commit/ed413726d356505b58b54962db3242b765825758))
+* **service-plan:** address content review findings ([cb8c6b7](https://github.com/K-Cheddar/worship-sync/commit/cb8c6b7f3046f65bdef786fd6fbb75e3a1c77477))
+* **service-plans:** preserve custom document references ([bed6420](https://github.com/K-Cheddar/worship-sync/commit/bed64200a0b859e3024b82376b23769af273106d))
+* **services:** preserve formatting in resource notes ([66c5ed6](https://github.com/K-Cheddar/worship-sync/commit/66c5ed62747d6a1f9411b5770847d046586ac2e4))
+* **teams:** refresh stale data on a bounded interval ([782ed65](https://github.com/K-Cheddar/worship-sync/commit/782ed6555def285c4826d8e802b58218d670723c))
+
+
+### Features
+
+* **aux-controller:** reorder previews ([76340a0](https://github.com/K-Cheddar/worship-sync/commit/76340a0c8cd4be69c3e9d6eefd19ec1347484f56))
+* **controller:** simplify service plan selector ([ffad620](https://github.com/K-Cheddar/worship-sync/commit/ffad62078100b5462c9a66526580233e4ed7c19b))
+* **media:** color source labels and icons ([2a35b61](https://github.com/K-Cheddar/worship-sync/commit/2a35b61a3b64c549e332d1750661aa68118707e0))
+* **service-plan:** normalize controller content references ([e196c6f](https://github.com/K-Cheddar/worship-sync/commit/e196c6f88fffbed056c4cfbbe4a4cf9596113634))
+* **service-plan:** render public plan resources as pills ([f3e728a](https://github.com/K-Cheddar/worship-sync/commit/f3e728a53defbef58a66b877771f2fc782ce817f))
+* **service-plans:** support custom documents ([5922de1](https://github.com/K-Cheddar/worship-sync/commit/5922de142a6da501edf7afab94a5d78f92f491cc))
+* **services:** use rich text for resource notes ([e4a1e55](https://github.com/K-Cheddar/worship-sync/commit/e4a1e551e573d1ba801afb804ad584a67f27e0cc))
+* **workspace:** add cross-controller previews ([b627568](https://github.com/K-Cheddar/worship-sync/commit/b62756824803521a85b5965f72544d8e14980631))
+
+## [2.37.1](https://github.com/K-Cheddar/worship-sync/compare/v2.37.0...v2.37.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* Minor fixes for QR code scanning ([fb722f8](https://github.com/K-Cheddar/worship-sync/commit/fb722f8df7f24e3180796973e1f40cfc28026de5))
+* move media manifest publication to controllers ([c2ea3dd](https://github.com/K-Cheddar/worship-sync/commit/c2ea3ddfe05f695a2011dd6fd86395c55fdfc32d))
+* **schedule:** expand single-column cards ([649d0e7](https://github.com/K-Cheddar/worship-sync/commit/649d0e7d81c9f42fd55858d354bddc584e233172))
+
+# [2.37.0](https://github.com/K-Cheddar/worship-sync/compare/v2.36.1...v2.37.0) (2026-09-24)
+
+
+### Bug Fixes
+
+* expose pending operator actions ([fbd9f13](https://github.com/K-Cheddar/worship-sync/commit/fbd9f1368389252164817e11796cddcc305bdadb))
+* harden local video decoder recovery ([d22c2e1](https://github.com/K-Cheddar/worship-sync/commit/d22c2e17978d87f735f05964a5ea35cbaa43102e))
+* make device QR pairing recovery clearer ([7deb69e](https://github.com/K-Cheddar/worship-sync/commit/7deb69e7db25f6df223a0e5a2b21b4a6062ffdd7))
+* Minor fixes and improvements ([fb3ba5c](https://github.com/K-Cheddar/worship-sync/commit/fb3ba5cbd8e0ae0c2f8d545de54b1120d50080e0))
+
+
+### Features
+
+* add church resource library storage ([f6655c3](https://github.com/K-Cheddar/worship-sync/commit/f6655c3ab0777ee809bc0f6a9393fb7b390974c3))
+* add individual team intake workflows ([8dc2a5c](https://github.com/K-Cheddar/worship-sync/commit/8dc2a5c49fea66e932506fc9f16e2e842ef7f4f2))
+* add service plan resources and media workflows ([5184c01](https://github.com/K-Cheddar/worship-sync/commit/5184c01ade9c3d78dd6c890d7ad3a3477e60ee4f))
+* add SMS consent and legal disclosures ([ba73606](https://github.com/K-Cheddar/worship-sync/commit/ba736068f2eb73001d7bf38968bedd4eb950ecd8))
+* add team chat access to service viewer ([7df609b](https://github.com/K-Cheddar/worship-sync/commit/7df609b349d67d7280c230d8851d67f5e8f56f75))
+* Add variability to display transition duration ([ec648f9](https://github.com/K-Cheddar/worship-sync/commit/ec648f936ab27b9138ead7b220ff9e0253ad52dd))
+* Adding resources page ([28cf7a3](https://github.com/K-Cheddar/worship-sync/commit/28cf7a34bca3011fe4a26f1c56e3e1c99ffb1471))
+* Adding storage quotas ([3fe1ad0](https://github.com/K-Cheddar/worship-sync/commit/3fe1ad073a98960411a2f825cd084475cc9eae7c))
+* harden SMS foundation ([3bf6ffb](https://github.com/K-Cheddar/worship-sync/commit/3bf6ffb9fa301519c8f1943d010e949c2b4d3a01))
+* improve prepared display media surfaces ([76b1f3a](https://github.com/K-Cheddar/worship-sync/commit/76b1f3a90e1719d46e87dcaef73c4edc8bbf9f3b))
+* **sms:** add individualized intake delivery ([834b0b3](https://github.com/K-Cheddar/worship-sync/commit/834b0b335034ab99c6c866c5d49b52bd6adc0042))
+* strengthen service planning synchronization ([bc4515f](https://github.com/K-Cheddar/worship-sync/commit/bc4515f5c6922db39dc318b77bfde8b02ebf360d))
+* wire resource, intake, and consent flows ([817a4dc](https://github.com/K-Cheddar/worship-sync/commit/817a4dcb4e557ed939a057af0d359c3c8f473f87))
+
+## [2.36.1](https://github.com/K-Cheddar/worship-sync/compare/v2.36.0...v2.36.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* Correct qr code scanning ([f20a65a](https://github.com/K-Cheddar/worship-sync/commit/f20a65adf664389265fae0f8a40a6ed0f8731de5))
+
+# [2.36.0](https://github.com/K-Cheddar/worship-sync/compare/v2.35.0...v2.36.0) (2026-09-18)
+
+
+### Bug Fixes
+
+* **client:** harden countdown and window capture recovery ([542ea70](https://github.com/K-Cheddar/worship-sync/commit/542ea70c383af263a2c6758ee7a34ad56d56bdf0))
+* **display:** preserve media readiness across outputs ([e0cd591](https://github.com/K-Cheddar/worship-sync/commit/e0cd5914215a6553c50bff739b8f5c11e60647bc))
+
+
+### Features
+
+* **auth:** improve church invite lifecycle ([5a49de8](https://github.com/K-Cheddar/worship-sync/commit/5a49de80f8dba12f8052f9b8850be7fbcc755ac3))
+* **editor:** improve slide and local media workflows ([1d96e2b](https://github.com/K-Cheddar/worship-sync/commit/1d96e2b9c4866c5283e9a2ad622a58dc6bcbd1f9))
+
+# [2.35.0](https://github.com/K-Cheddar/worship-sync/compare/v2.34.0...v2.35.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* harden service plans, teams, and client state workflows ([e1e5c91](https://github.com/K-Cheddar/worship-sync/commit/e1e5c91afc3e0faa28e68eb20e9a25224e098049))
+
+
+### Features
+
+* add device pairing and service plan viewer access ([a5f5bd3](https://github.com/K-Cheddar/worship-sync/commit/a5f5bd3ae0a4ab264afe777040f5820dc2607bdc))
+* expand Canva media import workflows ([aa4314a](https://github.com/K-Cheddar/worship-sync/commit/aa4314a6c18756aa77695c92285462346f388d1e))
+* improve lyrics search and desktop media support ([224d58a](https://github.com/K-Cheddar/worship-sync/commit/224d58ad60a37513f4273f0d678193b684014db1))
+
+
+### Performance Improvements
+
+* improve presentation rendering and slide thumbnails ([870ad6a](https://github.com/K-Cheddar/worship-sync/commit/870ad6a95ad9999f75dc16548d0ae507dceb7dd2))
+
+# [2.34.0](https://github.com/K-Cheddar/worship-sync/compare/v2.33.1...v2.34.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* improve account people layout ([5ed5a50](https://github.com/K-Cheddar/worship-sync/commit/5ed5a5084d41afe81839a7e89768b33bca2e7061))
+* make restream message persistence idempotent ([49e5cb4](https://github.com/K-Cheddar/worship-sync/commit/49e5cb41552daefba5d51009af25c87a351fd789))
+
+
+### Features
+
+* add account workspace and service plan email support ([0eb3486](https://github.com/K-Cheddar/worship-sync/commit/0eb34864b2eff39e19b648016d357ea419a4db86))
+* connect account workspace navigation ([2d4a9f2](https://github.com/K-Cheddar/worship-sync/commit/2d4a9f26e96aa383841fc824f6481060c5e51a00))
+* expand current service and service plan workflows ([f4be7c6](https://github.com/K-Cheddar/worship-sync/commit/f4be7c64b179acbe78091f401592926e7a13fc47))
+* harden discussion boards and restream sessions ([636b6eb](https://github.com/K-Cheddar/worship-sync/commit/636b6eb4bb70bf6429cdf4867c7cffd7649db70d))
+* improve media and display rendering paths ([d717991](https://github.com/K-Cheddar/worship-sync/commit/d717991b023a8a280a7a5be6024bf7800743e2da))
+* improve presentation and media workflows ([82fa9b3](https://github.com/K-Cheddar/worship-sync/commit/82fa9b31622cff013aacc210bf70238e94a8aa0f))
+* improve service plan email sharing ([edeaacb](https://github.com/K-Cheddar/worship-sync/commit/edeaacb257469dcc15ee053d6ff3917a9f09652e))
+* refine auxiliary controller workflows ([450c99b](https://github.com/K-Cheddar/worship-sync/commit/450c99b5823b2a0f1c42024f166ef7f909a2b841))
+* strengthen team scheduling workflows ([f589f9b](https://github.com/K-Cheddar/worship-sync/commit/f589f9b3d09e4af062037d3f8ab0526b99a5a303))
+* support offline-compatible local video media ([ad9048a](https://github.com/K-Cheddar/worship-sync/commit/ad9048a12cc287af037f885554b38ff9f001125c))
+
+
+### Performance Improvements
+
+* improve live local video capture paths ([7a291b9](https://github.com/K-Cheddar/worship-sync/commit/7a291b9a1ceb44890807e94b71359f38881c73d2))
+
+## [2.33.1](https://github.com/K-Cheddar/worship-sync/compare/v2.33.0...v2.33.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* Update public image ([0b3c2fc](https://github.com/K-Cheddar/worship-sync/commit/0b3c2fc0b09152b8b2c17f476200b5db1911c7c1))
+
+# [2.33.0](https://github.com/K-Cheddar/worship-sync/compare/v2.32.0...v2.33.0) (2026-09-10)
+
+
+### Bug Fixes
+
+* Board crawlers can wait forever ([dbc5756](https://github.com/K-Cheddar/worship-sync/commit/dbc57565132107a66c91c27382ee29a9ba919fe6))
+* Canva decks omit selected existing pages ([e7a266a](https://github.com/K-Cheddar/worship-sync/commit/e7a266ae3eac480e898056aa68c4b95779d51e72))
+* Existing-account invite sign-in loses return path ([6a55e71](https://github.com/K-Cheddar/worship-sync/commit/6a55e715f097539e8480b25e6b28a5b144ace8f9))
+* Improve mobile tap targets and outline scroll restore ([ee930a2](https://github.com/K-Cheddar/worship-sync/commit/ee930a2a36d0f62b247f18469310c9e470a54807))
+* Other controller outlines disappear after a new controller opens ([e94217a](https://github.com/K-Cheddar/worship-sync/commit/e94217a1c516870cc98f222f9fe65cf31e4f270a))
+* Signed-in volunteers lose their schedule link ([4229c25](https://github.com/K-Cheddar/worship-sync/commit/4229c25c2f14de457dbc5911f482b7a8863e24f0))
+* Some live input items lose their feed ([ffe9a69](https://github.com/K-Cheddar/worship-sync/commit/ffe9a69df05ad4f85778f50e3abeb254f1e1950a))
+* Two client views nest ternaries ([8f217ea](https://github.com/K-Cheddar/worship-sync/commit/8f217ea2dd073e50d8544fcfd3a3c13a3672a8e5))
+* Unused cameras stay open after restart ([e668bde](https://github.com/K-Cheddar/worship-sync/commit/e668bde7d2503206b3f520988b1f30f810ee6358))
+* Video posters vanish before cue sync ([fd0141f](https://github.com/K-Cheddar/worship-sync/commit/fd0141fa2ef6ee42e6b5b6ddabdb3cf837e23b9c))
+* Video retries retain stale listeners ([21a4d68](https://github.com/K-Cheddar/worship-sync/commit/21a4d68d5fe92ab6240b98608e3cc1ddebe6e058))
+
+
+### Features
+
+* Add public support contact form ([560d93e](https://github.com/K-Cheddar/worship-sync/commit/560d93eb2095000e8cc80428d208c07750139770))
+* Connect Planning Center accounts to churches ([d65de16](https://github.com/K-Cheddar/worship-sync/commit/d65de1640fee7402f0f1d8e5de0e907f4ecb1b7f))
+* Harden live video backgrounds and presentation sync ([4ec4863](https://github.com/K-Cheddar/worship-sync/commit/4ec4863ed2cd9d81f89511b9aecb4035fdd65660))
+* Import service plans from Planning Center and PDFs ([a9e1689](https://github.com/K-Cheddar/worship-sync/commit/a9e1689dbc14de81b551300c728ce60ed062b1c6))
+
+# [2.32.0](https://github.com/K-Cheddar/worship-sync/compare/v2.31.0...v2.32.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* Harden video paint-ready and song lyrics drawer flow ([c17900f](https://github.com/K-Cheddar/worship-sync/commit/c17900f7a1360db0e6dd789a42585b2388483c1b))
+* Share next-service countdown ticker and polish schedule search UX ([b801b41](https://github.com/K-Cheddar/worship-sync/commit/b801b417921fcdab04c48f16b1cc2c3a6eea21c1))
+
+
+### Features
+
+* Allow custom controller profile descriptions on Home ([0a81b2b](https://github.com/K-Cheddar/worship-sync/commit/0a81b2b18b128cb2ff7bcc7f0d8acc2e338ce390))
+* Grant booth workstations Current Service Workspace access ([06f493f](https://github.com/K-Cheddar/worship-sync/commit/06f493f0e399027dcc13d1d380b0374d217e4ab8))
+* Harden local video inputs and media library workflows ([b417b4e](https://github.com/K-Cheddar/worship-sync/commit/b417b4e6afa5db4ba9f9b2f5f0d9e2c45db9e044))
+* Improve media library for live inputs and Canva imports ([23b3d6c](https://github.com/K-Cheddar/worship-sync/commit/23b3d6c4aefa2ceebf4577c99ac34c92506ff091))
+* Multi-select roles and smoother service plan menus ([37d70c2](https://github.com/K-Cheddar/worship-sync/commit/37d70c2afcbc1ca4ed39633a4e69bf3d69b6176e))
+* Scope outlines per controller and soft-reset controller sessions ([f8c9652](https://github.com/K-Cheddar/worship-sync/commit/f8c965256610633019064f59579455f78e003923))
+* Serve path-based public share links with Open Graph meta ([0ca5a5d](https://github.com/K-Cheddar/worship-sync/commit/0ca5a5d9ed569dac0e374312acfdc54f873f7534))
+
+# [2.31.0](https://github.com/K-Cheddar/worship-sync/compare/v2.30.2...v2.31.0) (2026-09-08)
+
+
+### Bug Fixes
+
+* Adjust slide clamp for continuous ([6466fdc](https://github.com/K-Cheddar/worship-sync/commit/6466fdc1b9e04c9b835c6c967736bbb593677c90))
+* Archived plans no longer reopen ([525c084](https://github.com/K-Cheddar/worship-sync/commit/525c084f012c97211b87eb6f9cc494f1b4319c12))
+* Church switches show stale broadcasts ([76ba97f](https://github.com/K-Cheddar/worship-sync/commit/76ba97f07b6e6b159b5e7feac54be3d194b47cae))
+* Clear sticky isMobile when leaving controller surfaces ([8f849e9](https://github.com/K-Cheddar/worship-sync/commit/8f849e91ecf15878aa58b70a16f081655f4b1a61))
+* Coerce empty number inputs to a valid value on blur ([b7806ee](https://github.com/K-Cheddar/worship-sync/commit/b7806ee9c250a2307b23e123001e37e206d51200))
+* Harden auth bootstrap and localStorage outputs sync ([79a95d3](https://github.com/K-Cheddar/worship-sync/commit/79a95d38a285cee39f031abd63446cba73753ab3))
+* Harden remote follow topology and desktop-capture IPC ([6996771](https://github.com/K-Cheddar/worship-sync/commit/6996771ae26eaa48c06b632525a611d827fa485d))
+* Hide cursor only on signed-in projector output ([84e21db](https://github.com/K-Cheddar/worship-sync/commit/84e21dbf4afd2b73bac8b33dc16842dd8a91a22c))
+* Home links ignore modified clicks ([9656010](https://github.com/K-Cheddar/worship-sync/commit/9656010736a7569b5493f709087933b78c1c89d4))
+* Keep archived services out of the live current-service picker ([27a1fef](https://github.com/K-Cheddar/worship-sync/commit/27a1fef267406f4c0dc923698d721b1bb4365ba4))
+* Keep cursor visible on monitor (projector-only hide) ([a517582](https://github.com/K-Cheddar/worship-sync/commit/a51758219d219b893319ea73329f7c80e892ebb4))
+* Keep optional number fields empty on blur ([5f204cd](https://github.com/K-Cheddar/worship-sync/commit/5f204cd3a4a635d10fbdd64e94e47ac76ee22601))
+* Maintainers lose layout rationale ([76842c6](https://github.com/K-Cheddar/worship-sync/commit/76842c627175a993a49cd4891f2a9d291748dd6a))
+* Maintainers lose placeholder rationale ([d8f4af9](https://github.com/K-Cheddar/worship-sync/commit/d8f4af91b6a97cd5c80db4b0f5279d8903e754d1))
+* Minor fixes ([a3c958c](https://github.com/K-Cheddar/worship-sync/commit/a3c958c35c1de97bb223fda4695f40ec7ab2cac3))
+* Minor fixes ([46336ee](https://github.com/K-Cheddar/worship-sync/commit/46336eea94fdabc0269adac00c84c60207e35c82))
+* Mobile code autofill enters one digit ([d428408](https://github.com/K-Cheddar/worship-sync/commit/d42840855dbbd6e46fb05b7caf7ea4cbffb443c4))
+* provision Couch content DB and bootstrap controller docs ([7627ac2](https://github.com/K-Cheddar/worship-sync/commit/7627ac271eaa3f988217a9d0f652d5776c9234c1))
+* Service filters become harder to change ([15e8b47](https://github.com/K-Cheddar/worship-sync/commit/15e8b477435320ea00a2dba6355bb22d344e5401))
+* stabilize YouTube and Restream connection status ([a10478c](https://github.com/K-Cheddar/worship-sync/commit/a10478ca7474dcba30178c6ac72956afa6c53f62))
+* Template copies fail type checking ([4e34b54](https://github.com/K-Cheddar/worship-sync/commit/4e34b54b9a95b3c2bfd3a659b5cfd975b43e7466))
+* Wire multi-output sync, send targets, and live surface props ([e62ded6](https://github.com/K-Cheddar/worship-sync/commit/e62ded60764559092fe6f86a31816b5de463532c))
+
+
+### Features
+
+* Add controller profiles, aux routes, and outline scope ([6f6fca5](https://github.com/K-Cheddar/worship-sync/commit/6f6fca5ea985ae4d7db925542741352baa18a93d))
+* Add local workstation media capture and library support ([57dba9c](https://github.com/K-Cheddar/worship-sync/commit/57dba9c0e176f5dc3aa5cd6f50a31d20e2ebce73))
+* Add named Displays UI and multi-output TransmitHandler ([a8f0c79](https://github.com/K-Cheddar/worship-sync/commit/a8f0c79af6f4e94bc6d8e6ff28a911be3eb3a2c8))
+* Add outline slide rail and synced video background cues ([b2bead9](https://github.com/K-Cheddar/worship-sync/commit/b2bead95573e07f704ec34ddbed490523b6ae95e))
+* Add per-output display settings and DisplayWindow visuals ([9832188](https://github.com/K-Cheddar/worship-sync/commit/98321887055e491a3ed64f7327ca0cac3f95d2c6))
+* Add privacy and terms pages ([b762396](https://github.com/K-Cheddar/worship-sync/commit/b762396219481bfb826c59885dadc5ef5821c17f))
+* Add read-only display outputs registry ([4077eda](https://github.com/K-Cheddar/worship-sync/commit/4077eda69597d87ceab7ba24953af02dbaf167fb))
+* coordinate operator-approved web updates ([5227c9c](https://github.com/K-Cheddar/worship-sync/commit/5227c9c69843d7d41e9132e6cbc1d104bcd52b28))
+* Expand multi-output displays, transmit, and overlay targets ([d35d079](https://github.com/K-Cheddar/worship-sync/commit/d35d079f1d06a9c31bf76141c8a7d2bace22cfc8))
+* harden service plan editor drag-and-drop ([1993359](https://github.com/K-Cheddar/worship-sync/commit/1993359569ae01a9e83626c7bbe787530fab630d))
+* Improve outline slide rail and video background cues ([f7fc3e0](https://github.com/K-Cheddar/worship-sync/commit/f7fc3e07f5474b738536e7ea4918f99e7aa99e6a))
+* improve teams schedule, mics, and service archive ([793923b](https://github.com/K-Cheddar/worship-sync/commit/793923b80186e65581f290b92d6dd59416de460e))
+* Keep Canva imports refreshable from design source metadata ([585c926](https://github.com/K-Cheddar/worship-sync/commit/585c926e7fc0d44bd587510c4c7a9d4b51c3f073))
+* Key Electron display windows by output id ([f948f8f](https://github.com/K-Cheddar/worship-sync/commit/f948f8fb5e556e75a1bd84c68eb8479122b10dc6))
+* Pair displays to named content outputs ([07a70c1](https://github.com/K-Cheddar/worship-sync/commit/07a70c17ee0a76ed4bb64ae420cc20195540dec9))
+* polish chat and shared operator controls ([3065703](https://github.com/K-Cheddar/worship-sync/commit/3065703d6cc400a18e23768f7cdd1de52eb206b7))
+* Redesign App Entry and Home with install chrome ([c8512a7](https://github.com/K-Cheddar/worship-sync/commit/c8512a7a50187af4d001842b943a1ba71aab2eb9))
+* Reshape presentation state into output slots ([5dbbaa8](https://github.com/K-Cheddar/worship-sync/commit/5dbbaa87dbc3a62f37dc5ad1d8093dab968d7246))
+* Scope controller chrome to auxiliary base paths ([e49cc6c](https://github.com/K-Cheddar/worship-sync/commit/e49cc6c198a5372968324e927933654c1d3728e7))
+* Show auxiliary controllers on the Home Controllers grid ([1a33739](https://github.com/K-Cheddar/worship-sync/commit/1a33739b06a222802f7f171d16f85b452a840a53))
+* Wire display outputs, profiles, and local media into the app ([0586ffb](https://github.com/K-Cheddar/worship-sync/commit/0586ffb0de8ba1f81749889d334abf68e6844bb7))
+
+## [2.30.2](https://github.com/K-Cheddar/worship-sync/compare/v2.30.1...v2.30.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* Improve reliability of service times ([dd1744a](https://github.com/K-Cheddar/worship-sync/commit/dd1744a1074a79db4f8bbd5490f69e49bdb0897b))
+
+## [2.30.1](https://github.com/K-Cheddar/worship-sync/compare/v2.30.0...v2.30.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* Minor ui fixes for service plans ([824a3ca](https://github.com/K-Cheddar/worship-sync/commit/824a3ca57ab45f9d21fd653f092c24d1eb403e3e))
+
+# [2.30.0](https://github.com/K-Cheddar/worship-sync/compare/v2.29.0...v2.30.0) (2026-09-02)
+
+
+### Features
+
+* Improve by date layout ([89d7adb](https://github.com/K-Cheddar/worship-sync/commit/89d7adbafb591407a65f77cd4d68d81e7f793f92))
+
+# [2.29.0](https://github.com/K-Cheddar/worship-sync/compare/v2.28.0...v2.29.0) (2026-09-02)
+
+
+### Bug Fixes
+
+* Fix scheduling issue ([10c8d43](https://github.com/K-Cheddar/worship-sync/commit/10c8d432d5ac3a695e3338207f1b0855c1b62da7))
+* harden auth recovery and intake notifications ([d58ac3c](https://github.com/K-Cheddar/worship-sync/commit/d58ac3cd2bf61843398d7ed39af5398c0b50e47b))
+
+
+### Features
+
+* complete responsive navigation coverage ([c11df50](https://github.com/K-Cheddar/worship-sync/commit/c11df5004dcd449be9d8f7065d6df5b7f7320679))
+* expand service plan and song library workflows ([a43282f](https://github.com/K-Cheddar/worship-sync/commit/a43282fd97d7eca6d3076baca146b9a3bbfb1d24))
+* expand service planning and team workflows ([18cce78](https://github.com/K-Cheddar/worship-sync/commit/18cce78cdec80300464697690637c901585e14b0))
+* improve lyrics import and Genius fallback ([1a6bec9](https://github.com/K-Cheddar/worship-sync/commit/1a6bec96b5a181b059f0a478b65828cd45ff23df))
+* improve teams and account workflows ([63b910d](https://github.com/K-Cheddar/worship-sync/commit/63b910dda02c0bd8393a32e243888f48199cb41e))
+
+# [2.28.0](https://github.com/K-Cheddar/worship-sync/compare/v2.27.0...v2.28.0) (2026-08-28)
+
+
+### Bug Fixes
+
+* consolidate Restream connection status issues ([55db77d](https://github.com/K-Cheddar/worship-sync/commit/55db77db5d4f7f8746e81f91292520cb3487d4d3))
+
+
+### Features
+
+* add contextual browser page titles ([9c27909](https://github.com/K-Cheddar/worship-sync/commit/9c27909fc7a10273015f367e808040467017f4e9))
+* expand Teams planning and scheduling workflows ([e027498](https://github.com/K-Cheddar/worship-sync/commit/e027498417202662a1e3f360a76f3b1ce647e881))
+* improve public service view controls ([19c2e85](https://github.com/K-Cheddar/worship-sync/commit/19c2e85ef3a0e23366f68a38ace8e914883c0f03))
+
+# [2.27.0](https://github.com/K-Cheddar/worship-sync/compare/v2.26.2...v2.27.0) (2026-08-27)
+
+
+### Bug Fixes
+
+* Improve public intake form ([843f601](https://github.com/K-Cheddar/worship-sync/commit/843f6014eb550fcfe05ae8bfd2e1b677aa28b56b))
+* Make admin screens a little more compact ([9c4eb9b](https://github.com/K-Cheddar/worship-sync/commit/9c4eb9bdcd247fda79ff0474eaf79bc2dfbd0730))
+
+
+### Features
+
+* Improve UX for service plans ([51d9346](https://github.com/K-Cheddar/worship-sync/commit/51d93461f8743fbe3dc2d010b09e8ba3821644e0))
+
+## [2.26.2](https://github.com/K-Cheddar/worship-sync/compare/v2.26.1...v2.26.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* Improve public intake forms ([18460e1](https://github.com/K-Cheddar/worship-sync/commit/18460e1f1a50af23ebe65c39c20f689bccdbdb54))
+
+## [2.26.1](https://github.com/K-Cheddar/worship-sync/compare/v2.26.0...v2.26.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* improvements for service plans ([f9c0fed](https://github.com/K-Cheddar/worship-sync/commit/f9c0fed33c898161d56ff255e0e6697e0a3bee96))
+
+# [2.26.0](https://github.com/K-Cheddar/worship-sync/compare/v2.25.3...v2.26.0) (2026-08-25)
+
+
+### Bug Fixes
+
+* harden realtime auth and overlay delivery ([5dd8739](https://github.com/K-Cheddar/worship-sync/commit/5dd87398351a90a28d370257ea61c8576cde9a01))
+* prioritize lyrics provider results consistently ([0682dd6](https://github.com/K-Cheddar/worship-sync/commit/0682dd6e314ce007406fc979d37e6ae983e0c60e))
+* recover provider sign-in redirects ([b22c2cf](https://github.com/K-Cheddar/worship-sync/commit/b22c2cf7e724bafa57858d42052f5e3de40de745))
+
+
+### Features
+
+* expand team intake profiles and field selection ([e15d919](https://github.com/K-Cheddar/worship-sync/commit/e15d919bd95c7e24d96d27bfb06eaa585b12b5fb))
+* improve service timer editing access ([26b4036](https://github.com/K-Cheddar/worship-sync/commit/26b40367d9e61abff0385b62087ded7914be82a0))
+* support configurable overlay template defaults ([8058b08](https://github.com/K-Cheddar/worship-sync/commit/8058b088ef5c407b528e6ebf848fccac60e66ad3))
+* sync structured service plan assignees ([2bbb560](https://github.com/K-Cheddar/worship-sync/commit/2bbb56083fcd612fc2333349bae3e552e7f1f4b6))
+
+## [2.25.3](https://github.com/K-Cheddar/worship-sync/compare/v2.25.2...v2.25.3) (2026-08-23)
+
+
+### Bug Fixes
+
+* add logs and fix cursor on monitor ([5bd9c3a](https://github.com/K-Cheddar/worship-sync/commit/5bd9c3a44aedf066ec673b8ef184b3142329d8e3))
+
+## [2.25.2](https://github.com/K-Cheddar/worship-sync/compare/v2.25.1...v2.25.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* Improve service plan selection in controller ([51058b6](https://github.com/K-Cheddar/worship-sync/commit/51058b6d3637e5a582dcf4547d99640fa5d44124))
+* Visual adjustments to microphones ([d661126](https://github.com/K-Cheddar/worship-sync/commit/d6611269659c94d117481713ec975ea57fbba98e))
+
+## [2.25.1](https://github.com/K-Cheddar/worship-sync/compare/v2.25.0...v2.25.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* Improvements for lyric imports and following live on service plans ([5b45e03](https://github.com/K-Cheddar/worship-sync/commit/5b45e039dc5602798fc7d0f2a2b97731bac53cc4))
+
+# [2.25.0](https://github.com/K-Cheddar/worship-sync/compare/v2.24.0...v2.25.0) (2026-08-21)
+
+
+### Bug Fixes
+
+* improvements for mic assignments and member management ([99eea51](https://github.com/K-Cheddar/worship-sync/commit/99eea51c1d6498344d7c522eff264c20bbd39182))
+* Minor fixes ([594092c](https://github.com/K-Cheddar/worship-sync/commit/594092c19195ac6be0cb9f9d6ab0153cd39574de))
+
+
+### Features
+
+* Auto-reset Restream chat when a new stream starts ([49396a3](https://github.com/K-Cheddar/worship-sync/commit/49396a37175049edf21dcf3e57bbd681ceb4577a))
+
+# [2.24.0](https://github.com/K-Cheddar/worship-sync/compare/v2.23.0...v2.24.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* Harden Electron display matching and updater helpers ([0a29330](https://github.com/K-Cheddar/worship-sync/commit/0a29330951866a0e412d0c1ccca8237a15826de8))
+* Keep broken-image alt text readable on display surfaces ([e91b6eb](https://github.com/K-Cheddar/worship-sync/commit/e91b6eb84410223bc427a4d680933ce05e16fe3f))
+
+
+### Features
+
+* Add Canva connect and media library import ([434fe07](https://github.com/K-Cheddar/worship-sync/commit/434fe07b75300a52686050006682196565ddf9d5))
+* Add chat image attachments and richer messaging UI ([23b97db](https://github.com/K-Cheddar/worship-sync/commit/23b97dbf9c314eddc5f5c4fcf70e150e09b881e4))
+* Add schedule response UI, guests, and team chat client ([1a8d568](https://github.com/K-Cheddar/worship-sync/commit/1a8d568d67ea9fb1fc3babcbaeaeae5af5e434a6))
+* Add schedule responses, notifications, and team chat APIs ([472ae7c](https://github.com/K-Cheddar/worship-sync/commit/472ae7c8795490817b37d73c27cb8aebedf60b5d))
+* Improve toasts, overlay selection, restream chat, and PWA guidance ([db597ca](https://github.com/K-Cheddar/worship-sync/commit/db597caa9bb7da4dc7c0db171e3737229b8dc177))
+* Include blockout conflicts in schedule response digests ([5d9f307](https://github.com/K-Cheddar/worship-sync/commit/5d9f307147e25ca7cefaa2cce293c3761803e5b8))
+
 # [2.23.0](https://github.com/K-Cheddar/worship-sync/compare/v2.22.2...v2.23.0) (2026-08-10)
 
 ### Bug Fixes
