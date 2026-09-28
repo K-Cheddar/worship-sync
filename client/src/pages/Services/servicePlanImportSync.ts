@@ -36,10 +36,11 @@ const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["i
     sourceLedBy: normalizedImportSourceValue(ambiguity.sourceLedBy),
     sourceNote: normalizedImportSourceValue(ambiguity.sourceNote),
     reasons: ambiguity.reasons,
-    songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint }) => ({
+    songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint, mappingId }) => ({
       incoming,
-      candidateOccurrenceIds,
+      candidateOccurrenceIds: [...candidateOccurrenceIds].sort(),
       sourceFingerprint,
+      mappingId,
     })),
     parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
       kind, value, destination, sourceField: sourceField || "title",
@@ -91,6 +92,13 @@ const normalizedSourceValue = (value: string): string =>
 
 const normalizedLyrics = (value: string): string =>
   value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
+
+const sameOccurrenceIds = (left: string[], right: string[]): boolean => {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((id, index) => id === sortedRight[index]);
+};
 
 const normalizedStartTime = (value: string | undefined): string => {
   const time = normalizedSourceValue(value || "");
@@ -244,6 +252,7 @@ const reconcileImportedSongRefs = (
 
   const ambiguousCandidateIndexes = new Set<number>();
   const songMappings: NonNullable<ServicePlanElement["importAmbiguity"]>["songMappings"] = [];
+  const mappingOccurrences = new Map<string, number>();
   const refs = importedRefs.flatMap((importedRef, incomingIndex) => {
     const ambiguousCandidates = ambiguousCandidatesByIncoming.get(incomingIndex);
     if (ambiguousCandidates) {
@@ -259,14 +268,36 @@ const reconcileImportedSongRefs = (
         normalizedLyrics(importedRef.lyricsText),
         normalized(importedRef.key || ""),
       ]);
-      const priorMapping = current.importAmbiguity?.songMappings?.find((mapping) =>
-        mapping.sourceFingerprint === sourceFingerprint,
+      const candidateOccurrenceIds = ambiguousCandidates.flatMap((index) =>
+        currentRefs[index].id ? [currentRefs[index].id!] : [],
       );
+      const occurrenceKey = JSON.stringify([sourceFingerprint, [...candidateOccurrenceIds].sort()]);
+      const occurrence = mappingOccurrences.get(occurrenceKey) || 0;
+      mappingOccurrences.set(occurrenceKey, occurrence + 1);
+      // The rank is local to identical occurrences with the same eligible set,
+      // so unrelated songs can be inserted or reordered without changing it.
+      const mappingId = JSON.stringify([occurrenceKey, occurrence]);
+      const oldMappings = current.importAmbiguity?.songMappings || [];
+      const legacyMatches = oldMappings.filter((mapping) =>
+        !mapping.mappingId && mapping.sourceFingerprint === sourceFingerprint &&
+        sameOccurrenceIds(mapping.candidateOccurrenceIds, candidateOccurrenceIds),
+      );
+      const sameOccurrenceCandidates = oldMappings.filter((mapping) =>
+        sameOccurrenceIds(mapping.candidateOccurrenceIds, candidateOccurrenceIds),
+      );
+      const priorMapping = oldMappings.find((mapping) => mapping.mappingId === mappingId) ||
+        (sameOccurrenceCandidates.length === 1 ? sameOccurrenceCandidates[0] : undefined) ||
+        (legacyMatches.length === 1 && oldMappings.filter((mapping) =>
+          !mapping.mappingId && mapping.sourceFingerprint === sourceFingerprint,
+        ).length === 1 ? legacyMatches[0] : undefined);
       songMappings?.push({
         incoming: importedRef as Extract<typeof importedRef, { kind: "pending" }>,
-        candidateOccurrenceIds: ambiguousCandidates.flatMap((index) => currentRefs[index].id ? [currentRefs[index].id!] : []),
+        candidateOccurrenceIds,
+        mappingId: priorMapping?.mappingId || mappingId,
         sourceFingerprint,
-        ...(priorMapping?.resolution ? { resolution: priorMapping.resolution } : {}),
+        ...(priorMapping?.sourceFingerprint === sourceFingerprint && priorMapping.resolution
+          ? { resolution: priorMapping.resolution }
+          : {}),
       });
       return candidateRefs;
     }
@@ -775,30 +806,58 @@ const mergeElement = (
         sourceFingerprint: "",
       };
       const oldMappings = current.importAmbiguity?.songMappings || [];
-      const sameMapping = (
-        left: ImportedSongMapping,
-        right: ImportedSongMapping,
-      ) => left.sourceFingerprint === right.sourceFingerprint &&
-        JSON.stringify(left.candidateOccurrenceIds) === JSON.stringify(right.candidateOccurrenceIds);
-      const newMappings = reconciledSongs.songMappings.filter((mapping) =>
-        !oldMappings.some((old) => sameMapping(old, mapping)),
-      );
-      const retainedMappings = oldMappings.filter((old) =>
-        reconciledSongs.songMappings?.some((mapping) => sameMapping(old, mapping)),
-      );
+      const sameMapping = (left: ImportedSongMapping, right: ImportedSongMapping) =>
+        (left.mappingId === right.mappingId || (
+          !left.mappingId && oldMappings.filter((mapping) =>
+            !mapping.mappingId && mapping.sourceFingerprint === left.sourceFingerprint,
+          ).length === 1
+        )) && left.sourceFingerprint === right.sourceFingerprint &&
+        sameOccurrenceIds(left.candidateOccurrenceIds, right.candidateOccurrenceIds);
       const unchangedMappings = reconciledSongs.songMappings.length === oldMappings.length &&
         reconciledSongs.songMappings.every((mapping) =>
           oldMappings.some((old) => sameMapping(old, mapping) &&
             JSON.stringify(old.resolution) === JSON.stringify(mapping.resolution)),
         );
+      const hasUnresolvedMapping = reconciledSongs.songMappings.some((mapping) => !mapping.resolution);
       next.importAmbiguity = {
         ...ambiguity,
-        songMappings: [...retainedMappings, ...newMappings],
+        // Use reconciled records so a safe legacy match is upgraded with its
+        // stable identity, while ambiguous legacy records receive no decision.
+        songMappings: reconciledSongs.songMappings,
         reasons: [...new Set([...ambiguity.reasons, "A pending song matches multiple linked library songs."])],
         status: unchangedMappings && current.importAmbiguity && current.importAmbiguity.status !== "unresolved"
-          ? current.importAmbiguity.status
+          ? hasUnresolvedMapping && current.importAmbiguity.status !== "deferred"
+            ? "unresolved"
+            : current.importAmbiguity.status
           : "unresolved",
       };
+    } else if (current.importAmbiguity?.songMappings?.length) {
+      const incomingFingerprints = new Set(getServicePlanElementSongRefs(imported).flatMap((ref) => ref.kind === "pending"
+        ? [JSON.stringify([normalized(ref.title), normalizedLyrics(ref.lyricsText), normalized(ref.key || "")])]
+        : [],
+      ));
+      // A saved decision belongs to the incoming song meaning it reviewed. Keep
+      // resolved records on an unchanged source, and discard records whose song
+      // meaning disappeared or changed during this refresh.
+      const retainedMappings = current.importAmbiguity.songMappings.filter((mapping) =>
+        Boolean(mapping.resolution) && incomingFingerprints.has(mapping.sourceFingerprint),
+      );
+      if (retainedMappings.length !== current.importAmbiguity.songMappings.length) {
+        const reasons = current.importAmbiguity.reasons.filter((reason) =>
+          reason !== "A pending song matches multiple linked library songs." || retainedMappings.length > 0,
+        );
+        const nextAmbiguity = {
+          ...(next.importAmbiguity || current.importAmbiguity),
+          ...(retainedMappings.length ? { songMappings: retainedMappings } : {}),
+          reasons,
+          ...(current.importAmbiguity.status === "unresolved" &&
+            !current.importAmbiguity.parts.length && !reasons.length
+            ? { status: "confirmed" as const }
+            : {}),
+        };
+        if (!retainedMappings.length) delete nextAmbiguity.songMappings;
+        next.importAmbiguity = nextAmbiguity;
+      }
     }
     if (!preserveConfirmedTitle) {
       if (normalized(current.sourceElementTypeRaw || "") !== normalized(imported.sourceElementTypeRaw || "")) {
@@ -880,8 +939,16 @@ const mergeElement = (
   if (!changedAcceptedTitleOrNote) {
     if (currentAmbiguity) {
       const nextSongMappings = next.importAmbiguity?.songMappings;
-      const songMappingChanged = nextSongMappings !== undefined &&
-        JSON.stringify(nextSongMappings) !== JSON.stringify(currentAmbiguity.songMappings || []);
+      const previousMappings = currentAmbiguity.songMappings || [];
+      const songMappingChanged = nextSongMappings !== undefined && (
+        nextSongMappings.length !== previousMappings.length ||
+        nextSongMappings.some((mapping, index) => {
+          const previous = previousMappings[index];
+          return !previous || mapping.sourceFingerprint !== previous.sourceFingerprint ||
+            !sameOccurrenceIds(mapping.candidateOccurrenceIds, previous.candidateOccurrenceIds) ||
+            JSON.stringify(mapping.resolution) !== JSON.stringify(previous.resolution);
+        })
+      );
       next.importAmbiguity = {
         ...currentAmbiguity,
         sourceElementType: importedAmbiguity?.sourceElementType ?? observed.elementType,
@@ -896,8 +963,9 @@ const mergeElement = (
         } : {}),
       };
     }
-  } else if (importedAmbiguity) {
+  } else if (importedAmbiguity || currentAmbiguity || next.importAmbiguity) {
     const reconciledAmbiguity = next.importAmbiguity;
+    const interpretationBase = importedAmbiguity || currentAmbiguity || reconciledAmbiguity!;
     const acceptedFields = new Set([
       ...(changedAcceptedTitle ? ["title"] : []),
       ...(changedAcceptedNote ? ["note"] : []),
@@ -905,27 +973,57 @@ const mergeElement = (
     const retainedParts = (currentAmbiguity?.parts || []).filter((part) =>
       !acceptedFields.has(part.sourceField || "title"),
     );
-    const acceptedParts = importedAmbiguity.parts.filter((part) =>
+    const acceptedParts = (importedAmbiguity?.parts || []).filter((part) =>
       acceptedFields.has(part.sourceField || "title"),
     );
-    next.importAmbiguity = {
-      ...reconciledAmbiguity,
-      ...importedAmbiguity,
-      ...(reconciledAmbiguity?.songMappings ? { songMappings: reconciledAmbiguity.songMappings } : {}),
-      parts: [...retainedParts, ...acceptedParts].map((part) => {
-        const reconciledPart = next.importAmbiguity?.parts.find((candidate) =>
-          candidate.kind === part.kind && candidate.value === part.value &&
-          (candidate.sourceField || "title") === (part.sourceField || "title"),
-        );
-        return reconciledPart || part;
-      }),
-      reasons: [...new Set([
-        ...importedAmbiguity.reasons,
-        ...(reconciledAmbiguity?.reasons.filter((reason) => !importedAmbiguity.reasons.includes(reason)) || []),
-      ])],
-      status: importedAmbiguity.status === "unresolved" ||
-        reconciledAmbiguity?.status === "unresolved" ? "unresolved" : "confirmed",
-    };
+    const parts = [...retainedParts, ...acceptedParts].map((part) => {
+      const reconciledPart = reconciledAmbiguity?.parts.find((candidate) =>
+        candidate.kind === part.kind && candidate.value === part.value &&
+        (candidate.sourceField || "title") === (part.sourceField || "title"),
+      );
+      return reconciledPart || part;
+    });
+    const songMappings = reconciledAmbiguity?.songMappings ?? currentAmbiguity?.songMappings;
+    const unresolvedSongMapping = songMappings?.some((mapping) => !mapping.resolution) || false;
+    const previousMappings = currentAmbiguity?.songMappings || [];
+    const deferredMappingUnchanged = currentAmbiguity?.status === "deferred" &&
+      Boolean(songMappings) && songMappings!.length === previousMappings.length &&
+      songMappings!.every((mapping, index) => {
+        const previous = previousMappings[index];
+        return previous && mapping.sourceFingerprint === previous.sourceFingerprint &&
+          sameOccurrenceIds(mapping.candidateOccurrenceIds, previous.candidateOccurrenceIds) &&
+          JSON.stringify(mapping.resolution) === JSON.stringify(previous.resolution);
+      });
+    const interpretationUnresolved = importedAmbiguity?.status === "unresolved" ||
+      (reconciledAmbiguity?.status === "unresolved" && reconciledAmbiguity.reasons.some((reason) =>
+        reason.includes("source-managed attachment was edited locally"),
+      )) ||
+      (parts.length > 0 && currentAmbiguity?.status === "unresolved");
+    const reasons = [...new Set([
+      ...(importedAmbiguity?.reasons || (retainedParts.length ? currentAmbiguity?.reasons || [] : [])),
+      ...(reconciledAmbiguity?.reasons || []).filter((reason) =>
+        reason.includes("pending song matches multiple linked library songs") && unresolvedSongMapping,
+      ),
+    ])];
+    if (!parts.length && !songMappings?.length && !reasons.length) {
+      delete next.importAmbiguity;
+    } else {
+      const status = (unresolvedSongMapping && !deferredMappingUnchanged) || interpretationUnresolved
+        ? "unresolved"
+        : deferredMappingUnchanged || (currentAmbiguity?.status === "deferred" && !importedAmbiguity)
+          ? "deferred"
+          : importedAmbiguity?.status === "acknowledged" || currentAmbiguity?.status === "acknowledged"
+            ? "acknowledged"
+            : "confirmed";
+      next.importAmbiguity = {
+        ...interpretationBase,
+        ...(reconciledAmbiguity || {}),
+        ...(songMappings ? { songMappings } : {}),
+        parts,
+        reasons,
+        status,
+      };
+    }
   } else if (currentAmbiguity && changedAcceptedTitleOrNote) {
     delete next.importAmbiguity;
   }

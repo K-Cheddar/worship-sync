@@ -14,6 +14,7 @@ import CanvaImportSheet from "./CanvaImportSheet";
 import type { MediaType } from "../../types";
 import type { mediaInfoType } from "./cloudinaryTypes";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
+import { CanvaMediaReconciliationRequiredError } from "../../utils/canvaMediaReplacement";
 
 jest.mock("../../api/canva", () => ({
   getCanvaStatus: jest.fn(),
@@ -1136,6 +1137,46 @@ test("resolves a refresh target from current Media state during finalization", a
   await queuedJob.finalize(imported, signal, jest.fn());
 
   expect(onImageRefresh).toHaveBeenCalledWith(refreshedImage, "media-1");
+});
+
+test("retains a Canva asset and fails its page when replacement reconciliation is required", async () => {
+  setCanvaDesignList(1);
+  jest.mocked(listCanvaDesigns).mockResolvedValue({
+    items: [{
+      id: "DAF_design_1",
+      title: "Progress Deck",
+      thumbnailUrl: "https://example.test/progress.png",
+      pageCount: 1,
+      updatedAt: 101,
+      editUrl: "https://www.canva.com/design/DAF_design_1/edit",
+      viewUrl: "https://www.canva.com/design/DAF_design_1/view",
+    }],
+    continuation: "",
+  });
+  mockStartCanvaTransfer.mockImplementationOnce(() => "queued-reconciliation");
+  jest.mocked(importCanvaDesign).mockResolvedValue({
+    assets: [{ kind: "image", data: refreshedImage }],
+    skippedCount: 0,
+    revision: 101,
+  });
+  const onImageRefresh = jest.fn().mockRejectedValue(
+    new CanvaMediaReconciliationRequiredError("Canva media references need reconciliation. Both provider files were kept."),
+  );
+  const cleanup = jest.fn().mockResolvedValue(true);
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={jest.fn()} onVideoComplete={jest.fn()} onImageRefresh={onImageRefresh} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[existingMedia as MediaType]} getCurrentMedia={() => [existingMedia as MediaType]} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Refresh selected/i }));
+  const job = mockStartCanvaTransfer.mock.calls[0][0] as unknown as {
+    run: (signal: AbortSignal, onProgress: (event: never) => void) => Promise<unknown>;
+    finalize: (result: unknown, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<unknown>;
+  };
+  const signal = new AbortController().signal;
+  const imported = await job.run(signal, jest.fn());
+  await expect(job.finalize(imported, signal, jest.fn())).rejects.toThrow("Both provider files were kept");
+  expect(cleanup).not.toHaveBeenCalled();
 });
 
 test("fails and cleans the exported asset when a queued refresh target disappears", async () => {

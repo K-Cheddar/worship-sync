@@ -391,6 +391,30 @@ describe("useServicePlanAutosave", () => {
     expect(save.mock.calls[1][1]).toBe(11);
   });
 
+  it("acknowledges only the sent version when a newer local edit is waiting", async () => {
+    let resolveFirst: (plan: ServicePlan) => void = () => {};
+    let callCount = 0;
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, baseRevision) => {
+        callCount += 1;
+        if (callCount === 1) return new Promise<ServicePlan>((resolve) => { resolveFirst = resolve; });
+        return Promise.resolve(planFor("plan-a", baseRevision + 1));
+      },
+    );
+    const onSaveAcknowledged = jest.fn();
+    const { view, options } = setup({ save, onSaveAcknowledged });
+
+    view.rerender({ ...options, save, onSaveAcknowledged, changeVersion: 1 });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    view.rerender({ ...options, save, onSaveAcknowledged, changeVersion: 2, buildPayload: () => payloadFor("B") });
+    await act(async () => { resolveFirst(planFor("plan-a", 1)); });
+
+    expect(onSaveAcknowledged).toHaveBeenCalledTimes(1);
+    expect(onSaveAcknowledged).toHaveBeenCalledWith(1);
+    expect(view.result.current.state).toBe("dirty");
+  });
+
   it("keeps the expected acknowledgement revision while a failed save is retrying", async () => {
     const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
       async () => {

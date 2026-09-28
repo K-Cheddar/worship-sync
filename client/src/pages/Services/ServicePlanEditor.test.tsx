@@ -44,7 +44,7 @@ import {
 } from "../../types/richText";
 import { calendarDateInTimeZone } from "../../utils/teamScheduleOccurrences";
 import * as generalUtils from "../../utils/generalUtils";
-import { readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
+import { flushServicePlanRecoveryDraftWrites, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
 
 jest.mock("../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`, so the
@@ -387,7 +387,11 @@ describe("ServicePlanEditor", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    flushServicePlanRecoveryDraftWrites();
     sessionStorage.clear();
+    for (const key of Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))) {
+      if (key?.startsWith("worship-sync:service-plan-draft:")) localStorage.removeItem(key);
+    }
     localStorage.removeItem("worshipsyncServicePlanImportSource");
     localStorage.removeItem("worshipsyncServicePublicNotesTeam");
     mockAllSongDocs = [];
@@ -1112,9 +1116,12 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByRole("button", { name: "Apply merged plan" })).toBeDisabled();
 
     await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    mockSaveServicePlan.mockRejectedValueOnce(new Error("temporary network failure"));
     await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(2), { timeout: 4_000 });
+    expect(await screen.findByText("Retrying save…", undefined, { timeout: 4_000 })).toBeInTheDocument();
+    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).not.toBeNull();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(3), { timeout: 8_000 });
     await waitFor(() => {
       expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).toBeNull();
     });

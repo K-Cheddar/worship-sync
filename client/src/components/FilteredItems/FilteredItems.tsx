@@ -881,7 +881,6 @@ const FilteredItems = ({
         <div
           ref={filteredTableHeaderRef}
           className="shrink-0 border-y border-gray-600 bg-gray-700 py-2 text-xs font-semibold uppercase tracking-wide text-gray-300"
-          aria-hidden="true"
         >
           <div
             className={cn(
@@ -891,13 +890,13 @@ const FilteredItems = ({
               "px-4",
             )}
           >
+            <span className="justify-self-center">Type</span>
             <span>Name</span>
             {type === "song" ? (
               <span className="hidden justify-self-start text-left md:block">
                 Artist
               </span>
             ) : null}
-            <span>Actions</span>
           </div>
         </div>
         <div

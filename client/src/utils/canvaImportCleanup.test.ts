@@ -85,3 +85,13 @@ test("retains failed cleanup state so a later attempt can retry it", async () =>
   expect(await cleanupCanvaAssetsByLifecycle([asset], lifecycle, cleanup)).toEqual([]);
   expect(lifecycle).toEqual(["cleaned"]);
 });
+
+test("does not delete an asset while its media replacement needs reconciliation", async () => {
+  const asset = { kind: "image", data: image("reconciliation-required") } satisfies CanvaImportedAsset;
+  const lifecycle: CanvaAssetLifecycle[] = ["reconciliation-required"];
+  const cleanup = jest.fn(async () => true);
+
+  expect(await cleanupCanvaAssetsByLifecycle([asset], lifecycle, cleanup)).toEqual([]);
+  expect(cleanup).not.toHaveBeenCalled();
+  expect(lifecycle).toEqual(["reconciliation-required"]);
+});

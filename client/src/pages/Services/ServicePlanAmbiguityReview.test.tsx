@@ -3,8 +3,12 @@ import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
+import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 import { createServicePlanTextResource } from "./servicePlanResources";
 import { applyReviewedServicePlanParts, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
+import { DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, refreshServicePlanFromImport } from "./servicePlanImportSync";
+import { applySelectedServicePlanImportChanges, servicePlanImportChangeKey, summarizeServicePlanImport } from "./servicePlanImportSummary";
 import ServicePlanAmbiguityReview from "./ServicePlanAmbiguityReview";
 
 const sections: ServicePlanSection[] = [{
@@ -143,10 +147,106 @@ describe("ServicePlanAmbiguityReview", () => {
 
     const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
     expect(changes.songRefs).toEqual([
-      { id: "incoming-id", kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
+      { id: "library-one", kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
       { id: "library-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
     ]);
     expect(changes.importAmbiguity).toMatchObject({ status: "confirmed", reasons: [] });
+  });
+
+  it("keeps identical song mappings on separate controls and applies each selection", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const linkedSongs: ServicePlanElement = {
+      ...sections[0].elements[0],
+      songRefs: [
+        { id: "library-one", kind: "library", songId: "song-one", songName: "Same Song", key: "C" },
+        { id: "library-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+      ],
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        songMappings: [0, 1].map((occurrence) => ({
+          incoming: { kind: "pending" as const, title: "Same Song", lyricsText: `Lyrics ${occurrence}` },
+          candidateOccurrenceIds: ["library-one", "library-two"],
+          mappingId: `mapping-${occurrence}`,
+          sourceFingerprint: `song-${occurrence}`,
+        })),
+      },
+    };
+    render(<ServicePlanAmbiguityReview sections={[{ ...sections[0], elements: [linkedSongs] }]} elementIds={[linkedSongs.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    const [first, second] = screen.getAllByRole("combobox", { name: /Song mapping for Same Song/ });
+    await user.click(first);
+    await user.click(screen.getByRole("option", { name: "Same Song · C" }));
+    expect(first).toHaveTextContent("Same Song · C");
+    expect(second).toHaveTextContent("Keep existing linked songs");
+    await user.click(second);
+    await user.click(screen.getByRole("option", { name: "Same Song · G" }));
+    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(changes.songRefs).toEqual([
+      { id: "library-one", kind: "pending", title: "Same Song", lyricsText: "Lyrics 0" },
+      { id: "library-two", kind: "pending", title: "Same Song", lyricsText: "Lyrics 1" },
+    ]);
+    expect(changes.importAmbiguity?.songMappings?.map(({ resolution }) => resolution)).toEqual([
+      { kind: "replace", occurrenceId: "library-one" },
+      { kind: "replace", occurrenceId: "library-two" },
+    ]);
+  });
+
+  it("parses, selectively applies, confirms, saves, and repeats a manual song replacement without reopening", async () => {
+    const user = userEvent.setup();
+    const source: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{ sectionName: "Praise", rows: [{ elementType: "Song", title: "Same Song", songTitle: "Same Song", ledBy: "" }] }],
+      teamAssignments: [],
+    };
+    const parsed = buildServicePlanSectionsFromImport(source, []);
+    const current: ServicePlanSection[] = [{
+      id: "saved-section",
+      name: "Praise",
+      sourcePlanningManaged: true,
+      elements: [{
+        id: "saved-set",
+        type: "song",
+        title: plainTextToRichText("Worship Set"),
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "selected-occurrence", kind: "library", songId: "song-one", songName: "Same Song", key: "C" },
+          { id: "other-occurrence", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+        ],
+      }],
+    }];
+    const reconciled = refreshServicePlanFromImport(current, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, reconciled);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      reconciled,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+    let savedSections = JSON.parse(JSON.stringify(applied)) as ServicePlanSection[];
+    const onResolve = jest.fn((elementId: string, changes: Partial<ServicePlanElement>) => {
+      const nextSections = savedSections.map((section) => ({
+        ...section,
+        elements: section.elements.map((element) => element.id === elementId ? { ...element, ...changes } : element),
+      }));
+      savedSections = JSON.parse(JSON.stringify(nextSections));
+    });
+    const elementId = applied[0].elements[0].id;
+    render(<ServicePlanAmbiguityReview sections={applied} elementIds={[elementId]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    await user.click(screen.getByRole("combobox", { name: /Song mapping for Same Song/ }));
+    await user.click(screen.getByRole("option", { name: "Same Song · C" }));
+    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+
+    expect(savedSections[0].elements[0].songRefs).toEqual([
+      { id: "selected-occurrence", kind: "pending", title: "Same Song", lyricsText: "" },
+      { id: "other-occurrence", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+    ]);
+    const repeated = refreshServicePlanFromImport(savedSections, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated[0].elements[0]).toEqual(savedSections[0].elements[0]);
+    expect(summarizeServicePlanImport(savedSections, repeated).changes).toEqual([]);
   });
 
   it("advances through queued items without closing the review", async () => {

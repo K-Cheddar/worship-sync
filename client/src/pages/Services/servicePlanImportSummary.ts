@@ -96,7 +96,7 @@ const comparableInterpretation = (element: ServicePlanElement) => {
     reasons: ambiguity.reasons.map(normalizedText),
     songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint }) => ({
       incoming: songRefValue(incoming),
-      candidateOccurrenceIds,
+      candidateOccurrenceIds: [...candidateOccurrenceIds].sort(),
       sourceFingerprint,
     })),
     parts: ambiguity.parts.map(({ kind, value, destination, sourceField, managed }) => ({

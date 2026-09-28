@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { TransferProvider, useTransfers } from "./transferContext";
+import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplacement";
 
 jest.mock("../hooks", () => ({ useDispatch: () => jest.fn() }));
 
@@ -193,6 +194,32 @@ test("shows and retries cleanup that remained pending after a failed import", as
   await user.click(screen.getByRole("button", { name: "Retry cleanup" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Retry cleanup" })).not.toBeInTheDocument());
   expect(cleanupRetry).toHaveBeenCalledTimes(1);
+});
+
+test("reports an unresolved Canva replacement as a failed page with recovery guidance", async () => {
+  const user = userEvent.setup();
+  const ReconciliationHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "reconciliation-required",
+      title: "Welcome slide",
+      format: "png",
+      pages: [1],
+      run: async () => result,
+      finalize: async () => {
+        throw new CanvaMediaReconciliationRequiredError(
+          "Canva refresh needs attention. Saved media references could not be confirmed, so both files were kept. Reload Media before trying again.",
+        );
+      },
+    })}>Refresh Canva slide</button>;
+  };
+  render(<MemoryRouter><TransferProvider><ReconciliationHarness /></TransferProvider></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Refresh Canva slide" }));
+
+  expect(await screen.findByText("Import failed")).toBeInTheDocument();
+  expect(screen.getAllByText(/Saved media references could not be confirmed/)).toHaveLength(2);
+  expect(screen.getByText(/0 of 1 pages processed/)).toBeInTheDocument();
 });
 
 test("cancelling a queued Canva job prevents its export from starting", async () => {

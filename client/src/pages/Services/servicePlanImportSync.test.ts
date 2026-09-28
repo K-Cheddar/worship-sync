@@ -764,6 +764,7 @@ describe("refreshServicePlanFromImport", () => {
     expect(refreshed.elements[0].importAmbiguity?.songMappings).toEqual([{
       incoming: { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
       candidateOccurrenceIds: ["linked-one", "linked-two"],
+      mappingId: JSON.stringify([JSON.stringify([JSON.stringify(["same song", "New lyrics", ""]), ["linked-one", "linked-two"]]), 0]),
       sourceFingerprint: JSON.stringify(["same song", "New lyrics", ""]),
     }]);
     expect(summarizeServicePlanImport(current, [refreshed]).changes[0]?.fields.map(({ label }) => label)).toContain("Import interpretation");
@@ -897,6 +898,143 @@ describe("refreshServicePlanFromImport", () => {
     const changedRefresh = refreshServicePlanFromImport([refreshed], changedImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     expect(changedRefresh[0].elements[0].importAmbiguity?.status).toBe("unresolved");
     expect(summarizeServicePlanImport([refreshed], changedRefresh).changes[0]?.fields.map(({ label }) => label)).toContain("Import interpretation");
+  });
+
+  it("preserves distinct identities for identical incoming mappings across unrelated row insertion", () => {
+    const current = [section("section", "Praise", [
+      element("set", "Worship Set", {
+        sourcePlanningManaged: true,
+        songRefs: [
+          { id: "linked-one", kind: "library", songId: "song-1", songName: "Same Song" },
+          { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+        ],
+      }),
+    ])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      songRefs: [
+        { kind: "pending", title: "Same Song", lyricsText: "Same lyrics" },
+        { kind: "pending", title: "Same Song", lyricsText: "Same lyrics" },
+      ],
+    })])];
+
+    const [first] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const mappings = first.elements[0].importAmbiguity?.songMappings || [];
+    expect(mappings).toHaveLength(2);
+    expect(new Set(mappings.map(({ mappingId }) => mappingId)).size).toBe(2);
+    const saved = [{ ...first, elements: first.elements.map((item) => ({
+      ...item,
+      importAmbiguity: item.importAmbiguity && {
+        ...item.importAmbiguity,
+        status: "confirmed" as const,
+        songMappings: item.importAmbiguity.songMappings?.map((mapping, index) => ({
+          ...mapping,
+          resolution: { kind: "replace" as const, occurrenceId: index ? "linked-two" : "linked-one" },
+        })),
+      },
+      songRefs: [
+        { id: "linked-one", kind: "pending" as const, title: "Same Song", lyricsText: "Same lyrics" },
+        { id: "linked-two", kind: "pending" as const, title: "Same Song", lyricsText: "Same lyrics" },
+      ],
+    })) }];
+    const reorderedSource = [section("source", "Praise", [
+      element("unrelated", "Welcome"),
+      imported[0].elements[0],
+    ])];
+    const repeated = refreshServicePlanFromImport(saved, reorderedSource, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const repeatedElement = repeated[0].elements.find(({ id }) => id === "set")!;
+
+    expect(repeatedElement.importAmbiguity?.songMappings?.map(({ mappingId, resolution }) => ({ mappingId, resolution }))).toEqual(
+      mappings.map(({ mappingId }, index) => ({
+        mappingId,
+        resolution: { kind: "replace", occurrenceId: index ? "linked-two" : "linked-one" },
+      })),
+    );
+  });
+
+  it("keeps a new song mapping when the accepted source title changes in the same refresh", () => {
+    const currentState = {
+      observed: { elementType: "Song", title: "Old set title", ledBy: "", note: "" },
+      applied: { elementType: "Song", title: "Old set title", ledBy: "", note: "" },
+      pendingFields: [],
+    };
+    const current = [section("section", "Praise", [element("set", "Old set title", {
+      sourcePlanningManaged: true,
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Old set title",
+      servicePlanningImport: currentState,
+      songRefs: [
+        { id: "linked-one", kind: "library", songId: "song-1", songName: "Same Song" },
+        { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+      ],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "New set title", {
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "New set title",
+      servicePlanningImport: {
+        observed: { elementType: "Song", title: "New set title", ledBy: "", note: "" },
+        applied: { elementType: "Song", title: "New set title", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+      songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "New lyrics" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].importAmbiguity?.status).toBe("unresolved");
+    expect(refreshed.elements[0].importAmbiguity?.songMappings).toHaveLength(1);
+    expect(getNewServicePlanImportAmbiguityIds(current, [refreshed])).toEqual(["set"]);
+  });
+
+  it("keeps confirmed title interpretation separate from a deferred song mapping", () => {
+    const oldNote = { type: "paragraph" as const, id: "old-note", spans: [{ text: "Old note" }] };
+    const newNote = { type: "paragraph" as const, id: "new-note", spans: [{ text: "New note" }] };
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      notes: { blocks: [oldNote] },
+      servicePlanningImport: {
+        observed: { elementType: "Song", title: "Worship Set", ledBy: "", note: "Old note" },
+        applied: { elementType: "Song", title: "Worship Set", ledBy: "", note: "Old note" },
+        pendingFields: [],
+        managedNotes: [{ id: oldNote.id, fingerprint: servicePlanNoteFingerprint(oldNote) }],
+      },
+      songRefs: [
+        { id: "linked-one", kind: "library", songId: "song-1", songName: "Same Song" },
+        { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+      ],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Praise:0", sourceElementType: "Song", sourceTitle: "Worship Set",
+        sourceLedBy: "", parts: [{ kind: "description", value: "Worship Set", destination: "content", sourceField: "title" }],
+        reasons: ["A pending song matches multiple linked library songs."], status: "deferred", sourceFingerprint: "title-source",
+        songMappings: [{
+          incoming: { kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
+          candidateOccurrenceIds: ["linked-one", "linked-two"],
+          mappingId: "same-song-mapping",
+          sourceFingerprint: JSON.stringify(["same song", "Updated lyrics", ""]),
+        }],
+      },
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      sourceElementTypeRaw: "Song",
+      servicePlanningImport: {
+        observed: { elementType: "Song", title: "Worship Set", ledBy: "", note: "New note" },
+        applied: { elementType: "Song", title: "Worship Set", ledBy: "", note: "New note" },
+        pendingFields: [],
+        managedNotes: [{ id: newNote.id, fingerprint: servicePlanNoteFingerprint(newNote) }],
+      },
+      sourceNoteRaw: "New note",
+      notes: { blocks: [newNote] },
+      songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const ambiguity = refreshed.elements[0].importAmbiguity;
+
+    expect(ambiguity?.status).toBe("deferred");
+    expect(ambiguity?.parts).toEqual(current[0].elements[0].importAmbiguity?.parts);
+    expect(ambiguity?.songMappings?.[0]).toMatchObject({
+      mappingId: "same-song-mapping",
+      sourceFingerprint: JSON.stringify(["same song", "Updated lyrics", ""]),
+    });
+    expect(getNewServicePlanImportAmbiguityIds(current, [refreshed])).toEqual([]);
   });
 
   it("keeps the unselected duplicate link after an explicitly confirmed replacement", () => {

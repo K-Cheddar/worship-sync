@@ -18,6 +18,7 @@ const {
   setDoc,
   setServerFirestoreForTests,
   setIntakeNotifyRecipientsForServerTests,
+  setIntakeDigestProviderTimeoutForServerTests,
   setSendEmailForServerTests,
 } = await import("../authService.js");
 
@@ -44,6 +45,7 @@ const createPendingDigest = async ({ pendingSince = nowIso() } = {}) => {
 
 afterEach(() => {
   setIntakeNotifyRecipientsForServerTests(null);
+  setIntakeDigestProviderTimeoutForServerTests(null);
   setSendEmailForServerTests(null);
   setServerFirestoreForTests(null);
 });
@@ -143,12 +145,16 @@ const createFirestore = (seed = {}) => {
                   ) || idA.localeCompare(idB),
               );
             if (cursorArgs) {
-              const [since, id] = cursorArgs;
-              docs = docs.filter(
-                ([docId, value]) =>
-                  value.pendingDigestSince > since ||
-                  (value.pendingDigestSince === since && docId > id),
-              );
+              if (cursorArgs.length === 1 && cursorArgs[0]?.id) {
+                docs = docs.filter(([docId]) => docId > cursorArgs[0].id);
+              } else {
+                const [since, id] = cursorArgs;
+                docs = docs.filter(
+                  ([docId, value]) =>
+                    value.pendingDigestSince > since ||
+                    (value.pendingDigestSince === since && docId > id),
+                );
+              }
             }
             docs = docs.slice(0, limit).map(([id, value]) => ({
               id,
@@ -278,6 +284,108 @@ test("partial provider failure retries only the undelivered recipient", async ()
   );
 });
 
+test("partial delivery closes its batch across restart and promotes every follow-up submission", async (t) => {
+  const formId = `intake_partial_handoff_${++formCounter}`;
+  const churchId = `intake_partial_handoff_church_${formCounter}`;
+  const since = nowIso();
+  const db = createFirestore({
+    [COLLECTIONS.teamIntakeForms]: {
+      [formId]: {
+        formId,
+        churchId,
+        name: "Fall availability",
+        pendingDigestSince: since,
+        pendingDigestBatchId: "original-batch",
+        pendingDigestAttempts: {},
+      },
+    },
+    [COLLECTIONS.teamIntakeSubmissions]: {
+      original: {
+        submissionId: "original",
+        formId,
+        churchId,
+        firstName: "Avery",
+        submittedAt: since,
+        digestBatchId: "original-batch",
+      },
+    },
+  });
+  setServerFirestoreForTests(db);
+  setIntakeNotifyRecipientsForServerTests([
+    "lead@example.test",
+    "other@example.test",
+  ]);
+  const sends = [];
+  setSendEmailForServerTests(async ({ idempotencyKey, textBody, to }) => {
+    sends.push({ idempotencyKey, textBody, to });
+    if (to === "other@example.test" && sends.length === 2) {
+      throw new Error("provider unavailable");
+    }
+  });
+
+  await sendIntakeSubmissionDigest(formId);
+  const partial = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  assert.equal(partial.pendingDigestBatchClosed, true);
+  assert.equal(partial.pendingDigestClaim, null);
+
+  const submittedAt = nowIso();
+  const submitted = await persistIntakeSubmissionForServerTests({
+    submissionId: "follow-up-submission",
+    formId,
+    churchId,
+    firstName: "Jordan",
+    lastName: "Lee",
+    status: "new",
+    submittedAt,
+  });
+  const queued = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  assert.equal(submitted.digestBatchId, queued.pendingDigestNextBatchId);
+  assert.notEqual(submitted.digestBatchId, "original-batch");
+
+  const restarted = await import("../authService.js?intake-partial-restart");
+  t.after(() => restarted.setServerFirestoreForTests(null));
+  restarted.setServerFirestoreForTests(db);
+  restarted.setIntakeNotifyRecipientsForServerTests([
+    "lead@example.test",
+    "other@example.test",
+  ]);
+  restarted.setSendEmailForServerTests(
+    async ({ idempotencyKey, textBody, to }) => {
+      sends.push({ idempotencyKey, textBody, to });
+    },
+  );
+
+  await restarted.sendIntakeSubmissionDigest(formId);
+  const promoted = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  assert.equal(promoted.pendingDigestBatchId, submitted.digestBatchId);
+  assert.equal(promoted.pendingDigestBatchClosed, false);
+  assert.equal(promoted.pendingDigestSince, queued.pendingDigestNextSince);
+
+  await restarted.sendIntakeSubmissionDigest(formId);
+  assert.deepEqual(
+    sends.map(({ to }) => to),
+    [
+      "lead@example.test",
+      "other@example.test",
+      "other@example.test",
+      "lead@example.test",
+      "other@example.test",
+    ],
+    "the ordinary retry skips the successful recipient; the follow-up notifies both",
+  );
+  assert.match(sends[0].textBody, /Avery/);
+  assert.doesNotMatch(sends[0].textBody, /Jordan/);
+  assert.match(sends[2].textBody, /Avery/);
+  assert.doesNotMatch(sends[2].textBody, /Jordan/);
+  assert.match(sends[3].textBody, /Jordan Lee/);
+  assert.doesNotMatch(sends[3].textBody, /Avery/);
+  assert.notEqual(sends[0].idempotencyKey, sends[3].idempotencyKey);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
+    null,
+  );
+});
+
 test("startup recovery sends an elapsed persisted digest", async () => {
   setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
   const pendingSince = new Date(Date.now() - 25 * 60 * 1000).toISOString();
@@ -288,6 +396,54 @@ test("startup recovery sends an elapsed persisted digest", async () => {
   await recoverPendingIntakeSubmissionDigests();
 
   assert.deepEqual(sent, ["lead@example.test"]);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
+    null,
+  );
+});
+
+test("submission pagination includes every response beyond 500", async () => {
+  const formId = `intake_pagination_${++formCounter}`;
+  const churchId = `intake_pagination_church_${formCounter}`;
+  const since = nowIso();
+  const forms = {
+    [formId]: {
+      formId,
+      churchId,
+      name: "Fall availability",
+      pendingDigestSince: since,
+      pendingDigestBatchId: "large-batch",
+      pendingDigestAttempts: {},
+    },
+  };
+  const submissions = {};
+  for (let index = 0; index < 525; index += 1) {
+    const id = `submission-${String(index).padStart(3, "0")}`;
+    submissions[id] = {
+      submissionId: id,
+      formId,
+      churchId,
+      firstName: `Person${index}`,
+      submittedAt: since,
+      digestBatchId: "large-batch",
+    };
+  }
+  const db = createFirestore({
+    [COLLECTIONS.teamIntakeForms]: forms,
+    [COLLECTIONS.teamIntakeSubmissions]: submissions,
+  });
+  setServerFirestoreForTests(db);
+  setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  let email;
+  setSendEmailForServerTests(async (payload) => {
+    email = payload;
+  });
+
+  await sendIntakeSubmissionDigest(formId);
+
+  assert.match(email.subject, /^525 new/);
+  assert.match(email.textBody, /Person0/);
+  assert.match(email.textBody, /Person524/);
   assert.equal(
     (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
     null,
@@ -542,6 +698,7 @@ test("separate module instances honor the Firestore lease and expired claims rec
         pendingDigestSince: since,
         pendingDigestBatchId: "lease-batch",
         pendingDigestAttempts: {},
+        pendingDigestBatchClosed: true,
       },
     },
     [COLLECTIONS.teamIntakeSubmissions]: {
@@ -592,11 +749,13 @@ test("separate module instances honor the Firestore lease and expired claims rec
     pendingDigestSince: expiredSince,
     pendingDigestBatchId: "expired-batch",
     pendingDigestAttempts: {},
+    pendingDigestBatchClosed: true,
     pendingDigestClaim: {
       claimId: "abandoned-claim",
       batchId: "expired-batch",
       since: expiredSince,
       attempts: {},
+      queryStarted: true,
       leaseUntil: Date.now() - 1,
     },
   });
@@ -608,12 +767,189 @@ test("separate module instances honor the Firestore lease and expired claims rec
     submittedAt: expiredSince,
     digestBatchId: "expired-batch",
   });
+  const expiredFollowup = await persistIntakeSubmissionForServerTests({
+    submissionId: "expired-followup",
+    formId: expiredId,
+    churchId,
+    firstName: "Jordan",
+    submittedAt: nowIso(),
+  });
+  assert.equal(
+    expiredFollowup.digestBatchId,
+    (await getDoc(COLLECTIONS.teamIntakeForms, expiredId))
+      .pendingDigestNextBatchId,
+  );
   setSendEmailForServerTests(async () => {
     sends += 1;
   });
   await sendIntakeSubmissionDigest(expiredId);
   assert.equal(sends, 2);
+  await sendIntakeSubmissionDigest(expiredId);
+  assert.equal(
+    sends,
+    3,
+    "the expired original claim promotes and delivers its follow-up",
+  );
   secondInstance.setServerFirestoreForTests(null);
+});
+
+test("an expired in-flight claim cannot record delivery or continue after takeover", async (t) => {
+  const secondInstance =
+    await import("../authService.js?intake-expired-inflight-owner");
+  t.after(() => secondInstance.setServerFirestoreForTests(null));
+  const formId = `intake_expired_inflight_${++formCounter}`;
+  const churchId = `intake_expired_inflight_church_${formCounter}`;
+  const since = nowIso();
+  const db = createFirestore({
+    [COLLECTIONS.teamIntakeForms]: {
+      [formId]: {
+        formId,
+        churchId,
+        name: "Fall availability",
+        pendingDigestSince: since,
+        pendingDigestBatchId: "blocked-batch",
+        pendingDigestAttempts: {},
+      },
+    },
+    [COLLECTIONS.teamIntakeSubmissions]: {
+      first: {
+        submissionId: "first",
+        formId,
+        churchId,
+        firstName: "Avery",
+        submittedAt: since,
+        digestBatchId: "blocked-batch",
+      },
+    },
+  });
+  setServerFirestoreForTests(db);
+  secondInstance.setServerFirestoreForTests(db);
+  setIntakeNotifyRecipientsForServerTests([
+    "lead@example.test",
+    "other@example.test",
+  ]);
+  secondInstance.setIntakeNotifyRecipientsForServerTests([
+    "lead@example.test",
+    "other@example.test",
+  ]);
+  setIntakeDigestProviderTimeoutForServerTests(60_000);
+  secondInstance.setIntakeDigestProviderTimeoutForServerTests(60_000);
+
+  let releaseFirstSend;
+  let notifyFirstStarted;
+  const firstStarted = new Promise((resolve) => {
+    notifyFirstStarted = resolve;
+  });
+  const calls = [];
+  setSendEmailForServerTests(async (payload) => {
+    calls.push({ instance: "first", ...payload });
+    notifyFirstStarted();
+    await new Promise((resolve) => {
+      releaseFirstSend = resolve;
+    });
+  });
+  secondInstance.setSendEmailForServerTests(async (payload) => {
+    calls.push({ instance: "second", ...payload });
+  });
+
+  const first = sendIntakeSubmissionDigest(formId);
+  await firstStarted;
+  const currentForm = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  await setDoc(
+    COLLECTIONS.teamIntakeForms,
+    formId,
+    {
+      pendingDigestClaim: {
+        ...currentForm.pendingDigestClaim,
+        leaseUntil: Date.now() - 1,
+      },
+    },
+    { merge: true },
+  );
+  await secondInstance.sendIntakeSubmissionDigest(formId);
+  releaseFirstSend();
+  await first;
+
+  assert.deepEqual(
+    calls.map(({ instance, to }) => [instance, to]),
+    [
+      ["first", "lead@example.test"],
+      ["second", "lead@example.test"],
+      ["second", "other@example.test"],
+    ],
+    "the stale owner must not record success or proceed to its next recipient",
+  );
+  assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
+    null,
+  );
+});
+
+test("a bounded provider timeout aborts a blocked request for another instance to recover", async (t) => {
+  const secondInstance =
+    await import("../authService.js?intake-provider-timeout-recovery");
+  t.after(() => secondInstance.setServerFirestoreForTests(null));
+  const formId = `intake_timeout_recovery_${++formCounter}`;
+  const churchId = `intake_timeout_recovery_church_${formCounter}`;
+  const since = nowIso();
+  const db = createFirestore({
+    [COLLECTIONS.teamIntakeForms]: {
+      [formId]: {
+        formId,
+        churchId,
+        name: "Fall availability",
+        pendingDigestSince: since,
+        pendingDigestBatchId: "timeout-batch",
+        pendingDigestAttempts: {},
+      },
+    },
+    [COLLECTIONS.teamIntakeSubmissions]: {
+      first: {
+        submissionId: "first",
+        formId,
+        churchId,
+        firstName: "Avery",
+        submittedAt: since,
+        digestBatchId: "timeout-batch",
+      },
+    },
+  });
+  setServerFirestoreForTests(db);
+  secondInstance.setServerFirestoreForTests(db);
+  setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  secondInstance.setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  setIntakeDigestProviderTimeoutForServerTests(20);
+  secondInstance.setIntakeDigestProviderTimeoutForServerTests(20);
+
+  let signal;
+  let providerCalls = 0;
+  setSendEmailForServerTests((payload) => {
+    providerCalls += 1;
+    signal = payload.signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+    });
+  });
+  secondInstance.setSendEmailForServerTests(async () => {
+    providerCalls += 1;
+  });
+
+  await sendIntakeSubmissionDigest(formId);
+  assert.equal(signal.aborted, true);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestClaim,
+    null,
+  );
+  await secondInstance.sendIntakeSubmissionDigest(formId);
+
+  assert.equal(providerCalls, 2);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
+    null,
+  );
 });
 
 test("a committed submission survives a missed scheduler and transaction retry", async () => {

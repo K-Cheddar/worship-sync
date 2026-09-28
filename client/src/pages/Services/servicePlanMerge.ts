@@ -183,6 +183,30 @@ const mergeIdArray = (
       if (!baseIds.has(previous) || !baseIds.has(current)) addEdge(previous, current);
     }
   }
+  // Treat additions from one editor in the same surviving gap as a run. When
+  // both editors insert into that gap, keep each run contiguous and use a
+  // stable local-before-remote tie break instead of interleaving by array rank.
+  const insertionRuns = [local, remote].map((source) => {
+    const sequence = source.map((item) => item.id).filter((id) => allIds.has(id));
+    const runs = new Map<string, string[]>();
+    for (let index = 0; index < sequence.length; index += 1) {
+      const id = sequence[index];
+      if (baseIds.has(id)) continue;
+      let previousBase = index - 1;
+      while (previousBase >= 0 && !baseIds.has(sequence[previousBase])) previousBase -= 1;
+      let nextBase = index + 1;
+      while (nextBase < sequence.length && !baseIds.has(sequence[nextBase])) nextBase += 1;
+      const gap = `${sequence[previousBase] ?? ""}\u0000${sequence[nextBase] ?? ""}`;
+      const run = runs.get(gap) || [];
+      run.push(id);
+      runs.set(gap, run);
+    }
+    return runs;
+  });
+  for (const [gap, localRun] of insertionRuns[0]) {
+    const remoteRun = insertionRuns[1].get(gap);
+    if (localRun.length && remoteRun?.length) addEdge(localRun[localRun.length - 1], remoteRun[0]);
+  }
   const rank = new Map<string, number>();
   for (const sequence of [local.map((item) => item.id), remote.map((item) => item.id)]) {
     sequence.forEach((id, index) => {

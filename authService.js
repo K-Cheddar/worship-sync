@@ -889,47 +889,75 @@ const createEmailTags = (tags = {}) =>
 let sendEmailForServerTests = null;
 
 const sendEmail = async (payload = {}) => {
-  if (
-    process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
-    typeof sendEmailForServerTests === "function"
-  ) {
-    return sendEmailForServerTests(payload);
-  }
+  const { timeoutMs, ...emailPayload } = payload;
+  const controller = timeoutMs ? new AbortController() : null;
+  let timeoutHandle;
+  const send = async () => {
+    if (
+      process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+      typeof sendEmailForServerTests === "function"
+    ) {
+      return sendEmailForServerTests({
+        ...emailPayload,
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    }
 
-  const {
-    to,
-    subject,
-    textBody,
-    htmlBody,
-    tags = {},
-    replyTo,
-    fromEmail,
-    idempotencyKey,
-  } = payload;
-  if (resendClient && resendFromEmail) {
-    const resendPayload = {
-      from: fromEmail || resendNotificationFromEmail || resendFromEmail,
-      to: [to],
+    const {
+      to,
       subject,
-      text: textBody,
-      html: htmlBody,
-      tags: createEmailTags(tags),
-    };
-    const normalizedReplyTo = String(replyTo || "").trim();
-    if (normalizedReplyTo) {
-      resendPayload.reply_to = normalizedReplyTo;
+      textBody,
+      htmlBody,
+      tags = {},
+      replyTo,
+      fromEmail,
+      idempotencyKey,
+    } = emailPayload;
+    if (resendClient && resendFromEmail) {
+      const resendPayload = {
+        from: fromEmail || resendNotificationFromEmail || resendFromEmail,
+        to: [to],
+        subject,
+        text: textBody,
+        html: htmlBody,
+        tags: createEmailTags(tags),
+      };
+      const normalizedReplyTo = String(replyTo || "").trim();
+      if (normalizedReplyTo) {
+        resendPayload.reply_to = normalizedReplyTo;
+      }
+      const response = await resendClient.emails.send(
+        resendPayload,
+        idempotencyKey || controller
+          ? {
+              ...(idempotencyKey ? { idempotencyKey } : {}),
+              ...(controller ? { signal: controller.signal } : {}),
+            }
+          : undefined,
+      );
+      if (response.error) {
+        throw new Error(response.error.message || "Could not send email.");
+      }
+      return response.data || null;
     }
-    const response = await resendClient.emails.send(
-      resendPayload,
-      idempotencyKey ? { idempotencyKey } : undefined,
-    );
-    if (response.error) {
-      throw new Error(response.error.message || "Could not send email.");
-    }
-    return response.data || null;
+    logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
+    return null;
+  };
+
+  if (!timeoutMs) return send();
+  const timeout = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort();
+      const error = new Error("Email provider request timed out.");
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([send(), timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-  logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
-  return null;
 };
 
 const buildPairingSetupUrl = (kind, token) => {
@@ -3164,6 +3192,16 @@ export const setSendEmailForServerTests = (fn) => {
   sendEmailForServerTests = typeof fn === "function" ? fn : null;
 };
 
+export const setIntakeDigestProviderTimeoutForServerTests = (timeoutMs) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeDigestProviderTimeoutForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  intakeDigestProviderTimeoutForServerTests =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : null;
+};
+
 export const setIntakeNotifyRecipientsForServerTests = (recipients) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
@@ -5293,9 +5331,12 @@ const INTAKE_DIGEST_RECOVERY_INTERVAL_MS = 60 * 1000;
 const INTAKE_DIGEST_RECOVERY_BATCH_LIMIT = 100;
 const INTAKE_DIGEST_MAX_ATTEMPTS = 3;
 const INTAKE_DIGEST_LEASE_MS = 5 * 60 * 1000;
+const INTAKE_DIGEST_PROVIDER_TIMEOUT_MS = 4 * 60 * 1000;
+const INTAKE_DIGEST_SUBMISSION_PAGE_SIZE = 500;
 const intakeDigestTimers = new Map();
 const intakeDigestInFlight = new Set();
 let intakeNotifyRecipientsForServerTests = null;
+let intakeDigestProviderTimeoutForServerTests = null;
 let intakeDigestSchedulingFailureForServerTests = false;
 let intakeDigestRecoveryTimer = null;
 let intakeDigestRecoveryInFlight = false;
@@ -5308,7 +5349,9 @@ let intakeDigestRecoveryCursor = null;
  * together.
  */
 const prepareIntakeSubmissionBatch = (form, submission) => {
-  const claimed = Boolean(form.pendingDigestClaim?.queryStarted);
+  const claimed = Boolean(
+    form.pendingDigestBatchClosed || form.pendingDigestClaim?.queryStarted,
+  );
   const batchIdField = claimed
     ? "pendingDigestNextBatchId"
     : "pendingDigestBatchId";
@@ -5418,6 +5461,9 @@ const claimIntakeDigest = async (formId) => {
       batchId: form.pendingDigestBatchId || form.pendingDigestSince,
       since: form.pendingDigestSince,
       attempts: form.pendingDigestAttempts || {},
+      queryStarted: Boolean(
+        form.pendingDigestBatchClosed || form.pendingDigestClaim?.queryStarted,
+      ),
       legacy: Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
       leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
     };
@@ -5448,6 +5494,9 @@ const claimIntakeDigest = async (formId) => {
         Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
       leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
     };
+    claim.queryStarted = Boolean(
+      claim.queryStarted || form.pendingDigestBatchClosed,
+    );
     transaction.update(ref, { pendingDigestClaim: claim });
     return claim;
   });
@@ -5460,6 +5509,7 @@ const markIntakeDigestQueryStarted = async (formId, claim) => {
     if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
     await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
       pendingDigestClaim: { ...form.pendingDigestClaim, queryStarted: true },
+      pendingDigestBatchClosed: true,
     });
     return true;
   }
@@ -5471,6 +5521,7 @@ const markIntakeDigestQueryStarted = async (formId, claim) => {
     if (current?.claimId !== claim.claimId) return false;
     transaction.update(ref, {
       pendingDigestClaim: { ...current, queryStarted: true },
+      pendingDigestBatchClosed: true,
     });
     return true;
   });
@@ -5523,6 +5574,7 @@ const finishIntakeDigestClaim = async (
     return {
       pendingDigestSince: nextSince,
       pendingDigestBatchId: nextSince ? form.pendingDigestNextBatchId : null,
+      pendingDigestBatchClosed: false,
       pendingDigestAttempts: nextSince
         ? form.pendingDigestNextAttempts || {}
         : {},
@@ -5571,6 +5623,76 @@ const finishIntakeDigestClaim = async (
   }
 };
 
+const queryIntakeDigestSubmissions = async (formId, claim) => {
+  const filters = [{ field: "formId", value: formId }];
+  if (!claim.legacy) {
+    filters.push({ field: "digestBatchId", value: claim.batchId });
+  }
+  const db = requireFirestore();
+  if (!db) {
+    return queryDocs(COLLECTIONS.teamIntakeSubmissions, filters, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  let query = db.collection(COLLECTIONS.teamIntakeSubmissions);
+  for (const filter of filters) {
+    query = query.where(filter.field, "==", filter.value);
+  }
+  const submissions = [];
+  let cursor = null;
+  while (true) {
+    let pageQuery = query
+      .orderBy(FieldPath.documentId())
+      .limit(INTAKE_DIGEST_SUBMISSION_PAGE_SIZE);
+    if (cursor) pageQuery = pageQuery.startAfter(cursor);
+    const snapshot = await pageQuery.get();
+    submissions.push(
+      ...snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    );
+    if (snapshot.docs.length < INTAKE_DIGEST_SUBMISSION_PAGE_SIZE) break;
+    cursor = snapshot.docs.at(-1);
+  }
+  return submissions;
+};
+
+const recordIntakeDigestDelivery = async (
+  formId,
+  claim,
+  ledgerId,
+  delivery,
+) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await setDoc(COLLECTIONS.notificationDeliveries, ledgerId, delivery, {
+      merge: true,
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const deliveryRef = db
+      .collection(COLLECTIONS.notificationDeliveries)
+      .doc(ledgerId);
+    const [formSnapshot, deliverySnapshot] = await Promise.all([
+      transaction.get(formRef),
+      transaction.get(deliveryRef),
+    ]);
+    if (
+      !formSnapshot.exists ||
+      formSnapshot.data().pendingDigestClaim?.claimId !== claim.claimId
+    ) {
+      return false;
+    }
+    if (!deliverySnapshot.exists) {
+      transaction.set(deliveryRef, delivery, { merge: true });
+    }
+    return true;
+  });
+};
+
 const sendIntakeSubmissionDigestInner = async (formId) => {
   const claim = await claimIntakeDigest(formId);
   if (!claim) return;
@@ -5589,16 +5711,7 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
     return;
   }
   if (!(await markIntakeDigestQueryStarted(formId, claim))) return;
-  const allSubmissions = await queryDocs(
-    COLLECTIONS.teamIntakeSubmissions,
-    [
-      { field: "formId", value: formId },
-      ...(!claim.legacy
-        ? [{ field: "digestBatchId", value: claim.batchId }]
-        : []),
-    ],
-    { limit: 500 },
-  );
+  const allSubmissions = await queryIntakeDigestSubmissions(formId, claim);
   const batchSubmissions = allSubmissions.filter((submission) =>
     claim.legacy
       ? (submission.submittedAt || "") >= since &&
@@ -5664,11 +5777,17 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
         htmlBody: html,
         tags: { type: "intake_digest" },
         idempotencyKey: `intake-digest/${ledgerId}`,
+        timeoutMs:
+          intakeDigestProviderTimeoutForServerTests ||
+          INTAKE_DIGEST_PROVIDER_TIMEOUT_MS,
       });
-      // Record only after provider success, so ordinary retries never resend
-      // recipients whose delivery was already accepted.
-      await setDoc(
-        COLLECTIONS.notificationDeliveries,
+      // A timeout or process stop can leave provider acceptance unknown.
+      // Resend honors this stable key for up to 24 hours; after that the
+      // provider outcome cannot be recovered from our delivery ledger alone.
+      // Record success only while this worker still owns the claim.
+      const recorded = await recordIntakeDigestDelivery(
+        formId,
+        claim,
         ledgerId,
         {
           deliveryKey: key,
@@ -5679,8 +5798,11 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
           churchId: form.churchId,
           createdAt: nowIso(),
         },
-        { merge: true },
       );
+      if (!recorded) {
+        lostClaim = true;
+        break;
+      }
       successful.push(to);
       delete attempts[attemptKey];
       logAuthEvent("info", "intake.digest.delivery_succeeded", { formId });

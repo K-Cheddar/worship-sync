@@ -31,6 +31,9 @@ export const formatCanvaImportError = (
   if (code === "CHURCH_STORAGE_MUTATION_IN_PROGRESS") {
     return "Another upload is updating this file. Wait for it to finish, then try again.";
   }
+  if (code === "CANVA_MEDIA_RECONCILIATION_REQUIRED") {
+    return message || "Canva media references need reconciliation. Both provider files were kept; reload Media before continuing.";
+  }
   if (
     code === "CANVA_RATE_LIMITED" ||
     code === "CANVA_EXPORT_RATE_LIMITED" ||

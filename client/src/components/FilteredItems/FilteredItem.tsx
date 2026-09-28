@@ -4,13 +4,18 @@ import Button from "../Button/Button";
 import { ServiceItem } from "../../types";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { cn } from "../../utils/cnHelper";
+import {
+  getItemTypeLabel,
+  iconColorMap,
+  svgMap,
+} from "../../utils/itemTypeMaps";
 import { filteredItemsListType } from "./FilteredItems";
 import HighlightWords from "./HighlightWords";
 
 export const FILTERED_ITEM_GRID_COLUMNS =
-  "grid gap-1 grid-cols-[minmax(0,1fr)_auto] md:gap-2 md:grid-cols-[minmax(0,1fr)_20rem]";
+  "grid gap-1 grid-cols-[44px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[44px_minmax(0,1fr)_15rem]";
 export const FILTERED_SONG_GRID_COLUMNS =
-  "grid gap-1 grid-cols-[minmax(0,1fr)_auto] md:gap-2 md:grid-cols-[minmax(0,1fr)_18rem_20rem]";
+  "grid gap-1 grid-cols-[44px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[44px_minmax(0,1fr)_13rem_21rem]";
 
 type FilteredItemProps = {
   index: number;
@@ -82,6 +87,8 @@ const FilteredItem = ({
 
   const matchedWords = item.matchedWords;
   const showWordsSection = showWords && matchedWords;
+  const ItemTypeIcon = svgMap.get(item.type);
+  const itemTypeLabel = getItemTypeLabel(item.type);
 
   return (
     <div
@@ -99,16 +106,33 @@ const FilteredItem = ({
             : FILTERED_ITEM_GRID_COLUMNS,
         )}
       >
+        <span
+          className={cn(
+            "col-start-1 row-start-1 flex min-w-0 items-center justify-center",
+            showArtistColumn && "row-span-2 md:row-span-1",
+          )}
+          role="img"
+          aria-label={itemTypeLabel}
+          title={itemTypeLabel}
+        >
+          {ItemTypeIcon ? (
+            <ItemTypeIcon
+              size={18}
+              color={iconColorMap.get(item.type)}
+              aria-hidden="true"
+            />
+          ) : null}
+        </span>
         <div
           className={cn(
-            "col-start-1 row-start-1 flex w-full min-w-0 items-start justify-between gap-2 md:flex-1 md:justify-start md:pr-0",
+            "col-start-2 row-start-1 flex w-full min-w-0 items-start justify-between gap-2 md:justify-start md:pr-0",
           )}
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5" title={item.name}>
             <HighlightWords
               searchValue={searchValue}
               string={item.name.trimStart()}
-              className="text-base"
+              className="text-base md:flex-nowrap md:truncate"
               highlightWordColor={showWords ? "text-white" : "text-orange-400"}
               nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
               allowPartial
@@ -127,7 +151,7 @@ const FilteredItem = ({
         </div>
         {showArtistColumn ? (
           <p
-            className="col-start-1 row-start-2 min-w-0 justify-self-start truncate text-left text-sm text-gray-400 md:col-start-2 md:row-start-1"
+            className="col-start-2 row-start-2 min-w-0 justify-self-start truncate text-left text-sm text-gray-400 md:col-start-3 md:row-start-1"
             title={artistName || "No artist listed"}
           >
             {artistName || "—"}
@@ -135,10 +159,10 @@ const FilteredItem = ({
         ) : null}
         <div
           className={cn(
-            "col-start-2 row-start-1 flex flex-wrap items-center gap-2",
+            "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-2",
             showArtistColumn
-              ? "md:col-start-3 md:row-start-1 md:flex-nowrap"
-              : "md:col-start-2 md:row-start-1 md:flex-nowrap",
+              ? "md:col-start-4 md:row-start-1 md:flex-nowrap md:justify-self-end"
+              : "md:col-start-3 md:row-start-1 md:flex-nowrap md:justify-self-end",
           )}
         >
           {matchedWords && (

@@ -10,6 +10,7 @@ export type CanvaAssetLifecycle =
   | "unprocessed"
   | "processing"
   | "committed"
+  | "reconciliation-required"
   | "failed"
   | "cleanup-pending"
   | "cleaned";
@@ -76,7 +77,11 @@ export async function cleanupCanvaAssetsByLifecycle(
 ): Promise<CanvaImportedAsset[]> {
   const failed: CanvaImportedAsset[] = [];
   for (let index = 0; index < assets.length; index += 1) {
-    if (lifecycle[index] === "committed" || lifecycle[index] === "cleaned") continue;
+    if (
+      lifecycle[index] === "committed" ||
+      lifecycle[index] === "cleaned" ||
+      lifecycle[index] === "reconciliation-required"
+    ) continue;
     lifecycle[index] = "cleanup-pending";
     try {
       if (await cleanupAsset(assets[index])) lifecycle[index] = "cleaned";

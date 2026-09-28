@@ -78,18 +78,22 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
     }));
     const reconciled = applyReviewedServicePlanParts(active.element, resolvedParts);
     const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);
+    const mappingKeys = new Map((ambiguity.songMappings || []).map((mapping, index) => [
+      mapping,
+      `${active.element.id}:${mapping.mappingId || JSON.stringify([mapping.sourceFingerprint, mapping.candidateOccurrenceIds, index])}`,
+    ]));
     const nextSongs = currentSongs.map((song) => {
       const mapping = (ambiguity.songMappings || []).find((candidate) =>
         candidate.candidateOccurrenceIds.includes(song.id || "") &&
-        songChoicesByMapping[`${active.element.id}:${candidate.sourceFingerprint}`] === song.id,
+        songChoicesByMapping[mappingKeys.get(candidate)!] === song.id,
       );
-      return mapping ? mapping.incoming : song;
+      return mapping ? { ...mapping.incoming, ...(song.id ? { id: song.id } : {}) } : song;
     });
     const nextAmbiguity: ServicePlanImportAmbiguity = {
       ...ambiguity,
       parts: reconciled.parts,
       songMappings: ambiguity.songMappings?.map((mapping) => {
-        const occurrenceId = songChoicesByMapping[`${active.element.id}:${mapping.sourceFingerprint}`];
+        const occurrenceId = songChoicesByMapping[mappingKeys.get(mapping)!];
         return {
           ...mapping,
           resolution: occurrenceId
@@ -139,8 +143,8 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
                 />
               </div>
             ))}
-          {(ambiguity.songMappings || []).map((mapping) => {
-            const mappingKey = `${active.element.id}:${mapping.sourceFingerprint}`;
+          {(ambiguity.songMappings || []).map((mapping, index) => {
+            const mappingKey = `${active.element.id}:${mapping.mappingId || JSON.stringify([mapping.sourceFingerprint, mapping.candidateOccurrenceIds, index])}`;
             const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);
             const choices = currentSongs.filter((song) => mapping.candidateOccurrenceIds.includes(song.id || ""));
             return (

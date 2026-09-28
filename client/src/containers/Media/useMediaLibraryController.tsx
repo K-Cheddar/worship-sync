@@ -116,6 +116,7 @@ import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import { getCanvaMediaSource, hasValidCanvaRefreshMetadata } from "./canvaMediaSource";
 import {
+  hasSupersededMediaReferences,
   replaceMediaReferencesForReplacement,
 } from "../../utils/mediaReferenceSweep";
 import { commitCanvaMediaReplacement } from "../../utils/canvaMediaReplacement";
@@ -1157,6 +1158,8 @@ export function useMediaLibraryController({
         folders,
         replaceReferences: async (replacement) =>
           replaceMediaReferencesForReplacement(db, replacement),
+        hasSupersededReferences: async (from, to) =>
+          hasSupersededMediaReferences(db, from, to),
         flushMedia: (nextList, nextFolders) =>
           flushMediaLibraryDocToPouch(db, nextList, nextFolders, () => ({
             list: store.getState().media.list,

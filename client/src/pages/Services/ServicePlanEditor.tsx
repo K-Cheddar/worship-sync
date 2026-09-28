@@ -966,7 +966,7 @@ const ServicePlanEditor = ({
 
   const autosave = useServicePlanAutosave({
     enabled: Boolean(canEdit && churchId && sections),
-    resetKey: `${userId || ""}:${planKey}`,
+    resetKey: editorIdentityKey,
     changeVersion: draftChangeVersion,
     // The previous occurrence's plan stays in state until its fetch effect
     // clears it. Feeding that revision in as the new plan's base is what

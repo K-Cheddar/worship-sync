@@ -49,6 +49,7 @@ import {
   type CanvaImportedAsset,
 } from "../../utils/canvaImportCleanup";
 import { formatCanvaImportError } from "../../utils/canvaImportError";
+import { CanvaMediaReconciliationRequiredError } from "../../utils/canvaMediaReplacement";
 import { useTransfers } from "../../context/transferContext";
 
 type Props = {
@@ -530,10 +531,15 @@ const CanvaImportSheet = ({
             return { importedCount: includeCustomItem ? pagesToUse.length : importedCount, ...customResult, ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
           } catch (error) {
             assetLifecycle.forEach((state, index) => {
-              if (state === "processing") assetLifecycle[index] = "failed";
+              if (state === "processing") {
+                assetLifecycle[index] = error instanceof CanvaMediaReconciliationRequiredError
+                  ? "reconciliation-required"
+                  : "failed";
+              }
             });
             let cleanupFailures = result.assets.filter((_, index) =>
-              assetLifecycle[index] !== "committed" && assetLifecycle[index] !== "cleaned",
+              assetLifecycle[index] !== "committed" && assetLifecycle[index] !== "cleaned" &&
+              assetLifecycle[index] !== "reconciliation-required",
             );
             if (onUnprocessedAssetCleanup) {
               cleanupFailures = await cleanupCanvaAssetsByLifecycle(

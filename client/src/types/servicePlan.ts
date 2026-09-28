@@ -140,6 +140,8 @@ export type ServicePlanImportAmbiguity = {
   songMappings?: Array<{
     incoming: Extract<ServicePlanSongReference, { kind: "pending" }>;
     candidateOccurrenceIds: string[];
+    /** Stable within this source song occurrence; legacy records may omit it. */
+    mappingId?: string;
     sourceFingerprint: string;
     resolution?: { kind: "keep" } | { kind: "replace"; occurrenceId: string };
   }>;

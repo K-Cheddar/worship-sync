@@ -10,6 +10,10 @@ import {
 } from "react-router-dom";
 
 import FilteredItems from "./FilteredItems";
+import {
+  FILTERED_ITEM_GRID_COLUMNS,
+  FILTERED_SONG_GRID_COLUMNS,
+} from "./FilteredItem";
 import { createItemSlice, initialCreateItemState } from "../../store/createItemSlice";
 import { createMockControllerContext, createMockGlobalContext } from "../../test/mocks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -89,6 +93,185 @@ describe("FilteredItems", () => {
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
     window.localStorage.removeItem("worshipsync_presentation_controller_mode");
+  });
+
+  it.each([
+    { type: "song", label: "song", name: "Song title" },
+    { type: "free", label: "custom item", name: "Custom title" },
+    { type: "timer", label: "timer", name: "Timer title" },
+  ])("shows the type column and accessible $type icon", async ({ type, label, name }) => {
+    const item = {
+      _id: `${type}-1`,
+      name,
+      type,
+      listId: `${type}-1`,
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type={type}
+                heading={type}
+                label={label}
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    });
+    expect(screen.getByText("Type")).toBeInTheDocument();
+    expect(screen.getByText("Type")).toHaveClass("justify-self-center");
+    expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: label })).toHaveAttribute(
+      "title",
+      label,
+    );
+    expect(screen.getByRole("img", { name: label })).toHaveClass(
+      "justify-center",
+    );
+    expect(screen.getByTitle(name)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
+  });
+
+  it("keeps the type column fixed while songs show artist metadata below the name on narrow layouts", async () => {
+    const song = {
+      _id: "song-with-artist",
+      name: "Song with artist",
+      type: "song",
+      listId: "song-with-artist",
+    } as any;
+    const songDoc = {
+      ...song,
+      songMetadata: { artistName: "Traditional" },
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[songDoc]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("44px_minmax(0,1fr)_9rem");
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("md:grid-cols-[44px_minmax(0,1fr)_15rem]");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("44px_minmax(0,1fr)_9rem");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("13rem_21rem");
+    await waitFor(() => {
+      expect(screen.getByText("Traditional")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("img", { name: "song" })).toHaveClass(
+      "row-span-2",
+      "md:row-span-1",
+    );
+  });
+
+  it("keeps a readable fallback when song artist metadata is missing", async () => {
+    const song = {
+      _id: "song-without-artist",
+      name: "Song without artist",
+      type: "song",
+      listId: "song-without-artist",
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("—")).toHaveAttribute("title", "No artist listed");
+    });
+  });
+
+  it("keeps the type icon visible when a virtualized lyric match expands", async () => {
+    const song = {
+      _id: "song-lyric-match",
+      name: "Song title",
+      type: "song",
+      listId: "song-lyric-match",
+    } as any;
+    const songDoc = {
+      ...song,
+      arrangements: [
+        { formattedLyrics: [{ words: "The Lord is my shepherd" }] },
+      ],
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[songDoc]}
+                searchValue="shepherd"
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("shepherd")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
   });
 
   it("removes an attached MP3 from storage after deleting its song document", async () => {

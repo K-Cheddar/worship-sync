@@ -18,6 +18,14 @@ const media = (overrides: Partial<MediaType> = {}) =>
     background: "https://cdn.example/old.png",
     thumbnail: "https://cdn.example/old-thumb.png",
     source: "cloudinary",
+    canvaImportKey: "canva:DAF_design_1:rev:100:png:1",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Welcome",
+      revision: 100,
+      format: "png",
+      pageNumbers: [1],
+    },
     ...overrides,
   }) as MediaType;
 
@@ -28,15 +36,25 @@ const createArgs = (overrides: Partial<Parameters<typeof commitCanvaMediaReplace
     thumbnail: "https://cdn.example/new-thumb.png",
     publicId: "new-public-id",
     updatedAt: "2026-01-03T00:00:00.000Z",
+    canvaImportKey: "canva:DAF_design_1:rev:101:png:1",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Welcome",
+      revision: 101,
+      format: "png",
+      pageNumbers: [1],
+    },
   });
   const events: string[] = [];
   const appliedLists: MediaType[][] = [];
+  let persistedState = { list: [oldMedia], folders: [] as [] };
+  let liveList = [oldMedia];
   return {
     oldMedia,
     newMedia,
     currentList: [oldMedia],
     folders: [],
-    readPersistedMedia: async () => ({ list: [oldMedia], folders: [] }),
+    readPersistedMedia: async () => persistedState,
     replaceReferences: async (replacement: { oldMedia: MediaType; newMedia: MediaType }) => {
       events.push(
         replacement.oldMedia.publicId === oldMedia.publicId &&
@@ -46,15 +64,18 @@ const createArgs = (overrides: Partial<Parameters<typeof commitCanvaMediaReplace
       );
       return { ok: true, rollbackStatus: "not_needed" };
     },
-    flushMedia: async () => {
+    hasSupersededReferences: async () => false,
+    flushMedia: async (list: MediaType[], folders: []) => {
       events.push("media");
+      persistedState = { list, folders };
       return { ok: true };
     },
     deleteProvider: async (row: MediaType) => {
       events.push(row.publicId === oldMedia.publicId ? "old-provider" : "new-provider");
       return true;
     },
-    applyList: (list: MediaType[]) => appliedLists.push(list),
+    applyList: (list: MediaType[]) => { appliedLists.push(list); liveList = list; },
+    getCurrentList: () => liveList,
     applyLiveReferences: () => events.push("live"),
     onCleanupFailure: () => events.push("cleanup-retry"),
     events,
@@ -139,6 +160,16 @@ test("keeps a refreshed Mux rendition active when old-asset cleanup fails", asyn
   expect(args.appliedLists[0][0].muxAssetId).toBe("new-mux-asset");
 });
 
+test("does not turn a confirmed replacement into a failed import when cleanup throws", async () => {
+  const args = createArgs({
+    deleteProvider: async () => { throw new Error("provider unavailable"); },
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).resolves.toBeUndefined();
+  expect(args.events).toContain("live");
+  expect(args.events).toContain("cleanup-retry");
+});
+
 test("cleans up the new provider when reference rollback succeeds", async () => {
   const args = createArgs({
     replaceReferences: async (replacement: { oldMedia: MediaType; newMedia: MediaType }) => {
@@ -196,7 +227,7 @@ test("retains the new provider when reverse reference migration is uncertain", a
   });
 
   await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(
-    "reconciliation is required",
+    "Reload Media",
   );
   expect(args.events).not.toContain("new-provider");
   expect(args.events).not.toContain("old-provider");
@@ -212,7 +243,7 @@ test("reconciles a Media write that committed despite a failed acknowledgement",
 
   await expect(commitCanvaMediaReplacement(args)).resolves.toBeUndefined();
   expect(args.events).toEqual([
-    "references", "rollback-references", "references", "live", "old-provider",
+    "references", "references", "live", "old-provider",
   ]);
   expect(args.appliedLists.at(-1)).toEqual([args.newMedia]);
 });
@@ -222,6 +253,14 @@ test("keeps both provider assets and preserves concurrent Media changes during r
     background: "https://cdn.example/newer.png",
     publicId: "newer-public-id",
     updatedAt: "2026-01-04T00:00:00.000Z",
+    canvaImportKey: "canva:DAF_design_1:rev:102:png:1",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Welcome",
+      revision: 102,
+      format: "png",
+      pageNumbers: [1],
+    },
   });
   const concurrentUpload = media({ id: "ordinary-upload", publicId: "upload-public-id" });
   let liveList: MediaType[] = [media()];
@@ -241,7 +280,7 @@ test("keeps both provider assets and preserves concurrent Media changes during r
     readPersistedMedia: async () => ({ list: [newerMedia, concurrentUpload], folders: [] }),
   });
 
-  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("both provider assets were kept");
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(/both files were kept/i);
 
   expect(args.appliedLists.at(-1)).toEqual([newerMedia, concurrentUpload]);
   expect(args.events).not.toContain("old-provider");
@@ -254,6 +293,14 @@ test("does not delete either asset when a newer Media revision lands during pers
     background: "https://cdn.example/newer.png",
     publicId: "newer-public-id",
     updatedAt: "2026-01-04T00:00:00.000Z",
+    canvaImportKey: "canva:DAF_design_1:rev:102:png:1",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Welcome",
+      revision: 102,
+      format: "png",
+      pageNumbers: [1],
+    },
   });
   const ordinaryUpload = media({ id: "ordinary-upload", publicId: "upload-public-id" });
   let liveList: MediaType[] = [media()];
@@ -269,8 +316,69 @@ test("does not delete either asset when a newer Media revision lands during pers
     },
   });
 
-  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("Both provider assets were kept");
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow(/both files were kept/i);
   expect(liveList).toEqual([newerMedia, ordinaryUpload]);
   expect(args.events).not.toContain("old-provider");
   expect(args.events).not.toContain("new-provider");
+});
+
+test("does not assume a different provider identity is a newer Canva revision", async () => {
+  const unrelatedRevision = media({
+    background: "https://cdn.example/unrelated.png",
+    publicId: "unrelated-public-id",
+    updatedAt: "2026-01-05T00:00:00.000Z",
+  });
+  const args = createArgs({
+    flushMedia: async () => ({ ok: false, error: new Error("write conflict") }),
+    readPersistedMedia: async () => ({ list: [unrelatedRevision], folders: [] }),
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("Reload Media");
+  expect(args.events).not.toContain("live");
+  expect(args.events).not.toContain("old-provider");
+  expect(args.events).not.toContain("new-provider");
+});
+
+test("keeps both providers when persisted Media cannot be read after a failed write", async () => {
+  const args = createArgs({
+    flushMedia: async () => ({ ok: false, error: new Error("write failed") }),
+    readPersistedMedia: async () => { throw new Error("database unavailable"); },
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("Reload Media");
+  expect(args.events).not.toContain("live");
+  expect(args.events).not.toContain("old-provider");
+  expect(args.events).not.toContain("new-provider");
+});
+
+test("does not apply live references when a confirmed new rendition cannot be verified", async () => {
+  const args = createArgs({
+    flushMedia: async () => ({ ok: false, error: new Error("acknowledgement lost") }),
+    readPersistedMedia: async () => ({ list: [args.newMedia], folders: [] }),
+    hasSupersededReferences: async () => true,
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("Reload Media");
+  expect(args.appliedLists.at(-1)).toEqual([args.newMedia]);
+  expect(args.events).not.toContain("live");
+  expect(args.events).not.toContain("old-provider");
+  expect(args.events).not.toContain("new-provider");
+});
+
+test("a second reconciliation attempt can verify the persisted new rendition", async () => {
+  let verificationAttempts = 0;
+  const args = createArgs({
+    flushMedia: async () => ({ ok: false, error: new Error("acknowledgement lost") }),
+    readPersistedMedia: async () => ({ list: [args.newMedia], folders: [] }),
+    hasSupersededReferences: async () => ++verificationAttempts === 1,
+  });
+
+  await expect(commitCanvaMediaReplacement(args)).rejects.toThrow("Reload Media");
+  expect(args.events).not.toContain("old-provider");
+  expect(args.events).not.toContain("new-provider");
+
+  args.hasSupersededReferences = async () => false;
+  await expect(commitCanvaMediaReplacement(args)).resolves.toBeUndefined();
+  expect(args.events.filter((event) => event === "live")).toHaveLength(1);
+  expect(args.events.filter((event) => event === "old-provider")).toHaveLength(1);
 });

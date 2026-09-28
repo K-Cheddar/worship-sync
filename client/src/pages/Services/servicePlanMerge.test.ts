@@ -63,6 +63,48 @@ describe("mergeServicePlan", () => {
     expect(result.plan.sections[0].elements.map(({ id }) => id)).toEqual(["a", "local", "b", "remote", "c", "d"]);
   });
 
+  it("orders same-position insertions deterministically and keeps consecutive additions together", () => {
+    const base = plan([section([element("a", "A"), element("b", "B")])]);
+    const local = plan([section([element("a", "A"), element("local-1", "L1"), element("local-2", "L2"), element("b", "B")])]);
+    const remote = plan([section([element("a", "A"), element("remote", "R"), element("b", "B")])]);
+    const result = mergeServicePlan(base, local, remote);
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.plan.sections[0].elements.map(({ id }) => id)).toEqual([
+      "a", "local-1", "local-2", "remote", "b",
+    ]);
+  });
+
+  it("keeps an insertion near its surviving anchor when another editor reorders elsewhere", () => {
+    const base = plan([section([element("a", "A"), element("b", "B"), element("c", "C"), element("d", "D")])]);
+    const local = plan([section([element("a", "A"), element("x", "X"), element("b", "B"), element("c", "C"), element("d", "D")])]);
+    const remote = plan([section([element("d", "D"), element("a", "A"), element("b", "B"), element("c", "C")])]);
+    const result = mergeServicePlan(base, local, remote);
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.plan.sections[0].elements.map(({ id }) => id)).toEqual(["d", "a", "x", "b", "c"]);
+  });
+
+  it("places an insertion beside surviving items when its original anchor was deleted", () => {
+    const base = plan([section([element("a", "A"), element("b", "B"), element("c", "C")])]);
+    const local = plan([section([element("a", "A"), element("x", "X"), element("c", "C")])]);
+    const remote = plan([section([element("a", "A"), element("c", "C")])]);
+    const result = mergeServicePlan(base, local, remote);
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.plan.sections[0].elements.map(({ id }) => id)).toEqual(["a", "x", "c"]);
+  });
+
+  it("combines disjoint reorderings from both editors", () => {
+    const base = plan([section([element("a", "A"), element("b", "B"), element("c", "C"), element("d", "D")])]);
+    const local = plan([section([element("b", "B"), element("a", "A"), element("c", "C"), element("d", "D")])]);
+    const remote = plan([section([element("a", "A"), element("b", "B"), element("d", "D"), element("c", "C")])]);
+    const result = mergeServicePlan(base, local, remote);
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.plan.sections[0].elements.map(({ id }) => id)).toEqual(["b", "a", "d", "c"]);
+  });
+
   it("requires a decision for incompatible reorderings and merges nested ID records", () => {
     const base = plan([section([
       { ...element("e1", "Welcome"), teamNotes: [{ id: "n1", label: "Band", note: plainTextToRichText("old") }] },
