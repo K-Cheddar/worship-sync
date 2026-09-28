@@ -40,6 +40,9 @@ const stableStringify = (value: unknown): string => {
 export const servicePlanResourceFingerprint = (resource: ServicePlanContentResource): string =>
   stableStringify(resource);
 
+export const servicePlanNoteFingerprint = (block: { id?: string; [key: string]: unknown }): string =>
+  stableStringify(block);
+
 const scriptureFingerprint = (reference: { label: string; book: string; chapter: string; verseRange: string; version: string }) =>
   JSON.stringify({ label: reference.label, book: reference.book, chapter: reference.chapter, verseRange: reference.verseRange, version: reference.version });
 
@@ -78,7 +81,7 @@ export const applyReviewedServicePlanParts = (
       );
     } else if (managed.kind === "note") {
       notes.blocks = notes.blocks.filter((block) =>
-        block.id !== managed.id || stableStringify(block) !== managed.fingerprint,
+        block.id !== managed.id || servicePlanNoteFingerprint(block) !== managed.fingerprint,
       );
     }
   };
@@ -200,6 +203,7 @@ export const reconcileReviewedServicePlanParts = (
   const incomingParts = (nextAmbiguity?.parts || []).map((part) => ({ ...part }));
   const processedOld = new Set<number>();
   const processedIncoming = new Set<number>();
+  const blockedSourceFields = new Set<string>();
 
   const removeExact = (part: Part) => {
     const managed = part.managed;
@@ -223,7 +227,7 @@ export const reconcileReviewedServicePlanParts = (
     if (managed.kind === "note") {
       const blocks = next.notes?.blocks || [];
       const match = blocks.find((block) => block.id === managed.id);
-      if (!match || stableStringify(match) !== managed.fingerprint) return false;
+      if (!match || servicePlanNoteFingerprint(match) !== managed.fingerprint) return false;
       next.notes = { blocks: blocks.filter((block) => block !== match) };
       return true;
     }
@@ -284,7 +288,9 @@ export const reconcileReviewedServicePlanParts = (
     if ((part.kind === "description" || part.kind === "url") && (part.destination === "resource" || part.destination === "content")) {
       const incomingResource = (incoming.resources || []).find((resource) =>
         resource.url === part.value || (resource.type === "text" && richTextToPlainText(getServicePlanResourceText(resource)) === part.value),
-      );
+      ) || (part.kind === "url" && part.destination === "resource"
+        ? createServicePlanLinkResource({ title: part.value, url: part.value })
+        : undefined);
       if (!incomingResource) return part;
       const id = part.managed?.kind === "resource" ? part.managed.id : incomingResource.id;
       const resource = { ...incomingResource, id };
@@ -314,18 +320,25 @@ export const reconcileReviewedServicePlanParts = (
     processedOld.add(oldIndex);
     processedIncoming.add(incomingIndex);
     const managed = oldPart.managed;
-    if (!managed) return;
+    if (!managed) {
+      if (oldPart.value !== freshPart.value || oldPart.destination !== freshPart.destination) {
+        conflict = true;
+        blockedSourceFields.add(oldPart.sourceField || "title");
+      }
+      return;
+    }
     const valid = managed.kind === "scripture"
       ? getServicePlanElementScriptureRefs(next).some((ref) => ref.id === managed.id && scriptureFingerprint(ref) === managed.fingerprint)
       : managed.kind === "resource"
         ? (next.resources || []).some((resource) => resource.id === managed.id && servicePlanResourceFingerprint(resource) === managed.fingerprint)
         : managed.kind === "note"
-          ? (next.notes?.blocks || []).some((block) => block.id === managed.id && stableStringify(block) === managed.fingerprint)
+          ? (next.notes?.blocks || []).some((block) => block.id === managed.id && servicePlanNoteFingerprint(block) === managed.fingerprint)
           : managed.kind === "assignee"
             ? getServicePlanElementAssignees(next).some((person) => person.id === managed.id && JSON.stringify({ name: person.name }) === managed.fingerprint)
             : false;
     if (!valid) {
       conflict = true;
+      blockedSourceFields.add(oldPart.sourceField || "title");
       return;
     }
     if (oldPart.value !== freshPart.value || oldPart.destination !== freshPart.destination) {
@@ -342,15 +355,60 @@ export const reconcileReviewedServicePlanParts = (
     const sameGroupIncoming = incomingParts.some((candidate) => candidate.kind === part.kind && (candidate.sourceField || "title") === (part.sourceField || "title"));
     if (sameGroupIncoming) {
       conflict = true;
+      blockedSourceFields.add(part.sourceField || "title");
       return;
     }
-    if (part.managed && !removeExact(part)) conflict = true;
+    if (!part.managed || !removeExact(part)) {
+      conflict = true;
+      blockedSourceFields.add(part.sourceField || "title");
+    }
   });
 
+  const preexistingScriptureKeys = new Set(getServicePlanElementScriptureRefs(next).map(scriptureKey));
+  const preexistingResourceUrls = new Set((next.resources || []).flatMap((resource) => resource.url ? [urlKey(resource.url)] : []));
+  const preexistingTextResources = new Set((next.resources || []).flatMap((resource) =>
+    resource.type === "text" ? [richTextToPlainText(getServicePlanResourceText(resource))] : [],
+  ));
   const mergedParts = incomingParts.map((part, index) => {
     if (processedIncoming.has(index)) return part;
     const field = part.sourceField || "title";
-    if (acceptedFields.has(field)) return part;
+    if (acceptedFields.has(field)) {
+      if (blockedSourceFields.has(field)) {
+        conflict = true;
+        return part;
+      }
+      const hasExistingGroup = oldParts.some((candidate) =>
+        (candidate.sourceField || "title") === field && candidate.kind === part.kind,
+      );
+      if (hasExistingGroup) {
+        conflict = true;
+        return part;
+      }
+      const parsedScripture = part.destination === "scripture" ? parseBibleReference(part.value) : undefined;
+      if (parsedScripture && preexistingScriptureKeys.has(scriptureKey(parsedScripture))) return part;
+      if (part.destination === "resource" && preexistingResourceUrls.has(urlKey(part.value))) return part;
+      if (part.destination === "content" && preexistingTextResources.has(part.value)) return part;
+      const installed = installIncoming(part);
+      if ((part.destination === "scripture" || part.destination === "resource" ||
+        part.destination === "content" || part.destination === "notes" || part.destination === "assignee") &&
+        !installed.managed) {
+        const alreadyPresent = part.destination === "scripture"
+          ? getServicePlanElementScriptureRefs(next).some((reference) => {
+              const parsed = parseBibleReference(part.value);
+              return parsed && scriptureKey(reference) === scriptureKey(parsed);
+            })
+          : part.destination === "assignee"
+            ? getServicePlanElementAssignees(next).some((person) => person.name?.trim().toLocaleLowerCase() === part.value.trim().toLocaleLowerCase())
+            : part.destination === "resource" || part.destination === "content"
+              ? (next.resources || []).some((resource) => part.destination === "resource"
+                  ? Boolean(resource.url && urlKey(resource.url) === urlKey(part.value))
+                  : resource.type === "text" && resource.title === "Imported description" &&
+                    richTextToPlainText(getServicePlanResourceText(resource)) === part.value)
+              : (next.notes?.blocks || []).some((block) => richTextToPlainText({ blocks: [block] }) === part.value);
+        if (!alreadyPresent) conflict = true;
+      }
+      return installed;
+    }
     const old = oldParts.find((candidate) => (candidate.sourceField || "title") === field && candidate.kind === part.kind && candidate.value === part.value);
     return old ? { ...part, destination: old.destination, managed: old.managed } : part;
   });

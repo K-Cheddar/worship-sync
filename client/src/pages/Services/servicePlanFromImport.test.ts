@@ -428,6 +428,10 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(element.durationMinutes).toBe(1.5);
     expect(element.durationSeconds).toBe(90);
     expect(richTextToPlainText(element.notes)).toBe("Invite everyone to sing.");
+    expect(element.notes?.blocks[0].id).toBeTruthy();
+    expect(element.servicePlanningImport?.managedNotes).toEqual([
+      { id: element.notes!.blocks[0].id, fingerprint: expect.any(String) },
+    ]);
     expect(
       element.teamNotes?.map(({ label, note }) => ({
         label,

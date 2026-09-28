@@ -35,7 +35,7 @@ import type {
 } from "../../types/servicePlan";
 import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
 import { createServicePlanTextResource } from "./servicePlanResources";
-import { servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 
 type ImportedAssigneeWithProvenance = ServicePlanAssignee & {
   servicePlanningImport?: {
@@ -259,7 +259,14 @@ const buildElementFromRow = <
     // Notes are the one imported field that carries line structure (bullet
     // lists of mic assignments and the like), so they keep their own blocks
     // rather than collapsing into a single run-on paragraph.
-    ...(row.note ? { notes: multilineTextToRichText(row.note) } : {}),
+    ...(row.note ? {
+      notes: {
+        blocks: multilineTextToRichText(row.note).blocks.map((block) => ({
+          ...block,
+          id: block.id || generateRandomId(),
+        })),
+      },
+    } : {}),
     ...(row.teamNotes?.length
       ? {
           teamNotes: row.teamNotes.map((teamNote) => ({
@@ -432,6 +439,9 @@ const buildElementFromRow = <
       ? [{ id: assignee.id, ...assignee.servicePlanningImport }]
       : [],
   );
+  const managedNotes = (element.notes?.blocks || []).flatMap((block) =>
+    block.id ? [{ id: block.id, fingerprint: servicePlanNoteFingerprint(block) }] : [],
+  );
   if (importedAssignees.length) {
     element.assignees = importedAssignees.map((assignee) => {
       const cleaned = { ...assignee };
@@ -444,6 +454,7 @@ const buildElementFromRow = <
     applied: sourceSnapshot,
     pendingFields: [],
     ...(managedAssignees.length ? { managedAssignees } : {}),
+    ...(managedNotes.length ? { managedNotes } : {}),
   };
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row

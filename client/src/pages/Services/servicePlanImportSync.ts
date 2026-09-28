@@ -3,6 +3,7 @@ import {
   getServicePlanElementAssignees,
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
+import generateRandomId from "../../utils/generateRandomId";
 import type {
   ServicePlanAssignee,
   ServicePlanElement,
@@ -10,7 +11,7 @@ import type {
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
-import { reconcileReviewedServicePlanParts } from "./servicePlanImportOwnership";
+import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
 
 export type ServicePlanningRefreshOptions = {
@@ -495,14 +496,24 @@ const reconcileImportedSourceAssignees = (
 
   const reconciledLedBy = incomingLedBy.map((incomingAssignee, index) => {
     const previous = currentByIncoming.get(index) === undefined ? undefined : existing[currentByIncoming.get(index)!];
-    return {
-      assignee: {
+    const identity = incomingAssignee.ownership.ledByIdentity;
+    const previousIdentity = previous && existingOwnership.find((item) => item.id === previous.id)?.ledByIdentity;
+    const isSamePerson = previous && (identity && previousIdentity
+      ? identity === previousIdentity
+      : normalizedName(previous.name) === normalizedName(incomingAssignee.assignee.name));
+    const assignee = {
       ...incomingAssignee.assignee,
       id: previous?.id || incomingAssignee.assignee.id,
-      ...(previous?.memberId ? { memberId: previous.memberId } : {}),
+      ...(isSamePerson && previous?.memberId ? { memberId: previous.memberId } : {}),
       ...(previous?.microphoneIds?.length ? { microphoneIds: previous.microphoneIds } : {}),
+    };
+    return {
+      assignee,
+      ownership: {
+        ...incomingAssignee.ownership,
+        id: assignee.id,
+        fingerprint: assigneeFingerprint(assignee),
       },
-      ownership: { ...incomingAssignee.ownership, id: previous?.id || incomingAssignee.assignee.id, fingerprint: assigneeFingerprint(previous || incomingAssignee.assignee) },
     };
   });
 
@@ -596,6 +607,63 @@ const preserveImportedTeamNoteIds = (
   });
 };
 
+const reconcileImportedSourceNotes = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+  previousSourceNote: string,
+): { notes?: ServicePlanElement["notes"]; managedNotes: NonNullable<ServicePlanElement["servicePlanningImport"]>["managedNotes"]; conflict: boolean } => {
+  const currentBlocks = current.notes?.blocks || [];
+  const incomingBlocks = imported.notes?.blocks || [];
+  const owned = current.servicePlanningImport?.managedNotes || [];
+  if (!owned.length && !previousSourceNote.trim() && sameRichText(current.notes, imported.notes)) {
+    return { notes: current.notes, managedNotes: [], conflict: false };
+  }
+  if (!owned.length && previousSourceNote.trim() && currentBlocks.length) {
+    return { notes: current.notes, managedNotes: owned, conflict: true };
+  }
+  const ownedById = new Map(owned.map((item) => [item.id, item]));
+  const ownedIndexes = currentBlocks.flatMap((block, index) => ownedById.has(block.id || "") ? [index] : []);
+  const currentOwnedOrder = ownedIndexes.map((index) => currentBlocks[index].id);
+  const savedOwnedOrder = owned.map((item) => item.id);
+  const exactOwnedBlocks = owned.length === ownedIndexes.length && owned.every((item) => {
+    const block = currentBlocks.find((candidate) => candidate.id === item.id);
+    return block && servicePlanNoteFingerprint(block) === item.fingerprint;
+  }) && JSON.stringify(currentOwnedOrder) === JSON.stringify(savedOwnedOrder);
+  if (owned.length && !exactOwnedBlocks) {
+    return { notes: current.notes, managedNotes: owned, conflict: true };
+  }
+
+  const replacements = incomingBlocks.map((block, index) => ({
+    ...block,
+    id: owned[index]?.id || block.id || generateRandomId(),
+  }));
+  const replacementByOldIndex = new Map<number, (typeof replacements)[number]>();
+  ownedIndexes.forEach((blockIndex, index) => {
+    const replacement = replacements[index];
+    if (replacement) replacementByOldIndex.set(blockIndex, replacement);
+  });
+  const lastOwnedIndex = ownedIndexes.at(-1);
+  const retained = currentBlocks.flatMap((block, index) => {
+    if (!ownedById.has(block.id || "")) return [block];
+    const replacement = replacementByOldIndex.get(index);
+    return replacement ? [replacement] : [];
+  });
+  if (lastOwnedIndex !== undefined && replacements.length > ownedIndexes.length) {
+    const priorCount = currentBlocks.slice(0, lastOwnedIndex + 1).filter((block) => !ownedById.has(block.id || "")).length;
+    retained.splice(priorCount + ownedIndexes.length, 0, ...replacements.slice(ownedIndexes.length));
+  } else if (!owned.length && (!previousSourceNote.trim() || !currentBlocks.length)) {
+    retained.push(...replacements);
+  }
+  const managedNotes = replacements.flatMap((block) => block.id
+    ? [{ id: block.id, fingerprint: servicePlanNoteFingerprint(block) }]
+    : []);
+  return {
+    ...(retained.length ? { notes: { blocks: retained } } : {}),
+    managedNotes,
+    conflict: false,
+  };
+};
+
 const mergeElement = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
@@ -629,6 +697,11 @@ const mergeElement = (
       ? currentState.observed.note
       : incomingObserved.note,
   };
+  const changedObservedNote = options.updateNotes && !sameSourceValue(currentState.applied.note, observed.note);
+  const noteReconciliation = changedObservedNote
+    ? reconcileImportedSourceNotes(current, imported, currentState.applied.note)
+    : undefined;
+  const noteUpdateConflict = Boolean(noteReconciliation?.conflict);
   const applied = { ...currentState.applied };
   if (options.updateTitles) {
     if (!sameSourceValue(applied.elementType, observed.elementType)) {
@@ -639,7 +712,7 @@ const mergeElement = (
   if (options.updateAssignments && !sameSourceValue(applied.ledBy, observed.ledBy)) {
     applied.ledBy = observed.ledBy;
   }
-  if (options.updateNotes && !sameSourceValue(applied.note, observed.note)) {
+  if (changedObservedNote && !noteUpdateConflict) {
     applied.note = observed.note;
   }
   const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
@@ -647,13 +720,15 @@ const mergeElement = (
   next.servicePlanningImport = {
     observed, applied, pendingFields,
     ...(currentState.managedAssignees?.length ? { managedAssignees: currentState.managedAssignees } : {}),
+    ...((noteReconciliation?.managedNotes || currentState.managedNotes)?.length
+      ? { managedNotes: noteReconciliation?.managedNotes || currentState.managedNotes }
+      : {}),
   };
   const changedAcceptedTitle = options.updateTitles && (
     !sameSourceValue(currentState.applied.title, observed.title) ||
     !sameSourceValue(currentState.applied.elementType, observed.elementType)
   );
-  const changedAcceptedNote = options.updateNotes &&
-    !sameSourceValue(currentState.applied.note, observed.note);
+  const changedAcceptedNote = changedObservedNote && !noteUpdateConflict;
   const changedAcceptedTitleOrNote = changedAcceptedTitle || changedAcceptedNote;
   const confirmed = current.importAmbiguity?.status === "confirmed" ||
     current.importAmbiguity?.status === "acknowledged";
@@ -661,7 +736,7 @@ const mergeElement = (
   // A title can contain a person suggestion whose destination was explicitly
   // changed during review. Keep that assignee choice intact until the source
   // changes are reviewed; Led By still follows its own refresh option.
-  const preserveConfirmedNotes = confirmed && !changedAcceptedNote;
+  const preserveConfirmedNotes = confirmed && !changedObservedNote;
   if (options.updateTitles) {
     if (!preserveConfirmedTitle) {
       next = {
@@ -767,18 +842,17 @@ const mergeElement = (
       next = copyOptionalField(next, imported, "durationMinutes");
     }
   }
-  if (options.updateNotes && !preserveConfirmedNotes) {
-    if (!sameRichText(current.notes, imported.notes)) {
-      next = copyOptionalField(next, imported, "notes");
+  if (options.updateNotes && changedAcceptedNote && noteReconciliation && !preserveConfirmedNotes) {
+    if (!sameRichText(current.notes, noteReconciliation.notes)) {
+      if (noteReconciliation.notes) next.notes = noteReconciliation.notes;
+      else delete next.notes;
     }
     if (!sameSourceValue(current.sourceNoteRaw || "", imported.sourceNoteRaw || "")) {
       next = copyOptionalField(next, imported, "sourceNoteRaw");
     }
-    // Service Planning can refresh shared and team notes, but role notes are
-    // local Teams instructions and must survive that refresh.
-    const localRoleNotes = (current.teamNotes || []).filter(
-      (note) => note.scope === "role",
-    );
+  }
+  if (options.updateNotes && !preserveConfirmedNotes) {
+    const localRoleNotes = (current.teamNotes || []).filter((note) => note.scope === "role");
     const importedTeamNotes = preserveImportedTeamNoteIds(
       current.teamNotes || [],
       (imported.teamNotes || []).filter((note) => note.scope !== "role"),
@@ -825,8 +899,8 @@ const mergeElement = (
   } else if (importedAmbiguity) {
     const reconciledAmbiguity = next.importAmbiguity;
     const acceptedFields = new Set([
-      ...(options.updateTitles ? ["title"] : []),
-      ...(options.updateNotes ? ["note"] : []),
+      ...(changedAcceptedTitle ? ["title"] : []),
+      ...(changedAcceptedNote ? ["note"] : []),
     ]);
     const retainedParts = (currentAmbiguity?.parts || []).filter((part) =>
       !acceptedFields.has(part.sourceField || "title"),
@@ -854,6 +928,26 @@ const mergeElement = (
     };
   } else if (currentAmbiguity && changedAcceptedTitleOrNote) {
     delete next.importAmbiguity;
+  }
+  if (noteUpdateConflict) {
+    const base = next.importAmbiguity || importedAmbiguity || currentAmbiguity || {
+      source: "servicePlanning" as const,
+      sourceKey: imported.importAmbiguity?.sourceKey || "",
+      sourceElementType: observed.elementType,
+      sourceTitle: observed.title,
+      sourceLedBy: observed.ledBy,
+      parts: [],
+      reasons: [],
+      status: "unresolved" as const,
+      sourceFingerprint: JSON.stringify(observed),
+    };
+    const reason = "The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update.";
+    next.importAmbiguity = {
+      ...base,
+      sourceNote: observed.note,
+      reasons: [...new Set([...base.reasons, reason])],
+      status: "unresolved",
+    };
   }
   return next;
 };

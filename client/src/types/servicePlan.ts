@@ -165,6 +165,11 @@ export type ServicePlanImportSourceState = {
     ledByIdentity?: string;
     fingerprint: string;
   }>;
+  /** Exact source-created shared Note paragraphs; older imports may omit provenance. */
+  managedNotes?: Array<{
+    id: string;
+    fingerprint: string;
+  }>;
 };
 
 /**

@@ -1,4 +1,4 @@
-import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
+import { multilineTextToRichText, plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type {
   ServicePlanElement,
   ServicePlanSection,
@@ -15,9 +15,9 @@ import {
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
-import { servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { applyReviewedServicePlanParts } from "./servicePlanImportOwnership";
-import { createServicePlanTextResource } from "./servicePlanResources";
+import { createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 const element = (
@@ -170,6 +170,405 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
     })])];
 
     expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
+});
+
+describe("remaining Service Planning import reconciliation defects", () => {
+  const importState = (title: string, ledBy: string, note = "") => ({
+    observed: { elementType: "Reading", title, ledBy, note },
+    applied: { elementType: "Reading", title, ledBy, note },
+    pendingFields: [] as Array<"elementType" | "title" | "ledBy" | "note">,
+  });
+
+  it("keeps Led By ownership valid across two accepted renames and serialization", () => {
+    const initial = element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceLedByRaw: "Jeriyah Brown",
+      assignees: [{ id: "lead", name: "Jeriyah Brown", memberId: "jeriyah-member", microphoneIds: ["mic-1"] }],
+      servicePlanningImport: {
+        ...importState("Reading", "Jeriyah Brown"),
+        managedAssignees: [{ id: "lead", fields: ["ledBy"], ledByIdentity: "jeriyah-source-id", fingerprint: JSON.stringify({ name: "Jeriyah Brown" }) }],
+      },
+    });
+    const refreshLedBy = (current: ServicePlanElement, name: string, identity: string) => refreshServicePlanFromImport(
+      [section("current", "Service", [current])],
+      [section("incoming", "Service", [element("new", "Reading", {
+        sourcePlanningManaged: true,
+        sourceLedByRaw: name,
+        assignees: [{ id: `incoming-${name}`, name }],
+        servicePlanningImport: {
+          ...importState("Reading", name),
+          managedAssignees: [{ id: `incoming-${name}`, fields: ["ledBy"], ledByIdentity: identity, fingerprint: JSON.stringify({ name }) }],
+        },
+      })])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+    const firstRefresh = refreshLedBy(initial, "Courtney Stephens", "courtney-source-id");
+    const savedAndReloaded = JSON.parse(JSON.stringify(firstRefresh)) as ServicePlanElement;
+    const secondRefresh = refreshLedBy(savedAndReloaded, "Taylor Smith", "taylor-source-id");
+    const repeated = refreshLedBy(JSON.parse(JSON.stringify(secondRefresh)) as ServicePlanElement, "Taylor Smith", "taylor-source-id");
+
+    expect(firstRefresh.assignees).toEqual([{ id: "lead", name: "Courtney Stephens", microphoneIds: ["mic-1"] }]);
+    expect(secondRefresh.assignees).toEqual([{ id: "lead", name: "Taylor Smith", microphoneIds: ["mic-1"] }]);
+    expect(secondRefresh.servicePlanningImport?.managedAssignees).toEqual([
+      { id: "lead", fields: ["ledBy"], ledByIdentity: "taylor-source-id", fingerprint: JSON.stringify({ name: "Taylor Smith" }) },
+    ]);
+    expect(repeated.assignees).toEqual(secondRefresh.assignees);
+    expect(repeated.servicePlanningImport?.managedAssignees).toEqual(secondRefresh.servicePlanningImport?.managedAssignees);
+  });
+
+  it("updates external Notes without replacing reviewed or operator-created paragraphs", () => {
+    const titleNote = { type: "paragraph" as const, id: "reviewed-title", spans: [{ text: "Walking With Jesus" }] };
+    const sourceNote = { type: "paragraph" as const, id: "external-note", spans: [{ text: "Video presentation" }] };
+    const manualNote = { type: "paragraph" as const, id: "manual-note", spans: [{ text: "Operator reminder" }] };
+    const current = element("same", "Skit/Mime", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation",
+      notes: { blocks: [titleNote, sourceNote, manualNote] },
+      servicePlanningImport: {
+        ...importState("Skit/Mime – Walking With Jesus", "", "Video presentation"),
+        managedNotes: [{ id: sourceNote.id, fingerprint: servicePlanNoteFingerprint(sourceNote) }],
+      },
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Skit/Mime",
+        sourceTitle: "Skit/Mime – Walking With Jesus", sourceLedBy: "", sourceNote: "Video presentation",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "notes", sourceField: "title",
+          managed: { kind: "note", id: titleNote.id, fingerprint: JSON.stringify(titleNote) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old",
+      },
+    });
+    const imported = element("incoming", "Skit/Mime", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation — updated instructions",
+      notes: { blocks: [{ type: "paragraph", id: "fresh-source-note", spans: [{ text: "Video presentation — updated instructions" }] }] },
+      servicePlanningImport: {
+        ...importState("Skit/Mime – Walking With Jesus", "", "Video presentation — updated instructions"),
+        managedNotes: [{ id: "fresh-source-note", fingerprint: servicePlanNoteFingerprint({ type: "paragraph", id: "fresh-source-note", spans: [{ text: "Video presentation — updated instructions" }] }) }],
+      },
+      importAmbiguity: {
+        ...current.importAmbiguity!,
+        sourceNote: "Video presentation — updated instructions",
+        parts: current.importAmbiguity!.parts,
+      },
+    });
+
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Special", [current])],
+      [section("incoming", "Special", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    expect(richTextToPlainText(refreshed.notes!)).toContain("Walking With Jesus");
+    expect(richTextToPlainText(refreshed.notes!)).toContain("Video presentation — updated instructions");
+    expect(richTextToPlainText(refreshed.notes!)).toContain("Operator reminder");
+    expect(richTextToPlainText(refreshed.notes!)).not.toContain("Video presentation\n");
+  });
+
+  it("preserves a locally edited external Note and leaves the accepted source update pending", () => {
+    const original = { type: "paragraph" as const, id: "external-note", spans: [{ text: "Video presentation" }] };
+    const edited = { ...original, spans: [{ text: "Video presentation — operator edit" }] };
+    const current = element("same", "Skit/Mime", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation",
+      notes: { blocks: [edited] },
+      servicePlanningImport: {
+        ...importState("Skit/Mime", "", "Video presentation"),
+        managedNotes: [{ id: original.id, fingerprint: servicePlanNoteFingerprint(original) }],
+      },
+    });
+    const imported = element("incoming", "Skit/Mime", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation — updated instructions",
+      notes: { blocks: [{ type: "paragraph", id: "new-note", spans: [{ text: "Video presentation — updated instructions" }] }] },
+      servicePlanningImport: importState("Skit/Mime", "", "Video presentation — updated instructions"),
+    });
+
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Special", [current])], [section("incoming", "Special", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    expect(refreshed.notes).toEqual({ blocks: [edited] });
+    expect(refreshed.servicePlanningImport?.applied.note).toBe("Video presentation");
+    expect(refreshed.servicePlanningImport?.pendingFields).toContain("note");
+    expect(refreshed.importAmbiguity?.status).toBe("unresolved");
+  });
+
+  it("keeps legacy Notes without reliable source provenance for operator review", () => {
+    const current = element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation",
+      notes: { blocks: [
+        { type: "paragraph", id: "legacy-source-or-manual", spans: [{ text: "Video presentation" }] },
+        { type: "paragraph", id: "manual", spans: [{ text: "Operator reminder" }] },
+      ] },
+      servicePlanningImport: importState("Reading", "", "Video presentation"),
+    });
+    const imported = element("incoming", "Reading", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation — changed",
+      notes: { blocks: [{ type: "paragraph", id: "incoming-note", spans: [{ text: "Video presentation — changed" }] }] },
+      servicePlanningImport: importState("Reading", "", "Video presentation — changed"),
+    });
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Reading", [current])], [section("incoming", "Reading", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    expect(refreshed.notes).toEqual(current.notes);
+    expect(refreshed.servicePlanningImport?.applied.note).toBe("Video presentation");
+    expect(refreshed.importAmbiguity?.status).toBe("unresolved");
+  });
+
+  it("updates multiline external Notes in place and does not duplicate paragraphs on repeat", () => {
+    const original = multilineTextToRichText("Video presentation\nFirst cue").blocks.map((block, index) => ({
+      ...block, id: `source-note-${index}`,
+    }));
+    const current = element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation\nFirst cue",
+      notes: { blocks: [
+        { type: "paragraph", id: "operator-before", spans: [{ text: "Operator note before" }] },
+        ...original,
+        { type: "paragraph", id: "operator-after", spans: [{ text: "Operator note after" }] },
+      ] },
+      servicePlanningImport: {
+        ...importState("Reading", "", "Video presentation\nFirst cue"),
+        managedNotes: original.map((block) => ({ id: block.id!, fingerprint: servicePlanNoteFingerprint(block) })),
+      },
+    });
+    const incomingBlocks = multilineTextToRichText("Video presentation — updated\nFirst cue\nSecond cue").blocks.map((block, index) => ({
+      ...block, id: `incoming-note-${index}`,
+    }));
+    const imported = element("incoming", "Reading", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: "Video presentation — updated\nFirst cue\nSecond cue",
+      notes: { blocks: incomingBlocks },
+      servicePlanningImport: {
+        ...importState("Reading", "", "Video presentation — updated\nFirst cue\nSecond cue"),
+        managedNotes: incomingBlocks.map((block) => ({ id: block.id!, fingerprint: servicePlanNoteFingerprint(block) })),
+      },
+    });
+    const refresh = (item: ServicePlanElement) => refreshServicePlanFromImport(
+      [section("current", "Reading", [item])], [section("incoming", "Reading", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    const once = refresh(current);
+    const twice = refresh(JSON.parse(JSON.stringify(once)) as ServicePlanElement);
+
+    expect(richTextToPlainText(once.notes!)).toBe("Operator note before\nVideo presentation — updated\nFirst cue\nSecond cue\nOperator note after");
+    expect(twice.notes).toEqual(once.notes);
+    expect(twice.servicePlanningImport?.managedNotes).toEqual(once.servicePlanningImport?.managedNotes);
+  });
+
+  it("classifies, reviews, serializes, refreshes, applies selected Notes, and stays stable on a second refresh", () => {
+    const build = (note: string) => buildServicePlanSectionsFromImport({
+      planLabel: "Sunday service",
+      sections: [{ sectionName: "Special", rows: [{ elementType: "Special", title: "Walking With Jesus", ledBy: "", note }] }],
+      teamAssignments: [],
+    }, [], { classifyExternalTitle: true });
+    const firstImport = build("Video presentation");
+    const initiallyImported = firstImport[0].elements[0];
+    expect(initiallyImported.importAmbiguity?.parts).toEqual([
+      expect.objectContaining({ kind: "description", value: "Walking With Jesus", sourceField: "title" }),
+    ]);
+    const reviewed = applyReviewedServicePlanParts(initiallyImported, [
+      { ...initiallyImported.importAmbiguity!.parts[0], destination: "notes" },
+    ]);
+    const saved = JSON.parse(JSON.stringify({
+      ...reviewed.element,
+      importAmbiguity: { ...initiallyImported.importAmbiguity!, parts: reviewed.parts, status: "confirmed" },
+    })) as ServicePlanElement;
+    const current = [section("current", "Special", [saved])];
+    const secondImport = build("Video presentation — updated instructions");
+    const preview = refreshServicePlanFromImport(current, secondImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, preview);
+    const applied = applySelectedServicePlanImportChanges(current, preview, summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)));
+    const reloaded = JSON.parse(JSON.stringify(applied)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(reloaded, secondImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const finalElement = repeated[0].elements[0];
+
+    expect(richTextToPlainText(finalElement.notes!)).toContain("Walking With Jesus");
+    expect(richTextToPlainText(finalElement.notes!)).toContain("Video presentation — updated instructions");
+    expect(finalElement.importAmbiguity?.parts[0].destination).toBe("notes");
+    expect(summarizeServicePlanImport(reloaded, repeated).changes).toEqual([]);
+  });
+
+  it("installs a newly classified scripture when an accepted Title changes kind", () => {
+    const oldDescription = createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Walking With Jesus") });
+    const current = element("same", "Special", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Walking With Jesus",
+      resources: [oldDescription],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+          managed: { kind: "resource", id: oldDescription.id, fingerprint: servicePlanResourceFingerprint(oldDescription) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "description",
+      },
+      servicePlanningImport: importState("Walking With Jesus", ""),
+    });
+    const newReference = { id: "incoming-scripture", label: "John 3:16 (NIV)", book: "John", chapter: "3", verseRange: "16", version: "NIV" };
+    const imported = element("incoming", "Special", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "John 3:16 (NIV)",
+      scriptureRefs: [newReference],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special",
+        sourceTitle: "John 3:16 (NIV)", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "John 3:16 (NIV)", destination: "scripture", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "scripture",
+      },
+      servicePlanningImport: importState("John 3:16 (NIV)", ""),
+    });
+
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Special", [current])],
+      [section("incoming", "Special", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+    const summary = summarizeServicePlanImport([section("current", "Special", [current])], [section("refreshed", "Special", [refreshed])]);
+    const applied = applySelectedServicePlanImportChanges(
+      [section("current", "Special", [current])], [section("refreshed", "Special", [refreshed])], summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    )[0].elements[0];
+
+    expect(applied.resources).toBeUndefined();
+    expect(applied.scriptureRefs).toEqual([expect.objectContaining({ book: "John", chapter: "3", verseRange: "16", version: "NIV" })]);
+    expect(applied.importAmbiguity?.parts[0].managed?.kind).toBe("scripture");
+  });
+
+  it("keeps legacy Title attachments when ownership provenance is incomplete", () => {
+    const legacyDescription = createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Walking With Jesus") });
+    const current = element("same", "Special", {
+      sourcePlanningManaged: true,
+      resources: [legacyDescription],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "legacy",
+      },
+      servicePlanningImport: importState("Walking With Jesus", ""),
+    });
+    const imported = element("incoming", "Special", {
+      sourcePlanningManaged: true,
+      scriptureRefs: [{ label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special",
+        sourceTitle: "John 3:16", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "John 3:16", destination: "scripture", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "new",
+      },
+      servicePlanningImport: importState("John 3:16", ""),
+    });
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Special", [current])], [section("incoming", "Special", [imported])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    expect(refreshed.resources).toEqual([legacyDescription]);
+    expect(refreshed.scriptureRefs).toBeUndefined();
+    expect(refreshed.importAmbiguity?.status).toBe("unresolved");
+  });
+
+  it.each([
+    ["scripture", "description", "John 3:16", "Skit/Mime – Walking With Jesus"],
+    ["description", "resource", "Walking With Jesus", "https://example.org/service"],
+  ] as const)("reconciles a %s-to-%s classification transition while preserving manual attachments", (oldKind, nextDestination, oldValue, nextValue) => {
+    const manualResource = { ...createServicePlanTextResource({ title: "Operator attachment", text: plainTextToRichText("Keep this") }), id: "manual-resource" };
+    const oldReference = { id: "source-scripture", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "" };
+    const oldResource = { ...createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText(oldValue) }), id: "source-description" };
+    const oldPart = oldKind === "scripture"
+      ? { kind: "scripture" as const, value: oldValue, destination: "scripture" as const, sourceField: "title" as const,
+          managed: { kind: "scripture" as const, id: oldReference.id, fingerprint: JSON.stringify({ label: oldReference.label, book: oldReference.book, chapter: oldReference.chapter, verseRange: oldReference.verseRange, version: oldReference.version }) } }
+      : { kind: "description" as const, value: oldValue, destination: "content" as const, sourceField: "title" as const,
+          managed: { kind: "resource" as const, id: oldResource.id, fingerprint: servicePlanResourceFingerprint(oldResource) } };
+    const nextResource = nextDestination === "resource"
+      ? { ...createServicePlanLinkResource({ title: nextValue, url: nextValue }), id: "incoming-resource" }
+      : { ...createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText(nextValue) }), id: "incoming-description" };
+    const nextPart = nextDestination === "resource"
+      ? { kind: "url" as const, value: nextValue, destination: "resource" as const, sourceField: "title" as const }
+      : { kind: "description" as const, value: nextValue, destination: "content" as const, sourceField: "title" as const };
+    const current = element("same", "Old content", {
+      sourcePlanningManaged: true,
+      resources: [manualResource, ...(oldKind === "description" ? [oldResource] : [])],
+      ...(oldKind === "scripture" ? { scriptureRefs: [oldReference] } : {}),
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special", sourceTitle: oldValue, sourceLedBy: "",
+        parts: [oldPart], reasons: [], status: "confirmed", sourceFingerprint: "old",
+      },
+      servicePlanningImport: importState(oldValue, ""),
+    });
+    const incoming = element("incoming", "New content", {
+      sourcePlanningManaged: true,
+      resources: [nextResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special", sourceTitle: nextValue, sourceLedBy: "",
+        parts: [nextPart], reasons: [], status: "confirmed", sourceFingerprint: "new",
+      },
+      servicePlanningImport: importState(nextValue, ""),
+    });
+    const sections = [section("current", "Special", [current])];
+    const refreshed = refreshServicePlanFromImport(sections, [section("incoming", "Special", [incoming])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(sections, refreshed);
+    expect(summary.changes[0]?.fields.map(({ label }) => label)).toContain("Import interpretation");
+    const applied = applySelectedServicePlanImportChanges(sections, refreshed, summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)))[0].elements[0];
+    const repeated = refreshServicePlanFromImport(
+      [section("current", "Special", [applied])], [section("incoming", "Special", [incoming])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    )[0].elements[0];
+
+    const expectedResources = nextDestination === "resource"
+      ? [manualResource, expect.objectContaining({ url: "https://example.org/service" })]
+      : [manualResource, expect.objectContaining({ title: "Imported description" })];
+    expect(applied.resources).toContainEqual(manualResource);
+    expect(applied.importAmbiguity?.parts[0].managed).toBeDefined();
+    expect(applied.resources).toEqual(expectedResources);
+    expect(applied.scriptureRefs).toBeUndefined();
+    expect(repeated.resources).toEqual(applied.resources);
+    expect(repeated.scriptureRefs).toEqual(applied.scriptureRefs);
+  });
+
+  it("does not install an unmatched Title part when only Notes were accepted", () => {
+    const description = createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Walking With Jesus") });
+    const current = element("same", "Old title", {
+      sourcePlanningManaged: true,
+      resources: [description],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special", sourceTitle: "Walking With Jesus", sourceLedBy: "",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+          managed: { kind: "resource", id: description.id, fingerprint: servicePlanResourceFingerprint(description) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old",
+      },
+      servicePlanningImport: importState("Walking With Jesus", "", "Original note"),
+      sourceNoteRaw: "Original note",
+    });
+    const newReference = { label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "" };
+    const imported = element("incoming", "John 3:16", {
+      sourcePlanningManaged: true,
+      scriptureRefs: [newReference],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special", sourceTitle: "John 3:16", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "John 3:16", destination: "scripture", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "new",
+      },
+      servicePlanningImport: importState("John 3:16", "", "Updated note"),
+      sourceNoteRaw: "Updated note",
+      notes: { blocks: [{ type: "paragraph", id: "note", spans: [{ text: "Updated note" }] }] },
+    });
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Special", [current])], [section("incoming", "Special", [imported])],
+      { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, updateTitles: false, updateNotes: true },
+    )[0].elements[0];
+
+    expect(refreshed.scriptureRefs).toBeUndefined();
+    expect(refreshed.resources).toEqual([description]);
+    expect(refreshed.servicePlanningImport?.pendingFields).toContain("title");
   });
 });
 
