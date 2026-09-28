@@ -105,6 +105,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "formId", "order": "ASCENDING" }
       ]
     },
