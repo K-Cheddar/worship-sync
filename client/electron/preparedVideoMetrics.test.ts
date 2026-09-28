@@ -26,16 +26,20 @@ describe("prepared video metrics normalization", () => {
       rendererPid: 42,
       matchedPid: 42,
       processType: "Tab",
-      memory: { status: "available", value: 2048 },
+      memory: {
+        private: { status: "unsupported", reason: "private memory unavailable on this platform" },
+        workingSet: { status: "available", value: 2048 },
+      },
       cpu: { status: "available", value: 3.5 },
       total: {
-        memory: { status: "available", value: 2148 },
+        privateMemory: { status: "unsupported", reason: "private memory unavailable for one or more app processes" },
+        workingSetMemory: { status: "available", value: 2148 },
         cpu: { status: "available", value: 3.5 },
         processCount: 2,
       },
       processes: [
-        { pid: 41, processType: "Browser", labels: [], memory: { status: "available", value: 100 }, cpu: { status: "unsupported", reason: "CPU metric unavailable on this platform" } },
-        { pid: 42, processType: "Tab", labels: [], memory: { status: "available", value: 2048 }, cpu: { status: "available", value: 3.5 } },
+        { pid: 41, processType: "Browser", labels: [], memory: { private: { status: "unsupported", reason: "private memory unavailable on this platform" }, workingSet: { status: "available", value: 100 } }, cpu: { status: "unsupported", reason: "CPU metric unavailable on this platform" } },
+        { pid: 42, processType: "Tab", labels: [], memory: { private: { status: "unsupported", reason: "private memory unavailable on this platform" }, workingSet: { status: "available", value: 2048 } }, cpu: { status: "available", value: 3.5 } },
       ],
     });
   });
@@ -52,7 +56,7 @@ describe("prepared video metrics normalization", () => {
     const { timestamp, matchedPid, memory, total } = getPreparedVideoMetricsForRenderer(sample, 11);
     expect(timestamp).toBe(123);
     expect(matchedPid).toBe(11);
-    expect(memory.value).toBe(200);
+    expect(memory.workingSet?.value).toBe(200);
     expect(total).toEqual(sample.total);
   });
 
@@ -63,7 +67,8 @@ describe("prepared video metrics normalization", () => {
       timestamp: 321,
       total: {
         cpu: { status: "unsupported", reason: "CPU metrics unavailable" },
-        memory: { status: "unsupported", reason: "CPU metrics unavailable" },
+        privateMemory: { status: "unsupported", reason: "CPU metrics unavailable" },
+        workingSetMemory: { status: "unsupported", reason: "CPU metrics unavailable" },
         processCount: 0,
       },
     });
@@ -81,7 +86,7 @@ describe("prepared video metrics normalization", () => {
       }),
     ).toMatchObject({
       status: "metric_unsupported",
-      memory: { status: "unsupported" },
+      memory: { workingSet: { status: "unsupported" } },
       cpu: { status: "unsupported", reason: "renderer CPU metric unsupported" },
     });
   });
@@ -99,11 +104,45 @@ describe("prepared video metrics normalization", () => {
     });
 
     expect(snapshot.total).toEqual({
-      memory: { status: "available", value: 1000 },
+      privateMemory: { status: "unsupported", reason: "private memory unavailable for one or more app processes" },
+      workingSetMemory: { status: "available", value: 1000 },
       cpu: { status: "available", value: 135 },
       processCount: 2,
     });
     expect(snapshot.processes?.[1].labels).toEqual(["GPU process"]);
+  });
+
+  it("aggregates Windows private bytes while retaining working sets per process", () => {
+    const snapshot = normalizePreparedVideoMetrics({
+      rendererPid: 100,
+      metrics: [
+        { pid: 100, type: "Tab", memory: { privateBytes: 300, workingSetSize: 500 }, cpu: { percentCPUUsage: 4 } },
+        { pid: 200, type: "GPU", memory: { privateBytes: 700, workingSetSize: 1200 }, cpu: { percentCPUUsage: 6 } },
+      ],
+    });
+    expect(snapshot.total).toMatchObject({
+      privateMemory: { status: "available", value: 1000 },
+      workingSetMemory: { status: "available", value: 1700 },
+    });
+    expect(snapshot.processes?.[0].memory).toEqual({
+      private: { status: "available", value: 300 },
+      workingSet: { status: "available", value: 500 },
+    });
+  });
+
+  it("does not invent a private total when any process lacks private bytes", () => {
+    const snapshot = normalizePreparedVideoMetrics({
+      rendererPid: 100,
+      metrics: [
+        { pid: 100, memory: { privateBytes: 300, workingSetSize: 500 } },
+        { pid: 200, memory: { workingSetSize: 1200 } },
+      ],
+    });
+    expect(snapshot.total?.privateMemory).toEqual({
+      status: "unsupported",
+      reason: "private memory unavailable for one or more app processes",
+    });
+    expect(snapshot.total?.workingSetMemory).toEqual({ status: "available", value: 1700 });
   });
 
   it("starts one shared timer while subscribed and stops when the last window closes its panel", () => {

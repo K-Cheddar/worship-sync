@@ -5,6 +5,8 @@ import {
   isMediaPreparationManifest,
   isMediaPreparationReadinessReport,
   buildMediaPreparationReadinessCounts,
+  buildMediaPreparationReadinessVideos,
+  sanitizeMediaPreparationReadinessText,
   mediaPreparationManifestToCandidates,
 } from "./mediaPreparationManifest";
 import type { ElectronMediaDiscovery } from "./electronMediaSurfaceDiagnostics";
@@ -83,6 +85,42 @@ describe("media preparation manifest", () => {
     expect(isMediaPreparationReadinessReport({ ...report, candidateCount: 50_001 })).toBe(false);
     expect(isMediaPreparationReadinessReport({ ...report, sessionId: "x".repeat(129) })).toBe(false);
     expect(isMediaPreparationReadinessReport({ ...report, errors: Array(9).fill("error") })).toBe(false);
+  });
+
+  it("normalizes per-video readiness, sorts actionable states first, and keeps labels transport-safe", () => {
+    const result = buildMediaPreparationReadinessVideos([
+      { mediaKey: "remote:ready", status: "eligible", selected: true, phase: "ready-paused", itemName: "Welcome" },
+      { mediaKey: "remote:playing", status: "eligible", selected: true, phase: "active-playing", name: "loop.mp4", itemName: "Welcome" },
+      { mediaKey: "remote:preparing", status: "eligible", selected: true, phase: "preparing", itemName: "Announcement" },
+      { mediaKey: "remote:failed", status: "eligible", selected: true, phase: "error", error: "decode failed" },
+      { mediaKey: "remote:pending", status: "pending-cache", selected: true, itemName: "Background" },
+      { mediaKey: "remote:deferred", status: "eligible", selected: false, itemName: "Outro" },
+      { mediaKey: "remote:excluded", status: "excluded", selected: false, itemName: "Invalid source" },
+      { mediaKey: "https://cdn.example.test/private/path.mp4?token=secret", status: "eligible", selected: false, name: "https://cdn.example.test/private/path.mp4?token=secret" },
+    ]);
+
+    expect(result.videos.map(({ status }) => status)).toEqual([
+      "failed", "preparing", "pending-cache", "playing", "ready", "excluded", "deferred", "deferred",
+    ]);
+    expect(result.videos.find(({ mediaKey }) => mediaKey === "remote:ready")).toMatchObject({ name: "Welcome", status: "ready" });
+    expect(result.videos.find(({ mediaKey }) => mediaKey === "remote:playing")).toMatchObject({ name: "loop.mp4", itemName: "Welcome", status: "playing" });
+    expect(result.videos.find(({ status }) => status === "failed")).toMatchObject({ name: "remote:failed", error: "decode failed" });
+    expect(JSON.stringify(result)).not.toMatch(/https?:|private\/path|token=secret/);
+    expect(result.videos.at(-1)?.mediaKey).toMatch(/^video-/);
+    expect(sanitizeMediaPreparationReadinessText("Failed to open /root/worship-sync/private/video.mp4")).toBe("Failed to open");
+  });
+
+  it("accepts optional bounded video rows, older reports, and rejects unsafe video details", () => {
+    const report = {
+      contract: "worshipsync.media-preparation-readiness", version: 1, outputId: "projector",
+      deviceId: "device-1", sessionId: "session-1", reportedAt: 100, manifestRevision: 2,
+      manifestReceivedAt: 90, source: "remote-manifest", candidateCount: 1, finiteCandidateCount: 1,
+      pendingCacheCount: 0, readyCount: 1, preparingCount: 0, failedCount: 0, errors: [],
+    };
+    expect(isMediaPreparationReadinessReport(report)).toBe(true);
+    expect(isMediaPreparationReadinessReport({ ...report, videos: [{ mediaKey: "remote:one", name: "Song.mp4", itemName: "Welcome", status: "ready" }] })).toBe(true);
+    expect(isMediaPreparationReadinessReport({ ...report, videos: [{ mediaKey: "remote:one", name: "https://cdn.test/song.mp4", status: "ready" }] })).toBe(false);
+    expect(isMediaPreparationReadinessReport({ ...report, videos: Array(65).fill({ mediaKey: "remote:one", status: "ready" }) })).toBe(false);
   });
 
   it("keeps pending HLS failures reportable when no finite candidate exists", () => {

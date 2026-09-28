@@ -16,6 +16,7 @@ import {
 } from "../../utils/preparedVideoSurfaceState";
 import {
   type ElectronMediaSurfaceCandidate,
+  type ElectronMediaSurfacePerformanceClass,
   type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
 import {
@@ -84,6 +85,7 @@ type ElectronMediaSurfacePoolProps = {
   manifestPublishedAt?: number;
   discovery?: ElectronMediaDiscovery;
   poolCapacity?: number;
+  performanceClass?: ElectronMediaSurfacePerformanceClass;
 };
 
 const PRESENTED_FRAME_TIMEOUT_MS = 5000;
@@ -1507,6 +1509,7 @@ const ElectronMediaSurfacePool = ({
   manifestPublishedAt,
   discovery,
   poolCapacity,
+  performanceClass,
 }: ElectronMediaSurfacePoolProps) => {
   const lifecycleRoute = route ?? "display-window";
   const lifecycleRole = role ?? windowRole ?? "output";
@@ -1758,6 +1761,7 @@ const ElectronMediaSurfacePool = ({
           ["ready", "playing"].includes(diagnosticsRef.current[candidate.mediaKey]?.phase ?? ""),
         ).length,
         poolCapacity,
+        performanceClass,
         surfaceCount: mountedKeySet.size,
         readyCount: mountedPhases.filter((phase) => phase === "ready").length,
         preparingCount: mountedPhases.filter((phase) => phase === "loading" || phase === "preparing").length,
@@ -1805,6 +1809,7 @@ const ElectronMediaSurfacePool = ({
       const surface = diagnostics[detail.mediaKey];
       return {
         ...detail,
+        selected: Boolean(candidate),
         priority: candidate?.priority,
         protected: candidate?.protected,
         surfaceState: surface?.surfaceState,
@@ -1919,6 +1924,7 @@ const ElectronMediaSurfacePool = ({
           .map((surface) => surface.mediaKey),
       ).size,
       poolCapacity,
+      performanceClass,
     });
     latestDiagnosticsRef.current = value;
     (
@@ -1943,6 +1949,7 @@ const ElectronMediaSurfacePool = ({
     mountedKeySet,
     outputId,
     poolCapacity,
+    performanceClass,
     posterShown,
     transitionComplete,
     transitionStart,

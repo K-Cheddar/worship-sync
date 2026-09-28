@@ -18,6 +18,7 @@ type MonitorPresentationPreviewProps = {
   fillWidth?: boolean;
   readOnly?: boolean;
   isVisible?: boolean;
+  suspendPreviewMedia?: boolean;
   toggleIsTransmitting: () => void;
   /** Output this tile shows; defaults to the built-in surface. */
   outputId?: string;
@@ -35,6 +36,7 @@ const MonitorPresentationPreview = memo(
     fillWidth,
     readOnly = false,
     isVisible = true,
+    suspendPreviewMedia = false,
     toggleIsTransmitting,
     outputId = "monitor",
     name = "Monitor",
@@ -82,6 +84,7 @@ const MonitorPresentationPreview = memo(
         fillWidth={fillWidth}
         footer={footer}
         isVisible={isVisible}
+        suspendPreviewMedia={suspendPreviewMedia}
         previewOverride={
           monitorBoardAliasId ? (
             <ScaledBoardPreview aliasId={monitorBoardAliasId} />

@@ -10,16 +10,22 @@ export type PreparedVideoMetricValue = {
   reason?: string;
 };
 
+export type PreparedVideoProcessMemory = {
+  private?: PreparedVideoMetricValue;
+  workingSet?: PreparedVideoMetricValue;
+};
+
 export type PreparedVideoMetricsResponse = {
   status: PreparedVideoMetricStatus;
   timestamp?: number;
   rendererPid?: number;
   matchedPid?: number;
   processType?: string;
-  memory: PreparedVideoMetricValue;
+  memory: PreparedVideoProcessMemory;
   cpu: PreparedVideoMetricValue;
   total?: {
-    memory: PreparedVideoMetricValue;
+    privateMemory: PreparedVideoMetricValue;
+    workingSetMemory: PreparedVideoMetricValue;
     cpu: PreparedVideoMetricValue;
     processCount: number;
   };
@@ -33,7 +39,7 @@ export type PreparedVideoProcessMetric = {
   name?: string;
   serviceName?: string;
   labels: string[];
-  memory: PreparedVideoMetricValue;
+  memory: PreparedVideoProcessMemory;
   cpu: PreparedVideoMetricValue;
 };
 
@@ -42,7 +48,7 @@ type ElectronProcessMetric = {
   type?: string;
   name?: string;
   serviceName?: string;
-  memory?: { workingSetSize?: number };
+  memory?: { privateBytes?: number; workingSetSize?: number };
   cpu?: { percentCPUUsage?: number };
 };
 
@@ -51,6 +57,21 @@ const unavailableValue = (reason: string): PreparedVideoMetricValue => ({
   reason,
 });
 
+const numericValue = (value: number | undefined, reason: string): PreparedVideoMetricValue =>
+  Number.isFinite(value) ? { status: "available", value } : unavailableValue(reason);
+
+const sumMetrics = (
+  values: PreparedVideoMetricValue[],
+  reason: string,
+  requireAll = false,
+): PreparedVideoMetricValue => {
+  const available = values.filter((value) => value.status === "available" && Number.isFinite(value.value));
+  if (available.length === 0 || (requireAll && available.length !== values.length)) {
+    return unavailableValue(reason);
+  }
+  return { status: "available", value: available.reduce((total, value) => total + (value.value ?? 0), 0) };
+};
+
 export const createUnavailablePreparedVideoMetrics = (
   status: Exclude<PreparedVideoMetricStatus, "available">,
   reason: string,
@@ -58,10 +79,14 @@ export const createUnavailablePreparedVideoMetrics = (
 ): PreparedVideoMetricsResponse => ({
   status,
   ...(timestamp != null && { timestamp }),
-  memory: unavailableValue(reason),
+  memory: {
+    private: unavailableValue(reason),
+    workingSet: unavailableValue(reason),
+  },
   cpu: unavailableValue(reason),
   total: {
-    memory: unavailableValue(reason),
+    privateMemory: unavailableValue(reason),
+    workingSetMemory: unavailableValue(reason),
     cpu: unavailableValue(reason),
     processCount: 0,
   },
@@ -92,36 +117,41 @@ export const normalizePreparedVideoMetrics = ({
     ...(metric.name && { name: metric.name }),
     ...(metric.serviceName && { serviceName: metric.serviceName }),
     labels: labelsByPid.get(metric.pid!) ?? [],
-    memory: Number.isFinite(metric.memory?.workingSetSize)
-      ? { status: "available" as const, value: metric.memory!.workingSetSize }
-      : unavailableValue("working set unavailable on this platform"),
-    cpu: Number.isFinite(metric.cpu?.percentCPUUsage)
-      ? { status: "available" as const, value: metric.cpu!.percentCPUUsage }
-      : unavailableValue("CPU metric unavailable on this platform"),
+    memory: {
+      private: numericValue(metric.memory?.privateBytes, "private memory unavailable on this platform"),
+      workingSet: numericValue(metric.memory?.workingSetSize, "working set unavailable on this platform"),
+    },
+    cpu: numericValue(metric.cpu?.percentCPUUsage, "CPU metric unavailable on this platform"),
   }));
-  const sum = (key: "memory" | "cpu"): PreparedVideoMetricValue => {
-    const available = processes
-      .map((process) => process[key])
-      .filter((value) => value.status === "available" && Number.isFinite(value.value));
-    return available.length
-      ? { status: "available", value: available.reduce((total, value) => total + (value.value ?? 0), 0) }
-      : unavailableValue(`no ${key} metrics available`);
+  const workingSetMemory = sumMetrics(
+    processes.map((process) => process.memory.workingSet!),
+    "no working set metrics available",
+    true,
+  );
+  const privateMemory = sumMetrics(
+    processes.map((process) => process.memory.private!),
+    "private memory unavailable for one or more app processes",
+    true,
+  );
+  const total = {
+    privateMemory,
+    workingSetMemory,
+    cpu: sumMetrics(processes.map((process) => process.cpu), "no CPU metrics available"),
+    processCount: processes.length,
   };
-  const total = { memory: sum("memory"), cpu: sum("cpu"), processCount: processes.length };
   const renderer = byPid.get(rendererPid ?? -1);
-  const rendererMemory = renderer?.memory?.workingSetSize;
-  const rendererCpu = renderer?.cpu?.percentCPUUsage;
-  const memory = Number.isFinite(rendererMemory)
-    ? { status: "available" as const, value: rendererMemory }
-    : unavailableValue("renderer memory metric unsupported");
-  const cpu = Number.isFinite(rendererCpu)
-    ? { status: "available" as const, value: rendererCpu }
-    : unavailableValue("renderer CPU metric unsupported");
+  const memory = renderer
+    ? processes.find((process) => process.pid === renderer.pid)!.memory
+    : {
+        private: unavailableValue("renderer private memory metric unsupported"),
+        workingSet: unavailableValue("renderer working set metric unsupported"),
+      };
+  const cpu = numericValue(renderer?.cpu?.percentCPUUsage, "renderer CPU metric unsupported");
   const rendererMatched = Boolean(renderer);
   return {
     status: !rendererMatched
       ? "renderer_pid_not_matched"
-      : memory.status === "available" && cpu.status === "available"
+      : memory.workingSet?.status === "available" && cpu.status === "available"
         ? "available"
         : "metric_unsupported",
     timestamp,
@@ -151,7 +181,7 @@ export const getPreparedVideoMetricsForRenderer = (
       processType: renderer.processType,
       memory: renderer.memory,
       cpu: renderer.cpu,
-      status: renderer.memory.status === "available" && renderer.cpu.status === "available"
+      status: renderer.memory.workingSet?.status === "available" && renderer.cpu.status === "available"
         ? "available"
         : "metric_unsupported",
     }),
@@ -159,7 +189,10 @@ export const getPreparedVideoMetricsForRenderer = (
       status: "renderer_pid_not_matched",
       matchedPid: undefined,
       processType: undefined,
-      memory: unavailableValue("renderer memory metric unavailable in this snapshot"),
+      memory: {
+        private: unavailableValue("renderer private memory metric unavailable in this snapshot"),
+        workingSet: unavailableValue("renderer working set metric unavailable in this snapshot"),
+      },
       cpu: unavailableValue("renderer CPU metric unavailable in this snapshot"),
     }),
   };

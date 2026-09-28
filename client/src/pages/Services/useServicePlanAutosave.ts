@@ -119,6 +119,8 @@ export const useServicePlanAutosave = <
   const timerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const inFlightRef = useRef<Promise<boolean> | null>(null);
+  const requestSequenceRef = useRef(0);
+  const inFlightRequestIdRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const resetKeyRef = useRef(resetKey);
   /** Bumped whenever we switch plans. A save that resolves after a switch
@@ -191,6 +193,8 @@ export const useServicePlanAutosave = <
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const expectedNextRevision = sentRevision + 1;
+    const requestId = ++requestSequenceRef.current;
+    inFlightRequestIdRef.current = requestId;
     expectedAckRevisionRef.current = expectedNextRevision;
 
     const acknowledge = (savedPlan: TDoc) => {
@@ -289,7 +293,13 @@ export const useServicePlanAutosave = <
         }
         return false;
       } finally {
-        inFlightRef.current = null;
+        // A plan switch detaches this request and lets the next plan install
+        // its own request in the shared ref. Only the request that still owns
+        // the slot may clear it when it settles.
+        if (inFlightRequestIdRef.current === requestId) {
+          inFlightRef.current = null;
+          inFlightRequestIdRef.current = null;
+        }
       }
     })();
     inFlightRef.current = request;
@@ -392,6 +402,7 @@ export const useServicePlanAutosave = <
     // Any in-flight request now belongs to the previous plan.
     generationRef.current += 1;
     inFlightRef.current = null;
+    inFlightRequestIdRef.current = null;
     // Editor route changes reset their local draft counter to zero. Do not
     // snapshot the render's value here: an incoming route response must never
     // acknowledge a click that happened while it was settling.
@@ -492,6 +503,7 @@ export const useServicePlanAutosave = <
       const inFlight = inFlightRef.current;
       generationRef.current += 1;
       inFlightRef.current = null;
+      inFlightRequestIdRef.current = null;
       flushPendingForPreviousPlan(inFlight, leavingGeneration);
     },
     [clearTimers, flushPendingForPreviousPlan],

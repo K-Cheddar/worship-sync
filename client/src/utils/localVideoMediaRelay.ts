@@ -202,7 +202,7 @@ export const publishLocalVideoMedia = (
   };
 
   const startSubscriber = (subscriberId: string) => {
-    if (subscribers.has(subscriberId)) {
+    if (subscribers.has(subscriberId) && session?.subscribers.has(subscriberId)) {
       subscribers.set(subscriberId, Date.now());
       return;
     }
@@ -369,7 +369,20 @@ export const subscribeLocalVideoMedia = (
 
   const resetMediaSource = () => {
     pendingChunks.length = 0;
+    const currentMediaSource = mediaSource;
+    const currentSourceBuffer = sourceBuffer;
+    mediaSource = undefined;
     sourceBuffer = undefined;
+    if (
+      currentMediaSource?.readyState === "open" &&
+      !currentSourceBuffer?.updating
+    ) {
+      try {
+        currentMediaSource.endOfStream();
+      } catch {
+        // The element can already have detached this source during reset.
+      }
+    }
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = undefined;
     video.playbackRate = 1;
@@ -385,20 +398,28 @@ export const subscribeLocalVideoMedia = (
       reportError("This display cannot decode the local video format.");
       return;
     }
-    mediaSource = new MediaSource();
-    objectUrl = URL.createObjectURL(mediaSource);
+    const nextMediaSource = new MediaSource();
+    mediaSource = nextMediaSource;
+    objectUrl = URL.createObjectURL(nextMediaSource);
     if (!assignPlayableVideoSource(video, objectUrl, { path: "local-video-relay" })) {
       reportError("This display could not start the local video relay.");
       return;
     }
-    mediaSource.addEventListener(
+    nextMediaSource.addEventListener(
       "sourceopen",
       () => {
-        if (!active || mediaSource?.readyState !== "open") return;
+        if (
+          !active ||
+          mediaSource !== nextMediaSource ||
+          nextMediaSource.readyState !== "open"
+        ) {
+          return;
+        }
         try {
-          sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-          sourceBuffer.mode = "sequence";
-          sourceBuffer.addEventListener("updateend", () => {
+          const nextSourceBuffer = nextMediaSource.addSourceBuffer(mimeType);
+          sourceBuffer = nextSourceBuffer;
+          nextSourceBuffer.mode = "sequence";
+          nextSourceBuffer.addEventListener("updateend", () => {
             syncToLiveEdge();
             appendNext();
           });

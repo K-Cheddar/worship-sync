@@ -362,6 +362,66 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
+  it("releases a removed prepared surface without deleting its cached media", async () => {
+    const removedCandidate = makeCandidate("remote:removed");
+    const keptCandidate = makeCandidate("remote:kept");
+    const getLocalMediaPath = jest.fn().mockResolvedValue("media-cache://clip.mp4");
+    const deleteCachedMedia = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const onStatusChange = jest.fn();
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalMediaPath, deleteCachedMedia, isDev: jest.fn() },
+    });
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[removedCandidate, keptCandidate]}
+        views={[]}
+        onSurfaceElement={onSurfaceElement}
+        onStatusChange={onStatusChange}
+      />,
+    );
+
+    const removedVideo = await screen.findByTestId(
+      "electron-media-surface-video-remote:removed",
+    );
+    await waitFor(() => expect(removedVideo).toHaveAttribute("src"));
+    const load = HTMLMediaElement.prototype.load as jest.Mock;
+    const pause = HTMLMediaElement.prototype.pause as jest.Mock;
+    const loadCallsBeforeRemoval = load.mock.contexts.filter(
+      (context) => context === removedVideo,
+    ).length;
+    const pauseCallsBeforeRemoval = pause.mock.contexts.filter(
+      (context) => context === removedVideo,
+    ).length;
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[keptCandidate]}
+        views={[]}
+        onSurfaceElement={onSurfaceElement}
+        onStatusChange={onStatusChange}
+      />,
+    );
+
+    await waitFor(() => expect(removedVideo).not.toBeInTheDocument());
+    expect(removedVideo).not.toHaveAttribute("src");
+    expect(
+      load.mock.contexts.filter((context) => context === removedVideo),
+    ).toHaveLength(loadCallsBeforeRemoval + 1);
+    expect(
+      pause.mock.contexts.filter((context) => context === removedVideo),
+    ).toHaveLength(pauseCallsBeforeRemoval + 1);
+    expect(getLocalMediaPath).toHaveBeenCalled();
+    expect(deleteCachedMedia).not.toHaveBeenCalled();
+    expect(onSurfaceElement).toHaveBeenCalledWith("remote:removed", null);
+    expect(onStatusChange).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaKey: "remote:removed", phase: "disposed" }),
+    );
+  });
+
   it("does not activate on a retained frame callback", async () => {
     const callbacks: Array<
       (now: number, metadata: VideoFrameCallbackMetadata) => void

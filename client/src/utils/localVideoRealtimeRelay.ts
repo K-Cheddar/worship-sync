@@ -17,6 +17,7 @@ import {
 const CHANNEL_NAME = "worshipsync-local-video-realtime-v1";
 const HEARTBEAT_MS = 2_000;
 const SUBSCRIBER_TTL_MS = 6_000;
+const FRAME_LOOP_STOP_GRACE_MS = 200;
 const PUBLISHER_LOSS_GRACE_MS = 15_000;
 const FIRST_FRAME_FALLBACK_MS = 8_000;
 const MAX_VIDEO_FRAMERATE = 60;
@@ -153,6 +154,7 @@ export const publishLocalVideoRealtime = (
   let encoder: VideoEncoder | undefined;
   let decoderConfig: VideoDecoderConfig | undefined;
   let frameCallbackId: number | undefined;
+  let frameLoopStopTimer: number | undefined;
   let forceKeyFrame = true;
   let lastKeyFrameAt = 0;
   let audioContext: AudioContext | undefined;
@@ -169,6 +171,18 @@ export const publishLocalVideoRealtime = (
 
   const hasAudioSubscribers = () =>
     [...subscribers.values()].some((subscriber) => subscriber.includeAudio);
+
+  const stopAudioPublisher = () => {
+    audioProcessor?.disconnect();
+    audioSource?.disconnect();
+    silentGain?.disconnect();
+    audioProcessor = undefined;
+    audioSource = undefined;
+    silentGain = undefined;
+    const context = audioContext;
+    audioContext = undefined;
+    void context?.close().catch(() => undefined);
+  };
 
   const sendStart = (subscriberId: string) => {
     if (!decoderConfig) return;
@@ -233,6 +247,38 @@ export const publishLocalVideoRealtime = (
     }
   };
 
+  const stopFrameLoop = () => {
+    if (frameCallbackId !== undefined) {
+      video.cancelVideoFrameCallback(frameCallbackId);
+      frameCallbackId = undefined;
+    }
+    if (encoder?.state !== "closed") encoder?.close();
+    encoder = undefined;
+  };
+
+  const startFrameLoop = () => {
+    if (!active || subscribers.size === 0 || frameCallbackId !== undefined) {
+      return;
+    }
+    if (frameLoopStopTimer !== undefined) {
+      window.clearTimeout(frameLoopStopTimer);
+      frameLoopStopTimer = undefined;
+    }
+    frameCallbackId = video.requestVideoFrameCallback(processVideoFrame);
+  };
+
+  const scheduleFrameLoopStop = () => {
+    if (frameLoopStopTimer !== undefined) {
+      window.clearTimeout(frameLoopStopTimer);
+    }
+    frameLoopStopTimer = window.setTimeout(() => {
+      frameLoopStopTimer = undefined;
+      if (subscribers.size > 0) return;
+      stopFrameLoop();
+      if (!hasAudioSubscribers()) stopAudioPublisher();
+    }, FRAME_LOOP_STOP_GRACE_MS);
+  };
+
   const configureEncoder = (width: number, height: number) => {
     if (encoder?.state !== "closed") encoder?.close();
     const sourceFrameRate =
@@ -266,9 +312,9 @@ export const publishLocalVideoRealtime = (
         frameRate,
         bitrate: config.bitrate,
       });
-      encoder = new VideoEncoder({
+      const nextEncoder = new VideoEncoder({
         output: (chunk) => {
-          if (!active || subscribers.size === 0) return;
+          if (!active || encoder !== nextEncoder || subscribers.size === 0) return;
           recordLocalVideoEncoder(sourceId, {
             chunks: 1,
             keyframes: chunk.type === "key" ? 1 : 0,
@@ -294,7 +340,8 @@ export const publishLocalVideoRealtime = (
           );
         },
       });
-      encoder.configure(config);
+      encoder = nextEncoder;
+      nextEncoder.configure(config);
       subscribers.forEach((_subscriber, subscriberId) =>
         sendStart(subscriberId),
       );
@@ -310,7 +357,8 @@ export const publishLocalVideoRealtime = (
   };
 
   const processVideoFrame: VideoFrameRequestCallback = (now, metadata) => {
-    if (!active) return;
+    frameCallbackId = undefined;
+    if (!active || subscribers.size === 0) return;
     frameCallbackId = video.requestVideoFrameCallback(processVideoFrame);
     const values = {
       width: video.videoWidth,
@@ -389,17 +437,23 @@ export const publishLocalVideoRealtime = (
       return;
     }
     if (message.type === "subscribe") {
+      const hadSubscribers = subscribers.size > 0;
       subscribers.set(message.subscriberId, {
         lastSeenAt: Date.now(),
         includeAudio: message.includeAudio === true,
       });
       setLocalVideoSubscriberCount(sourceId, subscribers.size);
       if (message.includeAudio) startAudioPublisher();
+      else if (!hasAudioSubscribers()) stopAudioPublisher();
+      if (!hadSubscribers) startFrameLoop();
       sendStart(message.subscriberId);
     }
     if (message.type === "unsubscribe") {
-      subscribers.delete(message.subscriberId);
-      setLocalVideoSubscriberCount(sourceId, subscribers.size);
+      if (subscribers.delete(message.subscriberId)) {
+        setLocalVideoSubscriberCount(sourceId, subscribers.size);
+        if (!hasAudioSubscribers()) stopAudioPublisher();
+        if (subscribers.size === 0) scheduleFrameLoopStop();
+      }
     }
     if (message.type === "request-key-frame") {
       forceKeyFrame = true;
@@ -408,31 +462,31 @@ export const publishLocalVideoRealtime = (
 
   const cleanupTimer = window.setInterval(() => {
     const staleBefore = Date.now() - SUBSCRIBER_TTL_MS;
+    let removedSubscriber = false;
     subscribers.forEach((subscriber, subscriberId) => {
       if (subscriber.lastSeenAt < staleBefore) {
         subscribers.delete(subscriberId);
+        removedSubscriber = true;
       }
     });
-    setLocalVideoSubscriberCount(sourceId, subscribers.size);
+    if (removedSubscriber) {
+      setLocalVideoSubscriberCount(sourceId, subscribers.size);
+      if (!hasAudioSubscribers()) stopAudioPublisher();
+      if (subscribers.size === 0) scheduleFrameLoopStop();
+    }
     post({ type: "publisher-ready", sourceId, sessionId });
   }, HEARTBEAT_MS);
   post({ type: "publisher-ready", sourceId, sessionId });
-  frameCallbackId = video.requestVideoFrameCallback(processVideoFrame);
 
   return () => {
     window.clearInterval(cleanupTimer);
-    if (frameCallbackId !== undefined) {
-      video.cancelVideoFrameCallback(frameCallbackId);
-    }
+    if (frameLoopStopTimer !== undefined) window.clearTimeout(frameLoopStopTimer);
+    stopFrameLoop();
     post({ type: "stream-stopped", sourceId, sessionId });
     active = false;
     subscribers.clear();
     setLocalVideoSubscriberCount(sourceId, 0);
-    audioProcessor?.disconnect();
-    audioSource?.disconnect();
-    silentGain?.disconnect();
-    void audioContext?.close().catch(() => undefined);
-    if (encoder?.state !== "closed") encoder?.close();
+    stopAudioPublisher();
     channel.close();
   };
 };

@@ -208,6 +208,90 @@ describe("useServicePlanAutosave", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
+  it("keeps the active request owned through an A to B to C switch", async () => {
+    let resolveA1: (plan: ServicePlan) => void = () => {};
+    let resolveB1: (plan: ServicePlan) => void = () => {};
+    const saveA = jest.fn(
+      () => new Promise<ServicePlan>((resolve) => { resolveA1 = resolve; }),
+    );
+    let saveBCallCount = 0;
+    const saveB = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, baseRevision) => {
+        saveBCallCount += 1;
+        return saveBCallCount === 1
+          ? new Promise<ServicePlan>((resolve) => { resolveB1 = resolve; })
+          : Promise.resolve(planFor("plan-b", baseRevision + 1));
+      },
+    );
+    const saveC = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => planFor("plan-c", 1),
+    );
+    const { view, onSaved, options } = setup({ save: saveA });
+
+    // A1 remains pending when the mounted editor switches to B.
+    view.rerender({
+      ...options,
+      save: saveA,
+      changeVersion: 1,
+      buildPayload: () => payloadFor("A1"),
+    });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(saveA).toHaveBeenCalledTimes(1));
+
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 0,
+      save: saveB,
+      buildPayload: () => payloadFor("B1"),
+    });
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 1,
+      save: saveB,
+      buildPayload: () => payloadFor("B1"),
+    });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(saveB).toHaveBeenCalledTimes(1));
+
+    // Capture a newer B snapshot, then leave for C while B1 is still pending.
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 2,
+      save: saveB,
+      buildPayload: () => payloadFor("B2"),
+    });
+    view.rerender({
+      ...options,
+      resetKey: "plan-c",
+      baseRevision: 0,
+      changeVersion: 0,
+      save: saveC,
+      buildPayload: () => payloadFor("C"),
+    });
+
+    // A1 resolves after B1 has taken ownership of the active slot. It must not
+    // detach B1; B2 stays queued until B1 returns the revision it created.
+    await act(async () => { resolveA1(planFor("plan-a", 7)); });
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(view.result.current.getRevision()).toBe(0);
+    expect(saveB).toHaveBeenCalledTimes(1);
+    expect(saveC).not.toHaveBeenCalled();
+
+    await act(async () => { resolveB1(planFor("plan-b", 11)); });
+    await waitFor(() => expect(saveB).toHaveBeenCalledTimes(2));
+    expect(saveB.mock.calls[1][0]).toMatchObject({ name: "B2" });
+    expect(saveB.mock.calls[1][1]).toBe(11);
+    expect(saveC).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(view.result.current.getRevision()).toBe(0);
+  });
+
   it("persists a pending edit to the plan it belongs to when switching away", async () => {
     // Regression: navigating away cleared the debounce without saving, so the
     // last edit before prev/next was silently dropped.

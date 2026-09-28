@@ -28,7 +28,9 @@ import {
   peekLocalVideoFileUrl,
 } from "../utils/localVideoFileUrlCache";
 import {
+  resolveElectronMediaSurfaceBudget,
   selectElectronMediaSurfaceCandidates,
+  type ElectronMediaSurfacePerformanceClass,
   type ElectronMediaSurfaceCandidate,
 } from "../utils/electronMediaSurfacePool";
 import {
@@ -40,7 +42,6 @@ import {
   type ElectronMediaDiscovery,
   type ElectronMediaDiscoveryRenderer,
 } from "../utils/electronMediaSurfaceDiagnostics";
-import { DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET } from "../utils/electronMediaSurfacePool";
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
 
@@ -75,6 +76,7 @@ export type ServiceVideoCandidateResult = {
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
   discovery: ElectronMediaDiscovery;
   poolCapacity: number;
+  performanceClass: ElectronMediaSurfacePerformanceClass;
   posterUrls: string[];
 };
 
@@ -511,6 +513,7 @@ export const useServiceVideoCandidates = ({
   outlineId,
   protectedMediaKeys,
   maxSurfaces,
+  performanceClass = "normal",
   scope = "service",
   renderer = "projector",
   controllerProfileId,
@@ -529,6 +532,7 @@ export const useServiceVideoCandidates = ({
   outlineId?: string | null;
   protectedMediaKeys?: string[];
   maxSurfaces?: number;
+  performanceClass?: ElectronMediaSurfacePerformanceClass;
   scope?: "service" | "current-item";
   renderer?: ElectronMediaDiscoveryRenderer;
   controllerProfileId?: string;
@@ -1304,6 +1308,7 @@ export const useServiceVideoCandidates = ({
       currentItemId,
       protectedMediaKeys,
       maxSurfaces,
+      performanceClass,
     });
     const discoveryItems = serviceMedia.map((item) => {
       const videos = new Map<string, ElectronMediaSurfaceCandidateDiagnostic>();
@@ -1390,8 +1395,9 @@ export const useServiceVideoCandidates = ({
       discovery,
       poolCapacity: Math.max(
         0,
-        Math.floor(maxSurfaces ?? DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET),
+        resolveElectronMediaSurfaceBudget(performanceClass, maxSurfaces).budget,
       ),
+      performanceClass,
       posterUrls,
     };
   }, [
@@ -1400,6 +1406,7 @@ export const useServiceVideoCandidates = ({
     currentItemId,
     currentMedia,
     maxSurfaces,
+    performanceClass,
     outlineId,
     outlineName,
     outlineLoad,

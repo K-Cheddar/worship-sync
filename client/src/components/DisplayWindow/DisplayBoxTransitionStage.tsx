@@ -34,13 +34,18 @@ import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
 import {
   selectElectronMediaSurfaceCandidates,
   type ElectronMediaSurfaceCandidate,
+  type ElectronMediaSurfacePerformanceClass,
   type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
 import type {
   ElectronMediaDiscovery,
   ElectronMediaSurfaceCandidateDiagnostic,
 } from "../../utils/electronMediaSurfaceDiagnostics";
-import { buildMediaPreparationReadinessCounts } from "../../utils/mediaPreparationManifest";
+import {
+  buildMediaPreparationReadinessCounts,
+  buildMediaPreparationReadinessVideos,
+  getMediaReadinessFileName,
+} from "../../utils/mediaPreparationManifest";
 import {
   isMediaSurfaceVisible,
   isPreparedMediaSurfaceUsable,
@@ -103,6 +108,7 @@ export type LaneMediaPlaybackOptions = {
     | "contextSource"
   >;
   preparedSurfaceBudget?: number;
+  preparedSurfacePerformanceClass?: ElectronMediaSurfacePerformanceClass;
   preparedMediaScope?: "service" | "current-item";
   /** Resolved display setting; false means this surface does not paint backgrounds. */
   showBackground?: boolean;
@@ -116,6 +122,7 @@ export type LaneMediaPlaybackOptions = {
   activeFileVideoPlayback?: VideoBackgroundPlaybackCue;
   isEditor?: boolean;
   localVideo?: {
+    active: boolean;
     playAudio: boolean;
     captureEnabled: boolean;
     receiveHighQuality: boolean;
@@ -400,6 +407,7 @@ const DisplayBoxTransitionStage = ({
     currentMedia: currentPoolMedia,
     protectedMediaKeys: protectedPoolMediaKeys,
     maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
+    performanceClass: mediaPlayback?.preparedSurfacePerformanceClass,
     scope: mediaPlayback?.preparedMediaScope,
     renderer: "projector",
     controllerProfileId:
@@ -475,11 +483,13 @@ const DisplayBoxTransitionStage = ({
       currentItemId: mediaPlayback?.currentItemId,
       protectedMediaKeys: protectedPoolMediaKeys,
       maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
+      performanceClass: mediaPlayback?.preparedSurfacePerformanceClass,
     });
   }, [
     currentPoolMedia?.mediaKey,
     mediaPlayback?.currentItemId,
     mediaPlayback?.preparedSurfaceBudget,
+    mediaPlayback?.preparedSurfacePerformanceClass,
     poolCandidateResult.candidates,
     protectedPoolMediaKeys,
     remoteManifestCandidates,
@@ -592,6 +602,27 @@ const DisplayBoxTransitionStage = ({
       : 0,
   );
   const selectedPoolMediaKeys = new Set((poolEnabled ? poolCandidates : []).map((candidate) => candidate.mediaKey));
+  const remoteVideoStatuses = new Map(remoteSurfaceStatuses.map((status) => [status.mediaKey, status]));
+  const readinessVideoInventory = usingRemoteManifest
+    ? remoteManifestDiagnostics
+    : poolCandidateResult.discovery.items.flatMap((item) => item.videos.map((video) => ({
+        ...video,
+        itemId: item.itemId,
+        itemName: item.itemName,
+      })));
+  const readinessVideos = buildMediaPreparationReadinessVideos(readinessVideoInventory.map((video) => {
+    const surface = remoteVideoStatuses.get(video.mediaKey);
+    return {
+      mediaKey: video.mediaKey,
+      name: getMediaReadinessFileName("source" in video ? video.source : video.originalSource),
+      itemId: video.itemId,
+      itemName: video.itemName,
+      status: video.status,
+      selected: selectedPoolMediaKeys.has(video.mediaKey),
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  }));
   const readinessErrors = remoteSurfaceStatuses
     .filter((status) => status.phase === "error" && selectedPoolMediaKeys.has(status.mediaKey))
     .map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]"));
@@ -604,6 +635,7 @@ const DisplayBoxTransitionStage = ({
       ? remotePreparation.manifestReceivedAt ? "remote-manifest" : "cached-manifest"
       : window.electronAPI ? "local-fallback" : "browser-poster",
     ...readinessCounts,
+    ...readinessVideos,
     errors: readinessErrors,
   });
 
@@ -1901,6 +1933,7 @@ const DisplayBoxTransitionStage = ({
           onSurfaceElement={reportPreparedMediaElement}
           discovery={remoteManifestDiscovery ?? poolCandidateResult.discovery}
           poolCapacity={poolCandidateResult.poolCapacity}
+          performanceClass={poolCandidateResult.performanceClass}
           transitionDurationMs={normalizeTransitionDurationMs(
             transitionDurationMs,
           )}

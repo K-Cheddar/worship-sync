@@ -333,7 +333,10 @@ describe("useRemoteMediaPreparationManifest", () => {
       <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId: "church-pool-report", sharedDataReady: true } as never}>{children}</GlobalInfoContext.Provider>
     );
     const view = renderHook(() => useReportRemoteMediaPreparationReadiness({
-      enabled: true, outputId: "projector", source: "remote-manifest", manifest, manifestReceivedAt: Date.now(), ...counts, errors: [],
+      enabled: true, outputId: "projector", source: "remote-manifest", manifest, manifestReceivedAt: Date.now(), ...counts,
+      videos: [{ mediaKey: "remote:opening", name: "opening.mp4", itemName: "Opening", status: "ready" }],
+      videosTruncated: false,
+      errors: [],
     }), { wrapper });
     try {
       await waitFor(() => expect(setMock).toHaveBeenCalled());
@@ -343,6 +346,8 @@ describe("useRemoteMediaPreparationManifest", () => {
         candidateCount: 30, finiteCandidateCount: 30, selectedCandidateCount: 26,
         selectedFiniteCandidateCount: 26, selectedFiniteInventoryCount: 24,
         deferredFiniteCount: 6, mountedSurfaceCount: 26, readyCount: 26,
+        videos: [{ mediaKey: "remote:opening", name: "opening.mp4", itemName: "Opening", status: "ready" }],
+        videosTruncated: false,
       });
     } finally {
       view.unmount();

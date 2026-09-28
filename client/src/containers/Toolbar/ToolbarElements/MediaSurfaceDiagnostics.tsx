@@ -13,7 +13,7 @@ import {
   subscribeToElectronMediaSurfaceDiagnostics,
   type ElectronMediaSurfacePoolDiagnostics,
 } from "../../../utils/electronMediaSurfaceDiagnostics";
-import type { PreparedVideoMetrics } from "../../../types/electron";
+import type { PreparedVideoMetricValue, PreparedVideoMetrics } from "../../../types/electron";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import {
   MEDIA_READINESS_STATUS_EVENT,
@@ -24,7 +24,13 @@ import {
   type MediaPreparationPublicationStatus,
   type MediaReadinessLocalStatus,
 } from "../../../hooks/useMediaPreparationManifest";
-import type { MediaPreparationReadinessReport } from "../../../utils/mediaPreparationManifest";
+import {
+  buildMediaPreparationReadinessVideos,
+  getMediaReadinessFileName,
+  sanitizeMediaPreparationReadinessText,
+  type MediaPreparationReadinessReport,
+  type MediaPreparationReadinessVideo,
+} from "../../../utils/mediaPreparationManifest";
 
 type ReceivedDiagnostics = ElectronMediaSurfacePoolDiagnostics & {
   receivedAt: number;
@@ -34,7 +40,7 @@ const METRICS_STALE_MS = 12_000;
 const DIAGNOSTICS_STALE_MS = 15_000;
 
 const formatMetric = (
-  value: PreparedVideoMetrics["memory"] | undefined,
+  value: PreparedVideoMetricValue | undefined,
   unit: "MB" | "%",
 ): string => {
   if (value?.status !== "available" || typeof value.value !== "number") {
@@ -43,6 +49,70 @@ const formatMetric = (
   return unit === "MB"
     ? `≈${(value.value / 1024).toFixed(0)} MB`
     : `${value.value.toFixed(1)}%`;
+};
+
+const getPrimaryAppMemory = (metrics: PreparedVideoMetrics | undefined) => {
+  const privateMemory = metrics?.total?.privateMemory;
+  if (privateMemory?.status === "available") return { label: "App RAM", value: privateMemory };
+  const workingSet = metrics?.total?.workingSetMemory;
+  if (workingSet?.status === "available") return { label: "App RAM (working set)", value: workingSet };
+  return { label: "App RAM", value: privateMemory ?? workingSet };
+};
+
+const readinessStatusLabels = {
+  playing: "Playing",
+  ready: "Ready",
+  preparing: "Preparing",
+  failed: "Failed",
+  "pending-cache": "Pending cache",
+  deferred: "Deferred",
+  excluded: "Excluded",
+} as const;
+
+const readinessStatusIcons = {
+  playing: "▶",
+  ready: "✓",
+  preparing: "…",
+  failed: "⚠",
+  "pending-cache": "⏳",
+  deferred: "○",
+  excluded: "○",
+} as const;
+
+const ReadinessVideos = ({
+  videos,
+  preparedCount,
+  finiteCount,
+  unavailable,
+  truncated,
+}: {
+  videos?: MediaPreparationReadinessVideo[];
+  preparedCount: number;
+  finiteCount: number;
+  unavailable?: boolean;
+  truncated?: boolean;
+}) => {
+  if (unavailable) return <p className="mt-2 text-xs text-gray-400">Per-video details unavailable from this device version.</p>;
+  if (!videos?.length) return null;
+  return (
+    <details className="mt-3 border-t border-gray-700 pt-2">
+      <summary className="cursor-pointer text-xs font-medium text-gray-300">Videos {preparedCount}/{finiteCount} prepared</summary>
+      <ul className="mt-2 space-y-1.5 text-xs">
+        {videos.map((video) => (
+          <li key={video.mediaKey} className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span aria-hidden="true" className={video.status === "failed" ? "text-red-300" : "text-gray-400"}>{readinessStatusIcons[video.status]}</span>
+              <span className="break-words text-gray-200">{video.name || video.itemName || video.mediaKey}</span>
+              {video.itemName && video.name !== video.itemName && <span className="text-gray-500">· {video.itemName}</span>}
+              <strong className={video.status === "failed" ? "text-red-200" : "text-gray-400"}>{readinessStatusLabels[video.status]}</strong>
+            </div>
+            {video.error && <p className="ml-5 break-words text-red-200">{video.error}</p>}
+          </li>
+        ))}
+      </ul>
+      {truncated && <p className="mt-2 text-gray-500">Showing the first 64 videos by readiness status.</p>}
+    </details>
+  );
 };
 
 export const removeSensitiveQueryParameters = (value: string): string => {
@@ -68,6 +138,11 @@ export const sanitizeForCopy = (value: unknown, key = ""): unknown => {
   }
   if (typeof value === "string") {
     return value
+      .replace(/\bfile:\/\/[^\s"'<>]+/gi, "[local path]")
+      .replace(/\b[A-Za-z]:\\(?:[^\s"'<>\\]+\\)*[^\s"'<>]*/g, "[local path]")
+      .replace(/\\\\[^\s"'<>]+/g, "[local path]")
+      .replace(/\/(?:Users|home|private|tmp|var|mnt|media)\/[^\s"'<>]+/gi, "[local path]")
+      .replace(/(^|[\s(])\/[A-Za-z0-9._-]+(?:\/[^\s,;)]*)*/g, "$1[local path]")
       .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, removeSensitiveQueryParameters)
       .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
       .replace(/\b((?:access|refresh|id)?token|api[-_]?key|auth[-_]?key|key|sig(?:nature)?|secret|credential|password|cookie|x-amz-(?:credential|signature|security-token)|x-goog-(?:credential|signature|security-token))\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
@@ -109,6 +184,23 @@ const getPreparedKeys = (entry: ReceivedDiagnostics) =>
       .filter((surface) => surface.phase === "ready" || surface.phase === "playing")
       .map((surface) => surface.mediaKey),
   );
+
+const getLocalReadinessVideos = (entry: ReceivedDiagnostics) => {
+  const surfaceByKey = new Map(entry.surfaces.map((surface) => [surface.mediaKey, surface]));
+  return buildMediaPreparationReadinessVideos((entry.candidateDetails ?? []).map((candidate) => {
+    const surface = surfaceByKey.get(candidate.mediaKey);
+    return {
+      mediaKey: candidate.mediaKey,
+      name: getMediaReadinessFileName(candidate.originalSource),
+      itemId: candidate.itemId,
+      itemName: candidate.itemName,
+      status: candidate.status,
+      selected: candidate.selected,
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  }));
+};
 
 const getActionIssues = (entry: ReceivedDiagnostics): string[] => {
   const issues: string[] = [];
@@ -187,6 +279,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
       ? `Videos · ${issues} issue${issues === 1 ? "" : "s"}`
       : "Videos";
   const metricAvailable = metrics?.status === "available" && metrics.total;
+  const appMemory = getPrimaryAppMemory(metrics);
   const { churchId } = useContext(GlobalInfoContext) || {};
   const receiveRemoteReports = useCallback((outputId: string, reports: MediaPreparationReadinessReport[]) => {
     setRemoteReadinessReports((current) => {
@@ -201,11 +294,11 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const electronMetricsLabel = !window.electronAPI
     ? "Unavailable — Electron only"
     : metricAvailable
-      ? `App CPU ${formatMetric(metrics!.total!.cpu, "%")} · App RAM ${formatMetric(metrics!.total!.memory, "MB")}`
+      ? `App CPU ${formatMetric(metrics!.total!.cpu, "%")} · ${appMemory.label} ${formatMetric(appMemory.value, "MB")}`
       : metrics?.status === "stale"
         ? "Metrics are stale"
         : metrics?.timestamp
-          ? `App CPU ${formatMetric(metrics.total?.cpu, "%")} · App RAM ${formatMetric(metrics.total?.memory, "MB")}`
+          ? `App CPU ${formatMetric(metrics.total?.cpu, "%")} · ${appMemory.label} ${formatMetric(appMemory.value, "MB")}`
           : "Measuring app usage…";
 
   const copyReport = async () => {
@@ -252,7 +345,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
               </span>
             </div>
             <p className="mt-1 text-xs text-gray-400">
-              Approximate total across WorshipSync Electron processes. Working sets can overlap through shared memory; CPU can exceed 100% on multicore computers.
+              Private RAM is the better estimate of memory owned by WorshipSync. Summed working sets can include overlapping shared pages, and neither value is an exact Windows Task Manager match. CPU can exceed 100% on multicore computers.
             </p>
           </section>
 
@@ -263,6 +356,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
             const inventoryCount = getInventoryCount(entry);
             const finiteCount = getFiniteCount(entry);
             const preparedCount = getPreparedKeys(entry).size;
+            const readinessVideos = getLocalReadinessVideos(entry);
             const pendingCount = entry.discovery?.pendingHlsCacheCount ?? entry.pendingCacheCount;
             const excludedCount = entry.discovery?.intentionallyExcludedVideoCount ?? 0;
             const activeSurface = entry.lastMediaKey
@@ -299,6 +393,8 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   <Count label="Excluded" value={excludedCount} help="Distinct video sources that cannot be prepared as finite video." />
                   <Count label="Selected surfaces" value={entry.surfaceCount} help="Surfaces mounted in this output's bounded preparation pool; this is not the plan's video count." />
                 </dl>
+
+                <ReadinessVideos videos={readinessVideos.videos} preparedCount={preparedCount} finiteCount={finiteCount} truncated={readinessVideos.videosTruncated} />
 
                 <p className="mt-3 text-xs text-gray-300">
                   Playing video: <Status good={playingHealthy}>{playingHealthy ? "Frames advancing" : activeSurface?.phase === "error" ? "Needs attention" : "No video playing"}</Status>
@@ -338,7 +434,9 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   <div className="mt-3 space-y-3 text-xs text-gray-300">
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       <Metric label="App CPU" value={formatMetric(metrics?.total?.cpu, "%")} />
-                      <Metric label="App RAM" value={formatMetric(metrics?.total?.memory, "MB")} />
+                      <Metric label="App private RAM" value={formatMetric(metrics?.total?.privateMemory, "MB")} />
+                      <Metric label="Summed working sets" value={formatMetric(metrics?.total?.workingSetMemory, "MB")} />
+                      <Metric label="Process count" value={metrics?.total?.processCount ?? "—"} />
                       <Metric label="Pool capacity" value={entry.poolCapacity ?? "—"} />
                       <Metric label="Selected candidates" value={entry.candidateCount} />
                       <Metric label="Transition path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
@@ -352,10 +450,10 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                     </div>
                     <details>
                       <summary className="cursor-pointer">Electron process breakdown ({metrics?.processes?.length ?? 0})</summary>
-                      <p className="mt-1 text-gray-400">Working set is an approximate sum and can include shared memory. CPU is app-process CPU and may exceed 100%.</p>
+                      <p className="mt-1 text-gray-400">Private RAM is the better estimate of app-owned memory. Working sets can overlap through shared pages. CPU is app-process CPU and may exceed 100%.</p>
                       <div className="mt-2 space-y-1">
                         {(metrics?.processes ?? []).map((process) => (
-                          <p key={process.pid}>{process.labels.join(", ") || process.processType} (PID {process.pid}) · CPU {formatMetric(process.cpu, "%")} · RAM {formatMetric(process.memory, "MB")}</p>
+                          <p key={process.pid}>{process.labels.length ? `${process.labels.join(", ")} · ${process.processType}` : process.processType} (PID {process.pid}) · CPU {formatMetric(process.cpu, "%")} · Private RAM {formatMetric(process.memory.private, "MB")} · Working set {formatMetric(process.memory.workingSet, "MB")}</p>
                         ))}
                       </div>
                     </details>
@@ -534,7 +632,8 @@ const RemoteReadiness = ({
               <div className="flex items-center justify-between gap-2"><strong className="text-white">Device {deviceNumber}{concurrentCount > 1 ? ` · window ${concurrentIndex}` : ""}</strong><Status good={ready}>{ready ? "Ready" : connection}</Status></div>
               <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : desiredRevision != null ? ` · desired r${desiredRevision} not confirmed` : " · controller publication unknown"}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
               <p title="Inventory is unique media in the received manifest. Selected counts describe the actual bounded preparation pool, including protected transition media; deferred finite videos are outside that pool.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · inventory {device.candidateCount} ({device.finiteCandidateCount} finite, {device.pendingCacheCount} pending cache, {device.excludedCount ?? 0} excluded) · {hasSelectedCounts ? `selected ${device.readyCount}/${selectedFiniteCount} finite ready · ${device.preparingCount} preparing · ${device.failedCount} failed · ${selectedPendingCount} pending cache · ${device.deferredFiniteCount ?? 0} deferred · ${device.mountedSurfaceCount ?? 0} mounted` : "selected preparation counts unavailable (older report)"}{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
-              {device.errors.length > 0 && <p className="mt-1 text-red-200">{device.errors[0]}</p>}
+              <ReadinessVideos videos={device.videos} preparedCount={device.readyCount} finiteCount={device.selectedFiniteCandidateCount ?? device.finiteCandidateCount} unavailable={!device.videos} truncated={device.videosTruncated} />
+              {device.errors.length > 0 && <p className="mt-1 break-words text-red-200">{sanitizeMediaPreparationReadinessText(device.errors[0], 180)}</p>}
               <p className="mt-1 text-gray-400">Last report {Math.floor(age / 1000)}s ago · {connection}</p>
               {superseded.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-gray-400">{superseded.length} superseded session(s)</summary><ul className="mt-1 space-y-1">{superseded.map((old) => <li key={old.sessionId}>Previous window · r{old.manifestRevision ?? "—"} · report {new Date(old.reportedAt).toLocaleString()} · {old.readyCount} ready / {old.failedCount} failed</li>)}</ul></details>}
             </article>

@@ -30,10 +30,14 @@ export type PreparedVideoMetrics = {
   rendererPid?: number;
   matchedPid?: number;
   processType?: string;
-  memory: PreparedVideoMetricValue;
+  memory: {
+    private?: PreparedVideoMetricValue;
+    workingSet?: PreparedVideoMetricValue;
+  };
   cpu: PreparedVideoMetricValue;
   total?: {
-    memory: PreparedVideoMetricValue;
+    privateMemory: PreparedVideoMetricValue;
+    workingSetMemory: PreparedVideoMetricValue;
     cpu: PreparedVideoMetricValue;
     processCount: number;
   };
@@ -43,7 +47,10 @@ export type PreparedVideoMetrics = {
     name?: string;
     serviceName?: string;
     labels: string[];
-    memory: PreparedVideoMetricValue;
+    memory: {
+      private?: PreparedVideoMetricValue;
+      workingSet?: PreparedVideoMetricValue;
+    };
     cpu: PreparedVideoMetricValue;
   }>;
   reason?: string;

@@ -106,6 +106,7 @@ export type ElectronMediaSurfaceCandidateDiagnostic = {
   itemName?: string;
   itemIndex?: number;
   isCurrentItem?: boolean;
+  selected?: boolean;
   priority?: number;
   protected?: boolean;
   surfaceState?: "COLD" | "PREPARING" | "READY" | "ACTIVE";
@@ -208,6 +209,7 @@ export type ElectronMediaSurfacePoolDiagnostics = {
   currentItemVideoCount?: number;
   currentItemReadyCount?: number;
   poolCapacity?: number;
+  performanceClass?: "constrained" | "normal" | "high-performance";
   pendingCacheCount: number;
   surfaceCount: number;
   readyCount: number;
@@ -265,6 +267,7 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   currentItemVideoCount,
   currentItemReadyCount,
   poolCapacity,
+  performanceClass,
   surfaceCount,
   readyCount,
   preparingCount,
@@ -303,6 +306,7 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   currentItemVideoCount?: number;
   currentItemReadyCount?: number;
   poolCapacity?: number;
+  performanceClass?: "constrained" | "normal" | "high-performance";
   surfaceCount?: number;
   readyCount?: number;
   preparingCount?: number;
@@ -338,6 +342,7 @@ export const summarizeElectronMediaSurfaceDiagnostics = ({
   currentItemVideoCount,
   currentItemReadyCount,
   poolCapacity,
+  performanceClass,
   surfaceCount: surfaceCount ?? surfaces.length,
   readyCount: readyCount ?? surfaces.filter((surface) => surface.phase === "ready").length,
   preparingCount: preparingCount ?? surfaces.filter((surface) =>

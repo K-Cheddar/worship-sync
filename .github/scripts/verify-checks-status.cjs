@@ -1,4 +1,11 @@
-const requiredJobs = ["client_tests", "coverage", "server_tests", "lint_typecheck"];
+const requiredJobs = [
+  "client_tests",
+  "coverage",
+  "server_tests",
+  "lint_typecheck",
+  "heroku_build",
+  "electron_build",
+];
 let checks;
 
 try {

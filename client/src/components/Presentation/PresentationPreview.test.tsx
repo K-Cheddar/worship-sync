@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PresentationPreview from "./PresentationPreview";
 
@@ -512,6 +512,133 @@ describe("PresentationPreview", () => {
         videoPreloadRole: "preview",
         canCaptureLocalVideo: true,
         directLocalVideoCapture: true,
+      }),
+    );
+  });
+
+  it("deep-suspends long-hidden preview media and restores the latest state", () => {
+    jest.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={basePresentation}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible={false}
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: true,
+          suspendVideoPlayback: true,
+        }),
+      );
+
+      act(() => {
+        jest.advanceTimersByTime(30_000);
+      });
+
+      expect(screen.getByTestId("display-window")).toBeInTheDocument();
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: false,
+          suspendVideoPlayback: true,
+          canCaptureLocalVideo: false,
+        }),
+      );
+
+      const latestInfo = { ...basePresentation, time: 84 } as typeof basePresentation;
+      rerender(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={latestInfo}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          time: 84,
+          shouldPlayVideo: true,
+          suspendVideoPlayback: false,
+          canCaptureLocalVideo: true,
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("deep-suspends immediately when the controller renderer becomes hidden", () => {
+    const originalVisibilityState = document.visibilityState;
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+
+    try {
+      render(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={basePresentation}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: false,
+          suspendVideoPlayback: true,
+          canCaptureLocalVideo: false,
+        }),
+      );
+    } finally {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: originalVisibilityState,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+
+  it("accepts an external request to deep-suspend preview-only media", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        suspendPreviewMedia
+      />,
+    );
+
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        shouldPlayVideo: false,
+        suspendVideoPlayback: true,
+        canCaptureLocalVideo: false,
       }),
     );
   });

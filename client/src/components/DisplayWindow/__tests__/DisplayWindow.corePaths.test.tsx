@@ -154,6 +154,7 @@ jest.mock("../LocalVideoInputView", () => ({
   __esModule: true,
   default: function MockLocalVideoInputView({
     input,
+    isActive,
     playAudio,
     captureEnabled,
     receiveHighQuality,
@@ -163,6 +164,7 @@ jest.mock("../LocalVideoInputView", () => ({
     onPaintReadyChange,
   }: {
     input: { deviceLabel: string };
+    isActive?: boolean;
     playAudio?: boolean;
     captureEnabled?: boolean;
     receiveHighQuality?: boolean;
@@ -182,6 +184,7 @@ jest.mock("../LocalVideoInputView", () => ({
       <div
         data-testid="local-video-input-view"
         data-instance-id={instanceId.current}
+        data-active={isActive === false ? "false" : "true"}
         data-play-audio={playAudio ? "true" : "false"}
         data-capture-enabled={captureEnabled ? "true" : "false"}
         data-high-quality={receiveHighQuality ? "true" : "false"}
@@ -1994,6 +1997,10 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
       "data-capture-enabled",
       "true",
     );
@@ -2015,6 +2022,10 @@ describe("DisplayWindow core paths", () => {
           ownerLabel: "Booth",
         }}
       />,
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-active",
+      "false",
     );
     expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
       "data-capture-enabled",
@@ -2422,6 +2433,41 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
     expect(await screen.findByTestId("window-hls-player")).toBeInTheDocument();
+  });
+
+  it("releases a preview file-video player when deep suspension disables video", async () => {
+    const videoBox: Box = {
+      ...baseBox,
+      id: "suspended-video-box",
+      mediaInfo: {
+        id: "suspended-video",
+        type: "video",
+        background: "https://cdn.example.com/preview.mp4",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoBox]}
+        shouldPlayVideo
+        videoPreloadRole="preview"
+      />,
+    );
+
+    expect(await screen.findByTestId("window-hls-player")).toBeInTheDocument();
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoBox]}
+        shouldPlayVideo={false}
+        videoPreloadRole="preview"
+      />,
+    );
+
+    expect(screen.queryByTestId("window-hls-player")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
   });
 
   it("keeps a controller projector preview on the preview playback role", async () => {

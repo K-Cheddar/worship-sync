@@ -23,6 +23,7 @@ jest.mock("../../../hooks/useServiceVideoCandidates", () => ({
       uniqueFiniteVideoCount: 0,
     },
     poolCapacity: 24,
+    performanceClass: "normal",
     posterUrls: [],
   }),
 }));

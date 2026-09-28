@@ -69,7 +69,132 @@ export type MediaPreparationReadinessReport = {
   deferredFiniteCount?: number;
   /** Number of preparation surfaces actually mounted for the selected set. */
   mountedSurfaceCount?: number;
+  /** Optional bounded details; absent on older clients. */
+  videos?: MediaPreparationReadinessVideo[];
+  videosTruncated?: boolean;
   errors: string[];
+};
+
+export type MediaPreparationReadinessVideoStatus =
+  | "playing"
+  | "ready"
+  | "preparing"
+  | "failed"
+  | "pending-cache"
+  | "deferred"
+  | "excluded";
+
+export type MediaPreparationReadinessVideo = {
+  mediaKey: string;
+  name?: string;
+  itemId?: string;
+  itemName?: string;
+  status: MediaPreparationReadinessVideoStatus;
+  error?: string;
+};
+
+export type MediaPreparationReadinessVideoInput = {
+  mediaKey: string;
+  name?: string;
+  itemId?: string;
+  itemName?: string;
+  status: ReadinessCandidateState;
+  selected?: boolean;
+  phase?: ReadinessSurfacePhase;
+  error?: string;
+};
+
+const READINESS_VIDEO_LIMIT = 64;
+const readinessVideoStatusOrder: Record<MediaPreparationReadinessVideoStatus, number> = {
+  failed: 0,
+  preparing: 1,
+  "pending-cache": 1,
+  playing: 2,
+  ready: 3,
+  deferred: 4,
+  excluded: 4,
+};
+
+export const sanitizeMediaPreparationReadinessText = (value: string | undefined, limit = 120): string | undefined => {
+  if (!value) return undefined;
+  const safe = value
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, "")
+    .replace(/(?:\b[A-Za-z]:\\|\\\\)[^\s]*/g, "")
+    .replace(/(^|[\s(])\/[A-Za-z0-9._-]+(?:\/[^\s,;)]*)*/g, "$1")
+    .replace(/\b(?:token|sig(?:nature)?|auth(?:orization)?|secret|password|credential|api[-_]?key)\s*[:=]\s*[^\s,;]+/gi, "")
+    .replace(/[?#].*$/, "")
+    .replace(/[\\/]+/g, " ")
+    .trim()
+    .slice(0, limit);
+  return safe || undefined;
+};
+
+export const getMediaReadinessFileName = (source: string | undefined): string | undefined => {
+  if (!source) return undefined;
+  const withoutQuery = source.split(/[?#]/, 1)[0];
+  const fileName = withoutQuery.split(/[\\/]/).filter(Boolean).at(-1);
+  return sanitizeMediaPreparationReadinessText(fileName);
+};
+
+const safeReadinessMediaKey = (mediaKey: string): string => {
+  if (!/[\\/?#]|:\/\/|(?:^|[:?&_-])(?:token|sig(?:nature)?|secret|password|credential|auth|key)=/i.test(mediaKey)) return mediaKey.slice(0, 160);
+  let hash = 2166136261;
+  for (let index = 0; index < mediaKey.length; index += 1) {
+    hash = Math.imul(hash ^ mediaKey.charCodeAt(index), 16777619);
+  }
+  return `video-${(hash >>> 0).toString(16)}`;
+};
+
+/** Derives display-only video rows from the same inventory and surface state as the aggregate report. */
+export const buildMediaPreparationReadinessVideos = (
+  inputs: MediaPreparationReadinessVideoInput[],
+): { videos: MediaPreparationReadinessVideo[]; videosTruncated: boolean } => {
+  const byKey = new Map<string, MediaPreparationReadinessVideoInput>();
+  const phasePriority = (phase: ReadinessSurfacePhase | undefined) =>
+    phase === "active-playing" || phase === "playing" ? 5
+      : phase === "ready-paused" || phase === "ready" ? 4
+        : phase === "preparing" || phase === "activation-requested" || phase === "loading" ? 3
+          : phase === "error" ? 2 : 0;
+  const candidatePriority: Record<ReadinessCandidateState, number> = { excluded: 0, "pending-cache": 1, eligible: 2 };
+  inputs.forEach((input) => {
+    const current = byKey.get(input.mediaKey);
+    if (!current) {
+      byKey.set(input.mediaKey, input);
+      return;
+    }
+    const preferred = phasePriority(input.phase) > phasePriority(current.phase) || (!current.itemName && input.itemName)
+      ? input
+      : current;
+    byKey.set(input.mediaKey, {
+      ...preferred,
+      status: candidatePriority[input.status] > candidatePriority[current.status] ? input.status : current.status,
+      selected: Boolean(current.selected || input.selected),
+      name: preferred.name ?? current.name ?? input.name,
+      itemId: preferred.itemId ?? current.itemId ?? input.itemId,
+      itemName: preferred.itemName ?? current.itemName ?? input.itemName,
+    });
+  });
+  const videos = [...byKey.values()].map((video) => {
+    const phase = video.phase;
+    const status: MediaPreparationReadinessVideoStatus =
+      phase === "active-playing" || phase === "playing" ? "playing"
+        : phase === "ready-paused" || phase === "ready" ? "ready"
+          : phase === "error" ? "failed"
+            : phase === "preparing" || phase === "activation-requested" || phase === "loading" || (video.selected && video.status === "eligible") ? "preparing"
+              : video.status === "pending-cache" ? "pending-cache"
+                : video.status === "excluded" ? "excluded"
+                  : "deferred";
+    const fallbackName = sanitizeMediaPreparationReadinessText(video.name) ?? sanitizeMediaPreparationReadinessText(video.itemName) ?? sanitizeMediaPreparationReadinessText(video.mediaKey) ?? "Video";
+    return {
+      mediaKey: safeReadinessMediaKey(video.mediaKey),
+      name: fallbackName,
+      ...(video.itemId && { itemId: sanitizeMediaPreparationReadinessText(video.itemId) }),
+      ...(video.itemName && sanitizeMediaPreparationReadinessText(video.itemName) && { itemName: sanitizeMediaPreparationReadinessText(video.itemName) }),
+      status,
+      ...(status === "failed" && video.error && { error: sanitizeMediaPreparationReadinessText(video.error, 180) }),
+    } satisfies MediaPreparationReadinessVideo;
+  }).sort((left, right) => readinessVideoStatusOrder[left.status] - readinessVideoStatusOrder[right.status] || (left.name ?? left.mediaKey).localeCompare(right.name ?? right.mediaKey));
+  return { videos: videos.slice(0, READINESS_VIDEO_LIMIT), videosTruncated: videos.length > READINESS_VIDEO_LIMIT };
 };
 
 export type ReadinessCandidateState = "eligible" | "pending-cache" | "excluded";
@@ -150,6 +275,23 @@ export const isMediaPreparationReadinessReport = (
     report.mountedSurfaceCount,
   ];
   const hasSelection = selectedFields.some((entry) => entry !== undefined);
+  const validVideos = report.videos === undefined || (
+    Array.isArray(report.videos) && report.videos.length <= READINESS_VIDEO_LIMIT &&
+    report.videos.every((video) => {
+      if (!video || typeof video !== "object") return false;
+      const candidate = video as Partial<MediaPreparationReadinessVideo>;
+      const safeText = (text: unknown, max: number) => text === undefined || (
+        typeof text === "string" && text.length <= max && !/[\\/]|:\/\/|[?#]/.test(text) &&
+        !/\b(?:token|sig(?:nature)?|auth(?:orization)?|secret|password|credential|api[-_]?key)\s*[:=]/i.test(text)
+      );
+      return typeof candidate.mediaKey === "string" && candidate.mediaKey.length > 0 && candidate.mediaKey.length <= 160 && safeText(candidate.mediaKey, 160) &&
+        safeText(candidate.name, 120) &&
+        safeText(candidate.itemId, 120) &&
+        safeText(candidate.itemName, 120) &&
+        ["playing", "ready", "preparing", "failed", "pending-cache", "deferred", "excluded"].includes(candidate.status ?? "") &&
+        safeText(candidate.error, 180);
+    })
+  );
   const validSelection = !hasSelection || (
     selectedFields.every(count) &&
     Number(report.selectedFiniteCandidateCount) + Number(report.selectedPendingCacheCount) + Number(report.selectedExcludedCount) === Number(report.selectedCandidateCount) &&
@@ -185,6 +327,8 @@ export const isMediaPreparationReadinessReport = (
     Number(report.finiteCandidateCount) + Number(report.pendingCacheCount) + Number(report.excludedCount ?? 0) <= Number(report.candidateCount) &&
     (hasSelection || Number(report.readyCount) + Number(report.preparingCount) + Number(report.failedCount) <= Number(report.finiteCandidateCount)) &&
     validSelection &&
+    validVideos &&
+    (report.videosTruncated === undefined || typeof report.videosTruncated === "boolean") &&
     (hasSelection
       ? Number(report.pendingCacheFailedCount ?? 0) <= Number(report.selectedPendingCacheCount)
       : Number(report.pendingCacheFailedCount ?? 0) <= Number(report.pendingCacheCount)) &&

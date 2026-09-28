@@ -82,6 +82,56 @@ const publish = (outputId: string, readyCount: number, candidateCount: number) =
 };
 
 describe("MediaSurfaceDiagnostics", () => {
+  it("labels private RAM as the headline estimate and keeps per-process working sets available", () => {
+    let receiveMetrics: ((value: unknown) => void) | undefined;
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        onPreparedVideoMetrics: jest.fn((listener: (value: unknown) => void) => { receiveMetrics = listener; return jest.fn(); }),
+        subscribePreparedVideoMetrics: jest.fn(async () => true),
+        unsubscribePreparedVideoMetrics: jest.fn(async () => true),
+      },
+    });
+    renderDiagnostics();
+    act(() => publish("projector", 1, 1));
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+    act(() => receiveMetrics?.({
+      status: "available", timestamp: Date.now(),
+      memory: { private: { status: "available", value: 80_000 }, workingSet: { status: "available", value: 120_000 } },
+      cpu: { status: "available", value: 2 },
+      total: {
+        privateMemory: { status: "available", value: 918 * 1024 },
+        workingSetMemory: { status: "available", value: 1400 * 1024 },
+        cpu: { status: "available", value: 7.3 }, processCount: 2,
+      },
+      processes: [{
+        pid: 41, processType: "Tab", labels: ["Projector renderer"],
+        cpu: { status: "available", value: 1.2 },
+        memory: { private: { status: "available", value: 80_000 }, workingSet: { status: "available", value: 120_000 } },
+      }],
+    }));
+
+    expect(screen.getByLabelText("Computer health")).toHaveTextContent("App CPU 7.3% · App RAM ≈918 MB");
+    fireEvent.click(screen.getAllByText("Advanced diagnostics")[0]);
+    expect(screen.getByText("App private RAM")).toBeInTheDocument();
+    expect(screen.getByText("Summed working sets")).toBeInTheDocument();
+    expect(screen.getByText("Process count")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Electron process breakdown (1)"));
+    expect(screen.getByText(/Private RAM ≈78 MB · Working set ≈117 MB/)).toBeInTheDocument();
+    act(() => receiveMetrics?.({
+      status: "available", timestamp: Date.now(),
+      memory: { private: { status: "unsupported", reason: "private memory unavailable" }, workingSet: { status: "available", value: 120_000 } },
+      cpu: { status: "available", value: 2 },
+      total: {
+        privateMemory: { status: "unsupported", reason: "private memory unavailable" },
+        workingSetMemory: { status: "available", value: 1400 * 1024 },
+        cpu: { status: "available", value: 7.3 }, processCount: 2,
+      },
+    }));
+    expect(screen.getByLabelText("Computer health")).toHaveTextContent("App RAM (working set) ≈1400 MB");
+    delete (window as { electronAPI?: unknown }).electronAPI;
+  });
+
   it("renders readiness counts and keeps multiple displays separate", () => {
     renderDiagnostics();
     act(() => {
@@ -120,7 +170,7 @@ describe("MediaSurfaceDiagnostics", () => {
         resettingCount: 0,
         errorCount: 1,
         evictions: [],
-        candidateDetails: [{ mediaKey: "remote:secret", resolvedSource: "https://cdn.example.test/video.mp4?token=private" }],
+        candidateDetails: [{ mediaKey: "remote:secret", originalSource: "https://cdn.example.test/Closing Video.mp4?token=private", resolvedSource: "media-cache://private-copy", itemName: "Closing item", status: "eligible", selected: true }],
         surfaces: [{ mediaKey: "remote:secret", source: "https://cdn.example.test/video.mp4?token=private", phase: "error", sourceKind: "remote", error: "decode failed" }],
         discovery: { renderer: "projector", itemCount: 2, items: [], uniqueVideoInventoryCount: 2, finitePlayableSourceCount: 1, pendingHlsCacheCount: 0, intentionallyExcludedVideoCount: 0, outlineLoadState: "error", outlineLoadError: "One item is missing" },
       },
@@ -130,6 +180,10 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(screen.getByLabelText("Computer health")).toHaveTextContent("Unavailable — Electron only");
     expect(screen.getByRole("alert")).toHaveTextContent("decode failed");
     expect(screen.getByRole("button", { name: "Retry preparation" })).toBeInTheDocument();
+    expect(screen.getByText("Videos 0/1 prepared")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Videos 0/1 prepared"));
+    expect(screen.getByText("Closing Video.mp4")).toBeInTheDocument();
+    expect(screen.getAllByText("Failed")).toHaveLength(2);
     expect(screen.getByText("Candidate details (1)")).not.toBeVisible();
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
@@ -149,7 +203,18 @@ describe("MediaSurfaceDiagnostics", () => {
     });
     const reports = [
       makeReport({}),
-      makeReport({ sessionId: "window-000002", manifestRevision: 2, readyCount: 1, failedCount: 1, errors: ["decode failed"] }),
+      makeReport({
+        sessionId: "window-000002", manifestRevision: 2, readyCount: 1, failedCount: 1, errors: ["decode failed"],
+        videos: [
+          { mediaKey: "remote:ready", name: "Welcome.mp4", status: "ready" },
+          { mediaKey: "remote:playing", itemName: "Loop", status: "playing" },
+          { mediaKey: "remote:preparing", itemName: "Song", status: "preparing" },
+          { mediaKey: "remote:failed", itemName: "Closing", status: "failed", error: "decode failed" },
+          { mediaKey: "remote:pending", itemName: "Intro", status: "pending-cache" },
+          { mediaKey: "remote:deferred", itemName: "Outro", status: "deferred" },
+          { mediaKey: "remote:excluded", itemName: "Invalid source", status: "excluded" },
+        ],
+      }),
       makeReport({ deviceId: "device-def456", sessionId: "window-000003", readyCount: 0, preparingCount: 2 }),
       makeReport({ deviceId: "device-old777", sessionId: "window-000004", reportedAt: now - 200_000 }),
     ];
@@ -169,8 +234,14 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(healthy).toHaveTextContent("r3 · matches desired revision");
     expect(healthy).toHaveTextContent("selected 2/2 finite ready · 0 preparing · 0 failed");
     expect(healthy).toHaveTextContent("Ready");
+    expect(healthy).toHaveTextContent("Per-video details unavailable from this device version");
     expect(failing).toHaveTextContent("desired r3 not confirmed");
     expect(failing).toHaveTextContent("decode failed");
+    expect(failing).toHaveTextContent("Welcome.mp4");
+    expect(failing).toHaveTextContent("Pending cache");
+    expect(failing).toHaveTextContent("Deferred");
+    expect(failing).toHaveTextContent("Playing");
+    expect(failing).toHaveTextContent("Excluded");
     expect(other).toHaveTextContent("2 preparing");
     expect(offline).toHaveTextContent("Disconnected");
     act(() => { jest.advanceTimersByTime(50_000); });
@@ -224,6 +295,8 @@ describe("MediaSurfaceDiagnostics", () => {
         headers: { Authorization: "Bearer bearer-value", Cookie: "cookie-value" },
         authToken: "nested-auth-token",
         muxSignature: "mux-path-signature",
+        localPath: "C:\\Users\\KPC\\Videos\\private.mp4",
+        fileUrl: "file:///Users/KPC/Library/Application Support/video.mp4",
         mediaKey: "remote:diagnostic-identity",
         nested: [{ playbackUrl: "https://res.cloudinary.com/demo/video/upload/s--signed--/clip.mp4?auth_key=cloudinary-value" }],
       },
@@ -231,7 +304,7 @@ describe("MediaSurfaceDiagnostics", () => {
     const sanitized = JSON.stringify(sanitizeForCopy(dangerous));
     expect(sanitized).toContain("https://video.example.test/path.mp4");
     expect(sanitized).toContain("https://res.cloudinary.com/demo/video/upload/s--[redacted]--/clip.mp4");
-    ["signature-value", "token-value", "key-value", "aws-value", "bearer-value", "cookie-value", "cloudinary-value", "nested-auth-token", "mux-path-signature"].forEach((secret) => {
+    ["signature-value", "token-value", "key-value", "aws-value", "bearer-value", "cookie-value", "cloudinary-value", "nested-auth-token", "mux-path-signature", "C:\\Users\\KPC", "/Users/KPC/Library"].forEach((secret) => {
       expect(sanitized).not.toContain(secret);
     });
     expect(sanitized).toContain("remote:diagnostic-identity");

@@ -29,7 +29,10 @@ import {
   subscribeBrowserDesktopShares,
   supportsDirectElectronDesktopCapture,
 } from "../../utils/desktopCapture";
-import { applyLocalVideoCaptureProfile } from "../../utils/localVideoQuality";
+import {
+  applyLocalVideoCaptureProfile,
+  getLocalVideoCaptureFrameRateForRole,
+} from "../../utils/localVideoQuality";
 import {
   markLocalVideoViewFrame,
   localVideoDiagnosticsEnabled,
@@ -43,6 +46,8 @@ type LocalVideoInputViewProps = {
   playAudio?: boolean;
   /** Normalized playback level for this physical screen. */
   volume?: number;
+  /** Keep the view mounted while suspending its capture and relay work. */
+  isActive?: boolean;
   captureEnabled?: boolean;
   receiveHighQuality?: boolean;
   publishPreview?: boolean;
@@ -118,6 +123,7 @@ const LocalVideoInputView = ({
   input,
   playAudio = false,
   volume = 1,
+  isActive = true,
   captureEnabled = true,
   receiveHighQuality = false,
   publishPreview = false,
@@ -201,7 +207,7 @@ const LocalVideoInputView = ({
   }, [playAudio]);
 
   useEffect(() => {
-    if (!isLocal || (!receiveHighQuality && !captureOwnedElsewhere)) return;
+    if (!isActive || !isLocal || (!receiveHighQuality && !captureOwnedElsewhere)) return;
     // A local MediaStream in this window owns the video element; skip relays so
     // operator previews and editors mirror live output without encode/decode.
     if (
@@ -228,6 +234,7 @@ const LocalVideoInputView = ({
       const target = getRenderedPixelSize(observedOutputElement);
       const details = localVideoDiagnosticsEnabled()
         ? ({
+            frameRate: getLocalVideoCaptureFrameRateForRole(windowRole),
             cssWidth: target.cssWidth,
             cssHeight: target.cssHeight,
             devicePixelRatio: target.devicePixelRatio,
@@ -357,28 +364,25 @@ const LocalVideoInputView = ({
     }
     if (observedOutputElement) {
       const initialTarget = getRenderedPixelSize(observedOutputElement);
-      if (localVideoDiagnosticsEnabled()) {
-        qualitySubscription = subscribeLocalVideoCaptureQuality(
-          input.sourceId,
-          initialTarget.width,
-          initialTarget.height,
-          {
-            cssWidth: initialTarget.cssWidth,
-            cssHeight: initialTarget.cssHeight,
-            devicePixelRatio: initialTarget.devicePixelRatio,
-            outputId,
-            windowRole,
-            laneRole,
-            diagnosticViewId,
-          },
-        );
-      } else {
-        qualitySubscription = subscribeLocalVideoCaptureQuality(
-          input.sourceId,
-          initialTarget.width,
-          initialTarget.height,
-        );
-      }
+      qualitySubscription = subscribeLocalVideoCaptureQuality(
+        input.sourceId,
+        initialTarget.width,
+        initialTarget.height,
+        {
+          frameRate: getLocalVideoCaptureFrameRateForRole(windowRole),
+          ...(localVideoDiagnosticsEnabled()
+            ? {
+                cssWidth: initialTarget.cssWidth,
+                cssHeight: initialTarget.cssHeight,
+                devicePixelRatio: initialTarget.devicePixelRatio,
+                outputId,
+                windowRole,
+                laneRole,
+                diagnosticViewId,
+              }
+            : {}),
+        },
+      );
       if (typeof ResizeObserver !== "undefined") {
         targetSizeObserver = new ResizeObserver(syncOutputTargetSize);
         targetSizeObserver.observe(observedOutputElement);
@@ -403,6 +407,7 @@ const LocalVideoInputView = ({
     canUseRealtimeRelay,
     captureEnabled,
     captureOwnedElsewhere,
+    isActive,
     input.sourceId,
     isLocal,
     receiveHighQuality,
@@ -415,6 +420,7 @@ const LocalVideoInputView = ({
   useEffect(() => {
     if (
       !isLocal ||
+      !isActive ||
       (publishPreview && !captureOwnedElsewhere) ||
       isDirectReady
     ) {
@@ -469,6 +475,7 @@ const LocalVideoInputView = ({
   }, [
     captureOwnedElsewhere,
     input.sourceId,
+    isActive,
     isDirectReady,
     isLocal,
     publishPreview,
@@ -477,7 +484,7 @@ const LocalVideoInputView = ({
   ]);
 
   useEffect(() => {
-    if (!isLocal || !effectiveCaptureEnabled) return;
+    if (!isActive || !isLocal || !effectiveCaptureEnabled) return;
     if (!deviceId) {
       setErrorDetail(
         isDesktopCaptureKind(input.captureKind)
@@ -508,6 +515,7 @@ const LocalVideoInputView = ({
         target.width,
         target.height,
         input.sourceId,
+        getLocalVideoCaptureFrameRateForRole(windowRole),
       );
     };
     const scheduleDirectCaptureProfileSync = () => {
@@ -754,6 +762,7 @@ const LocalVideoInputView = ({
     };
   }, [
     audioDeviceId,
+    isActive,
     captureAttempt,
     effectiveCaptureEnabled,
     deviceId,
@@ -770,7 +779,7 @@ const LocalVideoInputView = ({
   // Re-sharing in this window does not change any saved binding, so watch for
   // the replacement stream directly instead of waiting for a capture retry.
   useEffect(() => {
-    if (!restartDetail) return;
+    if (!isActive || !restartDetail) return;
     const unsubscribe = subscribeBrowserDesktopShares((sourceId) => {
       if (sourceId === input.sourceId) {
         setCaptureAttempt((attempt) => attempt + 1);
@@ -779,7 +788,7 @@ const LocalVideoInputView = ({
     return () => {
       unsubscribe();
     };
-  }, [input.sourceId, restartDetail]);
+  }, [input.sourceId, isActive, restartDetail]);
 
   const isShowingPicture =
     isDirectReady ||

@@ -17,6 +17,7 @@ import PopOver from "../PopOver/PopOver";
 
 const COMPACT_QUICK_LINK_COLUMNS = 1;
 const COMPACT_QUICK_LINK_GAP = 4;
+const PREVIEW_DEEP_SUSPEND_DELAY_MS = 30_000;
 
 type PresentationPreviewProps = {
   name: string;
@@ -69,6 +70,8 @@ type PresentationPreviewProps = {
    * a parent panel stays CSS-hidden.
    */
   isVisible?: boolean;
+  /** Immediately suspend preview-only media under external resource pressure. */
+  suspendPreviewMedia?: boolean;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -99,6 +102,7 @@ const PresentationPreview = ({
   previewOverride,
   footer,
   isVisible = true,
+  suspendPreviewMedia = false,
 }: PresentationPreviewProps) => {
   const contentHiddenDescriptionId = useId();
   const dispatch = useDispatch();
@@ -120,6 +124,46 @@ const PresentationPreview = ({
     null,
   );
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
+  const [rendererIsVisible, setRendererIsVisible] = useState(
+    () => document.visibilityState !== "hidden",
+  );
+  const [isDeepSuspended, setIsDeepSuspended] = useState(false);
+
+  useEffect(() => {
+    const updateRendererVisibility = () => {
+      setRendererIsVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", updateRendererVisibility);
+    updateRendererVisibility();
+    return () =>
+      document.removeEventListener("visibilitychange", updateRendererVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (!rendererIsVisible) {
+      // A hidden Electron renderer means the controller was minimized or
+      // covered at the app level; release preview decoders immediately.
+      setIsDeepSuspended(true);
+      return;
+    }
+
+    if (isVisible) {
+      setIsDeepSuspended(false);
+      return;
+    }
+
+    // CSS-hidden tabs keep their current video element warm for quick returns.
+    setIsDeepSuspended(false);
+    const timeout = window.setTimeout(
+      () => setIsDeepSuspended(true),
+      PREVIEW_DEEP_SUSPEND_DELAY_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [isVisible, rendererIsVisible]);
+
+  const previewDeepSuspended = isDeepSuspended || suspendPreviewMedia;
+  const previewIsVisible =
+    isVisible && rendererIsVisible && !previewDeepSuspended;
 
   // This display only. The per-surface clears iterate every slot of a type, so
   // clearing Lobby would blank Main alongside it.
@@ -305,11 +349,11 @@ const PresentationPreview = ({
     prevTimerInfo,
     time: info.time,
     prevTime: prevInfo.time,
-    shouldAnimate: isVisible,
-    // Keep the stable video slots mounted while hidden so returning to Displays
-    // resumes the same preview position instead of reloading from the start.
-    shouldPlayVideo: true,
-    suspendVideoPlayback: !isVisible,
+    shouldAnimate: previewIsVisible,
+    // Keep video mounted and paused during the short CSS-hidden grace period.
+    // Long-hidden previews unmount it so Chromium can release decoder work.
+    shouldPlayVideo: !previewDeepSuspended,
+    suspendVideoPlayback: !previewIsVisible,
     videoPreloadRole: "preview",
     showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
@@ -323,8 +367,8 @@ const PresentationPreview = ({
     videoPlayback: info.videoPlayback,
     // Same-machine booth tiles must show live local video, not still previews,
     // so operators can trust what the audience sees.
-    canCaptureLocalVideo: isVisible,
-    directLocalVideoCapture: isVisible,
+    canCaptureLocalVideo: previewIsVisible,
+    directLocalVideoCapture: previewIsVisible,
     playLocalVideoAudio: false,
   } as const;
 
@@ -512,9 +556,8 @@ const PresentationPreview = ({
                     </span>
                   </div>
                 )}
-              {/* Keep DisplayWindow mounted while the parent tab is only
-                  CSS-hidden. Its file-video elements remain mounted but are
-                  paused by suspendVideoPlayback. */}
+              {/* Keep the DisplayWindow mounted so its current slide and
+                  controls stay current while preview-only media is suspended. */}
               {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
           </div>

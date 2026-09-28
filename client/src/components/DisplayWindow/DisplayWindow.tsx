@@ -1412,6 +1412,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           activeFileVideoPlayback: activeVideoPlayback,
           isEditor,
           localVideo: {
+            active: canCaptureLocalVideo,
             playAudio:
               canCaptureLocalVideo &&
               playLocalVideoAudio &&
@@ -1476,6 +1477,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         <LocalVideoInputLayer
           key={`local-video-${localVideoInput.sourceId}`}
           input={localVideoInput}
+          isActive={canCaptureLocalVideo}
           shouldAnimate={shouldAnimate}
           playAudio={
             canCaptureLocalVideo &&
@@ -1494,7 +1496,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           showErrors={!canCaptureLocalVideo || displayType === "editor"}
           transparentBackground={displayType === "stream"}
           outputId={outputId}
-          windowRole={displayType ?? "unknown"}
+          windowRole={
+            videoPreloadRole === "preview"
+              ? `${displayType ?? "unknown"}-preview`
+              : displayType ?? "unknown"
+          }
           contentVisible={localVideoContentVisible}
         />
       ) : null;
@@ -1503,6 +1509,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         <LocalVideoInputLayer
           key={`local-video-${renderedPrevLocalVideoInput.sourceId}`}
           input={renderedPrevLocalVideoInput}
+          isActive={canCaptureLocalVideo}
           isPrevious
           shouldAnimate={shouldAnimate}
           playAudio={false}
@@ -1511,7 +1518,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           showErrors={false}
           transparentBackground={displayType === "stream"}
           outputId={outputId}
-          windowRole={displayType ?? "unknown"}
+          windowRole={
+            videoPreloadRole === "preview"
+              ? `${displayType ?? "unknown"}-preview`
+              : displayType ?? "unknown"
+          }
           contentVisible={localVideoContentVisible}
         />
       ) : null;

@@ -8,6 +8,7 @@ import {
   getMediaPreparationManifestStructure,
   isMediaPreparationManifest,
   isMediaPreparationReadinessReport,
+  sanitizeMediaPreparationReadinessText,
   type MediaPreparationManifest,
   type MediaPreparationReadinessReport,
 } from "../utils/mediaPreparationManifest";
@@ -126,6 +127,8 @@ export const useReportRemoteMediaPreparationReadiness = ({
   selectedFiniteInventoryCount,
   deferredFiniteCount,
   mountedSurfaceCount,
+  videos,
+  videosTruncated,
   errors,
 }: Omit<MediaPreparationReadinessReport, "contract" | "version" | "outputId" | "deviceId" | "sessionId" | "reportedAt" | "manifestRevision" | "manifestReceivedAt"> & {
   enabled: boolean;
@@ -164,7 +167,8 @@ export const useReportRemoteMediaPreparationReadiness = ({
           deferredFiniteCount,
           mountedSurfaceCount,
         }),
-        errors: errors.slice(0, 8).map((error) => error.slice(0, 180)),
+        ...(videos && { videos, videosTruncated }),
+        errors: errors.slice(0, 8).map((error) => sanitizeMediaPreparationReadinessText(error, 180) ?? "Video preparation failed"),
       }
     : undefined;
 

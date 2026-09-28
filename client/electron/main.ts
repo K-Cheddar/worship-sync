@@ -30,7 +30,9 @@ import {
   type WindowType,
 } from "./windowState";
 import {
+  createAppWindowWebPreferences,
   createDisplayWindow,
+  getBackgroundThrottlingForRole,
   setupWindowEventListeners,
   setupReadyToShow,
   focusWindow,
@@ -528,12 +530,7 @@ const createLocalVideoCaptureHost = (): void => {
     skipTaskbar: true,
     focusable: false,
     webPreferences: {
-      preload: join(__dirname, "../preload/preload.mjs"),
-      partition: WORSHIPSYNC_SESSION_PARTITION,
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-      backgroundThrottling: false,
+      ...createAppWindowWebPreferences(__dirname, "capture-host"),
       autoplayPolicy: "no-user-gesture-required",
     },
   });
@@ -577,15 +574,7 @@ const createWindow = () => {
     height,
     ...(typeof x === "number" && typeof y === "number" && { x, y }),
     show: false,
-    webPreferences: {
-      preload: join(__dirname, "../preload/preload.mjs"),
-      partition: WORSHIPSYNC_SESSION_PARTITION,
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-      // Allow preview videos to continue even when this window is not focused.
-      backgroundThrottling: false,
-    },
+    webPreferences: createAppWindowWebPreferences(__dirname, "controller"),
     autoHideMenuBar: !isDev,
     ...(iconPath && { icon: iconPath }),
   });
@@ -1513,7 +1502,10 @@ const getIdentifyOverlay = (): BrowserWindow => {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    webPreferences: { sandbox: true },
+    webPreferences: {
+      sandbox: true,
+      backgroundThrottling: getBackgroundThrottlingForRole("incidental-popup"),
+    },
   });
   identifyOverlay.setIgnoreMouseEvents(true);
   // Float above fullscreen projector/monitor output so the glow is visible
@@ -1964,6 +1956,7 @@ ipcMain.handle("fetch-genius-lyrics", async (_event, targetUrl: string) => {
       contextIsolation: true,
       nodeIntegration: false,
       partition: WORSHIPSYNC_SESSION_PARTITION,
+      backgroundThrottling: getBackgroundThrottlingForRole("incidental-popup"),
     },
   });
 

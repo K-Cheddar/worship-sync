@@ -96,6 +96,18 @@ describe("TransmitHandler surface previews", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("forwards external preview suspension requests", () => {
+    render(
+      <ProjectorPresentationPreview
+        quickLinks={[]}
+        toggleIsTransmitting={toggle}
+        suspendPreviewMedia
+      />,
+    );
+
+    expect(lastPreviewProps?.suspendPreviewMedia).toBe(true);
+  });
+
   it("wires monitor Redux state and shows monitor clock/timer band flag", () => {
     render(
       <MonitorPresentationPreview

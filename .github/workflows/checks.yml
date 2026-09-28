@@ -2,6 +2,8 @@ name: Checks
 
 on:
   pull_request:
+  push:
+    branches: [in-progress, staging]
   workflow_dispatch:
 
 permissions:
@@ -114,6 +116,48 @@ jobs:
         if: always() && steps.install_client.outcome == 'success'
         run: npm run type-check --prefix client
 
+  heroku_build:
+    name: Heroku production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci --prefix client
+
+      - name: Build Heroku production bundle
+        run: npm run build:heroku --prefix client
+
+  electron_build:
+    name: Electron production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci --prefix client
+
+      - name: Build Electron bundles
+        run: npm run build:electron --prefix client
+
   coverage:
     name: Merge client coverage
     if: always() && !cancelled()
@@ -150,7 +194,7 @@ jobs:
   checks:
     name: npm run checks
     if: always()
-    needs: [client_tests, coverage, server_tests, lint_typecheck]
+    needs: [client_tests, coverage, server_tests, lint_typecheck, heroku_build, electron_build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

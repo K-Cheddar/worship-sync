@@ -345,6 +345,125 @@ describe("localVideoRealtimeRelay", () => {
     stopPublisher();
   });
 
+  it("starts realtime frame work for the first subscriber and retires it after the last", async () => {
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      videoWidth: { configurable: true, value: 1_920 },
+      videoHeight: { configurable: true, value: 1_080 },
+    });
+    const stream = {
+      getAudioTracks: () => [],
+      getVideoTracks: () => [{ getSettings: () => ({ frameRate: 30 }) }],
+    } as unknown as MediaStream;
+    const requestFrame = jest.spyOn(
+      HTMLVideoElement.prototype,
+      "requestVideoFrameCallback",
+    );
+    const clearInterval = jest.spyOn(window, "clearInterval");
+    localStorage.removeItem("worshipsync_local_video_debug");
+    const stopPublisher = publishLocalVideoRealtime("source-lifecycle", video, stream);
+
+    expect(requestFrame).not.toHaveBeenCalled();
+    const first = subscribeLocalVideoRealtime(
+      "source-lifecycle",
+      document.createElement("canvas"),
+    );
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(1));
+    nextVideoFrame?.(1_000, { mediaTime: 1 } as VideoFrameCallbackMetadata);
+    await waitFor(() => expect(FakeVideoEncoder.instances).toHaveLength(1));
+
+    clearInterval.mockClear();
+    first.stop();
+    expect(clearInterval).toHaveBeenCalledTimes(2);
+    clearInterval.mockClear();
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(HTMLVideoElement.prototype.cancelVideoFrameCallback).toHaveBeenCalled();
+    expect(FakeVideoEncoder.instances[0].state).toBe("closed");
+
+    const second = subscribeLocalVideoRealtime(
+      "source-lifecycle",
+      document.createElement("canvas"),
+    );
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(2));
+    nextVideoFrame?.(2_000, { mediaTime: 2 } as VideoFrameCallbackMetadata);
+    await waitFor(() => expect(FakeVideoEncoder.instances).toHaveLength(2));
+    clearInterval.mockClear();
+    second.stop();
+    stopPublisher();
+    expect(FakeVideoEncoder.instances.every((encoder) => encoder.state === "closed")).toBe(true);
+    expect(clearInterval).toHaveBeenCalledTimes(3);
+    expect(
+      FakeBroadcastChannel.channels.filter(
+        (channel) => channel.name === "worshipsync-local-video-realtime-v1",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps the active realtime loop through brief repeated subscriber cycles", async () => {
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      videoWidth: { configurable: true, value: 1_920 },
+      videoHeight: { configurable: true, value: 1_080 },
+    });
+    const stream = {
+      getAudioTracks: () => [],
+      getVideoTracks: () => [{ getSettings: () => ({ frameRate: 30 }) }],
+    } as unknown as MediaStream;
+    const stopPublisher = publishLocalVideoRealtime("source-cycles", video, stream);
+
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      const subscription = subscribeLocalVideoRealtime(
+        "source-cycles",
+        document.createElement("canvas"),
+      );
+      await waitFor(() =>
+        expect(
+          __getLocalVideoDiagnosticsForTests().get("source-cycles")?.subscribers,
+        ).toBe(1),
+      );
+      nextVideoFrame?.(1_000 + cycle * 33, {
+        mediaTime: 1 + cycle / 30,
+      } as VideoFrameCallbackMetadata);
+      await waitFor(() =>
+        expect(FakeVideoDecoder.instances).toHaveLength(cycle + 1),
+      );
+      const diagnosticView = [
+        ...(__getLocalVideoDiagnosticsForTests()
+          .get("source-cycles")
+          ?.views.values() ?? []),
+      ][0];
+      expect(diagnosticView?.decoderInstanceActive).toBe(true);
+      subscription.stop();
+      expect(FakeVideoDecoder.instances[cycle].state).toBe("closed");
+      expect(diagnosticView?.decoderInstanceActive).toBe(false);
+      expect(diagnosticView?.decoderInstanceCount).toBe(1);
+      expect(diagnosticView?.decoderInstancesDestroyed).toBe(1);
+      expect(diagnosticView?.decoderLifecycle.map(({ event }) => event)).toEqual([
+        "create",
+        "destroy",
+      ]);
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(__getLocalVideoDiagnosticsForTests().get("source-cycles")?.subscribers).toBe(0);
+    expect(
+      FakeVideoDecoder.instances.filter((decoder) => decoder.state !== "closed"),
+    ).toHaveLength(0);
+    expect(
+      [...(__getLocalVideoDiagnosticsForTests().get("source-cycles")?.views.values() ?? [])],
+    ).toHaveLength(0);
+    expect(FakeVideoEncoder.instances.filter((encoder) => encoder.state !== "closed")).toHaveLength(0);
+
+    stopPublisher();
+    expect(
+      FakeBroadcastChannel.channels.filter(
+        (channel) => channel.name === "worshipsync-local-video-realtime-v1",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("is disabled in the browser so the compatibility relay remains available", () => {
     delete window.__ELECTRON__;
 

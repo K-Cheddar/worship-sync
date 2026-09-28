@@ -93,10 +93,14 @@ interface PreparedVideoMetrics {
   rendererPid?: number;
   matchedPid?: number;
   processType?: string;
-  memory: PreparedVideoMetricValue;
+  memory: {
+    private?: PreparedVideoMetricValue;
+    workingSet?: PreparedVideoMetricValue;
+  };
   cpu: PreparedVideoMetricValue;
   total?: {
-    memory: PreparedVideoMetricValue;
+    privateMemory: PreparedVideoMetricValue;
+    workingSetMemory: PreparedVideoMetricValue;
     cpu: PreparedVideoMetricValue;
     processCount: number;
   };
@@ -106,7 +110,10 @@ interface PreparedVideoMetrics {
     name?: string;
     serviceName?: string;
     labels: string[];
-    memory: PreparedVideoMetricValue;
+    memory: {
+      private?: PreparedVideoMetricValue;
+      workingSet?: PreparedVideoMetricValue;
+    };
     cpu: PreparedVideoMetricValue;
   }>;
   reason?: string;
