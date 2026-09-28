@@ -5,6 +5,7 @@ import Button from "../../components/Button/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { AccessType } from "../../context/globalInfo";
+import { useSelector } from "../../hooks";
 
 type ButtonType = {
   type: string;
@@ -74,6 +75,9 @@ const EditorButtons = ({
   sections,
 }: EditorButtonsProps) => {
   const location = useLocation();
+  const libraryFilter = useSelector((state) => state.allItems.libraryFilter);
+  const routeSection = location.pathname.split("/").at(-1) ?? "";
+  const isLibraryRoute = ["songs", "free", "timers"].includes(routeSection);
 
   const canShow = (b: ButtonType) =>
     Boolean(access && b.access?.includes(access)) &&
@@ -85,8 +89,20 @@ const EditorButtons = ({
         .filter((b): b is ButtonType => Boolean(b) && canShow(b!))
     : buttons.filter(canShow);
 
-  const isSelected = (section: string) =>
-    location.pathname.replace(`${basePath}/`, "") === section;
+  const isSelected = (section: string) => {
+    if (isLibraryRoute) {
+      const filterSection =
+        libraryFilter === "song"
+          ? "songs"
+          : libraryFilter === "free"
+            ? "free"
+            : libraryFilter === "timer"
+              ? "timers"
+              : "";
+      return filterSection === section;
+    }
+    return location.pathname.replace(`${basePath}/`, "") === section;
+  };
 
   return (
     <ErrorBoundary>

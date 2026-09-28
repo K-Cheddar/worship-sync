@@ -31,6 +31,16 @@ describe("songSearchUtils", () => {
     expect(result.map((s) => s._id)).toEqual(["m"]);
   });
 
+  it("finds songs by artist metadata", () => {
+    const match = baseSong({
+      _id: "artist-match",
+      name: "A Quiet Hymn",
+      songMetadata: { artistName: "The Harbor Choir" } as DBItem["songMetadata"],
+    });
+    const result = filterAndSortSongsForSearch([match], "harbor choir");
+    expect(result.map((song) => song._id)).toEqual(["artist-match"]);
+  });
+
   it("ranks a whole-word title match above an embedded partial match", () => {
     const wholeWord = baseSong({ _id: "whole", name: "Owe You Praise" });
     const embedded = baseSong({ _id: "embedded", name: "Power in the Blood" });

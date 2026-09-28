@@ -34,6 +34,8 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
     info,
     readOnly,
     minimalHeader,
+    fillWidth,
+    centerPreview,
   }: {
     name: string;
     isTransmitting?: boolean;
@@ -41,6 +43,8 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
     footer?: React.ReactNode;
     readOnly?: boolean;
     minimalHeader?: boolean;
+    fillWidth?: boolean;
+    centerPreview?: boolean;
     info?: {
       name?: string;
       slide?: { id?: string } | null;
@@ -51,6 +55,8 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
       data-testid={`preview-${name}`}
       data-live={String(!!isTransmitting)}
       data-read-only={String(!!readOnly || !!minimalHeader)}
+      data-fill-width={String(!!fillWidth)}
+      data-center-preview={String(!!centerPreview)}
       data-info-name={info?.name ?? ""}
       data-slide-id={info?.slide?.id ?? ""}
       data-video-position={info?.videoPlayback?.positionSeconds ?? ""}
@@ -361,6 +367,18 @@ describe("mirror controls on an auxiliary controller", () => {
     expect(screen.getByTestId("aux-projector-preview")).not.toHaveAttribute(
       "hidden",
     );
+    expect(screen.getByTestId("preview-Projector")).toHaveAttribute(
+      "data-fill-width",
+      "false",
+    );
+    expect(screen.getByTestId("preview-Projector")).toHaveAttribute(
+      "data-center-preview",
+      "true",
+    );
+    expect(screen.getByTestId("preview-Lobby")).toHaveAttribute(
+      "data-fill-width",
+      "false",
+    );
     expect(screen.getByTestId("aux-staged-preview")).toHaveAttribute("hidden");
     expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
   });
@@ -604,6 +622,8 @@ describe("mirror controls on an auxiliary controller", () => {
       "hidden",
     );
     const stagedPreview = screen.getByTestId("preview-Staged for TVs");
+    expect(stagedPreview).toHaveAttribute("data-fill-width", "false");
+    expect(stagedPreview).toHaveAttribute("data-center-preview", "true");
     expect(screen.getByTestId("aux-staged-preview")).not.toHaveAttribute(
       "hidden",
     );

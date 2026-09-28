@@ -641,7 +641,7 @@ const TransmitHandler = ({
                     toggleIsTransmitting={NOOP_TOGGLE}
                     isMobile={isMobile}
                     previewScale={previewScale}
-                    fillWidth={fillWidth}
+                    centerPreview
                       isVisible={isPreviewActive && !auxTvFollowingId}
                   />
                   </div>
@@ -661,7 +661,7 @@ const TransmitHandler = ({
                     toggleIsTransmitting={NOOP_TOGGLE}
                     isMobile={isMobile}
                     previewScale={previewScale}
-                    fillWidth={fillWidth}
+                    centerPreview
                       isVisible={isPreviewActive && Boolean(auxTvFollowingId)}
                   />
                   </div>

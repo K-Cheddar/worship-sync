@@ -1,30 +1,5 @@
-import { useDispatch, useSelector } from "../../hooks";
-import FilteredItems from "../../components/FilteredItems/FilteredItems";
-import { setFreeFormSearchValue } from "../../store/allItemsSlice";
-import { RootState } from "../../store/store";
-import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import ItemLibrary from "../ItemLibrary/ItemLibrary";
 
-const FreeForms = () => {
-  const { list, isAllItemsLoading, freeFormSearchValue } = useSelector(
-    (state: RootState) => state.allItems
-  );
-  const { allFreeFormDocs } = useSelector((state: RootState) => state.allDocs);
-  const dispatch = useDispatch();
-
-  return (
-    <ErrorBoundary>
-      <FilteredItems
-        list={list}
-        type="free"
-        heading="Custom"
-        label="custom item"
-        isLoading={isAllItemsLoading}
-        allDocs={allFreeFormDocs}
-        searchValue={freeFormSearchValue}
-        setSearchValue={(value) => dispatch(setFreeFormSearchValue(value))}
-      />
-    </ErrorBoundary>
-  );
-};
+const FreeForms = () => <ItemLibrary routeFilter="free" />;
 
 export default FreeForms;

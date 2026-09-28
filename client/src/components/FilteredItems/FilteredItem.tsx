@@ -13,9 +13,9 @@ import { filteredItemsListType } from "./FilteredItems";
 import HighlightWords from "./HighlightWords";
 
 export const FILTERED_ITEM_GRID_COLUMNS =
-  "grid gap-1 grid-cols-[44px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[44px_minmax(0,1fr)_15rem]";
+  "grid gap-1 grid-cols-[20px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[20px_minmax(0,1fr)_15rem]";
 export const FILTERED_SONG_GRID_COLUMNS =
-  "grid gap-1 grid-cols-[44px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[44px_minmax(0,1fr)_13rem_21rem]";
+  "grid gap-1 grid-cols-[20px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[20px_minmax(0,1fr)_21rem]";
 
 type FilteredItemProps = {
   index: number;
@@ -42,8 +42,8 @@ type FilteredItemProps = {
   showDelete?: boolean;
   /** Songs library: open read-only details, resources, and lyrics for this item. */
   onViewSongSections?: () => void;
-  /** Show a separate artist column in the Songs library table. */
-  showArtistColumn?: boolean;
+  /** Use the wider action track needed by song controls. */
+  useSongGrid?: boolean;
 };
 
 const FilteredItem = ({
@@ -61,7 +61,7 @@ const FilteredItem = ({
   addButtonLabel = "Add to outline",
   showDelete,
   onViewSongSections,
-  showArtistColumn = false,
+  useSongGrid = false,
 }: FilteredItemProps) => {
   const [justAdded, setJustAdded] = useState(false);
   const canAdd = showAddButton ?? canMutateLibrary;
@@ -101,7 +101,7 @@ const FilteredItem = ({
       <div
         className={cn(
           "flex flex-col gap-1 py-1 pl-4 pr-4 md:items-center md:gap-2",
-          showArtistColumn
+          useSongGrid
             ? FILTERED_SONG_GRID_COLUMNS
             : FILTERED_ITEM_GRID_COLUMNS,
         )}
@@ -109,7 +109,6 @@ const FilteredItem = ({
         <span
           className={cn(
             "col-start-1 row-start-1 flex min-w-0 items-center justify-center",
-            showArtistColumn && "row-span-2 md:row-span-1",
           )}
           role="img"
           aria-label={itemTypeLabel}
@@ -137,6 +136,11 @@ const FilteredItem = ({
               nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
               allowPartial
             />
+            {item.type === "song" && artistName ? (
+              <p className="truncate text-sm text-gray-400" title={artistName}>
+                {artistName}
+              </p>
+            ) : null}
           </div>
           {canDelete ? (
             <Button
@@ -149,20 +153,10 @@ const FilteredItem = ({
             />
           ) : null}
         </div>
-        {showArtistColumn ? (
-          <p
-            className="col-start-2 row-start-2 min-w-0 justify-self-start truncate text-left text-sm text-gray-400 md:col-start-3 md:row-start-1"
-            title={artistName || "No artist listed"}
-          >
-            {artistName || "—"}
-          </p>
-        ) : null}
         <div
           className={cn(
             "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-2",
-            showArtistColumn
-              ? "md:col-start-4 md:row-start-1 md:flex-nowrap md:justify-self-end"
-              : "md:col-start-3 md:row-start-1 md:flex-nowrap md:justify-self-end",
+            "md:col-start-3 md:row-start-1 md:flex-nowrap md:justify-self-end",
           )}
         >
           {matchedWords && (

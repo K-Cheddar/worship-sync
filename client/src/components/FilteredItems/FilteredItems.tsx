@@ -1,7 +1,6 @@
 import React, {
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -25,10 +24,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
-import FilteredItem, {
-  FILTERED_ITEM_GRID_COLUMNS,
-  FILTERED_SONG_GRID_COLUMNS,
-} from "./FilteredItem";
+import FilteredItem from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
 import {
   getMatchForString,
@@ -71,6 +67,7 @@ import {
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import type { LibraryFilter } from "../../store/allItemsSlice";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -81,6 +78,9 @@ type FilteredItemsProps = {
   allDocs: DBItem[];
   searchValue: string;
   setSearchValue: (value: string) => void;
+  /** Opt-in unified library filters; omitted by embedded/category-specific callers. */
+  libraryFilter?: LibraryFilter;
+  onLibraryFilterChange?: (filter: LibraryFilter) => void;
   /** Rendered above the scrollable list — use for pinned virtual items (e.g. Upcoming Service). */
   pinnedTopContent?: React.ReactNode;
   /**
@@ -134,6 +134,14 @@ type FilteredItemsVirtualRow =
 const getExternalCandidateKey = (candidate: NormalizedLrclibTrack) =>
   `${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName}:${candidate.artistName}`;
 
+const getCreateLabel = (type: string, filter: LibraryFilter, label: string) => {
+  if (type !== "all") return label;
+  if (filter === "all") return "item";
+  if (filter === "song") return "song";
+  if (filter === "free") return "custom item";
+  return "timer";
+};
+
 const FilteredItems = ({
   list,
   type,
@@ -143,6 +151,8 @@ const FilteredItems = ({
   allDocs,
   searchValue,
   setSearchValue,
+  libraryFilter = "all",
+  onLibraryFilterChange,
   pinnedTopContent,
   onAddItem,
   addButtonLabel = "Add to outline",
@@ -159,41 +169,27 @@ const FilteredItems = ({
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
-  const filteredTableHeaderRef = useRef<HTMLDivElement | null>(null);
 
-  useLayoutEffect(() => {
-    const scrollElement = listScrollRef.current;
-    const headerElement = filteredTableHeaderRef.current;
-    if (!scrollElement || !headerElement) return;
-
-    const updateHeaderLayout = () => {
-      const { paddingLeft, paddingRight } = window.getComputedStyle(scrollElement);
-      const leftInset = Number.parseFloat(paddingLeft) || 0;
-      const rightInset = Number.parseFloat(paddingRight) || 0;
-      headerElement.style.width = `${Math.max(
-        0,
-        scrollElement.clientWidth - leftInset - rightInset,
-      )}px`;
-      headerElement.style.marginLeft = `${leftInset}px`;
-    };
-    updateHeaderLayout();
-
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? undefined
-        : new ResizeObserver(updateHeaderLayout);
-    observer?.observe(scrollElement);
-    window.addEventListener("resize", updateHeaderLayout);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", updateHeaderLayout);
-    };
-  }, []);
-
-  const listOfType = useMemo(() => {
-    return list.filter((item) => item.type === type);
-  }, [list, type]);
+  const effectiveFilter: LibraryFilter =
+    type === "all"
+      ? libraryFilter
+      : type === "song"
+        ? "song"
+        : type === "free"
+          ? "free"
+          : "timer";
+  const showExternalSearch = type === "song" || (type === "all" && effectiveFilter === "song");
+  const useSongGrid =
+    type === "song" ||
+    (type === "all" && (effectiveFilter === "all" || effectiveFilter === "song"));
+  const listForFilter = useMemo(() => {
+    const supportedTypes = new Set(["song", "free", "timer"]);
+    return list.filter(
+      (item) =>
+        supportedTypes.has(item.type) &&
+        (effectiveFilter === "all" || item.type === effectiveFilter),
+    );
+  }, [list, effectiveFilter]);
 
   const docsById = useMemo(() => {
     const byId = new Map<string, DBItem>();
@@ -205,7 +201,7 @@ const FilteredItems = ({
 
   const freeDocsByName = useMemo(() => {
     const byName = new Map<string, DBItem>();
-    if (type !== "free") {
+    if (type !== "free" && effectiveFilter !== "free" && effectiveFilter !== "all") {
       return byName;
     }
     for (const doc of allDocs) {
@@ -216,11 +212,11 @@ const FilteredItems = ({
       }
     }
     return byName;
-  }, [allDocs, type]);
+  }, [allDocs, effectiveFilter, type]);
 
   const songArtistById = useMemo(() => {
     const byId = new Map<string, string>();
-    if (type !== "song") {
+    if (type !== "song" && effectiveFilter !== "song" && effectiveFilter !== "all") {
       return byId;
     }
     for (const doc of allDocs) {
@@ -230,10 +226,10 @@ const FilteredItems = ({
       }
     }
     return byId;
-  }, [allDocs, type]);
+  }, [allDocs, effectiveFilter, type]);
 
   const [filteredList, setFilteredList] =
-    useState<filteredItemsListType[]>(listOfType);
+    useState<filteredItemsListType[]>(listForFilter);
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
     null
@@ -257,7 +253,7 @@ const FilteredItems = ({
   const displayRows = useMemo<FilteredItemsVirtualRow[]>(() => {
     const rows: FilteredItemsVirtualRow[] = [];
 
-    if (type === "song" && externalSearchQuery) {
+    if (showExternalSearch && externalSearchQuery) {
       if (isExternalSearchLoading) {
         rows.push({ kind: "external-loading" });
       } else {
@@ -284,7 +280,7 @@ const FilteredItems = ({
 
     return rows;
   }, [
-    type,
+    showExternalSearch,
     externalSearchQuery,
     isExternalSearchLoading,
     externalSearchError,
@@ -343,7 +339,7 @@ const FilteredItems = ({
       return estimateFilteredItemRowHeight(
         row.item,
         showWordsRef.current,
-        false,
+        Boolean(songArtistById.get(row.item._id)),
       );
     },
     gap: 0,
@@ -352,12 +348,12 @@ const FilteredItems = ({
   });
 
   const viewSongDoc = useMemo(() => {
-    if (!viewSectionsSongId || type !== "song") return null;
+    if (!viewSectionsSongId || (type !== "song" && effectiveFilter !== "song" && effectiveFilter !== "all")) return null;
     const doc = allDocs.find(
       (d) => d._id === viewSectionsSongId && d.type === "song",
     );
     return doc ?? null;
-  }, [viewSectionsSongId, allDocs, type]);
+  }, [viewSectionsSongId, allDocs, effectiveFilter, type]);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access, churchId } = useContext(GlobalInfoContext) || {};
@@ -372,18 +368,26 @@ const FilteredItems = ({
   // keystroke, so it stays O(n): doc lookups go through `docsById` /
   // `freeDocsByName` instead of an `allDocs.find` per item.
   const searchItems = useMemo(() => {
-    return (rawSearchValue: string): filteredItemsListType[] => {
+    return (
+      rawSearchValue: string,
+      filter: LibraryFilter = effectiveFilter,
+    ): filteredItemsListType[] => {
+      const candidates = list.filter(
+        (item) =>
+          (item.type === "song" || item.type === "free" || item.type === "timer") &&
+          (filter === "all" || item.type === filter),
+      );
       const cleanSearchValue = rawSearchValue
         .replace(punctuationRegex, "")
         .toLowerCase()
         .trim();
 
       if (cleanSearchValue === "") {
-        return listOfType;
+        return candidates;
       }
 
-      const results = listOfType.map((item) => {
-        if (type === "song") {
+      const results = candidates.map((item) => {
+        if (item.type === "song") {
           const doc = docsById.get(item._id);
           if (doc?.type === "song") {
             const enriched = computeSongSearchEnrichment(doc, cleanSearchValue);
@@ -413,8 +417,12 @@ const FilteredItems = ({
         const wordMatches = [];
         let hasLyricMatch = false;
 
-        if (type === "free") {
-          const slides = freeDocsByName.get(name)?.slides || [];
+        if (item.type === "free") {
+          const customDoc =
+            type === "all"
+              ? docsById.get(item._id)
+              : freeDocsByName.get(name);
+          const slides = customDoc?.slides || [];
 
           for (const slide of slides) {
             for (const box of slide.boxes) {
@@ -456,16 +464,20 @@ const FilteredItems = ({
               titleMatch: a.titleMatch ?? 0,
               matchRank: a.matchRank ?? 0,
               name: a.name,
+              type: a.type,
+              id: a._id,
             },
             {
               titleMatch: b.titleMatch ?? 0,
               matchRank: b.matchRank ?? 0,
               name: b.name,
+              type: b.type,
+              id: b._id,
             },
           ),
         );
     };
-  }, [listOfType, docsById, freeDocsByName, type]);
+  }, [list, docsById, freeDocsByName, effectiveFilter, type]);
 
   // Debounced search effect
   useEffect(() => {
@@ -586,7 +598,7 @@ const FilteredItems = ({
     setExternalSearchQuery("");
     setExternalSearchResults([]);
     setExternalSearchError("");
-  }, [searchValue]);
+  }, [searchValue, effectiveFilter]);
 
   const createSongFromExternalResult = (candidate: NormalizedLrclibTrack) => {
     dispatch(
@@ -732,9 +744,11 @@ const FilteredItems = ({
       showAddButton={allowAdd}
       showDelete={allowDelete}
       addButtonLabel={addButtonLabel}
-      showArtistColumn={type === "song"}
+      useSongGrid={useSongGrid}
       onViewSongSections={
-        type === "song" ? () => setViewSectionsSongId(item._id) : undefined
+        item.type === "song" && (type !== "all" || effectiveFilter === "all" || effectiveFilter === "song")
+          ? () => setViewSectionsSongId(item._id)
+          : undefined
       }
       libraryIndex={libraryIndex}
     />
@@ -776,6 +790,20 @@ const FilteredItems = ({
     }
   };
 
+  const changeLibraryFilter = (filter: LibraryFilter) => {
+    if (filter === effectiveFilter) return;
+    onLibraryFilterChange?.(filter);
+    setFilteredList(searchItems(searchValue, filter));
+    setDebouncedSearchValue(searchValue);
+    setIsSearchLoading(false);
+    listScrollRef.current?.scrollTo?.({ top: 0 });
+  };
+  const createLabel = getCreateLabel(type, effectiveFilter, label);
+  const createLink =
+    type === "all" && effectiveFilter === "all"
+      ? `${controllerBasePath}/create`
+      : `${controllerBasePath}/create?type=${type === "all" ? effectiveFilter : type}&name=${encodeURI(searchValue)}`;
+
   return (
     <div
       className={cn(
@@ -808,7 +836,7 @@ const FilteredItems = ({
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
-      <div className="mb-4 flex w-full gap-2 justify-center">
+      <div className="mb-2 flex w-full flex-col justify-center gap-2 sm:mb-3 sm:flex-row">
         <SongSearchInput
           value={searchValue}
           disabled={isLoading}
@@ -816,7 +844,7 @@ const FilteredItems = ({
           label="Search"
           labelClassName={searchLabelClassName}
           inputClassName={searchInputClassName}
-          className="text-base flex flex-1 gap-2 items-center max-w-2xl"
+          className="text-base flex w-full flex-1 gap-2 items-center sm:max-w-2xl"
           placeholder=""
           showSearchIconWhenEmpty={false}
         />
@@ -828,6 +856,37 @@ const FilteredItems = ({
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
       </div>
+      {type === "all" && onLibraryFilterChange ? (
+        <div
+          role="group"
+          aria-label="Item type filters"
+          className="mb-3 flex w-full flex-wrap items-center justify-center gap-1"
+        >
+          {([
+            ["all", "All Items"],
+            ["song", "Songs"],
+            ["free", "Custom"],
+            ["timer", "Timers"],
+          ] as const).map(([filter, title]) => (
+            <Button
+              key={filter}
+              type="button"
+              variant="tertiary"
+              isSelected={effectiveFilter === filter}
+              aria-pressed={effectiveFilter === filter}
+              className={cn(
+                "!min-h-8 border px-3 py-1 text-sm",
+                effectiveFilter === filter
+                  ? "border-cyan-300/50 bg-cyan-500/20 text-cyan-100 shadow-inner"
+                  : "border-transparent text-gray-300 hover:border-gray-500 hover:bg-gray-500/20",
+              )}
+              onClick={() => changeLibraryFilter(filter)}
+            >
+              {title}
+            </Button>
+          ))}
+        </div>
+      ) : null}
       {allowCreateAndExternal ? (
         <div className="mb-2 flex flex-col gap-3">
           <section className="text-sm flex flex-wrap gap-2 items-center justify-center">
@@ -840,7 +899,7 @@ const FilteredItems = ({
                 color="#84cc16"
                 onClick={onCreateNew}
               >
-                Create a new {label}
+                Create a new {createLabel}
               </Button>
             ) : (
               <Button
@@ -849,12 +908,12 @@ const FilteredItems = ({
                 svg={FilePlus}
                 color="#84cc16"
                 component="link"
-                to={`${controllerBasePath}/create?type=${type}&name=${encodeURI(searchValue)}`}
+                to={createLink}
               >
-                Create a new {label}
+                Create a new {createLabel}
               </Button>
             )}
-            {type === "song" && (
+            {showExternalSearch && (
               <Button
                 variant="tertiary"
                 className="relative"
@@ -878,27 +937,6 @@ const FilteredItems = ({
             <Spinner />
           </div>
         )}
-        <div
-          ref={filteredTableHeaderRef}
-          className="shrink-0 border-y border-gray-600 bg-gray-700 py-2 text-xs font-semibold uppercase tracking-wide text-gray-300"
-        >
-          <div
-            className={cn(
-              type === "song"
-                ? FILTERED_SONG_GRID_COLUMNS
-                : FILTERED_ITEM_GRID_COLUMNS,
-              "px-4",
-            )}
-          >
-            <span className="justify-self-center">Type</span>
-            <span>Name</span>
-            {type === "song" ? (
-              <span className="hidden justify-self-start text-left md:block">
-                Artist
-              </span>
-            ) : null}
-          </div>
-        </div>
         <div
           ref={listScrollRef}
           className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"

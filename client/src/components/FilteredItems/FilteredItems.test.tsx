@@ -21,6 +21,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import type { LibraryFilter } from "../../store/allItemsSlice";
 
 jest.mock("../../api/lrclib", () => ({
   searchLrclibTracks: jest.fn(),
@@ -133,8 +134,8 @@ describe("FilteredItems", () => {
     await waitFor(() => {
       expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
     });
-    expect(screen.getByText("Type")).toBeInTheDocument();
-    expect(screen.getByText("Type")).toHaveClass("justify-self-center");
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
     expect(screen.queryByText("Actions")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: label })).toHaveAttribute(
       "title",
@@ -182,17 +183,217 @@ describe("FilteredItems", () => {
       </Provider>,
     );
 
-    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("44px_minmax(0,1fr)_9rem");
-    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("md:grid-cols-[44px_minmax(0,1fr)_15rem]");
-    expect(FILTERED_SONG_GRID_COLUMNS).toContain("44px_minmax(0,1fr)_9rem");
-    expect(FILTERED_SONG_GRID_COLUMNS).toContain("13rem_21rem");
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_15rem]");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_21rem]");
     await waitFor(() => {
       expect(screen.getByText("Traditional")).toBeInTheDocument();
     });
+    expect(screen.queryByText("Artist")).not.toBeInTheDocument();
+    expect(screen.getByText("Traditional")).toHaveClass("text-sm");
     expect(screen.getByRole("img", { name: "song" })).toHaveClass(
-      "row-span-2",
-      "md:row-span-1",
+      "justify-center",
     );
+  });
+
+  it("keeps one search across filters and searches song lyrics, artists, and custom slide text", async () => {
+    const song = {
+      _id: "song-library-1",
+      name: "Quiet Hymn",
+      type: "song",
+      listId: "song-library-1",
+    } as any;
+    const custom = {
+      _id: "custom-library-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "custom-library-1",
+    } as any;
+    const timer = {
+      _id: "timer-library-1",
+      name: "Five Minute Timer",
+      type: "timer",
+      listId: "timer-library-1",
+    } as any;
+    const documents = [
+      {
+        ...song,
+        songMetadata: { artistName: "The Harbor Choir" },
+        arrangements: [
+          { formattedLyrics: [{ words: "The Lord is my shepherd" }] },
+        ],
+      },
+      {
+        ...custom,
+        slides: [{ boxes: [{ words: "Welcome our shepherd" }] }],
+      },
+    ] as any[];
+
+    const UnifiedLibraryHarness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      const [search, setSearch] = React.useState("");
+      return (
+        <FilteredItems
+          list={[song, custom, timer]}
+          type="all"
+          heading="All Items"
+          label="item"
+          isLoading={false}
+          allDocs={documents}
+          searchValue={search}
+          setSearchValue={setSearch}
+          libraryFilter={filter}
+          onLibraryFilterChange={setFilter}
+        />
+      );
+    };
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={["/controller/songs"]}>
+              <UnifiedLibraryHarness />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    const searchInput = screen.getByLabelText(/Search/);
+    fireEvent.change(searchInput, { target: { value: "shepherd" } });
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    expect(searchInput).toHaveValue("shepherd");
+    expect(await screen.findByTitle(custom.name)).toBeInTheDocument();
+    expect(screen.queryByTitle(song.name)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Songs" }));
+    expect(searchInput).toHaveValue("shepherd");
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+    expect(screen.queryByTitle(custom.name)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search external lyrics" })).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "harbor choir" } });
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+  });
+
+  it("shows no column headers in All Items and defaults creation by filter", async () => {
+    const song = {
+      _id: "all-song",
+      name: "All Song",
+      type: "song",
+      listId: "all-song",
+    } as any;
+    const custom = {
+      _id: "all-custom",
+      name: "All Custom",
+      type: "free",
+      listId: "all-custom",
+    } as any;
+    const UnifiedLibraryHarness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      return (
+        <FilteredItems
+          list={[song, custom]}
+          type="all"
+          heading="All Items"
+          label="item"
+          isLoading={false}
+          allDocs={[
+            { ...song, songMetadata: { artistName: "The Harbor Choir" } } as any,
+          ]}
+          searchValue=""
+          setSearchValue={jest.fn()}
+          libraryFilter={filter}
+          onLibraryFilterChange={setFilter}
+        />
+      );
+    };
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={["/controller/timers"]}>
+              <UnifiedLibraryHarness />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(screen.queryByText("Artist")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Items" })).toHaveClass(
+      "bg-cyan-500/20",
+      "border-cyan-300/50",
+    );
+    expect(await screen.findByTitle("The Harbor Choir")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create a new item" })).toHaveAttribute(
+      "href",
+      "/controller/create",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Timers" }));
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Create a new timer" })).toHaveAttribute(
+        "href",
+        "/controller/create?type=timer&name=",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Timers" })).toHaveClass(
+      "bg-cyan-500/20",
+      "border-cyan-300/50",
+    );
+  });
+
+  it("keeps library mutations and creation hidden for view-only access", async () => {
+    const item = {
+      _id: "view-only-custom",
+      name: "Read Only Item",
+      type: "free",
+      listId: "view-only-custom",
+    } as any;
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider
+            value={createMockGlobalContext({ access: "view" }) as any}
+          >
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type="all"
+                heading="All Items"
+                label="item"
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+                libraryFilter="all"
+                onLibraryFilterChange={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await screen.findByTitle(item.name);
+    expect(screen.queryByRole("link", { name: "Create a new item" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add to outline/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Read Only Item" })).not.toBeInTheDocument();
   });
 
   it("keeps a readable fallback when song artist metadata is missing", async () => {
@@ -227,8 +428,10 @@ describe("FilteredItems", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("—")).toHaveAttribute("title", "No artist listed");
+      expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
     });
+    expect(screen.queryByTitle("No artist listed")).not.toBeInTheDocument();
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
   });
 
   it("keeps the type icon visible when a virtualized lyric match expands", async () => {

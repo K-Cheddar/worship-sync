@@ -129,6 +129,36 @@ describe("PresentationPreview", () => {
     expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
   });
 
+  it("centers a fixed-size preview and caps it to its available stage width", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        hideQuickLinks
+        centerPreview
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass(
+      "flex",
+      "w-full",
+      "min-w-0",
+      "justify-center",
+    );
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        width: 14,
+        className: "max-w-full",
+      }),
+    );
+  });
+
   it("keeps Clear labeled before Live when space is limited", async () => {
     headerWidth = 220;
 

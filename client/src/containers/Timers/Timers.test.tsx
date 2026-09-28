@@ -12,15 +12,28 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 import { createMockControllerContext, createMockGlobalContext } from "../../test/mocks";
 import type { DBItem } from "../../types";
+import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
 
 jest.mock("../../components/FilteredItems/FilteredItems", () => {
   const React = jest.requireActual<typeof import("react")>("react");
-  return function FilteredItems({ list, type }: { list: any[]; type: string }) {
+  return function FilteredItems({
+    list,
+    type,
+    libraryFilter,
+    pinnedTopContent,
+  }: {
+    list: any[];
+    type: string;
+    libraryFilter?: string;
+    pinnedTopContent?: React.ReactNode;
+  }) {
     return React.createElement(
       "ul",
       { role: "list" },
-      list
-        .filter((item) => item.type === type)
+      React.createElement("div", { "data-testid": "library-filter" }, libraryFilter),
+      pinnedTopContent,
+      ...list
+        .filter((item) => type === "all" || item.type === type)
         .map((item) =>
           React.createElement("li", { key: item._id, role: "listitem" }, item.name),
         ),
@@ -28,10 +41,16 @@ jest.mock("../../components/FilteredItems/FilteredItems", () => {
   };
 });
 
+jest.mock("../../hooks/useDisplayedUpcomingService", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
+
 describe("Timers library recovery integration", () => {
   let getBoundingClientRectSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    jest.mocked(useDisplayedUpcomingService).mockReturnValue(null);
     getBoundingClientRectSpy = jest
       .spyOn(Element.prototype, "getBoundingClientRect")
       .mockImplementation(() =>
@@ -103,5 +122,48 @@ describe("Timers library recovery integration", () => {
     );
 
     expect(screen.getByRole("listitem")).toHaveTextContent("11 AM Countdown");
+    expect(screen.getByTestId("library-filter")).toHaveTextContent("timer");
+  });
+
+  it("keeps the upcoming service countdown separate from saved timers", async () => {
+    jest.mocked(useDisplayedUpcomingService).mockReturnValue({
+      service: { id: "service-1", name: "Sunday Service" },
+      nextAt: new Date("2030-01-01T12:00:00.000Z"),
+    } as any);
+    const store = configureStore({
+      reducer: {
+        allItems: allItemsSlice.reducer,
+        allDocs: allDocsSlice.reducer,
+        undoable: (state = { present: { serviceTimes: { list: [] } } }) => state,
+      },
+    });
+    const timer = {
+      _id: "saved-timer",
+      name: "Saved Timer",
+      type: "timer",
+      timerInfo: { id: "saved-timer", name: "Saved Timer" },
+    } as DBItem;
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([timer as any]));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <PresentationControllerModeProvider>
+              <MemoryRouter initialEntries={["/controller/timers"]}>
+                <Timers />
+              </MemoryRouter>
+            </PresentationControllerModeProvider>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(screen.getByText("Sunday Service")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")[1]).toHaveTextContent("Saved Timer");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
 });

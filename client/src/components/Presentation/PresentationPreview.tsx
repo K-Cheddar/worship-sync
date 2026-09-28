@@ -53,6 +53,8 @@ type PresentationPreviewProps = {
    * Prefer this over a large previewScale when the preview must use the full column.
    */
   fillWidth?: boolean;
+  /** Center a fixed-size preview within its full-width stage and cap it to that stage. */
+  centerPreview?: boolean;
   /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
    * by the monitor preview to show the discussion board while it's on the monitor. */
   previewOverride?: ReactNode;
@@ -93,6 +95,7 @@ const PresentationPreview = ({
   contentHiddenUnconfirmedLabel = "Offline",
   previewScale = 1,
   fillWidth = false,
+  centerPreview = false,
   previewOverride,
   footer,
   isVisible = true,
@@ -277,6 +280,7 @@ const PresentationPreview = ({
     prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: info.bibleInfoBox,
     ...(fillWidth || !hideQuickLinks ? {} : { width: previewWidthVw }),
+    ...(centerPreview ? { className: "max-w-full" } : {}),
     showBorder,
     // Without this the preview resolves the built-in output's settings, so a
     // second projector would render the first one's clock, timer, and background.
@@ -475,6 +479,7 @@ const PresentationPreview = ({
             <div
               className={cn(
                 "relative @container/preview",
+                centerPreview && "flex w-full min-w-0 justify-center",
                 info.displayType === "stream" && "bg-gray-500/35",
               )}
               data-testid="content-hidden-preview-stage"

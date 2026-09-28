@@ -15,6 +15,7 @@ type ProjectorPresentationPreviewProps = {
   isMobile?: boolean;
   previewScale?: number;
   fillWidth?: boolean;
+  centerPreview?: boolean;
   readOnly?: boolean;
   isVisible?: boolean;
   toggleIsTransmitting: () => void;
@@ -34,6 +35,7 @@ const ProjectorPresentationPreview = memo(
     isMobile,
     previewScale,
     fillWidth,
+    centerPreview,
     readOnly = false,
     isVisible = true,
     toggleIsTransmitting,
@@ -84,6 +86,7 @@ const ProjectorPresentationPreview = memo(
         showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
+        centerPreview={centerPreview}
         footer={previewFooter}
         isVisible={isVisible}
       />
