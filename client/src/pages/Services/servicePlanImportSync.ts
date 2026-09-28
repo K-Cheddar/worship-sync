@@ -498,6 +498,20 @@ const reconcileImportedSourceAssignees = (
     const oldNames = oldLedByNames.filter((name) => normalizedName(name) === normalizedName(assignee.name));
     const matchingCurrent = existing.filter((candidate) => normalizedName(candidate.name) === normalizedName(assignee.name));
     if (!ownership && oldNames.length === 1 && matchingCurrent.length === 1 && current.sourcePlanningManaged) ownedOld.add(index);
+    // Plans saved before Led By snapshots stored the source person only as
+    // assignedName. Treat that single legacy slot as source-owned so an
+    // assignment refresh replaces it instead of keeping it beside the import.
+    if (
+      !ownedOld.has(index) &&
+      !ownership &&
+      oldLedByNames.length === 0 &&
+      assignee.id === "legacy-assignee" &&
+      current.sourcePlanningManaged &&
+      incomingNames.length > 0 &&
+      matchingCurrent.length === 1
+    ) {
+      ownedOld.add(index);
+    }
   });
 
   incomingLedBy.forEach((incomingAssignee, incomingIndex) => {

@@ -2299,7 +2299,7 @@ Opening Song to begin the worship experience.
     await user.type(screen.getByLabelText(/^Title/i), "!");
     expect(screen.getByLabelText(/^Title/i)).toHaveValue("Living Hope!");
     await user.click(
-      screen.getByRole("button", { name: /Assignees for Living Hope/i }),
+      screen.getByRole("button", { name: /Show all 1 participant for Living Hope/i }),
     );
     expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
     await user.click(screen.getByRole("button", { name: /Close side panel/i }));

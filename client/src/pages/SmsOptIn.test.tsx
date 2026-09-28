@@ -47,8 +47,7 @@ describe("SmsOptIn", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Optional SMS updates" })).toBeInTheDocument();
-    expect(screen.getByText(/SMS is optional/i)).toBeInTheDocument();
-    expect(screen.getByText(/without receiving text messages/i)).toBeInTheDocument();
+    expect(screen.getByText("Get volunteer schedule updates from your church by text.")).toBeInTheDocument();
     expect(screen.getByLabelText(/Mobile phone number/i)).toBeInTheDocument();
     expect(screen.getByText(SMS_CONSENT_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "false");

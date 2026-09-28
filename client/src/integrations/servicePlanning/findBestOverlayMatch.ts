@@ -102,7 +102,7 @@ export const findOverlayForServicePlanningCandidate = (
         (o) =>
           (o.event || "").toLowerCase().replace(/\s+/g, " ").trim() === te,
       );
-    return exactMatches.length === 1 ? exactMatches[0] : null;
+    return exactMatches[0] ?? null;
   }
 
   return findBestOverlayMatch(planningElementType, pool)?.overlay ?? null;

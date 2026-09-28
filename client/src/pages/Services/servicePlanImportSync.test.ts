@@ -621,6 +621,35 @@ describe("refreshServicePlanFromImport", () => {
     });
   });
 
+  it("replaces a legacy assigned name when assignment refresh is on", () => {
+    const current = [
+      section("section-1", "Worship", [
+        element("element-1", "Old welcome", {
+          sourcePlanningManaged: true,
+          assignedName: "Avery",
+          startTime: "09:00",
+        }),
+      ]),
+    ];
+    const imported = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday",
+      sections: [{
+        sectionName: "Worship",
+        rows: [{ elementType: "Welcome", title: "Welcome home", ledBy: "Blair", startTime: "09:05" }],
+      }],
+      teamAssignments: [],
+    }, []);
+
+    const refreshed = refreshServicePlanFromImport(current, imported, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      updateTiming: false,
+    });
+
+    expect(refreshed[0].elements[0].id).toBe("element-1");
+    expect(refreshed[0].elements[0].assignees?.[0]?.name).toBe("Blair");
+    expect(refreshed[0].elements[0].startTime).toBe("09:00");
+  });
+
   it("keeps a linked library song when the source still has no match for it", () => {
     const current = [
       section("section-1", "Praise", [
