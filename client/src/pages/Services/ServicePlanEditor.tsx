@@ -240,6 +240,14 @@ const isServicePlanLiveItemReady = (item: HTMLElement, container: HTMLElement) =
     && containerRect.width > 0 && containerRect.height > 0;
 };
 
+const isServicePlanLiveItemVisible = (item: HTMLElement, container: HTMLElement) => {
+  const itemRect = item.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const viewportTop = containerRect.top + container.clientTop;
+  const viewportBottom = viewportTop + (container.clientHeight || containerRect.height);
+  return itemRect.bottom > viewportTop && itemRect.top < viewportBottom;
+};
+
 const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
   keepElementInView({ child: item, parent: container, shouldScrollToCenter: true });
 
@@ -2331,6 +2339,7 @@ const ServicePlanEditor = ({
     containerRef: servicePlanScrollRef,
     getItem: getServicePlanLiveItem,
     isItemReady: isServicePlanLiveItemReady,
+    isItemVisible: isServicePlanLiveItemVisible,
     scrollToItem: centerServicePlanLiveItem,
   });
 

@@ -170,6 +170,31 @@ test("offers a custom-item retry after media import without rerunning Canva", as
   expect(await screen.findByText("Import complete")).toBeInTheDocument();
 });
 
+test("shows and retries cleanup that remained pending after a failed import", async () => {
+  const user = userEvent.setup();
+  const cleanupRetry = jest.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+  const PendingCleanupHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "pending-cleanup",
+      title: "Pending cleanup deck",
+      format: "png",
+      pages: [1],
+      run: async () => result,
+      finalize: async () => { throw new Error("Import failed. 1 Canva asset could not be removed."); },
+      cleanupRetry,
+    })}>Start import</button>;
+  };
+  render(<MemoryRouter><TransferProvider><PendingCleanupHarness /></TransferProvider></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Start import" }));
+  expect(await screen.findByRole("button", { name: "Retry cleanup" })).toBeInTheDocument();
+  expect(screen.getByText(/Some unused Canva files still need cleanup/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry cleanup" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Retry cleanup" })).not.toBeInTheDocument());
+  expect(cleanupRetry).toHaveBeenCalledTimes(1);
+});
+
 test("cancelling a queued Canva job prevents its export from starting", async () => {
   const gate = deferred<typeof result>();
   const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);

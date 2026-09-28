@@ -3,6 +3,7 @@ import { reconcileSongLibraryIndex } from "../utils/songLibrary";
 import { allDocsSlice } from "./allDocsSlice";
 import { allItemsSlice } from "./allItemsSlice";
 import { reconcileFreeFormLibraryIndex } from "../utils/freeFormLibrary";
+import { reconcileTimerLibraryIndex } from "../utils/timerLibrary";
 
 type SongLibraryIndexState = {
   allItems: ReturnType<typeof allItemsSlice.reducer>;
@@ -15,16 +16,58 @@ type SongLibraryIndexState = {
  */
 export const createSongLibraryIndexRepairMiddleware = () => {
   const middleware = createListenerMiddleware<SongLibraryIndexState>();
+  // An index removal is authoritative while PouchDB replication catches up.
+  // Keep stale timer documents from restoring the row until a docs refresh
+  // confirms the document itself has been removed.
+  const deletedTimerIds = new Set<string>();
 
   middleware.startListening({
     predicate: isAnyOf(
       allDocsSlice.actions.updateAllSongDocs,
       allDocsSlice.actions.updateAllFreeFormDocs,
+      allDocsSlice.actions.updateAllTimerDocs,
       allItemsSlice.actions.initiateAllItemsList,
       allItemsSlice.actions.updateAllItemsListFromRemote,
+      allItemsSlice.actions.removeItemFromAllItemsList,
     ),
     effect: (action, listenerApi) => {
       const state = listenerApi.getState();
+
+      if (allItemsSlice.actions.removeItemFromAllItemsList.match(action)) {
+        const previousState = listenerApi.getOriginalState();
+        const removedItem = previousState.allItems.list.find(
+          (item) => item._id === action.payload,
+        );
+        if (removedItem?.type === "timer") {
+          deletedTimerIds.add(removedItem._id);
+        }
+        return;
+      }
+
+      if (allItemsSlice.actions.updateAllItemsListFromRemote.match(action)) {
+        const previousState = listenerApi.getOriginalState();
+        const incomingTimerIds = new Set(
+          state.allItems.list
+            .filter((item) => item.type === "timer")
+            .map((item) => item._id),
+        );
+        for (const item of previousState.allItems.list) {
+          if (item.type === "timer" && !incomingTimerIds.has(item._id)) {
+            deletedTimerIds.add(item._id);
+          }
+        }
+        for (const id of incomingTimerIds) deletedTimerIds.delete(id);
+      }
+
+      if (allDocsSlice.actions.updateAllTimerDocs.match(action)) {
+        const durableTimerIds = new Set(
+          state.allDocs.allTimerDocs.map((doc) => doc._id),
+        );
+        for (const id of deletedTimerIds) {
+          if (!durableTimerIds.has(id)) deletedTimerIds.delete(id);
+        }
+      }
+
       if (!state.allItems.isInitialized) return;
 
       // Remote allItems messages are handled before the controller refreshes
@@ -39,9 +82,16 @@ export const createSongLibraryIndexRepairMiddleware = () => {
             state.allItems.list,
             state.allDocs.allFreeFormDocs,
           );
-      const repairedItems = reconcileSongLibraryIndex(
+      const withSongs = reconcileSongLibraryIndex(
         withCustomItems,
         state.allDocs.allSongDocs,
+      );
+      const repairableTimerDocs = state.allDocs.allTimerDocs.filter(
+        (doc) => !deletedTimerIds.has(doc._id),
+      );
+      const repairedItems = reconcileTimerLibraryIndex(
+        withSongs,
+        repairableTimerDocs,
       );
       if (repairedItems === state.allItems.list) return;
 

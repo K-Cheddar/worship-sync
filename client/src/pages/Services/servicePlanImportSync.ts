@@ -1,7 +1,6 @@
 import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
 import {
   getServicePlanElementAssignees,
-  getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
 import type {
@@ -11,6 +10,8 @@ import type {
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
+import { reconcileReviewedServicePlanParts } from "./servicePlanImportOwnership";
+import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -34,6 +35,11 @@ const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["i
     sourceLedBy: normalizedImportSourceValue(ambiguity.sourceLedBy),
     sourceNote: normalizedImportSourceValue(ambiguity.sourceNote),
     reasons: ambiguity.reasons,
+    songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint }) => ({
+      incoming,
+      candidateOccurrenceIds,
+      sourceFingerprint,
+    })),
     parts: ambiguity.parts.map(({ kind, value, destination, sourceField }) => ({
       kind, value, destination, sourceField: sourceField || "title",
     })),
@@ -74,6 +80,7 @@ export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOpt
   };
 
 type Indexed<T> = { value: T; index: number };
+type ImportedSongMapping = NonNullable<NonNullable<ServicePlanElement["importAmbiguity"]>["songMappings"]>[number];
 
 const normalized = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
@@ -116,19 +123,14 @@ const sameSongContent = (
   return false;
 };
 
-const sameScriptureContent = (
-  left: ReturnType<typeof getServicePlanElementScriptureRefs>[number],
-  right: ReturnType<typeof getServicePlanElementScriptureRefs>[number],
-): boolean => normalized(left.book) === normalized(right.book) &&
-  normalized(left.chapter) === normalized(right.chapter) &&
-  normalized(left.verseRange) === normalized(right.verseRange) &&
-  normalized(left.version) === normalized(right.version);
-
 /** Reuse occurrence IDs through increasingly weaker, deterministic evidence. */
 const reconcileImportedSongRefs = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
-): ReturnType<typeof getServicePlanElementSongRefs> => {
+): {
+  refs: ReturnType<typeof getServicePlanElementSongRefs>;
+  songMappings: NonNullable<ServicePlanElement["importAmbiguity"]>["songMappings"];
+} => {
   const currentRefs = getServicePlanElementSongRefs(current);
   const importedRefs = getServicePlanElementSongRefs(imported);
   const matchByIncomingIndex = new Map<number, number>();
@@ -170,11 +172,35 @@ const reconcileImportedSongRefs = (
     if (identityIndex >= 0) pair(incomingIndex, identityIndex);
   });
 
+  // A pending source song with several remaining same-title library matches
+  // must not replace every existing link with an unlinked placeholder. Keep
+  // those occurrences and route the decision through the existing review.
+  const ambiguousCandidatesByIncoming = new Map<number, number[]>();
+  importedRefs.forEach((incomingRef, incomingIndex) => {
+    if (matchByIncomingIndex.has(incomingIndex) || incomingRef.kind !== "pending") return;
+    const title = songTitle(incomingRef);
+    const sourceFingerprint = JSON.stringify([
+      normalized(incomingRef.title),
+      normalizedLyrics(incomingRef.lyricsText),
+      normalized(incomingRef.key || ""),
+    ]);
+    const priorMapping = current.importAmbiguity?.songMappings?.find((mapping) =>
+      mapping.sourceFingerprint === sourceFingerprint && mapping.resolution?.kind === "keep",
+    );
+    const candidates = currentRefs.flatMap((existing, index) =>
+      !usedCurrent.has(index) && existing.kind === "library" && songTitle(existing) === title
+        && (!priorMapping || priorMapping.candidateOccurrenceIds.includes(existing.id || ""))
+        ? [index]
+        : [],
+    );
+    if (title && (candidates.length > 1 || priorMapping)) ambiguousCandidatesByIncoming.set(incomingIndex, candidates);
+  });
+
   // A title is safe only when it identifies exactly one remaining occurrence
   // on each side. Exact-content matches above retain intentional duplicate order,
   // while this fallback prevents duplicate titles from preserving the wrong link.
   importedRefs.forEach((incomingRef, incomingIndex) => {
-    if (matchByIncomingIndex.has(incomingIndex)) return;
+    if (matchByIncomingIndex.has(incomingIndex) || ambiguousCandidatesByIncoming.has(incomingIndex)) return;
     const title = songTitle(incomingRef);
     if (!title) return;
     const currentCandidates = currentRefs.flatMap((existing, index) =>
@@ -215,19 +241,61 @@ const reconcileImportedSongRefs = (
     incomingCandidates.forEach((incomingIndex, index) => pair(incomingIndex, currentCandidates[index]));
   });
 
-  return importedRefs.map((importedRef, incomingIndex) => {
+  const ambiguousCandidateIndexes = new Set<number>();
+  const songMappings: NonNullable<ServicePlanElement["importAmbiguity"]>["songMappings"] = [];
+  const refs = importedRefs.flatMap((importedRef, incomingIndex) => {
+    const ambiguousCandidates = ambiguousCandidatesByIncoming.get(incomingIndex);
+    if (ambiguousCandidates) {
+      if (importedRef.kind !== "pending") return [importedRef];
+      const candidateRefs = ambiguousCandidates
+        .filter((index) => !ambiguousCandidateIndexes.has(index))
+        .map((index) => {
+          ambiguousCandidateIndexes.add(index);
+          return currentRefs[index];
+        });
+      const sourceFingerprint = JSON.stringify([
+        normalized(importedRef.title),
+        normalizedLyrics(importedRef.lyricsText),
+        normalized(importedRef.key || ""),
+      ]);
+      const priorMapping = current.importAmbiguity?.songMappings?.find((mapping) =>
+        mapping.sourceFingerprint === sourceFingerprint,
+      );
+      songMappings?.push({
+        incoming: importedRef as Extract<typeof importedRef, { kind: "pending" }>,
+        candidateOccurrenceIds: ambiguousCandidates.flatMap((index) => currentRefs[index].id ? [currentRefs[index].id!] : []),
+        sourceFingerprint,
+        ...(priorMapping?.resolution ? { resolution: priorMapping.resolution } : {}),
+      });
+      return candidateRefs;
+    }
     const matchIndex = matchByIncomingIndex.get(incomingIndex);
-    if (matchIndex === undefined) return importedRef;
+    if (matchIndex === undefined) return [importedRef];
     const currentRef = currentRefs[matchIndex];
     if (currentRef.kind === "library" && importedRef.kind === "pending") {
-      return currentRef;
+      return [currentRef];
     }
-    if (sameSongContent(currentRef, importedRef)) return currentRef;
-    if (currentRef.id && !importedRef.id) {
-      return { ...importedRef, id: currentRef.id };
-    }
-    return importedRef;
+    if (sameSongContent(currentRef, importedRef)) return [currentRef];
+    return [{ ...importedRef, ...(currentRef.id ? { id: currentRef.id } : {}) }];
   });
+  importedRefs.forEach((importedRef) => {
+    if (importedRef.kind !== "pending") return;
+    const sourceFingerprint = JSON.stringify([
+      normalized(importedRef.title), normalizedLyrics(importedRef.lyricsText), normalized(importedRef.key || ""),
+    ]);
+    const priorMapping = current.importAmbiguity?.songMappings?.find((mapping) =>
+      mapping.sourceFingerprint === sourceFingerprint && mapping.resolution?.kind === "replace",
+    );
+    const resolution = priorMapping?.resolution;
+    if (!priorMapping || resolution?.kind !== "replace") return;
+    currentRefs.forEach((currentRef, index) => {
+      if (!currentRef.id || currentRef.id === resolution.occurrenceId ||
+        !priorMapping.candidateOccurrenceIds.includes(currentRef.id) || usedCurrent.has(index) ||
+        refs.some((ref) => ref.id === currentRef.id)) return;
+      refs.push(currentRef);
+    });
+  });
+  return { refs, songMappings };
 };
 
 const labelsMatch = (left: string | string[], right: string | string[]): boolean => {
@@ -350,6 +418,143 @@ export const mergeImportedAssignees = (
   ];
 };
 
+const assigneeFingerprint = (assignee: ServicePlanAssignee) => JSON.stringify({ name: assignee.name });
+
+/** Reconcile the independently owned title and Led By people while leaving
+ * operator-created assignees and their member/microphone links intact. */
+const reconcileImportedSourceAssignees = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+  previousLedBy: string,
+  acceptTitlePeople: boolean,
+): { assignees: ServicePlanAssignee[]; managedAssignees: NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"] } => {
+  const existing = getServicePlanElementAssignees(current).map((assignee) => ({ ...assignee }));
+  const existingOwnership = current.servicePlanningImport?.managedAssignees || [];
+  const oldLedByNames = splitServicePlanningLedByNames(previousLedBy);
+  const incomingLedByRaw = imported.sourceLedByRaw || imported.servicePlanningImport?.observed.ledBy || imported.importAmbiguity?.sourceLedBy || "";
+  const incomingNames = splitServicePlanningLedByNames(incomingLedByRaw);
+  const incomingLedBy = getServicePlanElementAssignees(imported).flatMap((assignee) => {
+    const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
+    if (ownership?.fields.includes("ledBy")) return [{ assignee, ownership }];
+    const matches = incomingNames.filter((name) => normalized(name) === normalized(assignee.name || ""));
+    if (!matches.length || getServicePlanElementAssignees(imported).filter((candidate) => normalized(candidate.name || "") === normalized(assignee.name || "")).length !== 1) return [];
+    return [{
+      assignee,
+      ownership: { id: assignee.id, fields: ["ledBy" as const], fingerprint: assigneeFingerprint(assignee) },
+    }];
+  });
+  const incomingTitle = acceptTitlePeople
+    ? getServicePlanElementAssignees(imported).flatMap((assignee) => {
+        const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
+        return ownership?.fields.includes("title") && !ownership.fields.includes("ledBy") ? [{ assignee, ownership }] : [];
+      })
+    : [];
+  const ownedOld = new Set<number>();
+  const currentByIncoming = new Map<number, number>();
+  const used = new Set<number>();
+  const normalizedName = (name: string | undefined) => normalized(name || "");
+
+  existing.forEach((assignee, index) => {
+    const ownership = existingOwnership.find((item) => item.id === assignee.id);
+    const verified = ownership && ownership.fingerprint === assigneeFingerprint(assignee);
+    if (verified && ownership.fields.includes("ledBy")) {
+      ownedOld.add(index);
+      return;
+    }
+    // Legacy imported plans have no per-assignee marker. Only use a unique
+    // name match against the last applied Led By snapshot as weak evidence.
+    const oldNames = oldLedByNames.filter((name) => normalizedName(name) === normalizedName(assignee.name));
+    const matchingCurrent = existing.filter((candidate) => normalizedName(candidate.name) === normalizedName(assignee.name));
+    if (!ownership && oldNames.length === 1 && matchingCurrent.length === 1 && current.sourcePlanningManaged) ownedOld.add(index);
+  });
+
+  incomingLedBy.forEach((incomingAssignee, incomingIndex) => {
+    const identity = incomingAssignee.ownership.ledByIdentity;
+    let match = identity
+      ? [...ownedOld].find((index) => existingOwnership.find((item) => item.id === existing[index].id)?.ledByIdentity === identity && !used.has(index))
+      : undefined;
+    if (match === undefined) {
+      const candidates = [...ownedOld].filter((index) => !used.has(index) && normalizedName(existing[index].name) === normalizedName(incomingAssignee.assignee.name));
+      if (candidates.length === 1) match = candidates[0];
+    }
+    if (match !== undefined) {
+      used.add(match);
+      currentByIncoming.set(incomingIndex, match);
+    }
+  });
+
+  const remainingOld = [...ownedOld].filter((index) => !used.has(index));
+  const remainingIncoming = incomingLedBy.map((_, index) => index).filter((index) => !currentByIncoming.has(index));
+  if (remainingOld.length === remainingIncoming.length) {
+    remainingIncoming.forEach((incomingIndex, index) => {
+      const oldIndex = remainingOld[index];
+      used.add(oldIndex);
+      currentByIncoming.set(incomingIndex, oldIndex);
+    });
+  }
+
+  const reconciledLedBy = incomingLedBy.map((incomingAssignee, index) => {
+    const previous = currentByIncoming.get(index) === undefined ? undefined : existing[currentByIncoming.get(index)!];
+    return {
+      assignee: {
+      ...incomingAssignee.assignee,
+      id: previous?.id || incomingAssignee.assignee.id,
+      ...(previous?.memberId ? { memberId: previous.memberId } : {}),
+      ...(previous?.microphoneIds?.length ? { microphoneIds: previous.microphoneIds } : {}),
+      },
+      ownership: { ...incomingAssignee.ownership, id: previous?.id || incomingAssignee.assignee.id, fingerprint: assigneeFingerprint(previous || incomingAssignee.assignee) },
+    };
+  });
+
+  const ownershipById = new Map<string, NonNullable<NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"]>[number]>();
+  const emitted = new Set<number>();
+  const result = existing.flatMap((assignee, index) => {
+    if (!ownedOld.has(index)) return [assignee];
+    const matchedIncoming = [...currentByIncoming.entries()].find(([, currentIndex]) => currentIndex === index)?.[0];
+    if (matchedIncoming !== undefined) {
+      emitted.add(matchedIncoming);
+      return [reconciledLedBy[matchedIncoming].assignee];
+    }
+    const ownership = existingOwnership.find((item) => item.id === assignee.id);
+    if (ownership?.fields.includes("title") && ownership.fingerprint === assigneeFingerprint(assignee)) {
+      const titleOwnership = { ...ownership, fields: ["title" as const] };
+      delete titleOwnership.ledByIdentity;
+      ownershipById.set(assignee.id, titleOwnership);
+      return [assignee];
+    }
+    return assignee.microphoneIds?.length ? [{ id: assignee.id, microphoneIds: assignee.microphoneIds }] : [];
+  });
+  existingOwnership.forEach((ownership) => {
+    const assignee = result.find((item) => item.id === ownership.id);
+    if (assignee && ownership.fingerprint === assigneeFingerprint(assignee) && !ownershipById.has(ownership.id)) ownershipById.set(ownership.id, ownership);
+  });
+  reconciledLedBy.forEach((item) => ownershipById.set(item.assignee.id, item.ownership));
+  [...reconciledLedBy.filter((_, index) => !emitted.has(index)), ...incomingTitle].forEach((incomingItem) => {
+    const incomingAssignee = incomingItem.assignee;
+    const duplicate = result.find((assignee) => normalizedName(assignee.name) === normalizedName(incomingAssignee.name));
+    if (duplicate) {
+      const prior = ownershipById.get(duplicate.id);
+      if (!prior && incomingItem.ownership.fields.includes("ledBy")) return;
+      const fields = [...new Set([...(prior?.fields || []), ...incomingItem.ownership.fields])];
+      ownershipById.set(duplicate.id, {
+        ...incomingItem.ownership,
+        id: duplicate.id,
+        fields,
+        fingerprint: assigneeFingerprint(duplicate),
+      });
+      return;
+    }
+    result.push(incomingAssignee);
+    ownershipById.set(incomingAssignee.id, { ...incomingItem.ownership, id: incomingAssignee.id, fingerprint: assigneeFingerprint(incomingAssignee) });
+  });
+  return {
+    assignees: result,
+    managedAssignees: [...ownershipById.values()].filter((ownership) =>
+      result.some((assignee) => assignee.id === ownership.id && ownership.fingerprint === assigneeFingerprint(assignee)),
+    ),
+  };
+};
+
 const copyOptionalField = <T extends object, K extends keyof T>(
   target: T,
   source: T,
@@ -439,7 +644,10 @@ const mergeElement = (
   }
   const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
     .filter((field) => !sameSourceValue(observed[field], applied[field]));
-  next.servicePlanningImport = { observed, applied, pendingFields };
+  next.servicePlanningImport = {
+    observed, applied, pendingFields,
+    ...(currentState.managedAssignees?.length ? { managedAssignees: currentState.managedAssignees } : {}),
+  };
   const changedAcceptedTitle = options.updateTitles && (
     !sameSourceValue(currentState.applied.title, observed.title) ||
     !sameSourceValue(currentState.applied.elementType, observed.elementType)
@@ -453,24 +661,25 @@ const mergeElement = (
   // A title can contain a person suggestion whose destination was explicitly
   // changed during review. Keep that assignee choice intact until the source
   // changes are reviewed; Led By still follows its own refresh option.
-  const preserveConfirmedAssignees = confirmed && !changedAcceptedTitle &&
-    (!options.updateAssignments || currentState.applied.ledBy === observed.ledBy);
   const preserveConfirmedNotes = confirmed && !changedAcceptedNote;
-  if (options.updateTitles && !preserveConfirmedTitle) {
-    next = {
-      ...next,
-      type: imported.type,
-      ...(!sameRichText(current.title, imported.title)
-        ? { title: imported.title }
-        : {}),
-    };
+  if (options.updateTitles) {
+    if (!preserveConfirmedTitle) {
+      next = {
+        ...next,
+        type: imported.type,
+        ...(!sameRichText(current.title, imported.title)
+          ? { title: imported.title }
+          : {}),
+      };
+    }
     // A refresh must not undo song linking: once a slot points at a real
     // library song, an unmatched ("pending") ref from the source is the weaker
     // of the two, so the operator's link stays. Check every song slot — a
     // worship set can keep a later library link even when an earlier one is
     // still pending.
     const currentSongRefs = getServicePlanElementSongRefs(current);
-    const mergedSongRefs = reconcileImportedSongRefs(current, imported);
+    const reconciledSongs = reconcileImportedSongRefs(current, imported);
+    const mergedSongRefs = reconciledSongs.refs;
     const songRefsUnchanged =
       mergedSongRefs.length === currentSongRefs.length &&
       mergedSongRefs.every((ref, index) => ref === currentSongRefs[index]);
@@ -478,33 +687,65 @@ const mergeElement = (
       next.songRefs = mergedSongRefs;
       delete next.songRef;
     }
-    const currentScriptureRefs = getServicePlanElementScriptureRefs(current);
-    const importedScriptureRefs = getServicePlanElementScriptureRefs(imported);
-    const scriptureRefsUnchanged = currentScriptureRefs.length === importedScriptureRefs.length &&
-      currentScriptureRefs.every((ref, index) =>
-        sameScriptureContent(ref, importedScriptureRefs[index]),
+    if (reconciledSongs.songMappings?.length) {
+      const ambiguity = next.importAmbiguity || imported.importAmbiguity || {
+        source: "servicePlanning" as const,
+        sourceKey: imported.servicePlanningImport?.observed.title || "song-reference",
+        sourceElementType: imported.sourceElementTypeRaw || "Song",
+        sourceTitle: imported.sourceContentTitleRaw || richTextToPlainText(imported.title),
+        sourceLedBy: imported.sourceLedByRaw || "",
+        parts: [],
+        reasons: [],
+        status: "unresolved" as const,
+        sourceFingerprint: "",
+      };
+      const oldMappings = current.importAmbiguity?.songMappings || [];
+      const sameMapping = (
+        left: ImportedSongMapping,
+        right: ImportedSongMapping,
+      ) => left.sourceFingerprint === right.sourceFingerprint &&
+        JSON.stringify(left.candidateOccurrenceIds) === JSON.stringify(right.candidateOccurrenceIds);
+      const newMappings = reconciledSongs.songMappings.filter((mapping) =>
+        !oldMappings.some((old) => sameMapping(old, mapping)),
       );
-    if (!scriptureRefsUnchanged) {
-      next.scriptureRefs = importedScriptureRefs.map((ref, index) => ({
-        ...ref,
-        ...(currentScriptureRefs[index]?.id && !ref.id
-          ? { id: currentScriptureRefs[index].id }
-          : {}),
-      }));
-      delete next.scriptureRef;
+      const retainedMappings = oldMappings.filter((old) =>
+        reconciledSongs.songMappings?.some((mapping) => sameMapping(old, mapping)),
+      );
+      const unchangedMappings = reconciledSongs.songMappings.length === oldMappings.length &&
+        reconciledSongs.songMappings.every((mapping) =>
+          oldMappings.some((old) => sameMapping(old, mapping) &&
+            JSON.stringify(old.resolution) === JSON.stringify(mapping.resolution)),
+        );
+      next.importAmbiguity = {
+        ...ambiguity,
+        songMappings: [...retainedMappings, ...newMappings],
+        reasons: [...new Set([...ambiguity.reasons, "A pending song matches multiple linked library songs."])],
+        status: unchangedMappings && current.importAmbiguity && current.importAmbiguity.status !== "unresolved"
+          ? current.importAmbiguity.status
+          : "unresolved",
+      };
     }
-    if (normalized(current.sourceElementTypeRaw || "") !== normalized(imported.sourceElementTypeRaw || "")) {
-      next = copyOptionalField(next, imported, "sourceElementTypeRaw");
-    }
-    if (!sameSourceValue(current.sourceContentTitleRaw || "", imported.sourceContentTitleRaw || "")) {
-      next = copyOptionalField(next, imported, "sourceContentTitleRaw");
+    if (!preserveConfirmedTitle) {
+      if (normalized(current.sourceElementTypeRaw || "") !== normalized(imported.sourceElementTypeRaw || "")) {
+        next = copyOptionalField(next, imported, "sourceElementTypeRaw");
+      }
+      if (!sameSourceValue(current.sourceContentTitleRaw || "", imported.sourceContentTitleRaw || "")) {
+        next = copyOptionalField(next, imported, "sourceContentTitleRaw");
+      }
     }
   }
-  if (options.updateAssignments && !preserveConfirmedAssignees) {
-    const mergedAssignees = mergeImportedAssignees(current, imported);
-    if (JSON.stringify(mergedAssignees) !== JSON.stringify(getServicePlanElementAssignees(current))) {
-      next.assignees = mergedAssignees;
+  if (options.updateAssignments) {
+    const reconciledAssignees = reconcileImportedSourceAssignees(
+      current,
+      imported,
+      currentState.applied.ledBy,
+      changedAcceptedTitle,
+    );
+    if (JSON.stringify(reconciledAssignees.assignees) !== JSON.stringify(getServicePlanElementAssignees(current))) {
+      next.assignees = reconciledAssignees.assignees;
     }
+    if (reconciledAssignees.managedAssignees?.length) next.servicePlanningImport = { ...next.servicePlanningImport!, managedAssignees: reconciledAssignees.managedAssignees };
+    else if (next.servicePlanningImport) delete next.servicePlanningImport.managedAssignees;
     if (!sameSourceValue(current.sourceLedByRaw || "", imported.sourceLedByRaw || "")) {
       next = copyOptionalField(next, imported, "sourceLedByRaw");
     }
@@ -547,21 +788,42 @@ const mergeElement = (
     else delete next.teamNotes;
   }
 
+  if (changedAcceptedTitleOrNote) {
+    const acceptedFields = new Set<"title" | "note" | "ledBy">([
+      ...(changedAcceptedTitle ? ["title" as const] : []),
+      ...(changedAcceptedNote ? ["note" as const] : []),
+    ]);
+    const reconciled = reconcileReviewedServicePlanParts(next, imported, acceptedFields);
+    next = reconciled.element;
+    if (reconciled.ambiguity) next.importAmbiguity = reconciled.ambiguity;
+  }
+
   // Reconcile interpretation metadata independently from destination updates.
   // A declined title or note remains observed and pending, never applied later
   // just because another refresh happens to enable that field.
   const currentAmbiguity = current.importAmbiguity;
   const importedAmbiguity = imported.importAmbiguity;
   if (!changedAcceptedTitleOrNote) {
-    if (currentAmbiguity) next.importAmbiguity = {
-      ...currentAmbiguity,
-      sourceElementType: importedAmbiguity?.sourceElementType ?? observed.elementType,
-      sourceTitle: importedAmbiguity?.sourceTitle ?? observed.title,
-      sourceLedBy: importedAmbiguity?.sourceLedBy ?? observed.ledBy,
-      ...(observed.note ? { sourceNote: observed.note } : {}),
-      sourceFingerprint: importedAmbiguity?.sourceFingerprint || currentAmbiguity.sourceFingerprint,
-    };
+    if (currentAmbiguity) {
+      const nextSongMappings = next.importAmbiguity?.songMappings;
+      const songMappingChanged = nextSongMappings !== undefined &&
+        JSON.stringify(nextSongMappings) !== JSON.stringify(currentAmbiguity.songMappings || []);
+      next.importAmbiguity = {
+        ...currentAmbiguity,
+        sourceElementType: importedAmbiguity?.sourceElementType ?? observed.elementType,
+        sourceTitle: importedAmbiguity?.sourceTitle ?? observed.title,
+        sourceLedBy: importedAmbiguity?.sourceLedBy ?? observed.ledBy,
+        ...(observed.note ? { sourceNote: observed.note } : {}),
+        sourceFingerprint: importedAmbiguity?.sourceFingerprint || currentAmbiguity.sourceFingerprint,
+        ...(nextSongMappings ? { songMappings: nextSongMappings } : {}),
+        ...(songMappingChanged ? {
+          reasons: next.importAmbiguity?.reasons || currentAmbiguity.reasons,
+          status: "unresolved" as const,
+        } : {}),
+      };
+    }
   } else if (importedAmbiguity) {
+    const reconciledAmbiguity = next.importAmbiguity;
     const acceptedFields = new Set([
       ...(options.updateTitles ? ["title"] : []),
       ...(options.updateNotes ? ["note"] : []),
@@ -573,9 +835,22 @@ const mergeElement = (
       acceptedFields.has(part.sourceField || "title"),
     );
     next.importAmbiguity = {
+      ...reconciledAmbiguity,
       ...importedAmbiguity,
-      parts: [...retainedParts, ...acceptedParts],
-      status: importedAmbiguity.status === "unresolved" ? "unresolved" : "confirmed",
+      ...(reconciledAmbiguity?.songMappings ? { songMappings: reconciledAmbiguity.songMappings } : {}),
+      parts: [...retainedParts, ...acceptedParts].map((part) => {
+        const reconciledPart = next.importAmbiguity?.parts.find((candidate) =>
+          candidate.kind === part.kind && candidate.value === part.value &&
+          (candidate.sourceField || "title") === (part.sourceField || "title"),
+        );
+        return reconciledPart || part;
+      }),
+      reasons: [...new Set([
+        ...importedAmbiguity.reasons,
+        ...(reconciledAmbiguity?.reasons.filter((reason) => !importedAmbiguity.reasons.includes(reason)) || []),
+      ])],
+      status: importedAmbiguity.status === "unresolved" ||
+        reconciledAmbiguity?.status === "unresolved" ? "unresolved" : "confirmed",
     };
   } else if (currentAmbiguity && changedAcceptedTitleOrNote) {
     delete next.importAmbiguity;

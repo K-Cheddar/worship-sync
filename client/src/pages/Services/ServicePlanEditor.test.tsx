@@ -3126,6 +3126,77 @@ Opening Song to begin the worship experience.
     layout.mockRestore();
   });
 
+  it("preserves the editing viewport and shows Follow live when the live row is outside the plan viewport", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const livePlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      publicLive: { mode: "manual", currentElementId: "welcome" },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+
+    let rowTop = 140;
+    const getRect = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.id === "service-plan-list") {
+        return { x: 0, y: 100, width: 600, height: 200, top: 100, bottom: 300, left: 0, right: 600, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.id === "service-plan-element-welcome") {
+        return { x: 0, y: rowTop, width: 500, height: 30, top: rowTop, bottom: rowTop + 30, left: 0, right: 500, toJSON: () => ({}) } as DOMRect;
+      }
+      return { x: 0, y: 0, width: 0, height: 0, top: 0, bottom: 0, left: 0, right: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockImplementation(({ child, parent }) => {
+      rowTop = 140;
+      parent.scrollTop = 140;
+      return true;
+    });
+    const user = userEvent.setup();
+
+    try {
+      renderEditor({ occurrence: todayOccurrence });
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
+      const planList = screen.getByRole("region", { name: "Service plan" });
+      Object.defineProperty(planList, "clientHeight", { configurable: true, value: 200 });
+
+      await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+      rowTop = 20;
+      planList!.scrollTop = 480;
+      await user.click(screen.getByRole("button", { name: /^Done$/i }));
+
+      expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+      expect(planList!.scrollTop).toBe(480);
+      expect(rowTop).toBe(20);
+      expect(keepInView).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("button", { name: /Follow live/i }));
+      await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
+      expect(rowTop).toBe(140);
+      expect(planList!.scrollTop).toBe(140);
+    } finally {
+      getRect.mockRestore();
+      keepInView.mockRestore();
+    }
+  });
+
   it("reconciles on return to Plan and keeps an explicit pause across tabs", async () => {
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);

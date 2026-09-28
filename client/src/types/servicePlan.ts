@@ -136,6 +136,13 @@ export type ServicePlanImportAmbiguity = {
   reasons: string[];
   status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
   sourceFingerprint: string;
+  /** Pending source songs that may correspond to more than one existing library occurrence. */
+  songMappings?: Array<{
+    incoming: Extract<ServicePlanSongReference, { kind: "pending" }>;
+    candidateOccurrenceIds: string[];
+    sourceFingerprint: string;
+    resolution?: { kind: "keep" } | { kind: "replace"; occurrenceId: string };
+  }>;
   /** URL extraction can be clear while attaching an external link still needs operator approval. */
   authorizationPending?: boolean;
 };
@@ -151,6 +158,13 @@ export type ServicePlanImportSourceState = {
   observed: ServicePlanningSourceSnapshot;
   applied: ServicePlanningSourceSnapshot;
   pendingFields: Array<"elementType" | "title" | "ledBy" | "note">;
+  /** Exact imported assignee occurrences and their source fields. */
+  managedAssignees?: Array<{
+    id: string;
+    fields: Array<"title" | "ledBy">;
+    ledByIdentity?: string;
+    fingerprint: string;
+  }>;
 };
 
 /**

@@ -25,8 +25,9 @@ import {
   multilineTextToRichText,
   plainTextToRichText,
 } from "../../types/richText";
-import { getServicePlanElementType } from "../../types/servicePlan";
+import { getServicePlanElementScriptureRefs, getServicePlanElementType } from "../../types/servicePlan";
 import type {
+  ServicePlanAssignee,
   ServicePlanElement,
   ServicePlanElementType,
   ServicePlanSection,
@@ -35,6 +36,14 @@ import type {
 import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
 import { createServicePlanTextResource } from "./servicePlanResources";
 import { servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+
+type ImportedAssigneeWithProvenance = ServicePlanAssignee & {
+  servicePlanningImport?: {
+    fields: Array<"title" | "ledBy">;
+    ledByIdentity?: string;
+    fingerprint: string;
+  };
+};
 
 /**
  * These labels describe a content kind rather than a distinct service moment.
@@ -212,10 +221,32 @@ const buildElementFromRow = <
     ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(resolvedAssigneeNames.length
       ? {
-          assignees: resolvedAssigneeNames.map((name) => ({
-            id: generateRandomId(),
-            name,
-          })),
+          assignees: resolvedAssigneeNames.map((name) => {
+            const matchingSource = sourceAssigneeNames.find((sourceName) =>
+              sourceName.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const structuredSource = row.ledByAssignments?.find((assignment) =>
+              assignment.kind === "person" && assignment.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const titleDerived = (classification?.suggestedAssignees || []).some((sourceName) =>
+              sourceName.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const fields = [
+              ...(titleDerived ? ["title" as const] : []),
+              ...(matchingSource ? ["ledBy" as const] : []),
+            ];
+            return {
+              id: generateRandomId(),
+              name,
+              ...(fields.length ? {
+                servicePlanningImport: {
+                  fields,
+                  ...(structuredSource?.id ? { ledByIdentity: structuredSource.id } : {}),
+                  fingerprint: JSON.stringify({ name }),
+                },
+              } : {}),
+            };
+          }),
         }
       : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
@@ -334,18 +365,26 @@ const buildElementFromRow = <
             },
           };
         }
-        if (part.kind === "scripture" && part.destination === "scripture" && element.scriptureRef?.id) {
-          return {
+        if (part.kind === "scripture" && part.destination === "scripture") {
+          const parsed = parseBibleReference(part.value);
+          const refs = getServicePlanElementScriptureRefs(element);
+          const matches = parsed ? refs.filter((reference) =>
+            reference.book.toLocaleLowerCase() === parsed.book.toLocaleLowerCase() &&
+            reference.chapter === parsed.chapter && reference.verseRange === parsed.verseRange &&
+            reference.version.toLocaleLowerCase() === parsed.version.toLocaleLowerCase(),
+          ) : [];
+          const scriptureRef = matches.length === 1 ? matches[0] : undefined;
+          if (scriptureRef?.id) return {
             ...part,
             managed: {
               kind: "scripture" as const,
-              id: element.scriptureRef.id,
+              id: scriptureRef.id,
               fingerprint: JSON.stringify({
-                label: element.scriptureRef.label,
-                book: element.scriptureRef.book,
-                chapter: element.scriptureRef.chapter,
-                verseRange: element.scriptureRef.verseRange,
-                version: element.scriptureRef.version,
+                label: scriptureRef.label,
+                book: scriptureRef.book,
+                chapter: scriptureRef.chapter,
+                verseRange: scriptureRef.verseRange,
+                version: scriptureRef.version,
               }),
             },
           };
@@ -356,7 +395,7 @@ const buildElementFromRow = <
 
   if (
     classification &&
-    (classification.reasons.length > 0 || classification.urls.length > 0)
+    (classification.parts.length > 0 || classification.reasons.length > 0 || classification.urls.length > 0)
   ) {
     const unresolved = classification.reasons.length > 0;
     element.importAmbiguity = {
@@ -387,10 +426,24 @@ const buildElementFromRow = <
     ledBy: row.sourceLedByRaw || row.ledBy || "",
     note: row.note || "",
   };
+  const importedAssignees = (element.assignees || []) as ImportedAssigneeWithProvenance[];
+  const managedAssignees = importedAssignees.flatMap((assignee) =>
+    assignee.servicePlanningImport
+      ? [{ id: assignee.id, ...assignee.servicePlanningImport }]
+      : [],
+  );
+  if (importedAssignees.length) {
+    element.assignees = importedAssignees.map((assignee) => {
+      const cleaned = { ...assignee };
+      delete cleaned.servicePlanningImport;
+      return cleaned;
+    });
+  }
   element.servicePlanningImport = {
     observed: sourceSnapshot,
     applied: sourceSnapshot,
     pendingFields: [],
+    ...(managedAssignees.length ? { managedAssignees } : {}),
   };
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row

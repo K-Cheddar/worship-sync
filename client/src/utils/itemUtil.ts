@@ -730,6 +730,25 @@ type CreateNewItemInDbType = {
   item: ItemState;
   db: PouchDB.Database | undefined;
 };
+
+/** Share one in-flight custom-item retry across repeated local clicks. */
+export async function runCanvaCustomItemCreationOnce(
+  inFlight: Map<string, Promise<string>>,
+  idempotencyKey: string | undefined,
+  create: () => Promise<string>,
+): Promise<string> {
+  if (!idempotencyKey) return create();
+  const existing = inFlight.get(idempotencyKey);
+  if (existing) return existing;
+  const creation = create();
+  inFlight.set(idempotencyKey, creation);
+  try {
+    return await creation;
+  } finally {
+    if (inFlight.get(idempotencyKey) === creation) inFlight.delete(idempotencyKey);
+  }
+}
+
 export const createNewItemInDb = async ({
   item,
   db,
@@ -739,6 +758,7 @@ export const createNewItemInDb = async ({
     const response: DBItem = await db.get(item._id);
     return {
       ...item,
+      ...response,
       _id: response._id,
       name: response.name,
       slides: response.slides,

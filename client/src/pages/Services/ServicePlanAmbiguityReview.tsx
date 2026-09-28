@@ -37,6 +37,7 @@ const destinationsForPart = (kind: string) => {
 const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onResolve }: Props) => {
   const [showPrompt, setShowPrompt] = useState(prompt);
   const [destinationsByPart, setDestinationsByPart] = useState<Record<string, string>>({});
+  const [songChoicesByMapping, setSongChoicesByMapping] = useState<Record<string, string>>({});
   const elements = sections.flatMap((section) => section.elements.map((element) => ({ section, element })));
   const selected = elementIds.flatMap((id) => {
     const found = elements.find(({ element }) => element.id === id);
@@ -63,7 +64,11 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
   const applyInterpretation = (acknowledge = false) => {
     if (acknowledge) {
       onResolve(active.element.id, {
-        importAmbiguity: { ...ambiguity, status: "acknowledged" },
+        importAmbiguity: {
+          ...ambiguity,
+          songMappings: ambiguity.songMappings?.map((mapping) => ({ ...mapping, resolution: { kind: "keep" } })),
+          status: "acknowledged",
+        },
       });
       return;
     }
@@ -72,14 +77,35 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
       destination: (destinationsByPart[`${active.element.id}:${index}`] || part.destination) as typeof part.destination,
     }));
     const reconciled = applyReviewedServicePlanParts(active.element, resolvedParts);
+    const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);
+    const nextSongs = currentSongs.map((song) => {
+      const mapping = (ambiguity.songMappings || []).find((candidate) =>
+        candidate.candidateOccurrenceIds.includes(song.id || "") &&
+        songChoicesByMapping[`${active.element.id}:${candidate.sourceFingerprint}`] === song.id,
+      );
+      return mapping ? mapping.incoming : song;
+    });
     const nextAmbiguity: ServicePlanImportAmbiguity = {
       ...ambiguity,
       parts: reconciled.parts,
+      songMappings: ambiguity.songMappings?.map((mapping) => {
+        const occurrenceId = songChoicesByMapping[`${active.element.id}:${mapping.sourceFingerprint}`];
+        return {
+          ...mapping,
+          resolution: occurrenceId
+            ? { kind: "replace", occurrenceId }
+            : { kind: "keep" },
+        };
+      }),
       reasons: [],
       status: "confirmed",
       authorizationPending: false,
     };
-    onResolve(active.element.id, { ...reconciled.element, importAmbiguity: nextAmbiguity });
+    onResolve(active.element.id, {
+      ...reconciled.element,
+      ...(JSON.stringify(nextSongs) !== JSON.stringify(currentSongs) ? { songRefs: nextSongs } : {}),
+      importAmbiguity: nextAmbiguity,
+    });
   };
 
   return (
@@ -113,6 +139,30 @@ const ServicePlanAmbiguityReview = ({ sections, elementIds, prompt, onLater, onR
                 />
               </div>
             ))}
+          {(ambiguity.songMappings || []).map((mapping) => {
+            const mappingKey = `${active.element.id}:${mapping.sourceFingerprint}`;
+            const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);
+            const choices = currentSongs.filter((song) => mapping.candidateOccurrenceIds.includes(song.id || ""));
+            return (
+              <div key={mappingKey} className="space-y-2 rounded-md border border-amber-700/60 bg-amber-950/20 p-3">
+                <p className="text-xs text-amber-100">
+                  “{mapping.incoming.title}” could match several linked songs. Keep the current links, or choose one occurrence to replace with the incoming song.
+                </p>
+                <Select
+                  label={`Song mapping for ${mapping.incoming.title}`}
+                  options={[
+                    { value: "", label: "Keep existing linked songs" },
+                    ...choices.map((song) => ({
+                      value: song.id || "",
+                      label: `${song.kind === "library" ? song.songName : song.title}${song.kind === "library" && song.key ? ` · ${song.key}` : ""}`,
+                    })),
+                  ]}
+                  value={songChoicesByMapping[mappingKey] || ""}
+                  onChange={(value) => setSongChoicesByMapping((current) => ({ ...current, [mappingKey]: String(value) }))}
+                />
+              </div>
+            );
+          })}
             {!ambiguity.parts.length ? <p className="text-xs text-gray-400">The original text is preserved with this item.</p> : null}
           </div>
         </div>

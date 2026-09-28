@@ -15,6 +15,9 @@ import {
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
+import { servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { applyReviewedServicePlanParts } from "./servicePlanImportOwnership";
+import { createServicePlanTextResource } from "./servicePlanResources";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 const element = (
@@ -357,9 +360,175 @@ describe("refreshServicePlanFromImport", () => {
     ])];
 
     const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(refreshed.elements[0].importAmbiguity?.status).toBe("unresolved");
+    expect(refreshed.elements[0].importAmbiguity?.songMappings).toEqual([{
+      incoming: { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+      candidateOccurrenceIds: ["linked-one", "linked-two"],
+      sourceFingerprint: JSON.stringify(["same song", "New lyrics", ""]),
+    }]);
+    expect(summarizeServicePlanImport(current, [refreshed]).changes[0]?.fields.map(({ label }) => label)).toContain("Import interpretation");
+  });
+
+  it("keeps a matched pending song occurrence ID when changed lyrics arrive with another ID", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [{ id: "stable-pending", kind: "pending", title: "New Song", lyricsText: "old lyrics" }],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      songRefs: [{ id: "generated-new", kind: "pending", title: "New Song", lyricsText: "new lyrics" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, [refreshed]);
+
     expect(refreshed.elements[0].songRefs).toEqual([
-      { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+      { id: "stable-pending", kind: "pending", title: "New Song", lyricsText: "new lyrics" },
     ]);
+    expect(summary.changes[0]?.fields.map(({ label, before, after }) => ({ label, before, after }))).toContainEqual({
+      label: "Song", before: "New Song (Lyrics: old lyrics)", after: "New Song (Lyrics: new lyrics)",
+    });
+  });
+
+  it("keeps a matched library occurrence ID when its key changes and the import supplies another ID", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [{ id: "stable-library", kind: "library", songId: "song-1", songName: "New Song", key: "C" }],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      songRefs: [{ id: "generated-new", kind: "library", songId: "song-1", songName: "New Song", key: "D" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, [refreshed]);
+
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "stable-library", kind: "library", songId: "song-1", songName: "New Song", key: "D" },
+    ]);
+    expect(summary.changes[0]?.fields).toContainEqual({ label: "Song", before: "New Song (Key C)", after: "New Song (Key D)" });
+  });
+
+  it("does not transfer an occurrence ID to an unrelated replacement song", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [{ id: "old-song", kind: "pending", title: "Old Song", lyricsText: "old lyrics" }],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      songRefs: [{ id: "new-song", kind: "pending", title: "Unrelated Song", lyricsText: "new lyrics" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "new-song", kind: "pending", title: "Unrelated Song", lyricsText: "new lyrics" },
+    ]);
+  });
+
+  it("keeps changed duplicate songs in source order with their matching occurrence IDs", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [
+        { id: "morning", kind: "pending", title: "Same Song", lyricsText: "morning lyrics" },
+        { id: "evening", kind: "pending", title: "Same Song", lyricsText: "evening lyrics" },
+      ],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      songRefs: [
+        { id: "new-evening", kind: "pending", title: "Same Song", lyricsText: "evening lyrics" },
+        { id: "new-morning", kind: "pending", title: "Same Song", lyricsText: "morning lyrics" },
+      ],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed.elements[0].songRefs).toEqual([
+      { id: "evening", kind: "pending", title: "Same Song", lyricsText: "evening lyrics" },
+      { id: "morning", kind: "pending", title: "Same Song", lyricsText: "morning lyrics" },
+    ]);
+  });
+
+  it("reports a genuinely removed song without creating a mapping ambiguity", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [{ id: "linked", kind: "library", songId: "song-1", songName: "Same Song" }],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", { songRefs: [] })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed.elements[0].songRefs).toEqual([]);
+    expect(refreshed.elements[0].importAmbiguity?.songMappings).toBeUndefined();
+    expect(summarizeServicePlanImport(current, [refreshed]).changes[0]?.fields.map(({ label }) => label)).toContain("Song");
+  });
+
+  it("does not reopen a confirmed keep-links choice on an unchanged import", () => {
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [
+        { id: "linked-one", kind: "library", songId: "song-1", songName: "Same Song" },
+        { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+      ],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Praise:0", sourceElementType: "Song", sourceTitle: "Worship Set",
+        sourceLedBy: "", parts: [], reasons: [], status: "confirmed", sourceFingerprint: "source",
+        songMappings: [{
+          incoming: { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+          candidateOccurrenceIds: ["linked-one", "linked-two"],
+          sourceFingerprint: JSON.stringify(["same song", "New lyrics", ""]),
+          resolution: { kind: "keep" },
+        }],
+      },
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      sourceElementTypeRaw: "Song", sourceContentTitleRaw: "Worship Set",
+      songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "New lyrics" }],
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed.elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(refreshed.elements[0].importAmbiguity?.status).toBe("confirmed");
+    expect(getNewServicePlanImportAmbiguityIds(current, [refreshed])).toEqual([]);
+    expect(summarizeServicePlanImport(current, [refreshed]).changes).toEqual([]);
+
+    const changedImport = [section("source", "Praise", [element("incoming", "Worship Set", {
+      sourceElementTypeRaw: "Song", sourceContentTitleRaw: "Worship Set",
+      songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "Changed lyrics" }],
+    })])];
+    const changedRefresh = refreshServicePlanFromImport([refreshed], changedImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(changedRefresh[0].elements[0].importAmbiguity?.status).toBe("unresolved");
+    expect(summarizeServicePlanImport([refreshed], changedRefresh).changes[0]?.fields.map(({ label }) => label)).toContain("Import interpretation");
+  });
+
+  it("keeps the unselected duplicate link after an explicitly confirmed replacement", () => {
+    const sourceFingerprint = JSON.stringify(["same song", "New lyrics", ""]);
+    const current = [section("section", "Praise", [element("set", "Worship Set", {
+      sourcePlanningManaged: true,
+      songRefs: [
+        { id: "incoming-occurrence", kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+        { id: "linked-two", kind: "library", songId: "song-2", songName: "Same Song" },
+      ],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Praise:0", sourceElementType: "Song", sourceTitle: "Worship Set",
+        sourceLedBy: "", parts: [], reasons: [], status: "confirmed", sourceFingerprint: "source",
+        songMappings: [{
+          incoming: { kind: "pending", title: "Same Song", lyricsText: "New lyrics" },
+          candidateOccurrenceIds: ["linked-one", "linked-two"],
+          sourceFingerprint,
+          resolution: { kind: "replace", occurrenceId: "linked-one" },
+        }],
+      },
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Worship Set", {
+      sourceElementTypeRaw: "Song", sourceContentTitleRaw: "Worship Set",
+      songRefs: [{ kind: "pending", title: "Same Song", lyricsText: "New lyrics" }],
+    })])];
+
+    const [repeated] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(repeated.elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(repeated.elements[0].importAmbiguity?.status).toBe("confirmed");
+    expect(summarizeServicePlanImport(current, [repeated]).changes).toEqual([]);
   });
 
   it("treats adjacent same-format spans as the same note without adding spaces", () => {
@@ -458,6 +627,59 @@ describe("refreshServicePlanFromImport", () => {
     expect(summarizeServicePlanImport(applied, repeated)).toEqual({
       changes: [], added: 0, removed: 0, updated: 0,
     });
+  });
+
+  it("parses an ambiguous song, reviews it, applies safely, defers it, and stays quiet on repeat", () => {
+    const source: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{
+        sectionName: "Praise",
+        rows: [{ elementType: "Song", title: "Same Song", songTitle: "Same Song", ledBy: "", note: "Keep this local note" }],
+      }],
+      teamAssignments: [],
+    };
+    const parsed = buildServicePlanSectionsFromImport(source, []);
+    expect(parsed[0].elements[0].songRef?.kind).toBe("pending");
+    const current = [section("section", "Praise", [element("service-song", "Same Song", {
+      sourcePlanningManaged: true,
+      type: "song",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Same Song",
+      songRefs: [
+        { id: "linked-one", kind: "library", songId: "song-one", songName: "Same Song", key: "C" },
+        { id: "linked-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+      ],
+      notes: plainTextToRichText("Keep this local note"),
+      teamNotes: [{ id: "role-note", scope: "role", positionId: "band", label: "Band", note: plainTextToRichText("Keep the local cue") }],
+    })])];
+
+    const reconciled = refreshServicePlanFromImport(current, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, reconciled);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      reconciled,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+    const appliedElement = applied[0].elements[0];
+    expect(appliedElement.songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(richTextToPlainText(appliedElement.notes)).toBe("Keep this local note");
+    expect(appliedElement.teamNotes).toEqual(current[0].elements[0].teamNotes);
+    expect(getNewServicePlanImportAmbiguityIds(current, applied)).toEqual(["service-song"]);
+
+    const deferred = [{
+      ...applied[0],
+      elements: applied[0].elements.map((item) => item.id === "service-song" && item.importAmbiguity
+        ? { ...item, importAmbiguity: { ...item.importAmbiguity, status: "deferred" as const } }
+        : item),
+    }];
+    const repeated = refreshServicePlanFromImport(deferred, parsed, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(repeated[0].elements[0].songRefs).toEqual(current[0].elements[0].songRefs);
+    expect(richTextToPlainText(repeated[0].elements[0].notes)).toBe("Keep this local note");
+    expect(repeated[0].elements[0].importAmbiguity?.status).toBe("deferred");
+    expect(getNewServicePlanImportAmbiguityIds(deferred, repeated)).toEqual([]);
+    expect(summarizeServicePlanImport(deferred, repeated).changes).toEqual([]);
   });
 
   it("parses multiple songs, reconciles them, and applies one reviewed item without disturbing a skipped item", () => {
@@ -1222,6 +1444,360 @@ describe("refresh source snapshots and field selections", () => {
     expect(refreshed.elements[0].sourceLedByRaw).toBe("Old source person");
     expect(refreshed.elements[0].servicePlanningImport?.pendingFields).toEqual(["ledBy"]);
     expect(refreshed.elements[0].servicePlanningImport?.observed.ledBy).toBe("New source person");
+  });
+});
+
+describe("refreshing reviewed source-owned occurrences", () => {
+  const source = (title: string, ledBy: string) => ({
+    elementType: "Reading the Word", title, ledBy, note: "",
+  });
+
+  it("updates Led By without restoring a Title person moved out of assignees", () => {
+    const current = [section("current", "Reading", [element("same", "Reading the Word", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Psalms 97 (NLT) Jasmine Williams",
+      sourceLedByRaw: "Jeriyah Brown",
+      assignees: [{ id: "lead", name: "Jeriyah Brown", microphoneIds: ["mic-1"] }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: "Psalms 97 (NLT) Jasmine Williams", sourceLedBy: "Jeriyah Brown",
+        parts: [{ kind: "person", value: "Jasmine Williams", destination: "content", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "initial",
+      },
+      servicePlanningImport: {
+        observed: source("Psalms 97 (NLT) Jasmine Williams", "Jeriyah Brown"),
+        applied: source("Psalms 97 (NLT) Jasmine Williams", "Jeriyah Brown"), pendingFields: [],
+      },
+    })])];
+    const imported = [section("source", "Reading", [element("incoming", "Reading the Word", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Psalms 97 (NLT) Jasmine Williams",
+      sourceLedByRaw: "Courtney Stephens",
+      assignees: [{ id: "incoming-lead", name: "Courtney Stephens" }, { id: "incoming-title", name: "Jasmine Williams" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: "Psalms 97 (NLT) Jasmine Williams", sourceLedBy: "Courtney Stephens",
+        parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "updated-lead",
+      },
+      servicePlanningImport: {
+        observed: source("Psalms 97 (NLT) Jasmine Williams", "Courtney Stephens"),
+        applied: source("Psalms 97 (NLT) Jasmine Williams", "Courtney Stephens"), pendingFields: [],
+      },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, refreshed);
+    const applied = applySelectedServicePlanImportChanges(
+      current, refreshed, summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+
+    expect(applied[0].elements[0].assignees).toEqual([
+      expect.objectContaining({ id: "lead", name: "Courtney Stephens", microphoneIds: ["mic-1"] }),
+    ]);
+    expect(applied[0].elements[0].assignees).toHaveLength(1);
+  });
+
+  it("retains manual assignees and their member and microphone links during accepted Led By updates", () => {
+    const current = [section("current", "Reading", [element("same", "Reading", {
+      sourcePlanningManaged: true, sourceLedByRaw: "Jeriyah Brown",
+      assignees: [
+        { id: "lead", name: "Jeriyah Brown", microphoneIds: ["mic-1"] },
+        { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-2"] },
+      ],
+      servicePlanningImport: { observed: source("Reading", "Jeriyah Brown"), applied: source("Reading", "Jeriyah Brown"), pendingFields: [], managedAssignees: [{ id: "lead", fields: ["ledBy"], fingerprint: JSON.stringify({ name: "Jeriyah Brown" }) }] },
+    })])];
+    const imported = [section("source", "Reading", [element("incoming", "Reading", {
+      sourcePlanningManaged: true, sourceLedByRaw: "Courtney Stephens",
+      assignees: [{ id: "incoming", name: "Courtney Stephens" }],
+      servicePlanningImport: { observed: source("Reading", "Courtney Stephens"), applied: source("Reading", "Courtney Stephens"), pendingFields: [], managedAssignees: [{ id: "incoming", fields: ["ledBy"], fingerprint: JSON.stringify({ name: "Courtney Stephens" }) }] },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0].assignees).toEqual([
+      expect.objectContaining({ id: "lead", name: "Courtney Stephens", microphoneIds: ["mic-1"] }),
+      { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-2"] },
+    ]);
+  });
+
+  it("keeps one assignee when the same person is sourced by Title and Led By", () => {
+    const sourcePerson = {
+      fields: ["title", "ledBy"] as Array<"title" | "ledBy">,
+      ledByIdentity: "p-1",
+      fingerprint: JSON.stringify({ name: "Jasmine Williams" }),
+    };
+    const current = [section("current", "Reading", [element("same", "Reading", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Reading Jasmine Williams", sourceLedByRaw: "Jasmine Williams",
+      assignees: [{ id: "person", name: "Jasmine Williams", memberId: "member-1", microphoneIds: ["mic-1"] }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: "Reading Jasmine Williams",
+        sourceLedBy: "Jasmine Williams", parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "same-person",
+      },
+      servicePlanningImport: { observed: source("Reading Jasmine Williams", "Jasmine Williams"), applied: source("Reading Jasmine Williams", "Jasmine Williams"), pendingFields: [], managedAssignees: [{ id: "person", ...sourcePerson }] },
+    })])];
+    const imported = [section("source", "Reading", [element("incoming", "Reading", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Reading Jasmine Williams", sourceLedByRaw: "Jasmine Williams",
+      assignees: [{ id: "incoming", name: "Jasmine Williams" }],
+      importAmbiguity: { ...current[0].elements[0].importAmbiguity!, status: "confirmed" },
+      servicePlanningImport: { observed: source("Reading Jasmine Williams", "Jasmine Williams"), applied: source("Reading Jasmine Williams", "Jasmine Williams"), pendingFields: [], managedAssignees: [{ id: "incoming", ...sourcePerson }] },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0].assignees).toHaveLength(1);
+    expect(refreshed[0].elements[0].assignees?.[0]).toMatchObject({ id: "person", name: "Jasmine Williams", memberId: "member-1", microphoneIds: ["mic-1"] });
+  });
+
+  it("replaces only the managed scripture while retaining an additional manual passage", () => {
+    const oldRef = { id: "source-psalm", label: "Psalm 98", book: "Psalms", chapter: "98", verseRange: "", version: "" };
+    const manualRef = { id: "manual-john", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "" };
+    const current = [section("current", "Reading", [element("same", "Psalms 98", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Psalms 98",
+      scriptureRefs: [oldRef, manualRef],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: "Psalms 98", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "Psalms 98", destination: "scripture", sourceField: "title",
+          managed: { kind: "scripture", id: "source-psalm", fingerprint: JSON.stringify({ label: oldRef.label, book: oldRef.book, chapter: oldRef.chapter, verseRange: oldRef.verseRange, version: oldRef.version }) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "psalm-98",
+      },
+      servicePlanningImport: {
+        observed: source("Psalms 98", ""), applied: source("Psalms 98", ""), pendingFields: [],
+      },
+    })])];
+    const nextRef = { label: "Psalm 97", book: "Psalms", chapter: "97", verseRange: "", version: "" };
+    const imported = [section("source", "Reading", [element("incoming", "Psalms 97", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Psalms 97",
+      scriptureRefs: [nextRef],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: "Psalms 97", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "Psalms 97", destination: "scripture", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "psalm-97",
+      },
+      servicePlanningImport: {
+        observed: source("Psalms 97", ""), applied: source("Psalms 97", ""), pendingFields: [],
+      },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, refreshed);
+    const applied = applySelectedServicePlanImportChanges(
+      current, refreshed, summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+
+    expect(applied[0].elements[0].scriptureRefs).toEqual([
+      { ...nextRef, id: "source-psalm", label: "Psalms 97" }, manualRef,
+    ]);
+  });
+
+  it("preserves a locally edited managed scripture and flags the changed source for review", () => {
+    const original = { id: "source-ref", label: "Psalm 98", book: "Psalms", chapter: "98", verseRange: "", version: "" };
+    const edited = { ...original, label: "Psalm 98 (operator note)" };
+    const current = [section("current", "Reading", [element("same", "Psalm 98", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Psalm 98", scriptureRefs: [edited],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word", sourceTitle: "Psalm 98", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "Psalm 98", destination: "scripture", sourceField: "title", managed: { kind: "scripture", id: original.id, fingerprint: JSON.stringify({ label: original.label, book: original.book, chapter: original.chapter, verseRange: original.verseRange, version: original.version }) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old",
+      },
+      servicePlanningImport: { observed: source("Psalm 98", ""), applied: source("Psalm 98", ""), pendingFields: [] },
+    })])];
+    const imported = [section("source", "Reading", [element("incoming", "Psalm 97", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Psalm 97",
+      scriptureRefs: [{ label: "Psalm 97", book: "Psalms", chapter: "97", verseRange: "", version: "" }],
+      importAmbiguity: { ...current[0].elements[0].importAmbiguity!, sourceTitle: "Psalm 97", parts: [{ kind: "scripture", value: "Psalm 97", destination: "scripture", sourceField: "title" }], status: "confirmed" },
+      servicePlanningImport: { observed: source("Psalm 97", ""), applied: source("Psalm 97", ""), pendingFields: [] },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0].scriptureRefs).toEqual([edited]);
+    expect(refreshed[0].elements[0].importAmbiguity?.status).toBe("unresolved");
+  });
+
+  it("removes only a source-owned scripture occurrence, keeping intentional repeated manual references", () => {
+    const sourceRef = { id: "source-ref", label: "Psalm 98", book: "Psalms", chapter: "98", verseRange: "", version: "" };
+    const manualA = { ...sourceRef, id: "manual-a" };
+    const manualB = { ...sourceRef, id: "manual-b" };
+    const current = [section("current", "Reading", [element("same", "Psalm 98", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Psalm 98", scriptureRefs: [sourceRef, manualA, manualB],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: "Psalm 98", sourceLedBy: "",
+        parts: [{ kind: "scripture", value: "Psalm 98", destination: "scripture", sourceField: "title", managed: { kind: "scripture", id: sourceRef.id, fingerprint: JSON.stringify({ label: sourceRef.label, book: sourceRef.book, chapter: sourceRef.chapter, verseRange: sourceRef.verseRange, version: sourceRef.version }) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old",
+      },
+      servicePlanningImport: { observed: source("Psalm 98", ""), applied: source("Psalm 98", ""), pendingFields: [] },
+    })])];
+    const imported = [section("source", "Reading", [element("incoming", "Reading", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Reading", importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: "Reading", sourceLedBy: "",
+        parts: [], reasons: [], status: "confirmed", sourceFingerprint: "removed-scripture",
+      },
+      servicePlanningImport: { observed: source("Reading", ""), applied: source("Reading", ""), pendingFields: [] },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0].scriptureRefs).toEqual([manualA, manualB]);
+  });
+
+  it("replaces an unchanged managed description on accepted Title refresh", () => {
+    const oldResource = { ...createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Skit/Mime – Walking With Jesus") }), id: "source-description" };
+    const manualResource = { ...createServicePlanTextResource({ title: "Operator note", text: plainTextToRichText("Keep this") }), id: "manual-resource" };
+    const part = {
+      kind: "description" as const, value: "Skit/Mime – Walking With Jesus", destination: "content" as const,
+      sourceField: "title" as const,
+      managed: { kind: "resource" as const, id: oldResource.id, fingerprint: servicePlanResourceFingerprint(oldResource) },
+    };
+    const current = [section("current", "Special", [element("same", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – Walking With Jesus",
+      resources: [oldResource, manualResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Skit/Mime",
+        sourceTitle: "Skit/Mime – Walking With Jesus", sourceLedBy: "", parts: [part], reasons: [],
+        status: "confirmed", sourceFingerprint: "old-description",
+      },
+      servicePlanningImport: {
+        observed: source("Skit/Mime – Walking With Jesus", ""),
+        applied: source("Skit/Mime – Walking With Jesus", ""), pendingFields: [],
+      },
+    })])];
+    const imported = [section("source", "Special", [element("incoming", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – The Good Samaritan",
+      resources: [{ ...createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Skit/Mime – The Good Samaritan") }), id: "new-description" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Skit/Mime",
+        sourceTitle: "Skit/Mime – The Good Samaritan", sourceLedBy: "",
+        parts: [{ ...part, value: "Skit/Mime – The Good Samaritan", managed: undefined }], reasons: [],
+        status: "confirmed", sourceFingerprint: "new-description",
+      },
+      servicePlanningImport: {
+        observed: source("Skit/Mime – The Good Samaritan", ""),
+        applied: source("Skit/Mime – The Good Samaritan", ""), pendingFields: [],
+      },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, refreshed);
+    expect(summary.changes[0]?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: "Import interpretation",
+        before: expect.stringContaining("Skit/Mime – Walking With Jesus"),
+        after: expect.stringContaining("Skit/Mime – The Good Samaritan"),
+      }),
+    ]));
+    const applied = applySelectedServicePlanImportChanges(
+      current, refreshed, summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+
+    expect(applied[0].elements[0].resources).toEqual([
+      expect.objectContaining({ title: "Imported description" }), manualResource,
+    ]);
+    expect(JSON.stringify(applied[0].elements[0].resources?.[0])).toContain("The Good Samaritan");
+    expect(JSON.stringify(applied[0].elements[0].resources?.[0])).not.toContain("Walking With Jesus");
+    const repeated = refreshServicePlanFromImport(applied, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(summarizeServicePlanImport(applied, repeated).changes).toEqual([]);
+  });
+
+  it("keeps an edited managed description without silently replacing it", () => {
+    const oldResource = createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Walking With Jesus") });
+    const editedResource = { ...oldResource, title: "Operator-edited description" };
+    const current = [section("current", "Special", [element("same", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – Walking With Jesus", resources: [editedResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Skit/Mime", sourceTitle: "Skit/Mime – Walking With Jesus", sourceLedBy: "",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title", managed: { kind: "resource", id: oldResource.id, fingerprint: servicePlanResourceFingerprint(oldResource) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old-description",
+      },
+      servicePlanningImport: { observed: source("Skit/Mime – Walking With Jesus", ""), applied: source("Skit/Mime – Walking With Jesus", ""), pendingFields: [] },
+    })])];
+    const imported = [section("source", "Special", [element("incoming", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – The Good Samaritan",
+      resources: [createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("The Good Samaritan") })],
+      importAmbiguity: { ...current[0].elements[0].importAmbiguity!, sourceTitle: "Skit/Mime – The Good Samaritan", parts: [{ kind: "description", value: "The Good Samaritan", destination: "content", sourceField: "title" }], status: "confirmed" },
+      servicePlanningImport: { observed: source("Skit/Mime – The Good Samaritan", ""), applied: source("Skit/Mime – The Good Samaritan", ""), pendingFields: [] },
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0].resources).toEqual([editedResource]);
+    expect(refreshed[0].elements[0].importAmbiguity?.status).toBe("unresolved");
+  });
+
+  it("does not recreate a confirmed description moved to Notes on an unchanged refresh", () => {
+    const note = { type: "paragraph" as const, id: "managed-note", spans: [{ text: "Walking With Jesus" }] };
+    const current = [section("current", "Special", [element("same", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – Walking With Jesus",
+      notes: { blocks: [note] },
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Skit/Mime", sourceTitle: "Skit/Mime – Walking With Jesus", sourceLedBy: "",
+        parts: [{ kind: "description", value: "Walking With Jesus", destination: "notes", sourceField: "title", managed: { kind: "note", id: note.id, fingerprint: JSON.stringify(note) } }],
+        reasons: [], status: "confirmed", sourceFingerprint: "source",
+      },
+      servicePlanningImport: { observed: source("Skit/Mime – Walking With Jesus", ""), applied: source("Skit/Mime – Walking With Jesus", ""), pendingFields: [] },
+    })])];
+    const imported = [section("source", "Special", [element("incoming", "Skit/Mime", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Skit/Mime – Walking With Jesus",
+      resources: [createServicePlanTextResource({ title: "Imported description", text: plainTextToRichText("Walking With Jesus") })],
+      importAmbiguity: { ...current[0].elements[0].importAmbiguity!, status: "confirmed", parts: [{ kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title" }] },
+      servicePlanningImport: { observed: source("Skit/Mime – Walking With Jesus", ""), applied: source("Skit/Mime – Walking With Jesus", ""), pendingFields: [] },
+    })])];
+
+    const once = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const twice = refreshServicePlanFromImport(once, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(once[0].elements[0].resources).toBeUndefined();
+    expect(once[0].elements[0].notes).toEqual({ blocks: [note] });
+    expect(twice[0].elements[0]).toEqual(once[0].elements[0]);
+  });
+
+  it("persists confirmed ownership through serialization and a later Led By refresh", () => {
+    const sourcePerson = { id: "title-person", name: "Jasmine Williams" };
+    const lead = { id: "lead", name: "Jeriyah Brown" };
+    const before = element("same", "Reading", {
+      sourcePlanningManaged: true, sourceContentTitleRaw: "Psalms 97 Jasmine Williams", sourceLedByRaw: "Jeriyah Brown",
+      assignees: [lead, sourcePerson],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: "Psalms 97 Jasmine Williams", sourceLedBy: "Jeriyah Brown",
+        parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title", managed: { kind: "assignee", id: sourcePerson.id, fingerprint: JSON.stringify({ name: sourcePerson.name }) } }],
+        reasons: [], status: "unresolved", sourceFingerprint: "first-import",
+      },
+      servicePlanningImport: { observed: source("Psalms 97 Jasmine Williams", "Jeriyah Brown"), applied: source("Psalms 97 Jasmine Williams", "Jeriyah Brown"), pendingFields: [] },
+    });
+    const confirmed = applyReviewedServicePlanParts(before, [
+      { ...before.importAmbiguity!.parts[0], destination: "content" },
+    ]);
+    const savedAndReloaded = JSON.parse(JSON.stringify({
+      ...confirmed.element,
+      importAmbiguity: { ...before.importAmbiguity!, parts: confirmed.parts, status: "confirmed" },
+    })) as ServicePlanElement;
+    expect(savedAndReloaded.assignees?.map(({ name }) => name)).toEqual(["Jeriyah Brown"]);
+    const refreshed = refreshServicePlanFromImport(
+      [section("current", "Reading", [savedAndReloaded])],
+      [section("source", "Reading", [element("incoming", "Reading", {
+        sourcePlanningManaged: true, sourceContentTitleRaw: "Psalms 97 Jasmine Williams", sourceLedByRaw: "Courtney Stephens",
+        assignees: [
+          { id: "new-lead", name: "Courtney Stephens" },
+          { id: "title-person-new", name: "Jasmine Williams" },
+        ],
+        importAmbiguity: { ...savedAndReloaded.importAmbiguity!, sourceLedBy: "Courtney Stephens", status: "confirmed" },
+        servicePlanningImport: { observed: source("Psalms 97 Jasmine Williams", "Courtney Stephens"), applied: source("Psalms 97 Jasmine Williams", "Courtney Stephens"), pendingFields: [], managedAssignees: [
+          { id: "new-lead", fields: ["ledBy"], fingerprint: JSON.stringify({ name: "Courtney Stephens" }) },
+          { id: "title-person-new", fields: ["title"], fingerprint: JSON.stringify({ name: "Jasmine Williams" }) },
+        ] },
+      })])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual(["Courtney Stephens"]);
+    expect(refreshed[0].elements[0].importAmbiguity?.parts[0].destination).toBe("content");
   });
 });
 

@@ -1,6 +1,7 @@
 import React, {
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,7 +25,10 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
-import FilteredItem from "./FilteredItem";
+import FilteredItem, {
+  FILTERED_ITEM_GRID_COLUMNS,
+  FILTERED_SONG_GRID_COLUMNS,
+} from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
 import {
   getMatchForString,
@@ -63,10 +67,10 @@ import {
   estimateFilteredItemRowHeight,
   EXTERNAL_RESULT_ROW_HEIGHT,
   EXTERNAL_STATUS_ROW_HEIGHT,
-  FILTERED_ITEM_ROW_GAP,
   getLibraryItemVirtualKey,
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -155,6 +159,37 @@ const FilteredItems = ({
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const filteredTableHeaderRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const scrollElement = listScrollRef.current;
+    const headerElement = filteredTableHeaderRef.current;
+    if (!scrollElement || !headerElement) return;
+
+    const updateHeaderLayout = () => {
+      const { paddingLeft, paddingRight } = window.getComputedStyle(scrollElement);
+      const leftInset = Number.parseFloat(paddingLeft) || 0;
+      const rightInset = Number.parseFloat(paddingRight) || 0;
+      headerElement.style.width = `${Math.max(
+        0,
+        scrollElement.clientWidth - leftInset - rightInset,
+      )}px`;
+      headerElement.style.marginLeft = `${leftInset}px`;
+    };
+    updateHeaderLayout();
+
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(updateHeaderLayout);
+    observer?.observe(scrollElement);
+    window.addEventListener("resize", updateHeaderLayout);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeaderLayout);
+    };
+  }, []);
 
   const listOfType = useMemo(() => {
     return list.filter((item) => item.type === type);
@@ -267,8 +302,6 @@ const FilteredItems = ({
 
   const showWordsRef = useRef(showWords);
   showWordsRef.current = showWords;
-  const songArtistByIdRef = useRef(songArtistById);
-  songArtistByIdRef.current = songArtistById;
 
   const virtualizer = useVirtualizer({
     count: displayRows.length,
@@ -310,10 +343,10 @@ const FilteredItems = ({
       return estimateFilteredItemRowHeight(
         row.item,
         showWordsRef.current,
-        Boolean(songArtistByIdRef.current.get(row.item._id)),
+        false,
       );
     },
-    gap: FILTERED_ITEM_ROW_GAP,
+    gap: 0,
     overscan: 5,
     initialRect: { width: 0, height: 600 },
   });
@@ -328,8 +361,9 @@ const FilteredItems = ({
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access, churchId } = useContext(GlobalInfoContext) || {};
+  const { mode } = usePresentationControllerMode();
   const canMutateLibrary = !isViewOnlyAccess(access);
-  const allowDelete = showDelete ?? canMutateLibrary;
+  const allowDelete = (showDelete ?? canMutateLibrary) && mode === "edit";
   const allowCreateAndExternal = showCreateAndExternal ?? canMutateLibrary;
   /** Attach mode always shows the primary action even for view-only library access. */
   const allowAdd = onAddItem ? true : canMutateLibrary;
@@ -698,6 +732,7 @@ const FilteredItems = ({
       showAddButton={allowAdd}
       showDelete={allowDelete}
       addButtonLabel={addButtonLabel}
+      showArtistColumn={type === "song"}
       onViewSongSections={
         type === "song" ? () => setViewSectionsSongId(item._id) : undefined
       }
@@ -837,15 +872,37 @@ const FilteredItems = ({
       {pinnedTopContent && (
         <div className="mb-2 px-1 sm:px-2">{pinnedTopContent}</div>
       )}
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {isSearchLoading && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-gray-800/35">
             <Spinner />
           </div>
         )}
         <div
+          ref={filteredTableHeaderRef}
+          className="shrink-0 border-y border-gray-600 bg-gray-700 py-2 text-xs font-semibold uppercase tracking-wide text-gray-300"
+          aria-hidden="true"
+        >
+          <div
+            className={cn(
+              type === "song"
+                ? FILTERED_SONG_GRID_COLUMNS
+                : FILTERED_ITEM_GRID_COLUMNS,
+              "px-4",
+            )}
+          >
+            <span>Name</span>
+            {type === "song" ? (
+              <span className="hidden justify-self-start text-left md:block">
+                Artist
+              </span>
+            ) : null}
+            <span>Actions</span>
+          </div>
+        </div>
+        <div
           ref={listScrollRef}
-          className="scrollbar-variable h-full w-full overflow-y-auto px-1 sm:px-2"
+          className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"
           role="list"
         >
           <div

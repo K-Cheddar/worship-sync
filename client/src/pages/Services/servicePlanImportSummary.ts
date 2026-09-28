@@ -94,6 +94,11 @@ const comparableInterpretation = (element: ServicePlanElement) => {
     status: ambiguity.status,
     authorizationPending: Boolean(ambiguity.authorizationPending),
     reasons: ambiguity.reasons.map(normalizedText),
+    songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint }) => ({
+      incoming: songRefValue(incoming),
+      candidateOccurrenceIds,
+      sourceFingerprint,
+    })),
     parts: ambiguity.parts.map(({ kind, value, destination, sourceField, managed }) => ({
       kind,
       value: normalizedText(value),
@@ -226,7 +231,10 @@ const formatInterpretation = (element: ServicePlanElement) => {
   const parts = ambiguity.parts
     .map((part) => `${part.kind}: ${part.value} → ${part.destination}`)
     .join("; ");
-  return `${ambiguity.status}${parts ? ` · ${parts}` : ""}`;
+  const songMappings = (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds }) =>
+    `song link review: ${formatSongRef(incoming)} (${candidateOccurrenceIds.length} linked matches; current links preserved)`,
+  ).join("; ");
+  return `${ambiguity.status}${parts ? ` · ${parts}` : ""}${songMappings ? ` · ${songMappings}` : ""}`;
 };
 
 const formatSourceChanges = (element: ServicePlanElement) => {

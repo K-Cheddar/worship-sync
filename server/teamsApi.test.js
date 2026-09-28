@@ -31,6 +31,10 @@ const {
   seedChurchServiceTimesForServerTests,
   seedSmsConsentForServerTests,
   queryDocs,
+  recoverPendingIntakeSubmissionDigests,
+  setIntakeDigestSchedulingFailureForServerTests,
+  setIntakeNotifyRecipientsForServerTests,
+  setSendEmailForServerTests,
   setDoc,
 } = await import("../authService.js");
 import {
@@ -3080,9 +3084,15 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
     submitRes,
   );
   assert.equal(submitRes.statusCode, 200);
+  assert.deepEqual(Object.keys(submitRes.payload).sort(), ["submissionId", "success"]);
   await flushAsyncWork();
   const scheduledForm = await getDoc("teamIntakeForms", form.payload.form.formId);
   assert.ok(scheduledForm.pendingDigestSince);
+  const persistedSubmission = await getDoc(
+    "teamIntakeSubmissions",
+    submitRes.payload.submissionId,
+  );
+  assert.equal(persistedSubmission.digestBatchId, scheduledForm.pendingDigestBatchId);
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -3123,6 +3133,70 @@ test("a rejected public intake submission does not schedule a digest", async (t)
   assert.equal(rejected.statusCode, 404);
   const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
   assert.equal(storedForm.pendingDigestSince, undefined);
+});
+
+test("a failed scheduler leaves a persisted regular submission recoverable", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_schedule_failure");
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Scheduler failure",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+    },
+  });
+  const sent = [];
+  setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  setSendEmailForServerTests(async ({ to }) => sent.push(to));
+  setIntakeDigestSchedulingFailureForServerTests(true);
+  try {
+    const response = createRes();
+    await authHandlers.submitTeamIntake(
+      {
+        params: {},
+        headers: {},
+        session: createSession(),
+        query: { token: form.payload.publicToken },
+        body: {
+          firstName: "Avery",
+          lastName: "Stone",
+          email: "avery@example.test",
+        },
+      },
+      response,
+    );
+    await flushAsyncWork();
+    assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+    assert.deepEqual(Object.keys(response.payload).sort(), [
+      "submissionId",
+      "success",
+    ]);
+    const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+    const storedSubmission = await getDoc(
+      "teamIntakeSubmissions",
+      response.payload.submissionId,
+    );
+    assert.ok(storedForm.pendingDigestSince);
+    assert.equal(storedSubmission.digestBatchId, storedForm.pendingDigestBatchId);
+
+    setIntakeDigestSchedulingFailureForServerTests(false);
+    await setDoc(
+      "teamIntakeForms",
+      form.payload.form.formId,
+      {
+        pendingDigestSince: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+      },
+      { merge: true },
+    );
+    await recoverPendingIntakeSubmissionDigests();
+    assert.deepEqual(sent, ["lead@example.test"]);
+  } finally {
+    setIntakeDigestSchedulingFailureForServerTests(false);
+    setIntakeNotifyRecipientsForServerTests(null);
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("intake profile and scheduling fields carry onto a created member", async (t) => {

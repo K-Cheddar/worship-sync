@@ -16,6 +16,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 jest.mock("../../api/lrclib", () => ({
   searchLrclibTracks: jest.fn(),
@@ -87,6 +88,7 @@ describe("FilteredItems", () => {
 
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
   });
 
   it("removes an attached MP3 from storage after deleting its song document", async () => {
@@ -142,6 +144,46 @@ describe("FilteredItems", () => {
       songId: "song-1",
       audio,
     });
+  });
+
+  it("hides library delete controls in controller present mode", async () => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+    const item = {
+      _id: "custom-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "custom-1",
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <PresentationControllerModeProvider>
+              <MemoryRouter>
+                <FilteredItems
+                  list={[item]}
+                  type="free"
+                  heading="Custom"
+                  label="custom item"
+                  isLoading={false}
+                  allDocs={[]}
+                  searchValue=""
+                  setSearchValue={jest.fn()}
+                />
+              </MemoryRouter>
+            </PresentationControllerModeProvider>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Delete Welcome Slides" })).not.toBeInTheDocument();
   });
 
   it("searches external lyrics and opens a prefilled create song draft", async () => {

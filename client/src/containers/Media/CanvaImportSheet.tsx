@@ -44,7 +44,8 @@ import {
 } from "./canvaMediaSource";
 import { isCanvaShortLink, parseCanvaDesignId } from "./canvaDesignUrl";
 import {
-  cleanupUnprocessedCanvaAssets,
+  cleanupCanvaAssetsByLifecycle,
+  type CanvaAssetLifecycle,
   type CanvaImportedAsset,
 } from "../../utils/canvaImportCleanup";
 import { formatCanvaImportError } from "../../utils/canvaImportError";
@@ -356,6 +357,21 @@ const CanvaImportSheet = ({
     const includeCustomItem = createDeckItem;
     let customItemPages: MediaType[] = [];
     let mediaAtExecution: readonly MediaType[] = [];
+    let cleanupRetryAssets: CanvaImportedAsset[] = [];
+    let cleanupRetryLifecycle: CanvaAssetLifecycle[] = [];
+    const retryCanvaCleanup = async () => {
+      if (!onUnprocessedAssetCleanup || cleanupRetryAssets.length === 0) return;
+      const failures = await cleanupCanvaAssetsByLifecycle(
+        cleanupRetryAssets,
+        cleanupRetryLifecycle,
+        onUnprocessedAssetCleanup,
+      );
+      cleanupRetryAssets = failures;
+      cleanupRetryLifecycle = failures.map(() => "cleanup-pending");
+      if (failures.length) {
+        throw new Error(`${failures.length} Canva asset${failures.length === 1 ? " could" : "s could"} not be removed. Try cleanup again.`);
+      }
+    };
     const transferId = `canva-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const customItemIdempotencyKey = `canva-custom-${transferId}`;
     const getLatestMedia = () => getCurrentMedia?.() || existingMedia;
@@ -398,13 +414,15 @@ const CanvaImportSheet = ({
           const viewPath = await onCreateDeckItem(currentPages, design.title, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
           return viewPath;
         },
+        ...(onUnprocessedAssetCleanup ? { cleanupRetry: retryCanvaCleanup } : {}),
         finalize: async (result, signal, onPagesPersisted) => {
           const pageMap = new Map<number, MediaType>();
           let importedCount = 0;
-          let assetIndex = 0;
-          let assetStarted = false;
           let deckMedia: MediaType | undefined;
           customItemPages = [];
+          const assetLifecycle: CanvaAssetLifecycle[] = result.assets.map(() => "unprocessed");
+          cleanupRetryAssets = result.assets;
+          cleanupRetryLifecycle = assetLifecycle;
           const persistedPages = new Set<number>();
           const markPagesPersisted = (pages: number[]) => {
             pages.forEach((page) => persistedPages.add(page));
@@ -459,10 +477,8 @@ const CanvaImportSheet = ({
             }
             for (let index = 0; index < result.assets.length; index += 1) {
               const asset = result.assets[index];
-              assetIndex = index;
-              assetStarted = false;
               if (signal.aborted) throw new Error("Canva import cancelled.");
-              assetStarted = true;
+              assetLifecycle[index] = "processing";
               const currentMedia = getLatestMedia();
               const source = asset.data.canvaSource;
               const matchingTargets = source ? currentMedia
@@ -478,58 +494,59 @@ const CanvaImportSheet = ({
                 return originalSource && canvaSourcesMatch(originalSource, source) && Number(originalSource.revision) < Number(source.revision);
               }));
               if (source && !target && (expectedRefresh || (newestTarget && Number(getCanvaMediaSource(newestTarget)?.revision) >= Number(source.revision)))) {
-                const cleanupSucceeded = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
-                throw new Error(`${newestTarget ? "A newer Media version already exists" : "The Canva refresh target is no longer in Media"}. ${cleanupSucceeded ? "The newer Media version was kept." : "The Canva asset could not be cleaned up; Media was left unchanged."}`);
+                throw new Error(`${newestTarget ? "A newer Media version already exists" : "The Canva refresh target is no longer in Media"}.`);
               }
               if (asset.kind === "image") {
-                if (target) { await onImageRefresh(asset.data, target.id); recordDeckPages(mediaFromRefreshedImage(target, asset.data)); }
+                if (target) {
+                  const refreshed = await onImageRefresh(asset.data, target.id);
+                  if (refreshed === false) throw new Error("The Canva image refresh was not saved.");
+                  recordDeckPages(mediaFromRefreshedImage(target, asset.data));
+                  importedCount += 1;
+                }
                 else {
-                  let created: MediaType | void;
-                  try {
-                    created = await onImageComplete(asset.data);
-                    if (!created) throw new Error("A Canva page could not be added to Media. Refresh Media and try again.");
-                  } catch (saveError) {
-                    const cleaned = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
-                    const message = saveError instanceof Error ? saveError.message : "A Canva page could not be saved to Media.";
-                    throw new Error(cleaned ? message : `${message} The unused Canva asset could not be removed.`);
-                  }
+                  const created = await onImageComplete(asset.data);
+                  if (!created) throw new Error("A Canva page could not be added to Media. Refresh Media and try again.");
                   recordDeckPages(created);
                   importedCount += 1;
                 }
               } else if (target) {
-                await onVideoRefresh(asset.data, target.id);
+                const refreshed = await onVideoRefresh(asset.data, target.id);
+                if (refreshed === false) throw new Error("The Canva video refresh was not saved.");
                 deckMedia = mediaFromRefreshedVideo(target, asset.data);
                 recordDeckPages(deckMedia);
+                importedCount += 1;
               } else {
-                let created: MediaType | void;
-                try {
-                  created = await onVideoComplete(asset.data);
-                  if (!created) throw new Error("The Canva video could not be added to Media. Refresh Media and try again.");
-                } catch (saveError) {
-                  const cleaned = onUnprocessedAssetCleanup ? await onUnprocessedAssetCleanup(asset) : false;
-                  const message = saveError instanceof Error ? saveError.message : "The Canva video could not be saved to Media.";
-                  throw new Error(cleaned ? message : `${message} The unused Canva asset could not be removed.`);
-                }
+                const created = await onVideoComplete(asset.data);
+                if (!created) throw new Error("The Canva video could not be added to Media. Refresh Media and try again.");
                 deckMedia = created;
                 recordDeckPages(created);
                 importedCount += 1;
               }
+              assetLifecycle[index] = "committed";
               markPagesPersisted(asset.data.canvaSource?.pageNumbers || []);
-              assetIndex = index + 1;
-              assetStarted = false;
             }
             const pagesToUse = orderedPages();
             const customResult = await createDeckIfRequested(pagesToUse);
             return { importedCount: includeCustomItem ? pagesToUse.length : importedCount, ...customResult, ...(result.failedPages?.length ? { failedPages: result.failedPages } : {}) };
           } catch (error) {
-            let cleanupFailures: CanvaImportedAsset[] = [];
+            assetLifecycle.forEach((state, index) => {
+              if (state === "processing") assetLifecycle[index] = "failed";
+            });
+            let cleanupFailures = result.assets.filter((_, index) =>
+              assetLifecycle[index] !== "committed" && assetLifecycle[index] !== "cleaned",
+            );
             if (onUnprocessedAssetCleanup) {
-              const firstUnprocessed = assetStarted ? assetIndex + 1 : assetIndex;
-              if (firstUnprocessed < result.assets.length) cleanupFailures = await cleanupUnprocessedCanvaAssets(result.assets.slice(firstUnprocessed), onUnprocessedAssetCleanup);
+              cleanupFailures = await cleanupCanvaAssetsByLifecycle(
+                result.assets,
+                assetLifecycle,
+                onUnprocessedAssetCleanup,
+              );
             }
+            cleanupRetryAssets = cleanupFailures;
+            cleanupRetryLifecycle = cleanupFailures.map(() => "cleanup-pending");
             if (cleanupFailures.length) {
               const originalMessage = error instanceof Error ? error.message : "Canva import could not finish.";
-              throw new Error(`${originalMessage} ${cleanupFailures.length} unprocessed Canva asset${cleanupFailures.length === 1 ? " could" : "s could"} not be removed.`);
+              throw new Error(`${originalMessage} ${cleanupFailures.length} Canva asset${cleanupFailures.length === 1 ? " could" : "s could"} not be removed.`);
             }
             throw error;
           }

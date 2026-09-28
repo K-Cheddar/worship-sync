@@ -14,6 +14,7 @@ type FollowLiveScrollOptions = {
   containerRef: RefObject<HTMLElement | null>;
   getItem: (container: HTMLElement, itemId: string) => HTMLElement | null;
   isItemReady?: (item: HTMLElement, container: HTMLElement) => boolean;
+  isItemVisible?: (item: HTMLElement, container: HTMLElement) => boolean;
   /** Returns false when the item is already positioned and no scroll was needed. */
   scrollToItem: (item: HTMLElement, container: HTMLElement) => boolean | void;
 };
@@ -36,6 +37,7 @@ const useFollowLiveScroll = ({
   containerRef,
   getItem,
   isItemReady = isAlwaysReady,
+  isItemVisible = isAlwaysReady,
   scrollToItem,
 }: FollowLiveScrollOptions) => {
   const [isFollowingLive, setIsFollowingLive] = useState(true);
@@ -50,6 +52,7 @@ const useFollowLiveScroll = ({
   const lastSuspensionReasonRef = useRef<string | null>(null);
   const ignoreItemOnResumeRef = useRef<string | null>(null);
   const reconcileAfterSuspensionRef = useRef(false);
+  const wasFollowingBeforeEditRef = useRef(true);
   const suppressPauseUntilRef = useRef(0);
   const pointerScrollIntentUntilRef = useRef(0);
   const effectiveSuspensionReason = suspensionReason === undefined
@@ -67,7 +70,7 @@ const useFollowLiveScroll = ({
     pendingTargetRef.current = null;
   }, []);
 
-  const followItem = useCallback((targetId: string, force = false) => {
+  const followItem = useCallback((targetId: string, force = false, reconcileOnly = false) => {
     const container = containerRef.current;
     if (!container) return;
     cancelPendingFollow();
@@ -120,6 +123,15 @@ const useFollowLiveScroll = ({
         return;
       }
 
+      if (reconcileOnly) {
+        const visible = isItemVisible(item, container);
+        setIsFollowingLive(visible);
+        lastFollowedRef.current = visible ? target : null;
+        reconcileAfterSuspensionRef.current = false;
+        cleanup();
+        return;
+      }
+
       const didScroll = scrollToItem(item, container);
       lastFollowedRef.current = target;
       reconcileAfterSuspensionRef.current = false;
@@ -142,7 +154,7 @@ const useFollowLiveScroll = ({
     });
 
     return cleanup;
-  }, [cancelPendingFollow, containerRef, getItem, isItemReady, resetKey, scrollToItem, settleDelayMs]);
+  }, [cancelPendingFollow, containerRef, getItem, isItemReady, isItemVisible, resetKey, scrollToItem, settleDelayMs]);
 
   useEffect(() => () => cancelPendingFollow(), [cancelPendingFollow]);
 
@@ -161,6 +173,9 @@ const useFollowLiveScroll = ({
     if (effectiveSuspensionReason) {
       cancelPendingFollow();
       if (effectiveSuspensionReason === "editing") {
+        if (lastSuspensionReasonRef.current !== "editing") {
+          wasFollowingBeforeEditRef.current = isFollowingLive;
+        }
         // Ignore the item that is live when edit mode ends; later advances
         // follow normally, without moving the operator's editing viewport.
         ignoreItemOnResumeRef.current = itemId;
@@ -176,6 +191,9 @@ const useFollowLiveScroll = ({
     lastSuspensionReasonRef.current = null;
     if (resumedFrom === "editing") {
       ignoreItemOnResumeRef.current = itemId;
+      if (wasFollowingBeforeEditRef.current && itemId) {
+        return followItem(itemId, true, true);
+      }
       return undefined;
     }
     if (!itemId) {

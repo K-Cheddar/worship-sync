@@ -7,6 +7,11 @@ import { cn } from "../../utils/cnHelper";
 import { filteredItemsListType } from "./FilteredItems";
 import HighlightWords from "./HighlightWords";
 
+export const FILTERED_ITEM_GRID_COLUMNS =
+  "grid gap-1 grid-cols-[minmax(0,1fr)_auto] md:gap-2 md:grid-cols-[minmax(0,1fr)_20rem]";
+export const FILTERED_SONG_GRID_COLUMNS =
+  "grid gap-1 grid-cols-[minmax(0,1fr)_auto] md:gap-2 md:grid-cols-[minmax(0,1fr)_18rem_20rem]";
+
 type FilteredItemProps = {
   index: number;
   /** Index in the filtered library list — used for per-item show/hide lyrics. */
@@ -32,6 +37,8 @@ type FilteredItemProps = {
   showDelete?: boolean;
   /** Songs library: open read-only details, resources, and lyrics for this item. */
   onViewSongSections?: () => void;
+  /** Show a separate artist column in the Songs library table. */
+  showArtistColumn?: boolean;
 };
 
 const FilteredItem = ({
@@ -49,6 +56,7 @@ const FilteredItem = ({
   addButtonLabel = "Add to outline",
   showDelete,
   onViewSongSections,
+  showArtistColumn = false,
 }: FilteredItemProps) => {
   const [justAdded, setJustAdded] = useState(false);
   const canAdd = showAddButton ?? canMutateLibrary;
@@ -79,27 +87,32 @@ const FilteredItem = ({
     <div
       role="listitem"
       className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-lg border border-white/5 transition-colors",
+        "flex min-h-0 flex-col overflow-hidden border-b border-gray-700 transition-colors hover:bg-cyan-500/10",
         alternatingAdminListRowBg(index),
-        "hover:border-white/20",
       )}
     >
-      <div className="flex flex-col gap-2 py-1.5 pl-4 pr-4 md:flex-row md:items-center md:gap-2">
-        <div className="flex w-full min-w-0 items-start justify-between gap-2 md:flex-1 md:justify-start md:pr-0">
+      <div
+        className={cn(
+          "flex flex-col gap-1 py-1 pl-4 pr-4 md:items-center md:gap-2",
+          showArtistColumn
+            ? FILTERED_SONG_GRID_COLUMNS
+            : FILTERED_ITEM_GRID_COLUMNS,
+        )}
+      >
+        <div
+          className={cn(
+            "col-start-1 row-start-1 flex w-full min-w-0 items-start justify-between gap-2 md:flex-1 md:justify-start md:pr-0",
+          )}
+        >
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <HighlightWords
               searchValue={searchValue}
-              string={item.name}
+              string={item.name.trimStart()}
               className="text-base"
               highlightWordColor={showWords ? "text-white" : "text-orange-400"}
               nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
               allowPartial
             />
-            {artistName ? (
-              <p className="truncate text-sm text-gray-400" title={artistName}>
-                {artistName}
-              </p>
-            ) : null}
           </div>
           {canDelete ? (
             <Button
@@ -112,7 +125,22 @@ const FilteredItem = ({
             />
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2 md:ml-auto md:flex-nowrap">
+        {showArtistColumn ? (
+          <p
+            className="col-start-1 row-start-2 min-w-0 justify-self-start truncate text-left text-sm text-gray-400 md:col-start-2 md:row-start-1"
+            title={artistName || "No artist listed"}
+          >
+            {artistName || "—"}
+          </p>
+        ) : null}
+        <div
+          className={cn(
+            "col-start-2 row-start-1 flex flex-wrap items-center gap-2",
+            showArtistColumn
+              ? "md:col-start-3 md:row-start-1 md:flex-nowrap"
+              : "md:col-start-2 md:row-start-1 md:flex-nowrap",
+          )}
+        >
           {matchedWords && (
             <Button
               onClick={() => _updateShowWords()}

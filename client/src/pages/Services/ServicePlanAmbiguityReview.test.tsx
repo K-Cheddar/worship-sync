@@ -87,6 +87,68 @@ describe("ServicePlanAmbiguityReview", () => {
     });
   });
 
+  it("keeps all existing links when a song mapping is deferred", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const linkedSongs: ServicePlanElement = {
+      ...sections[0].elements[0],
+      songRefs: [
+        { id: "library-one", kind: "library", songId: "song-one", songName: "Same Song", key: "C" },
+        { id: "library-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+      ],
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        songMappings: [{
+          incoming: { kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
+          candidateOccurrenceIds: ["library-one", "library-two"],
+          sourceFingerprint: "incoming-song",
+        }],
+      },
+    };
+    const reviewSections = [{ ...sections[0], elements: [linkedSongs] }];
+    render(<ServicePlanAmbiguityReview sections={reviewSections} elementIds={[linkedSongs.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    expect(screen.getByRole("combobox", { name: /Song mapping for Same Song/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Leave for later" }));
+
+    expect(onResolve).toHaveBeenCalledWith("element-1", {
+      importAmbiguity: expect.objectContaining({ status: "deferred" }),
+    });
+    expect(linkedSongs.songRefs).toHaveLength(2);
+  });
+
+  it("replaces only the occurrence explicitly selected for an ambiguous song mapping", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const linkedSongs: ServicePlanElement = {
+      ...sections[0].elements[0],
+      songRefs: [
+        { id: "library-one", kind: "library", songId: "song-one", songName: "Same Song", key: "C" },
+        { id: "library-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+      ],
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        songMappings: [{
+          incoming: { id: "incoming-id", kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
+          candidateOccurrenceIds: ["library-one", "library-two"],
+          sourceFingerprint: "incoming-song",
+        }],
+      },
+    };
+    render(<ServicePlanAmbiguityReview sections={[{ ...sections[0], elements: [linkedSongs] }]} elementIds={[linkedSongs.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    await user.click(screen.getByRole("combobox", { name: /Song mapping for Same Song/ }));
+    await user.click(screen.getByRole("option", { name: "Same Song · C" }));
+    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(changes.songRefs).toEqual([
+      { id: "incoming-id", kind: "pending", title: "Same Song", lyricsText: "Updated lyrics" },
+      { id: "library-two", kind: "library", songId: "song-two", songName: "Same Song", key: "G" },
+    ]);
+    expect(changes.importAmbiguity).toMatchObject({ status: "confirmed", reasons: [] });
+  });
+
   it("advances through queued items without closing the review", async () => {
     const user = userEvent.setup();
     const secondElement: ServicePlanElement = {

@@ -102,9 +102,9 @@ import {
   setActiveItem,
   updateSlides,
 } from "../../store/itemSlice";
-import { addItemToItemList } from "../../store/itemListSlice";
+import { addItemToItemList, ensureCanvaItemInItemList } from "../../store/itemListSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
-import { createNewFreeForm } from "../../utils/itemUtil";
+import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
@@ -211,6 +211,8 @@ export function useMediaLibraryController({
   } = useSelector((state: RootState) => state.media);
   const currentMediaListRef = useRef(list);
   const currentMediaFoldersRef = useRef(folders);
+  const canvaItemCreationsRef = useRef(new Map<string, Promise<string>>());
+  const providerCleanupInFlightRef = useRef(new Map<string, Promise<boolean>>());
   currentMediaListRef.current = list;
   currentMediaFoldersRef.current = folders;
   const getCurrentMediaList = useCallback(() => store.getState().media.list, [store]);
@@ -1067,10 +1069,38 @@ export function useMediaLibraryController({
       ) {
         return true;
       }
-      const failed = await deleteFromProviders([row]);
-      return failed.length === 0;
+      const cleanupKey = getCanvaProviderCleanupKey(row);
+      const pending = providerCleanupInFlightRef.current.get(cleanupKey);
+      if (pending) return pending;
+      const cleanup = (async () => {
+        const identity = getCanvaProviderIdentity(row);
+        if (identity) {
+          const isReferenced = (rows: MediaType[]) => rows.some((mediaItem) =>
+            getCanvaProviderIdentity(mediaItem) === identity,
+          );
+          if (isReferenced(getCurrentMediaList())) return false;
+          if (!db) return false;
+          try {
+            const persisted = await db.get("media") as unknown as { list?: MediaType[] };
+            if (isReferenced(persisted.list || [])) return false;
+          } catch {
+            // Without an authoritative Media read, keep the asset for a later retry.
+            return false;
+          }
+        }
+        const failed = await deleteFromProviders([row]);
+        return failed.length === 0;
+      })();
+      providerCleanupInFlightRef.current.set(cleanupKey, cleanup);
+      try {
+        return await cleanup;
+      } finally {
+        if (providerCleanupInFlightRef.current.get(cleanupKey) === cleanup) {
+          providerCleanupInFlightRef.current.delete(cleanupKey);
+        }
+      }
     },
-    [deleteFromProviders],
+    [db, deleteFromProviders, getCurrentMediaList],
   );
 
   const showProviderCleanupRetry = useCallback((rows: MediaType[]) => {
@@ -1089,9 +1119,23 @@ export function useMediaLibraryController({
   }, []);
 
   const cleanupCanvaAsset = useCallback(
-    async (asset: CanvaImportedAsset) =>
-      deleteCanvaProvider(mediaFromCanvaAsset(asset)),
-    [deleteCanvaProvider],
+    async (asset: CanvaImportedAsset) => {
+      const row = mediaFromCanvaAsset(asset);
+      const identity = getCanvaProviderIdentity(row);
+      if (!identity || !db) return false;
+      const isReferenced = (rows: MediaType[]) => rows.some((mediaItem) =>
+        getCanvaProviderIdentity(mediaItem) === identity,
+      );
+      try {
+        const persisted = await db.get("media") as unknown as { list?: MediaType[] };
+        if (isReferenced(persisted.list || [])) return true;
+      } catch {
+        return false;
+      }
+      if (isReferenced(getCurrentMediaList())) return false;
+      return deleteCanvaProvider(row);
+    },
+    [db, deleteCanvaProvider, getCurrentMediaList],
   );
 
   const commitCanvaReplacement = useCallback(
@@ -1141,6 +1185,13 @@ export function useMediaLibraryController({
         },
         getCurrentList: getCurrentMediaList,
         getCurrentFolders: () => store.getState().media.folders,
+        readPersistedMedia: async () => {
+          const persisted = await db.get("media");
+          return {
+            list: [...((persisted as unknown as { list?: MediaType[] }).list || [])],
+            folders: [...((persisted as unknown as { folders?: MediaFolder[] }).folders || [])],
+          };
+        },
       });
     },
     [
@@ -1597,6 +1648,8 @@ export function useMediaLibraryController({
       designTitle: string,
       options: { navigateToItem?: boolean; idempotencyKey?: string } = {},
     ) => {
+      const key = options.idempotencyKey;
+      const create = async (): Promise<string> => {
       if (!db) throw new Error("The custom item could not be saved because Media is unavailable.");
       if (pages.length === 0) throw new Error("No imported media is available for the custom item.");
       // Prefer live list entries so refreshed Canva backgrounds are current.
@@ -1630,10 +1683,16 @@ export function useMediaLibraryController({
           listId: "",
         };
         if (options.navigateToItem !== false) dispatch(setActiveItem(newItem));
-        const addedAction = dispatch(addItemToItemList(listItem));
-        dispatch(upsertItemInAllItemsList(listItem));
+        dispatch(ensureCanvaItemInItemList(listItem));
+        const outlineItem = store.getState().undoable.present.itemList.list.find(
+          (entry) => entry._id === newItem._id,
+        );
+        if (!outlineItem) throw new Error("Could not confirm the custom item was added to the outline.");
+        if (!store.getState().allItems.list.some((entry) => entry._id === newItem._id)) {
+          dispatch(upsertItemInAllItemsList(listItem));
+        }
         const itemPath = getControllerItemPath(
-          { _id: newItem._id, listId: addedAction.payload.listId },
+          { _id: newItem._id, listId: outlineItem.listId },
           controllerBasePath,
         );
         if (options.navigateToItem !== false) {
@@ -1651,6 +1710,9 @@ export function useMediaLibraryController({
         );
         throw error;
       }
+      };
+
+      return runCanvaCustomItemCreationOnce(canvaItemCreationsRef.current, key, create);
     },
     [
       allItemsList,
@@ -1661,6 +1723,7 @@ export function useMediaLibraryController({
       dispatch,
       getCurrentMediaList,
       navigate,
+      store,
       showToast,
     ],
   );
@@ -1735,7 +1798,22 @@ export function useMediaLibraryController({
       folders: store.getState().media.folders,
     }));
     if (!result.ok) {
-      dispatch(removeItemFromMediaList(mediaItem.id));
+      try {
+        const persisted = await db.get("media") as unknown as {
+          list?: MediaType[];
+          folders?: MediaFolder[];
+        };
+        const persistedList = persisted.list || [];
+        const persistedItem = persistedList.find((item) => item.id === mediaItem.id);
+        dispatch(setMediaListAndFolders({
+          list: [...persistedList],
+          folders: [...(persisted.folders || store.getState().media.folders)],
+        }));
+        if (persistedItem) return persistedItem;
+      } catch {
+        // Keep the optimistic row and provider asset until persistence can be checked again.
+        throw new Error("The Canva media save could not be confirmed. The asset was kept for reconciliation.");
+      }
       throw new Error("Could not save the Canva media to Media.");
     }
     return mediaItem;

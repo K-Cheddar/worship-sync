@@ -609,7 +609,7 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
         finishFirstCleanup = resolve;
       }),
     )
-    .mockResolvedValueOnce(true);
+    .mockResolvedValue(true);
 
   render(
     <MemoryRouter>
@@ -651,22 +651,22 @@ test("cleans only returned Canva pages after a mid-list refresh failure", async 
   expect(screen.getByRole("button", { name: "Change design" })).toBeEnabled();
   await act(async () => finishFirstCleanup?.(false));
   await waitFor(() => {
-    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(cleanup).toHaveBeenNthCalledWith(
     1,
-    expect.objectContaining({ kind: "image", data: refreshedPages[2] }),
+    expect.objectContaining({ kind: "image", data: refreshedPages[1] }),
   );
   expect(cleanup).toHaveBeenNthCalledWith(
     2,
+    expect.objectContaining({ kind: "image", data: refreshedPages[2] }),
+  );
+  expect(cleanup).toHaveBeenNthCalledWith(
+    3,
     expect.objectContaining({ kind: "image", data: refreshedPages[3] }),
   );
   expect(cleanup).not.toHaveBeenCalledWith(
     expect.objectContaining({ data: refreshedPages[0] }),
-  );
-  expect(cleanup).not.toHaveBeenCalledWith(
-    expect.objectContaining({ data: refreshedPages[1] }),
   );
 });
 
@@ -1003,6 +1003,40 @@ const setCanvaDesignList = (pageCount = 4) => {
   });
 };
 
+const makeProgressAssets = (count: number) => Array.from({ length: count }, (_, index) => {
+  const page = index + 1;
+  return {
+    kind: "image" as const,
+    data: {
+      ...refreshedImage,
+      public_id: `progress-${page}`,
+      secure_url: `https://example.test/progress-${page}.png`,
+      canvaImportKey: `canva:DAF_design_progress:rev:101:png:${page}`,
+      canvaSource: {
+        designId: "DAF_design_progress",
+        designTitle: "Progress Deck",
+        revision: 101,
+        format: "png" as const,
+        pageNumbers: [page],
+      },
+    } as mediaInfoType,
+  };
+});
+
+type CapturedCanvaJob = {
+  run: (signal: AbortSignal, onProgress: (event: never) => void) => Promise<{
+    assets: ReturnType<typeof makeProgressAssets>;
+    skippedCount: number;
+    revision: number;
+  }>;
+  finalize: (
+    result: { assets: ReturnType<typeof makeProgressAssets>; skippedCount: number; revision: number },
+    signal: AbortSignal,
+    onPagesPersisted: (pages: number[]) => void,
+  ) => Promise<unknown>;
+  cleanupRetry?: () => Promise<void>;
+};
+
 test("starts a transfer, closes the import sheet, and finishes after the sheet closes", async () => {
   setCanvaDesignList(2);
   let resolveImport!: (result: { assets: { kind: "image"; data: mediaInfoType }[]; skippedCount: number; revision: number }) => void;
@@ -1160,4 +1194,137 @@ test("retries custom-item creation from saved media without exporting again", as
   expect(importCanvaDesign).toHaveBeenCalledTimes(1);
   expect(onImageComplete).toHaveBeenCalledTimes(1);
   expect(onCreateDeckItem.mock.calls[1][2]).toEqual(onCreateDeckItem.mock.calls[0][2]);
+});
+
+test("cleans every unprocessed Canva asset when cancelled before the first save", async () => {
+  setCanvaDesignList(2);
+  const assets = makeProgressAssets(2);
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets, skippedCount: 0, revision: 101 });
+  let job: CapturedCanvaJob | undefined;
+  mockStartCanvaTransfer.mockImplementationOnce((input) => {
+    job = input as unknown as CapturedCanvaJob;
+    return "captured-before-save";
+  });
+  const cleanup = jest.fn().mockResolvedValue(true);
+  const onImageComplete = jest.fn();
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[]} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  await waitFor(() => expect(importCanvaDesign).toHaveBeenCalled());
+
+  const controller = new AbortController();
+  const result = await job!.run(controller.signal, jest.fn());
+  controller.abort();
+  await expect(job!.finalize(result, controller.signal, jest.fn())).rejects.toThrow("cancelled");
+
+  expect(onImageComplete).not.toHaveBeenCalled();
+  expect(cleanup).toHaveBeenNthCalledWith(1, assets[0]);
+  expect(cleanup).toHaveBeenNthCalledWith(2, assets[1]);
+});
+
+test("keeps an asset whose save completes after cancellation and cleans the next page", async () => {
+  setCanvaDesignList(2);
+  const assets = makeProgressAssets(2);
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets, skippedCount: 0, revision: 101 });
+  let job: CapturedCanvaJob | undefined;
+  mockStartCanvaTransfer.mockImplementationOnce((input) => {
+    job = input as unknown as CapturedCanvaJob;
+    return "captured-active-save";
+  });
+  let finishSave!: (media: MediaType) => void;
+  const saveGate = new Promise<MediaType>((resolve) => { finishSave = resolve; });
+  const savedMedia = { id: "committed-page-1", background: assets[0].data.secure_url, canvaSource: assets[0].data.canvaSource } as MediaType;
+  const onImageComplete = jest.fn(() => saveGate);
+  const cleanup = jest.fn().mockResolvedValue(true);
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[]} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  await waitFor(() => expect(importCanvaDesign).toHaveBeenCalled());
+
+  const controller = new AbortController();
+  const result = await job!.run(controller.signal, jest.fn());
+  const persistedPages = jest.fn();
+  const finalizing = job!.finalize(result, controller.signal, persistedPages);
+  const cancellation = finalizing.then(() => null, (error: unknown) => error);
+  await waitFor(() => expect(onImageComplete).toHaveBeenCalledTimes(1));
+  controller.abort();
+  await act(async () => finishSave(savedMedia));
+  const outcome = await cancellation;
+  expect(outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("cancelled") }));
+
+  expect(persistedPages).toHaveBeenCalledWith([1]);
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(cleanup).toHaveBeenCalledWith(assets[1]);
+  expect(cleanup).not.toHaveBeenCalledWith(assets[0]);
+});
+
+test("retains a failed save asset when cleanup fails and retries only that cleanup", async () => {
+  setCanvaDesignList(2);
+  const assets = makeProgressAssets(2);
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets, skippedCount: 0, revision: 101 });
+  let job: CapturedCanvaJob | undefined;
+  mockStartCanvaTransfer.mockImplementationOnce((input) => {
+    job = input as unknown as CapturedCanvaJob;
+    return "captured-cleanup-retry";
+  });
+  const cleanup = jest.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+  const onImageComplete = jest.fn().mockRejectedValue(new Error("Media write could not be confirmed."));
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[]} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  await waitFor(() => expect(importCanvaDesign).toHaveBeenCalled());
+
+  const signal = new AbortController().signal;
+  const result = await job!.run(signal, jest.fn());
+  await expect(job!.finalize(result, signal, jest.fn())).rejects.toThrow("could not be removed");
+  expect(cleanup).toHaveBeenNthCalledWith(1, assets[0]);
+  expect(cleanup).toHaveBeenNthCalledWith(2, assets[1]);
+  await job!.cleanupRetry?.();
+  expect(cleanup).toHaveBeenNthCalledWith(3, assets[0]);
+  expect(cleanup).toHaveBeenCalledTimes(3);
+});
+
+test("cancellation immediately after a committed page stops the next page", async () => {
+  setCanvaDesignList(2);
+  const assets = makeProgressAssets(2);
+  jest.mocked(importCanvaDesign).mockResolvedValue({ assets, skippedCount: 0, revision: 101 });
+  let job: CapturedCanvaJob | undefined;
+  mockStartCanvaTransfer.mockImplementationOnce((input) => {
+    job = input as unknown as CapturedCanvaJob;
+    return "captured-after-save";
+  });
+  const cleanup = jest.fn().mockResolvedValue(true);
+  const onImageComplete = jest.fn(async (info: mediaInfoType) => ({
+    id: `saved-${info.canvaSource?.pageNumbers?.[0]}`,
+    background: info.secure_url,
+    canvaSource: info.canvaSource,
+  } as MediaType));
+  render(<MemoryRouter><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+    <CanvaImportSheet open onOpenChange={jest.fn()} onImageComplete={onImageComplete} onVideoComplete={jest.fn()} onImageRefresh={jest.fn()} onVideoRefresh={jest.fn()} onUnprocessedAssetCleanup={cleanup} existingMedia={[]} />
+  </GlobalInfoContext.Provider></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
+  await user.click(screen.getByRole("button", { name: /Import selected/i }));
+  await waitFor(() => expect(importCanvaDesign).toHaveBeenCalled());
+
+  const controller = new AbortController();
+  const result = await job!.run(controller.signal, jest.fn());
+  const persistedPages = jest.fn(() => controller.abort());
+  const cancellation = job!.finalize(result, controller.signal, persistedPages).then(() => null, (error: unknown) => error);
+  const outcome = await cancellation;
+  expect(outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("cancelled") }));
+
+  expect(onImageComplete).toHaveBeenCalledTimes(1);
+  expect(persistedPages).toHaveBeenCalledWith([1]);
+  expect(cleanup).toHaveBeenCalledWith(assets[1]);
+  expect(cleanup).not.toHaveBeenCalledWith(assets[0]);
 });

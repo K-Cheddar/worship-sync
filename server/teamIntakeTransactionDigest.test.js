@@ -94,11 +94,18 @@ const createFirestoreMock = (seed) => {
           throw new Error("Unsupported Firestore query in test transaction");
         },
         set(ref, data, options = {}) {
-          writes.push({ ref, data, options });
+          writes.push({ type: "set", ref, data, options });
+        },
+        update(ref, data) {
+          writes.push({ type: "update", ref, data });
         },
       });
-      for (const { ref, data, options } of writes) {
+      for (const { type, ref, data, options } of writes) {
         const store = stores.get(ref.collection);
+        if (type === "update") {
+          store.set(ref.id, { ...(store.get(ref.id) || {}), ...data });
+          continue;
+        }
         store.set(
           ref.id,
           options.merge ? { ...(store.get(ref.id) || {}), ...data } : { ...data },
@@ -170,7 +177,14 @@ test("individual recipient Firestore transaction schedules the digest after comm
 
   assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
   assert.deepEqual(Object.keys(response.payload).sort(), ["submissionId", "success"]);
-  assert.ok(
-    (await getDoc(COLLECTIONS.teamIntakeForms, formId)).pendingDigestSince,
+  const storedForm = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  const storedSubmission = await getDoc(
+    COLLECTIONS.teamIntakeSubmissions,
+    response.payload.submissionId,
+  );
+  assert.ok(storedForm.pendingDigestSince);
+  assert.equal(
+    storedSubmission.digestBatchId,
+    storedForm.pendingDigestBatchId,
   );
 });

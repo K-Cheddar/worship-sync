@@ -107,15 +107,18 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     },
     ref,
   ) => {
-    // Start with a fallback height. The first time a tile row renders and is
-    // measured, we update this to the real height and call virtualizer.measure()
-    // to flush the stale estimates. This avoids relying on a ResizeObserver to
-    // compute containerWidth (which fails inside Radix dialog portals).
+    // Keep a measured tile row height as the estimate for rows that have not
+    // been rendered yet. Individual row measurements remain owned by TanStack.
     const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
     const tileRowHeightRef = useRef(tileRowHeight);
     tileRowHeightRef.current = tileRowHeight;
-    const shouldSyncTileRowHeightRef = useRef(true);
+    const [gridWidth, setGridWidth] = useState(0);
     const gridRef = useRef<HTMLDivElement>(null);
+    const tileLayoutKey = JSON.stringify([
+      showBottomName,
+      bottomNameClassName ?? "",
+      imageContainerClassName ?? "",
+    ]);
     const rows = useMemo<VirtualRow[]>(() => {
       const result: VirtualRow[] = [];
       if (showFolders) {
@@ -135,17 +138,61 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     const mediaItemsRef = useRef(mediaItems);
     mediaItemsRef.current = mediaItems;
 
-    const getRowKey = useCallback((index: number) => {
-      const row = rowsRef.current[index];
-      if (!row) return index;
-      if (row.type === "up") return "up";
-      if (row.type === "folders") {
-        return `folders:${JSON.stringify(
-          row.folders.map(({ id, name }) => [id, name]),
-        )}`;
-      }
-      return `tiles:${JSON.stringify(row.items.map(({ id }) => id))}`;
-    }, []);
+    const rowKeys = useMemo(
+      () =>
+        rows.map((row) => {
+          if (row.type === "up") return `up:${row.label}`;
+          if (row.type === "folders") {
+            return `folders:${JSON.stringify(
+              row.folders.map(({ id, name }) => [id, name]),
+            )}`;
+          }
+          return `tiles:${JSON.stringify([
+            cols,
+            gridWidth,
+            tileLayoutKey,
+            row.items.map(({ id, name }) => [
+              id,
+              showBottomName ? name : "",
+            ]),
+          ])}`;
+        }),
+      [cols, gridWidth, rows, showBottomName, tileLayoutKey],
+    );
+    const rowKeysRef = useRef(rowKeys);
+    rowKeysRef.current = rowKeys;
+    const rowKeySignature = useMemo(() => JSON.stringify(rowKeys), [rowKeys]);
+    const folderRowIndex = useMemo(
+      () => rows.findIndex((row) => row.type === "folders"),
+      [rows],
+    );
+    const getRowKey = useCallback(
+      (index: number) =>
+        rowKeysRef.current[index] ??
+        `${rowKeySignature}:${tileRowHeight}:${index}`,
+      [rowKeySignature, tileRowHeight],
+    );
+    const rangeExtractor = useCallback(
+      ({ startIndex, endIndex, overscan, count }: {
+        startIndex: number;
+        endIndex: number;
+        overscan: number;
+        count: number;
+      }) => {
+        const first = Math.max(startIndex - overscan, 0);
+        const last = Math.min(endIndex + overscan, count - 1);
+        const indexes = Array.from(
+          { length: Math.max(last - first + 1, 0) },
+          (_, offset) => first + offset,
+        );
+        if (folderRowIndex >= 0 && !indexes.includes(folderRowIndex)) {
+          indexes.push(folderRowIndex);
+          indexes.sort((a, b) => a - b);
+        }
+        return indexes;
+      },
+      [folderRowIndex],
+    );
 
     const virtualizer = useVirtualizer({
       count: rows.length,
@@ -156,6 +203,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         rowsRef.current[index]?.type === "tiles"
           ? tileRowHeightRef.current
           : FOLDER_ROW_ESTIMATE_HEIGHT,
+      rangeExtractor,
       overscan: 3,
       paddingStart: 16,
       paddingEnd: 16,
@@ -170,43 +218,19 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       if (!el) return;
 
       const row = rowsRef.current[Number(el.dataset.index)];
-      // Update the tile height estimate from the first real measurement.
-      if (row?.type === "tiles" && shouldSyncTileRowHeightRef.current) {
+      // Measured tile rows provide a current estimate for unrendered rows.
+      if (row?.type === "tiles") {
         const h = el.getBoundingClientRect().height;
-        if (h > 0) {
-          shouldSyncTileRowHeightRef.current = false;
-          if (Math.abs(h - tileRowHeightRef.current) > 1) {
-            setTileRowHeight(h);
-          }
+        if (h > 0 && Math.abs(h - tileRowHeightRef.current) > 1) {
+          tileRowHeightRef.current = h;
+          setTileRowHeight(h);
         }
       }
     }, []);
 
-    const measureVisibleRows = useCallback(() => {
-      gridRef.current
-        ?.querySelectorAll<HTMLDivElement>("[data-index]")
-        .forEach(measureRowElement);
-    }, [measureRowElement]);
-
-    const folderLayoutKey = useMemo(
-      () =>
-        showFolders
-          ? JSON.stringify([
-              canGoUp ? currentFolderName ?? "" : "",
-              childFolders.map((folder) => [folder.id, folder.name]),
-            ])
-          : "",
-      [showFolders, canGoUp, currentFolderName, childFolders],
-    );
-    const tileLayoutKey = JSON.stringify([
-      showBottomName,
-      bottomNameClassName ?? "",
-      imageContainerClassName ?? "",
-    ]);
-    const previousLayoutRef = useRef({ cols, folderLayoutKey, tileLayoutKey });
-
-    // Width changes can affect measured row sizes. Invalidate only on a real
-    // resize, not during ordinary scrolling.
+    // The folder row stays in the virtual range even offscreen, so TanStack's
+    // row ResizeObserver can update its wrapping height without clearing the
+    // size cache for every other row.
     useLayoutEffect(() => {
       const gridElement = gridRef.current;
       if (!gridElement || typeof ResizeObserver === "undefined") return;
@@ -217,52 +241,12 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
         if (Math.abs(nextWidth - previousWidth) <= 1) return;
 
         previousWidth = nextWidth;
-        shouldSyncTileRowHeightRef.current = true;
-        virtualizerRef.current.measure();
-        measureVisibleRows();
+        setGridWidth(Math.round(nextWidth));
       });
       resizeObserver.observe(gridElement);
 
       return () => resizeObserver.disconnect();
-    }, [measureVisibleRows]);
-
-    // Flush stale size cache when the measured tile height changes.
-    const prevTileRowHeightRef = useRef(tileRowHeight);
-    useLayoutEffect(() => {
-      if (prevTileRowHeightRef.current !== tileRowHeight) {
-        prevTileRowHeightRef.current = tileRowHeight;
-        virtualizerRef.current.measure();
-        measureVisibleRows();
-      }
-    }, [measureVisibleRows, tileRowHeight]);
-
-    // Folder rows and thumbnail rows share an index-based measurement cache.
-    // Invalidate on content or column changes, then immediately remeasure the
-    // rendered rows so wrapped folders cannot leave stale estimates in place.
-    useLayoutEffect(() => {
-      const previousLayout = previousLayoutRef.current;
-      const colsChanged = previousLayout.cols !== cols;
-      const foldersChanged = previousLayout.folderLayoutKey !== folderLayoutKey;
-      const tileLayoutChanged = previousLayout.tileLayoutKey !== tileLayoutKey;
-      if (!colsChanged && !foldersChanged && !tileLayoutChanged) return;
-
-      previousLayoutRef.current = { cols, folderLayoutKey, tileLayoutKey };
-      if (colsChanged || tileLayoutChanged) {
-        shouldSyncTileRowHeightRef.current = true;
-        setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
-        prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
-      }
-      virtualizerRef.current.measure();
-      measureVisibleRows();
-    }, [
-      bottomNameClassName,
-      cols,
-      folderLayoutKey,
-      imageContainerClassName,
-      measureVisibleRows,
-      showBottomName,
-      tileLayoutKey,
-    ]);
+    }, []);
 
     useImperativeHandle(
       ref,

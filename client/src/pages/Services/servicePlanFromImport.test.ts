@@ -242,7 +242,11 @@ describe("buildServicePlanSectionsFromImport", () => {
       "Jeriyah Brown",
       "Jasmine Williams",
     ]);
-    expect(external[0].elements[0].importAmbiguity).toBeUndefined();
+    expect(external[0].elements[0].importAmbiguity).toMatchObject({ status: "confirmed" });
+    expect(external[0].elements[0].importAmbiguity?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "scripture", managed: expect.objectContaining({ kind: "scripture" }) }),
+      expect.objectContaining({ kind: "person", value: "Jasmine Williams", managed: expect.objectContaining({ kind: "assignee" }) }),
+    ]));
   });
 
   it("keeps uncertain descriptive title text visible as content and reviewable", () => {

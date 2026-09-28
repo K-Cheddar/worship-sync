@@ -1,7 +1,9 @@
 import type { mediaInfoType } from "../containers/Media/cloudinaryTypes";
 import type { MuxUploadResult } from "../containers/Media/MediaUploadInput.types";
 import {
+  cleanupCanvaAssetsByLifecycle,
   cleanupUnprocessedCanvaAssets,
+  type CanvaAssetLifecycle,
   mediaFromCanvaAsset,
   type CanvaImportedAsset,
 } from "./canvaImportCleanup";
@@ -54,4 +56,32 @@ test("builds provider rows with the Cloudinary and Mux identities required for d
     muxAssetId: "mux-page-4",
     type: "video",
   });
+});
+
+test("cleans unprocessed and in-flight assets but never a committed asset", async () => {
+  const assets: CanvaImportedAsset[] = [
+    { kind: "image", data: image("committed") },
+    { kind: "image", data: image("active-save") },
+    { kind: "video", data: video("not-started") },
+  ];
+  const lifecycle: CanvaAssetLifecycle[] = ["committed", "processing", "unprocessed"];
+  const cleanup = jest.fn(async () => true);
+
+  const failed = await cleanupCanvaAssetsByLifecycle(assets, lifecycle, cleanup);
+
+  expect(cleanup).toHaveBeenNthCalledWith(1, assets[1]);
+  expect(cleanup).toHaveBeenNthCalledWith(2, assets[2]);
+  expect(failed).toEqual([]);
+  expect(lifecycle).toEqual(["committed", "cleaned", "cleaned"]);
+});
+
+test("retains failed cleanup state so a later attempt can retry it", async () => {
+  const asset = { kind: "image", data: image("cleanup-retry") } satisfies CanvaImportedAsset;
+  const lifecycle: CanvaAssetLifecycle[] = ["failed"];
+  const cleanup = jest.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+  expect(await cleanupCanvaAssetsByLifecycle([asset], lifecycle, cleanup)).toEqual([asset]);
+  expect(lifecycle).toEqual(["cleanup-pending"]);
+  expect(await cleanupCanvaAssetsByLifecycle([asset], lifecycle, cleanup)).toEqual([]);
+  expect(lifecycle).toEqual(["cleaned"]);
 });

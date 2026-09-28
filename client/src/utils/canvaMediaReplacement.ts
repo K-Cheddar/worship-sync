@@ -12,6 +12,14 @@ type MediaFlushResult = {
   error?: unknown;
 };
 
+type PersistedMediaState = { list: MediaType[]; folders: MediaFolder[] };
+
+const sameMediaRevision = (left: MediaType | undefined, right: MediaType) =>
+  Boolean(left && left.id === right.id && left.updatedAt === right.updatedAt &&
+    left.background === right.background && left.publicId === right.publicId &&
+    left.muxAssetId === right.muxAssetId && left.canvaImportKey === right.canvaImportKey &&
+    left.canvaSource?.revision === right.canvaSource?.revision);
+
 export type CanvaMediaReplacementTransactionArgs = {
   oldMedia: MediaType;
   newMedia: MediaType;
@@ -34,6 +42,7 @@ export type CanvaMediaReplacementTransactionArgs = {
   canCommit?: () => boolean;
   getCurrentList?: () => MediaType[];
   getCurrentFolders?: () => MediaFolder[];
+  readPersistedMedia: () => Promise<PersistedMediaState>;
 };
 
 /**
@@ -55,6 +64,7 @@ export async function commitCanvaMediaReplacement({
   canCommit,
   getCurrentList,
   getCurrentFolders,
+  readPersistedMedia,
 }: CanvaMediaReplacementTransactionArgs): Promise<void> {
   const replacement = { oldMedia, newMedia };
   let references: ReferenceMutationResult;
@@ -112,7 +122,6 @@ export async function commitCanvaMediaReplacement({
     media.id === oldMedia.id ? newMedia : media,
   );
   applyList(nextList, latestFoldersBeforeApply);
-  applyLiveReferences(replacement);
 
   let mediaFlush: MediaFlushResult;
   try {
@@ -121,18 +130,6 @@ export async function commitCanvaMediaReplacement({
     mediaFlush = { ok: false, error };
   }
   if (!mediaFlush.ok) {
-    const latestList = getCurrentList?.() ?? currentList;
-    const latestFolders = getCurrentFolders?.() ?? folders;
-    const rollbackList = latestList.map((media) =>
-      media.id === newMedia.id &&
-      media.canvaImportKey === newMedia.canvaImportKey &&
-      media.background === newMedia.background &&
-      media.publicId === newMedia.publicId &&
-      media.muxAssetId === newMedia.muxAssetId
-        ? currentList.find((current) => current.id === oldMedia.id) ?? media
-        : media,
-    );
-    applyList(rollbackList, latestFolders);
     let rollback: ReferenceMutationResult;
     try {
       rollback = await replaceReferences({
@@ -146,26 +143,65 @@ export async function commitCanvaMediaReplacement({
         message: error instanceof Error ? error.message : String(error),
       };
     }
-    const rollbackIsKnownSafe = rollback.ok &&
+    let rollbackIsKnownSafe = rollback.ok &&
       (rollback.rollbackStatus === "complete" ||
         rollback.rollbackStatus === "not_needed");
-    if (!rollbackIsKnownSafe) {
-      console.error(
-        "Could not safely roll back Canva media references after media persistence failed; retaining both provider assets for reconciliation.",
-        rollback.message,
-      );
+    let persisted: PersistedMediaState | undefined;
+    try {
+      persisted = await readPersistedMedia();
+    } catch (readError) {
+      console.error("Could not inspect persisted Media after Canva replacement failed.", readError);
     }
-    applyLiveReferences({ oldMedia: newMedia, newMedia: oldMedia });
-    if (rollbackIsKnownSafe) {
-      if (!(await deleteProvider(newMedia, oldMedia))) {
-        onCleanupFailure([newMedia]);
+
+    const persistedTarget = persisted?.list.find((media) => media.id === oldMedia.id);
+    if (persisted && sameMediaRevision(persistedTarget, newMedia)) {
+      let forward: ReferenceMutationResult;
+      try {
+        forward = await replaceReferences(replacement);
+      } catch (error) {
+        forward = { ok: false, rollbackStatus: "uncertain", message: String(error) };
+      }
+      applyList(persisted.list, persisted.folders);
+      const forwardIsKnownSafe = forward.ok &&
+        (forward.rollbackStatus === "complete" || forward.rollbackStatus === "not_needed");
+      if (forwardIsKnownSafe) {
+        applyLiveReferences(replacement);
+        if (!(await deleteProvider(oldMedia, newMedia))) onCleanupFailure([oldMedia]);
+        return;
+      }
+      throw new Error("Could not confirm Canva media references after the Media write. Both provider assets were kept; reconciliation is required.");
+    }
+
+    if (persisted && sameMediaRevision(persistedTarget, oldMedia) && !rollbackIsKnownSafe) {
+      let retryRollback: ReferenceMutationResult;
+      try {
+        retryRollback = await replaceReferences({ oldMedia: newMedia, newMedia: oldMedia });
+      } catch (error) {
+        retryRollback = { ok: false, rollbackStatus: "uncertain", message: String(error) };
+      }
+      if (retryRollback.ok && (retryRollback.rollbackStatus === "complete" || retryRollback.rollbackStatus === "not_needed")) {
+        rollbackIsKnownSafe = true;
       }
     }
-    throw new Error(
-      rollbackIsKnownSafe
-        ? "Could not save the refreshed Canva media."
-        : "Could not save the refreshed Canva media. Saved references may still point to the new Canva rendition; reconciliation is required before cleanup.",
+
+    if (persisted) applyList(persisted.list, persisted.folders);
+    if (persisted && sameMediaRevision(persistedTarget, oldMedia) && rollbackIsKnownSafe) {
+      if (!(await deleteProvider(newMedia, oldMedia))) onCleanupFailure([newMedia]);
+      throw new Error("Could not save the refreshed Canva media. The previous version was restored.");
+    }
+
+    console.error(
+      "Could not establish a consistent Canva media replacement after persistence failed; retaining both provider assets for reconciliation.",
+      rollback.message,
     );
+    throw new Error("Could not save the refreshed Canva media. The saved state could not be confirmed; both provider assets were kept and reconciliation is required before cleanup.");
+  }
+
+  applyLiveReferences(replacement);
+
+  const latestCommittedTarget = (getCurrentList?.() ?? nextList).find((media) => media.id === oldMedia.id);
+  if (!sameMediaRevision(latestCommittedTarget, newMedia)) {
+    throw new Error("Media changed while Canva was refreshing this page. Both provider assets were kept for reconciliation.");
   }
 
   if (!(await deleteProvider(oldMedia, newMedia))) {

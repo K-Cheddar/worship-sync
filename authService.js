@@ -904,6 +904,7 @@ const sendEmail = async (payload = {}) => {
     tags = {},
     replyTo,
     fromEmail,
+    idempotencyKey,
   } = payload;
   if (resendClient && resendFromEmail) {
     const resendPayload = {
@@ -918,7 +919,10 @@ const sendEmail = async (payload = {}) => {
     if (normalizedReplyTo) {
       resendPayload.reply_to = normalizedReplyTo;
     }
-    const response = await resendClient.emails.send(resendPayload);
+    const response = await resendClient.emails.send(
+      resendPayload,
+      idempotencyKey ? { idempotencyKey } : undefined,
+    );
     if (response.error) {
       throw new Error(response.error.message || "Could not send email.");
     }
@@ -3176,6 +3180,15 @@ export const setIntakeNotifyRecipientsForServerTests = (recipients) => {
     : null;
 };
 
+export const setIntakeDigestSchedulingFailureForServerTests = (shouldFail) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setIntakeDigestSchedulingFailureForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  intakeDigestSchedulingFailureForServerTests = Boolean(shouldFail);
+};
+
 const upsertProfileFromVerifiedToken = async (
   verifiedToken,
   displayNameOverride,
@@ -5279,40 +5292,326 @@ const INTAKE_DIGEST_WINDOW_MS =
 const INTAKE_DIGEST_RECOVERY_INTERVAL_MS = 60 * 1000;
 const INTAKE_DIGEST_RECOVERY_BATCH_LIMIT = 100;
 const INTAKE_DIGEST_MAX_ATTEMPTS = 3;
+const INTAKE_DIGEST_LEASE_MS = 5 * 60 * 1000;
 const intakeDigestTimers = new Map();
 const intakeDigestInFlight = new Set();
 let intakeNotifyRecipientsForServerTests = null;
+let intakeDigestSchedulingFailureForServerTests = false;
 let intakeDigestRecoveryTimer = null;
 let intakeDigestRecoveryInFlight = false;
+let intakeDigestRecoveryCursor = null;
 
-const clearIntakeDigestMarker = (formId) =>
-  setDoc(
-    COLLECTIONS.teamIntakeForms,
-    formId,
-    { pendingDigestSince: null, pendingDigestAttempts: {} },
-    { merge: true },
+/**
+ * Add a submission to the current durable batch, or to the follow-up batch if
+ * another process has claimed the current one. Called from the submission's
+ * Firestore transaction so the submission and its notification work commit
+ * together.
+ */
+const prepareIntakeSubmissionBatch = (form, submission) => {
+  const claimed = Boolean(form.pendingDigestClaim?.queryStarted);
+  const batchIdField = claimed
+    ? "pendingDigestNextBatchId"
+    : "pendingDigestBatchId";
+  const sinceField = claimed ? "pendingDigestNextSince" : "pendingDigestSince";
+  const legacyBatch = Boolean(
+    (form.pendingDigestClaim?.legacy ||
+      (!form.pendingDigestClaim &&
+        form.pendingDigestSince &&
+        !form.pendingDigestBatchId)) &&
+    !claimed,
   );
+  const batchId =
+    form[batchIdField] ||
+    (!claimed ? form.pendingDigestClaim?.batchId : null) ||
+    (!claimed ? form.pendingDigestSince : null) ||
+    createId("intakeDigest");
+  const since = form[sinceField] || submission.submittedAt;
+  const batchUpdates = {
+    [batchIdField]: batchId,
+    [sinceField]: since,
+    ...(!claimed && legacyBatch ? { pendingDigestLegacy: true } : {}),
+    ...(claimed && !form.pendingDigestNextAttempts
+      ? { pendingDigestNextAttempts: {} }
+      : {}),
+  };
+  return {
+    batchUpdates,
+    taggedSubmission: { ...submission, digestBatchId: batchId },
+  };
+};
+
+const appendIntakeSubmissionToTransaction = ({
+  transaction,
+  formRef,
+  formSnapshot,
+  submissionRef,
+  submission,
+}) => {
+  const { batchUpdates, taggedSubmission } = prepareIntakeSubmissionBatch(
+    formSnapshot.data(),
+    submission,
+  );
+  transaction.set(submissionRef, taggedSubmission, { merge: false });
+  transaction.update(formRef, batchUpdates);
+  return taggedSubmission;
+};
+
+const persistTeamIntakeSubmission = async (submission) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, submission.formId);
+    if (!form) throw httpError(404, "Form not found.");
+    const { batchUpdates, taggedSubmission } = prepareIntakeSubmissionBatch(
+      form,
+      submission,
+    );
+    const updatedForm = {
+      ...form,
+      ...batchUpdates,
+    };
+    collectionMap[COLLECTIONS.teamIntakeForms].set(
+      submission.formId,
+      updatedForm,
+    );
+    collectionMap[COLLECTIONS.teamIntakeSubmissions].set(
+      submission.submissionId,
+      taggedSubmission,
+    );
+    return taggedSubmission;
+  }
+  return db.runTransaction(async (transaction) => {
+    const formRef = db
+      .collection(COLLECTIONS.teamIntakeForms)
+      .doc(submission.formId);
+    const submissionRef = db
+      .collection(COLLECTIONS.teamIntakeSubmissions)
+      .doc(submission.submissionId);
+    const formSnapshot = await transaction.get(formRef);
+    if (!formSnapshot.exists) throw httpError(404, "Form not found.");
+    return appendIntakeSubmissionToTransaction({
+      transaction,
+      formRef,
+      formSnapshot,
+      submissionRef,
+      submission,
+    });
+  });
+};
+
+export const persistIntakeSubmissionForServerTests = async (submission) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "persistIntakeSubmissionForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  return persistTeamIntakeSubmission(submission);
+};
+
+const claimIntakeDigest = async (formId) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (!form?.pendingDigestSince) return null;
+    if (form.pendingDigestClaim?.leaseUntil > Date.now()) return null;
+    const claim = {
+      claimId: createId("intakeDigestClaim"),
+      batchId: form.pendingDigestBatchId || form.pendingDigestSince,
+      since: form.pendingDigestSince,
+      attempts: form.pendingDigestAttempts || {},
+      legacy: Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
+      leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+    };
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: claim,
+    });
+    return claim;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const form = snapshot.data();
+    if (!form.pendingDigestSince) return null;
+    if (form.pendingDigestClaim?.leaseUntil > Date.now()) return null;
+    const existingClaim = form.pendingDigestClaim;
+    const claim = {
+      claimId: createId("intakeDigestClaim"),
+      batchId:
+        existingClaim?.batchId ||
+        form.pendingDigestBatchId ||
+        form.pendingDigestSince,
+      since: existingClaim?.since || form.pendingDigestSince,
+      attempts: existingClaim?.attempts || form.pendingDigestAttempts || {},
+      queryStarted: Boolean(existingClaim?.queryStarted),
+      legacy:
+        existingClaim?.legacy ??
+        Boolean(form.pendingDigestLegacy || !form.pendingDigestBatchId),
+      leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+    };
+    transaction.update(ref, { pendingDigestClaim: claim });
+    return claim;
+  });
+};
+
+const markIntakeDigestQueryStarted = async (formId, claim) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: { ...form.pendingDigestClaim, queryStarted: true },
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return false;
+    const current = snapshot.data().pendingDigestClaim;
+    if (current?.claimId !== claim.claimId) return false;
+    transaction.update(ref, {
+      pendingDigestClaim: { ...current, queryStarted: true },
+    });
+    return true;
+  });
+};
+
+const renewIntakeDigestClaim = async (formId, claim) => {
+  const db = requireFirestore();
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return false;
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestClaim: {
+        ...form.pendingDigestClaim,
+        leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+      },
+    });
+    return true;
+  }
+  return db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return false;
+    const current = snapshot.data().pendingDigestClaim;
+    if (current?.claimId !== claim.claimId) return false;
+    transaction.update(ref, {
+      pendingDigestClaim: {
+        ...current,
+        leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+      },
+    });
+    return true;
+  });
+};
+
+const finishIntakeDigestClaim = async (
+  formId,
+  claim,
+  { attempts, complete },
+) => {
+  const db = requireFirestore();
+  const apply = (form) => {
+    if (form?.pendingDigestClaim?.claimId !== claim.claimId) return null;
+    if (!complete) {
+      return {
+        pendingDigestClaim: null,
+        pendingDigestAttempts: attempts,
+      };
+    }
+    const nextSince = form.pendingDigestNextSince || null;
+    return {
+      pendingDigestSince: nextSince,
+      pendingDigestBatchId: nextSince ? form.pendingDigestNextBatchId : null,
+      pendingDigestAttempts: nextSince
+        ? form.pendingDigestNextAttempts || {}
+        : {},
+      pendingDigestLegacy: false,
+      pendingDigestNextSince: null,
+      pendingDigestNextBatchId: null,
+      pendingDigestNextAttempts: {},
+      pendingDigestClaim: null,
+    };
+  };
+  if (!db) {
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+    const updates = apply(form);
+    if (updates)
+      await updateDocFields(COLLECTIONS.teamIntakeForms, formId, updates);
+    if (complete && updates?.pendingDigestSince) {
+      armIntakeDigestTimer(
+        formId,
+        Math.max(
+          0,
+          INTAKE_DIGEST_WINDOW_MS -
+            (Date.now() - new Date(updates.pendingDigestSince).getTime()),
+        ),
+      );
+    }
+    return;
+  }
+  const nextSince = await db.runTransaction(async (transaction) => {
+    const ref = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const form = snapshot.data();
+    const updates = apply(form);
+    if (!updates) return undefined;
+    transaction.update(ref, updates);
+    return updates.pendingDigestSince;
+  });
+  if (complete && nextSince) {
+    armIntakeDigestTimer(
+      formId,
+      Math.max(
+        0,
+        INTAKE_DIGEST_WINDOW_MS - (Date.now() - new Date(nextSince).getTime()),
+      ),
+    );
+  }
+};
 
 const sendIntakeSubmissionDigestInner = async (formId) => {
+  const claim = await claimIntakeDigest(formId);
+  if (!claim) return;
   const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
-  if (!form?.pendingDigestSince) return;
-  const since = form.pendingDigestSince;
+  if (!form) return;
+  const since = claim.since;
   const recipients =
     intakeNotifyRecipientsForServerTests ||
     (await listIntakeNotifyRecipients(form.churchId, form.teamIds || []));
   if (recipients.length === 0) {
     logAuthEvent("info", "intake.digest.no_recipients", { formId });
-    await clearIntakeDigestMarker(formId);
+    await finishIntakeDigestClaim(formId, claim, {
+      attempts: {},
+      complete: true,
+    });
     return;
   }
+  if (!(await markIntakeDigestQueryStarted(formId, claim))) return;
   const allSubmissions = await queryDocs(
     COLLECTIONS.teamIntakeSubmissions,
-    [{ field: "formId", value: formId }],
+    [
+      { field: "formId", value: formId },
+      ...(!claim.legacy
+        ? [{ field: "digestBatchId", value: claim.batchId }]
+        : []),
+    ],
     { limit: 500 },
   );
-  const submitterNames = collectDigestSubmitterNames(allSubmissions, since);
+  const batchSubmissions = allSubmissions.filter((submission) =>
+    claim.legacy
+      ? (submission.submittedAt || "") >= since &&
+        (!submission.digestBatchId ||
+          submission.digestBatchId === claim.batchId)
+      : submission.digestBatchId === claim.batchId,
+  );
+  const submitterNames = collectDigestSubmitterNames(batchSubmissions, since);
   if (submitterNames.length === 0) {
-    await clearIntakeDigestMarker(formId);
+    await finishIntakeDigestClaim(formId, claim, {
+      attempts: {},
+      complete: true,
+    });
     return;
   }
   const church = await getChurchById(form.churchId);
@@ -5327,18 +5626,23 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
   }`;
   const successful = [];
   let retrying = 0;
-  const attempts = { ...(form.pendingDigestAttempts || {}) };
+  const attempts = { ...(claim.attempts || {}) };
+  let lostClaim = false;
   for (const to of recipients) {
     const key = notificationDeliveryKey({
       recipient: to,
       event: "intake.digest",
       subject: formId,
-      occurrence: since,
+      occurrence: claim.batchId,
     });
     const ledgerId = hashValue(`${form.churchId}|${key}`);
     if (await getDoc(COLLECTIONS.notificationDeliveries, ledgerId)) {
       successful.push(to);
       continue;
+    }
+    if (!(await renewIntakeDigestClaim(formId, claim))) {
+      lostClaim = true;
+      break;
     }
     const attemptKey = hashValue(to.trim().toLowerCase());
     const attemptCount = Number(attempts[attemptKey] || 0);
@@ -5351,12 +5655,15 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
     }
     try {
       // One email per recipient keeps addresses private.
+      // Resend honors this stable key if delivery succeeds but the process
+      // crashes before the Firestore ledger write (for up to 24 hours).
       await sendEmail({
         to,
         subject,
         textBody: text,
         htmlBody: html,
         tags: { type: "intake_digest" },
+        idempotencyKey: `intake-digest/${ledgerId}`,
       });
       // Record only after provider success, so ordinary retries never resend
       // recipients whose delivery was already accepted.
@@ -5368,7 +5675,7 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
           recipient: to,
           event: "intake.digest",
           subject: formId,
-          occurrence: since,
+          occurrence: claim.batchId,
           churchId: form.churchId,
           createdAt: nowIso(),
         },
@@ -5387,15 +5694,12 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
       });
     }
   }
-  if (retrying > 0) {
-    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
-      pendingDigestAttempts: attempts,
-    });
-  }
+  if (lostClaim) return;
   const exhausted = recipients.length - successful.length - retrying;
-  if (successful.length + exhausted === recipients.length) {
-    await clearIntakeDigestMarker(formId);
-  }
+  await finishIntakeDigestClaim(formId, claim, {
+    attempts,
+    complete: successful.length + exhausted === recipients.length,
+  });
 };
 
 // Re-entrancy guard prevents same-process timers and submissions from sending
@@ -5418,14 +5722,17 @@ export const sendIntakeSubmissionDigest = async (formId) => {
 const armIntakeDigestTimer = (formId, delayMs = INTAKE_DIGEST_WINDOW_MS) => {
   const existing = intakeDigestTimers.get(formId);
   if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    sendIntakeSubmissionDigest(formId).catch((error) =>
-      logAuthEvent("warn", "intake.digest.error", {
-        formId,
-        errorName: error?.name || "Error",
-      }),
-    );
-  }, Math.max(0, delayMs));
+  const timer = setTimeout(
+    () => {
+      sendIntakeSubmissionDigest(formId).catch((error) =>
+        logAuthEvent("warn", "intake.digest.error", {
+          formId,
+          errorName: error?.name || "Error",
+        }),
+      );
+    },
+    Math.max(0, delayMs),
+  );
   if (typeof timer.unref === "function") timer.unref();
   intakeDigestTimers.set(formId, timer);
 };
@@ -5435,6 +5742,9 @@ const scheduleIntakeSubmissionDigest = async (
   submittedAt = nowIso(),
   knownForm = null,
 ) => {
+  if (intakeDigestSchedulingFailureForServerTests) {
+    throw new Error("Simulated intake digest scheduling failure");
+  }
   const form = knownForm || (await getDoc(COLLECTIONS.teamIntakeForms, formId));
   if (!form) return;
   if (intakeDigestInFlight.has(formId)) {
@@ -5458,12 +5768,12 @@ const scheduleIntakeSubmissionDigest = async (
     return;
   }
   if (action === "open-window") {
-    await setDoc(
-      COLLECTIONS.teamIntakeForms,
-      formId,
-      { pendingDigestSince: submittedAt },
-      { merge: true },
-    );
+    const batchId = createId("intakeDigest");
+    await updateDocFields(COLLECTIONS.teamIntakeForms, formId, {
+      pendingDigestSince: submittedAt,
+      pendingDigestBatchId: batchId,
+      pendingDigestAttempts: {},
+    });
   }
   // "open-window" and "arm-timer" both schedule the send.
   const remainingWindowMs =
@@ -5481,11 +5791,55 @@ export const recoverPendingIntakeSubmissionDigests = async () => {
   if (intakeDigestRecoveryInFlight) return;
   intakeDigestRecoveryInFlight = true;
   try {
-    const forms = await queryDocs(
-      COLLECTIONS.teamIntakeForms,
-      [{ field: "pendingDigestSince", op: ">", value: "" }],
-      { limit: INTAKE_DIGEST_RECOVERY_BATCH_LIMIT },
-    );
+    const db = requireFirestore();
+    let forms;
+    if (db) {
+      let query = db
+        .collection(COLLECTIONS.teamIntakeForms)
+        .where("pendingDigestSince", ">", "")
+        .orderBy("pendingDigestSince")
+        .orderBy(FieldPath.documentId())
+        .limit(INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+      if (intakeDigestRecoveryCursor) {
+        query = query.startAfter(
+          intakeDigestRecoveryCursor.since,
+          intakeDigestRecoveryCursor.id,
+        );
+      }
+      const snapshot = await query.get();
+      forms = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const last = forms.at(-1);
+      intakeDigestRecoveryCursor =
+        forms.length === INTAKE_DIGEST_RECOVERY_BATCH_LIMIT && last
+          ? { since: last.pendingDigestSince, id: last.id }
+          : null;
+    } else {
+      forms = await queryDocs(
+        COLLECTIONS.teamIntakeForms,
+        [{ field: "pendingDigestSince", op: ">", value: "" }],
+        { limit: 100000 },
+      );
+      forms.sort(
+        (a, b) =>
+          a.pendingDigestSince.localeCompare(b.pendingDigestSince) ||
+          a.id.localeCompare(b.id),
+      );
+      if (intakeDigestRecoveryCursor) {
+        forms = forms.filter(
+          (form) =>
+            form.pendingDigestSince > intakeDigestRecoveryCursor.since ||
+            (form.pendingDigestSince === intakeDigestRecoveryCursor.since &&
+              form.id > intakeDigestRecoveryCursor.id),
+        );
+      }
+      const hasMore = forms.length > INTAKE_DIGEST_RECOVERY_BATCH_LIMIT;
+      forms = forms.slice(0, INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+      const last = forms.at(-1);
+      intakeDigestRecoveryCursor =
+        hasMore && last
+          ? { since: last.pendingDigestSince, id: last.id }
+          : null;
+    }
     if (forms.length > 0) {
       logAuthEvent("info", "intake.digest.recovery_scan", {
         pendingFormCount: forms.length,
@@ -5777,6 +6131,8 @@ const scheduleAssignmentResponseDigest = async (
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
+  appendIntakeSubmissionToTransaction,
+  persistTeamIntakeSubmission,
   scheduleAssignmentResponseDigest,
   addSecurityEvent,
   // Shared so member contact addresses normalize identically to account
@@ -8589,12 +8945,10 @@ export const authHandlers = {
         pollIntervalMs: DEVICE_PAIRING_POLL_INTERVAL_MS,
       });
     } catch (error) {
-      return res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          errorMessage: error.message || "Could not start device pairing.",
-        });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not start device pairing.",
+      });
     }
   },
 
@@ -8615,13 +8969,10 @@ export const authHandlers = {
       };
       return res.json(payload);
     } catch (error) {
-      return res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          errorMessage:
-            error.message || "Could not load device pairing status.",
-        });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load device pairing status.",
+      });
     }
   },
 
@@ -8645,13 +8996,10 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          errorMessage:
-            error.message || "Could not load device pairing request.",
-        });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load device pairing request.",
+      });
     }
   },
 
@@ -8757,12 +9105,10 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          errorMessage: error.message || "Could not approve device pairing.",
-        });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not approve device pairing.",
+      });
     }
   },
 

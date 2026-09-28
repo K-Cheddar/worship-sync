@@ -32,6 +32,9 @@ type CanvaTransfer = {
   customItemError?: string;
   customItemRetry?: () => Promise<string | void>;
   customItemRetryPending?: boolean;
+  cleanupRetry?: () => Promise<void>;
+  cleanupRetryPending?: boolean;
+  cleanupError?: string;
   dedupeKey?: string;
   controller?: AbortController;
   run: (signal: AbortSignal, onProgress: (event: CanvaImportProgressEvent) => void) => Promise<CanvaImportResult>;
@@ -50,7 +53,7 @@ export type TransferItem = CanvaTransfer | UploadTransfer;
 
 type TransferContextValue = {
   transfers: TransferItem[];
-  startCanvaTransfer: (input: Omit<CanvaTransfer, "kind" | "status" | "pageStatus" | "controller" | "customItemRetryPending">) => string;
+  startCanvaTransfer: (input: Omit<CanvaTransfer, "kind" | "status" | "pageStatus" | "controller" | "customItemRetryPending" | "cleanupRetryPending" | "cleanupError">) => string;
   updateUploadTransfer: (item: UploadTransfer | null) => void;
 };
 
@@ -140,6 +143,17 @@ const TransferPanel = ({ transfers, setTransfers }: {
             <p className="mt-1 text-xs text-gray-300">{completedPages} of {item.pages.length} pages processed · {pagePercent}% of pages</p>
             {item.status !== "failed" && item.status !== "cancelled" ? <div className="mt-2 h-1.5 rounded bg-gray-700"><div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} /></div> : null}
             {item.error ? <p role="alert" className="mt-2 text-xs text-red-200">{item.error}</p> : null}
+            {item.cleanupError ? <div role="alert" className="mt-2 text-xs text-amber-200">Some unused Canva files still need cleanup. {item.cleanupError}
+              {item.cleanupRetry ? <button className="ml-1 text-cyan-200 underline disabled:opacity-50" disabled={item.cleanupRetryPending} onClick={async () => {
+                setTransfers((current) => current.map((transfer) => transfer.id === item.id && transfer.kind === "canva" ? { ...transfer, cleanupRetryPending: true } : transfer));
+                try {
+                  await item.cleanupRetry?.();
+                  setTransfers((current) => current.map((transfer) => transfer.id === item.id && transfer.kind === "canva" ? { ...transfer, cleanupError: undefined, cleanupRetry: undefined, cleanupRetryPending: false } : transfer));
+                } catch (retryError) {
+                  setTransfers((current) => current.map((transfer) => transfer.id === item.id && transfer.kind === "canva" ? { ...transfer, cleanupError: retryError instanceof Error ? retryError.message : "Some files could not be removed. Try again.", cleanupRetryPending: false } : transfer));
+                }
+              }}>{item.cleanupRetryPending ? "Cleaning up…" : "Retry cleanup"}</button> : null}
+            </div> : null}
             {item.customItemError ? <div role="alert" className="mt-2 text-xs text-amber-200">Media was imported, but the custom item was not created. {item.customItemError}
               {item.customItemRetry ? <button className="ml-1 text-cyan-200 underline disabled:opacity-50" disabled={item.customItemRetryPending} onClick={async () => {
                 setTransfers((current) => current.map((transfer) => transfer.id === item.id && transfer.kind === "canva" ? { ...transfer, customItemRetryPending: true } : transfer));
@@ -207,15 +221,20 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       } catch (error) {
         if (controller.signal.aborted) {
           const savedPages = persistedPages.size;
-          const cleanupWarning = error instanceof Error && /could not be removed/i.test(error.message) ? ` ${error.message}` : "";
-          update({ status: "cancelled", error: `${savedPages ? `Import cancelled after saving ${savedPages} ${savedPages === 1 ? "page" : "pages"}. Saved Media remains available.` : "Import cancelled before any pages were saved."}${cleanupWarning}`, pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "cancelled"])), controller: undefined });
+          const cleanupMessage = error instanceof Error && /could not be removed/i.test(error.message) ? error.message : "";
+          const cancellationMessage = savedPages
+            ? `Import cancelled after saving ${savedPages} ${savedPages === 1 ? "page" : "pages"}. Saved Media remains available.`
+            : "Import cancelled before any pages were saved.";
+          update({ status: "cancelled", error: `${cancellationMessage}${cleanupMessage && !job.cleanupRetry ? ` ${cleanupMessage}` : ""}`, ...(cleanupMessage && job.cleanupRetry ? { cleanupError: cleanupMessage, cleanupRetry: job.cleanupRetry } : {}), pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "cancelled"])), controller: undefined });
           return;
         }
         const savedPages = persistedPages.size;
         const message = formatCanvaImportError(error, job.format);
+        const rawError = error instanceof Error ? error.message : "";
         update({
           status: savedPages ? "partial" : "failed",
           error: message,
+          ...(job.cleanupRetry && /could not be removed/i.test(rawError) ? { cleanupError: rawError, cleanupRetry: job.cleanupRetry } : {}),
           pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "error"])),
           failedPages: job.pages.filter((page) => !persistedPages.has(page)).map((page) => ({ page, error: message })),
           controller: undefined,

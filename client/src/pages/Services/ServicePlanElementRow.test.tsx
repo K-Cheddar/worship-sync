@@ -842,7 +842,7 @@ describe("ServicePlanElementRow", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("shows the editable lead and a deduplicated additional-participant summary", async () => {
+  it("preserves distinct same-name participant records in edit and view summaries", async () => {
     const user = userEvent.setup();
     const orange: ServicePlanMicrophone = {
       id: "mic-orange",
@@ -856,6 +856,7 @@ describe("ServicePlanElementRow", () => {
         assignees: [
           { id: "lead", name: "Pastor John" },
           { id: "duplicate", name: " pastor john " },
+          { id: "same-name", name: "Pastor John" },
           { id: "second", name: "Sarah Lee" },
           { id: "stand", microphoneIds: [orange.id] },
         ],
@@ -864,14 +865,12 @@ describe("ServicePlanElementRow", () => {
     });
 
     expect(screen.getByPlaceholderText("Led by")).toHaveValue("Pastor John");
-    const additionalNames = screen.getByTitle("Sarah Lee");
-    expect(additionalNames).toHaveTextContent("Sarah Lee");
-    expect(additionalNames).toHaveAttribute("title", "Sarah Lee");
-    expect(additionalNames).not.toHaveTextContent("Pastor John");
+    const additionalNames = screen.getByTitle("pastor john, Pastor John, Sarah Lee");
+    expect(additionalNames).toHaveTextContent("pastor john, Pastor John, Sarah Lee");
     const trigger = screen.getByRole("button", {
-      name: "Show all 3 participants for Pastoral Greetings",
+      name: "Show all 4 participants for Pastoral Greetings",
     });
-    expect(trigger).toHaveTextContent("3");
+    expect(trigger).toHaveTextContent("4");
     expect(trigger).toHaveClass("min-w-10", "shrink-0");
 
     await user.click(trigger);
@@ -880,13 +879,18 @@ describe("ServicePlanElementRow", () => {
       screen
         .getAllByPlaceholderText("Assigned to")
         .map((field) => (field as HTMLInputElement).value),
-    ).toEqual(expect.arrayContaining(["Pastor John", " pastor john ", "Sarah Lee"]));
+    ).toEqual(expect.arrayContaining([
+      "Pastor John",
+      " pastor john ",
+      "Pastor John",
+      "Sarah Lee",
+    ]));
     expect(screen.getAllByText("Orange").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByText("Edit people and microphones")).not.toBeInTheDocument();
   });
 
-  it("keeps view names ordered and unique while counting assigned participants", () => {
+  it("keeps view names ordered for every assigned participant and excludes empty mic slots", () => {
     renderRow({
       canEdit: false,
       isEditing: false,
@@ -896,20 +900,21 @@ describe("ServicePlanElementRow", () => {
           { id: "stand", microphoneIds: ["mic-orange"] },
           { id: "lead", name: "Pastor John" },
           { id: "duplicate", name: " pastor john " },
+          { id: "same-name", name: "Pastor John" },
           { id: "second", name: "Sarah Lee" },
         ],
       },
     });
 
-    expect(screen.getByText("Pastor John, Sarah Lee")).toHaveAttribute(
+    expect(screen.getByText("Pastor John, pastor john, Pastor John, Sarah Lee")).toHaveAttribute(
       "title",
-      "Pastor John, Sarah Lee",
+      "Pastor John, pastor john, Pastor John, Sarah Lee",
     );
     expect(
       screen.getByRole("button", {
-        name: "Show all 3 participants for Pastoral Greetings",
+        name: "Show all 4 participants for Pastoral Greetings",
       }),
-    ).toHaveTextContent("3");
+    ).toHaveTextContent("4");
   });
 
   it("keeps the edit assignment trigger without a count for zero participants", async () => {

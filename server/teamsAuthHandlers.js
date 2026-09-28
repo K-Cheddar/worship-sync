@@ -109,6 +109,8 @@ const MAX_TEAM_SCHEDULE_GUESTS = 200;
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
+  appendIntakeSubmissionToTransaction,
+  persistTeamIntakeSubmission,
   scheduleAssignmentResponseDigest,
   addSecurityEvent,
   assertCsrf,
@@ -5499,11 +5501,15 @@ export const createTeamsAuthHandlers = ({
       // callback when another process changes one of these documents, so the
       // member, deterministic audit row, recipient state, and team rosters
       // commit together instead of relying on the process-local queue.
-      transaction.set(
-        db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId),
+      appendIntakeSubmissionToTransaction({
+        transaction,
+        formRef,
+        formSnapshot,
+        submissionRef: db
+          .collection(COLLECTIONS.teamIntakeSubmissions)
+          .doc(submissionId),
         submission,
-        { merge: false },
-      );
+      });
       transaction.set(memberRef, memberUpdate, { merge: true });
       for (const teamSnapshot of teamSnapshots) {
         if (!teamSnapshot.exists) continue;
@@ -5593,12 +5599,16 @@ export const createTeamsAuthHandlers = ({
       // A recipient has one current response. Reusing its deterministic audit
       // record makes retries safe: a lost response or a second submission never
       // creates a second applied side effect or a second queue row.
-      await setDoc(
-        COLLECTIONS.teamIntakeSubmissions,
-        submissionId,
-        submission,
-        { merge: false },
-      );
+      if (persistTeamIntakeSubmission) {
+        await persistTeamIntakeSubmission(submission);
+      } else {
+        await setDoc(
+          COLLECTIONS.teamIntakeSubmissions,
+          submissionId,
+          submission,
+          { merge: false },
+        );
+      }
       const application = await applyTeamIntakeSubmissionToMember({
         submission,
         form,
@@ -9182,19 +9192,24 @@ export const createTeamsAuthHandlers = ({
         );
         const submissionId = createId("teamIntakeSubmission");
         const submittedAt = nowIso();
-        await setDoc(
-          COLLECTIONS.teamIntakeSubmissions,
+        const submission = {
+          ...payload,
           submissionId,
-          {
-            ...payload,
+          formId: form.formId,
+          churchId: form.churchId,
+          status: "new",
+          submittedAt,
+        };
+        if (persistTeamIntakeSubmission) {
+          await persistTeamIntakeSubmission(submission);
+        } else {
+          await setDoc(
+            COLLECTIONS.teamIntakeSubmissions,
             submissionId,
-            formId: form.formId,
-            churchId: form.churchId,
-            status: "new",
-            submittedAt,
-          },
-          { merge: false },
-        );
+            submission,
+            { merge: false },
+          );
+        }
         // Schedule the lead digest out-of-band after persistence. A scheduling
         // failure must not change the public submission response.
         if (scheduleIntakeSubmissionDigest) {

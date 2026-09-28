@@ -1343,20 +1343,17 @@ const ServicePlanElementRow = ({
   const assigneeSummary = leadAssignee?.name?.trim() ||
     (assignees.some((assignee) => !assignee.name?.trim()) ? "Unassigned" : "");
   const participantCount = participantAssignees.length;
-  const seenParticipantNames = new Set<string>();
-  const participantNames = namedAssignees
-    .map((assignee) => assignee.name?.trim())
-    .filter((name): name is string => Boolean(name))
-    .filter((name) => {
-      const normalizedName = name.toLowerCase();
-      if (seenParticipantNames.has(normalizedName)) return false;
-      seenParticipantNames.add(normalizedName);
-      return true;
-    });
+  // Assignment IDs identify the participant records. Keep each named record
+  // in assignment order, even when two records share the same display name.
+  const namedParticipants = namedAssignees.flatMap((assignee) => {
+    const name = assignee.name?.trim();
+    return name ? [{ assignee, name }] : [];
+  });
+  const participantNames = namedParticipants.map(({ name }) => name);
   const participantNamesLabel = participantNames.join(", ");
-  const leadName = leadInputAssignee?.name?.trim();
-  const additionalParticipantNamesLabel = participantNames
-    .filter((name) => !leadName || name.toLowerCase() !== leadName.toLowerCase())
+  const additionalParticipantNamesLabel = namedParticipants
+    .filter(({ assignee }) => assignee.id !== leadInputAssigneeId)
+    .map(({ name }) => name)
     .join(", ");
   const participantDetailsLabel = participantCount
     ? `Show all ${participantCount} participant${participantCount === 1 ? "" : "s"} for ${itemLabel}`
@@ -1459,9 +1456,9 @@ const ServicePlanElementRow = ({
     <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 max-w-full items-center overflow-visible bg-transparent")}>
       {allowEdit ? (
         <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
-          {/* HistorySuggestField's flex-1 sits under PopoverAnchor, so wrap so the
-              lead field and read-only names can shrink while the count stays fixed. */}
-          <div className="min-w-0 flex-1">
+          {/* HistorySuggestField's inner anchor can shrink; give the editable
+              field twice the space and hide the summary on tablet widths. */}
+          <div className="min-w-0 flex-[2_1_0%]">
             <DebouncedAssigneeNameField
               value={leadInputAssignee?.name || ""}
               onCommit={(name) => {
@@ -1486,7 +1483,7 @@ const ServicePlanElementRow = ({
           </div>
           {additionalParticipantNamesLabel ? (
             <span
-              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400"
+              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 lg:block"
               title={additionalParticipantNamesLabel}
             >
               {additionalParticipantNamesLabel}
