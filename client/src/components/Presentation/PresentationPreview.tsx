@@ -336,7 +336,7 @@ const PresentationPreview = ({
           <div
             ref={previewColumnRef}
             className={cn(
-              "flex flex-col self-start",
+              "@container/preview flex flex-col self-start",
               (hideQuickLinks || fillWidth) && "w-full min-w-0",
               fillWidth && "items-stretch",
               hideQuickLinks && !fillWidth && "items-center",
@@ -399,6 +399,19 @@ const PresentationPreview = ({
                 )}
               </h2>
             )}
+            {info.displayType === "stream" &&
+              streamItemContentBlocked &&
+              showContentHiddenIndicator && (
+                <p
+                  aria-hidden="true"
+                  data-testid="content-hidden-preview-header-hint"
+                  className="block truncate border-b border-amber-300/20 bg-amber-950/35 px-2 py-1 text-center text-[10px] font-semibold text-amber-200 @sm/preview:hidden"
+                >
+                  {contentHiddenUnconfirmed
+                    ? `Content Hidden · ${contentHiddenUnconfirmedLabel} · ${name}`
+                    : `Content Hidden · ${name}`}
+                </p>
+              )}
             {!hideHeader && !minimalHeader && (
               <>
                 <div

@@ -181,6 +181,14 @@ describe("PresentationPreview", () => {
     );
     expect(screen.getByText("Confirmed active Hide Content state for Lobby Stream.")).toBeInTheDocument();
     expect(badge).toHaveClass("pointer-events-none", "max-w-[calc(100%-0.5rem)]");
+    expect(badge).not.toHaveAttribute("tabindex");
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Lobby Stream",
+    );
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveClass(
+      "block",
+      "@sm/preview:hidden",
+    );
     expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass("@container/preview");
     expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "@sm/preview:inline");
 
@@ -227,10 +235,63 @@ describe("PresentationPreview", () => {
     ).toBeInTheDocument();
     expect(badge).toHaveClass("border-dashed");
     expect(screen.getByTestId("content-hidden-preview-badge")).toBeInTheDocument();
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Offline · Lobby Stream",
+    );
     expect(screen.getByText("Content Hidden · Offline")).toHaveClass(
       "hidden",
       "truncate",
       "@sm/preview:inline",
+    );
+  });
+
+  it("explains a reconnection sync state in the compact header", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        contentHiddenUnconfirmed
+        contentHiddenUnconfirmedLabel="Syncing"
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Syncing · Lobby Stream",
+    );
+    expect(screen.getByRole("status")).toHaveAccessibleDescription(
+      "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while syncing.",
+    );
+  });
+
+  it("keeps the explanation discoverable when a focused preview omits its header", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        hideHeader
+        contentHiddenUnconfirmed
+        contentHiddenUnconfirmedLabel="Syncing"
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Syncing · Lobby Stream",
     );
   });
 

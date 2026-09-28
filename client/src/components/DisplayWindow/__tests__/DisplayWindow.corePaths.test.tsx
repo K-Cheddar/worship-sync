@@ -2233,6 +2233,9 @@ describe("DisplayWindow core paths", () => {
       "data-play-audio",
       "false",
     );
+    expect(
+      screen.queryByTestId("content-hidden-preview-badge"),
+    ).not.toBeInTheDocument();
   });
 
   it("still hides and mutes local video when Hide Content is on during an overlay", () => {
