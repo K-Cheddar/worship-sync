@@ -32,7 +32,7 @@ describe("ScheduleMicrophoneSelect", () => {
 
     expect(screen.queryByLabelText("Microphone for Sarah")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("combobox", { name: "Microphone for Sarah IEM" }));
-    await userEvent.click(screen.getByRole("option", { name: "IEM 3" }));
+    await userEvent.click(screen.getByRole("option", { name: /IEM 3/ }));
     expect(onIemChange).toHaveBeenCalledWith(["same-id"]);
   });
   it("links to the church Microphones page when the catalog is empty", () => {

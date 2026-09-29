@@ -23,6 +23,8 @@ interface ColorFieldProps {
   labelKey?: string;
   value: string;
   onChange: (value: string) => void;
+  /** Use an opaque hex picker when the stored field accepts solid colors only. */
+  alpha?: boolean;
   defaultColor?: string;
   formatting?: OverlayFormatting;
   /**
@@ -265,6 +267,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
   labelKey,
   value,
   onChange,
+  alpha = true,
   defaultColor = "#ffffff",
   formatting,
   debounceParentCommitMs,
@@ -345,7 +348,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           color={val}
           onChange={handleColorChange}
           colors={brandColors}
-          alpha
+          alpha={alpha}
         />
       </PopOver>
     </div>

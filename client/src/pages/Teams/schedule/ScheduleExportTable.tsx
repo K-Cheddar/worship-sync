@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { User } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
+import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentIcon } from "../../../components/ServiceEquipmentIcon";
 import {
   EXPORT_EMPTY_SLOT_LABEL,
   type ScheduleExportCell,
@@ -51,6 +53,7 @@ const palette = (isBoard: boolean) => ({
     ? "rounded bg-amber-500/25 px-1 text-amber-100"
     : "rounded bg-amber-200 px-1 text-amber-900",
   role: isBoard ? "text-stone-400" : "text-gray-500",
+  equipment: isBoard ? "text-stone-300" : "text-gray-600",
   byDatePositionLabel: isBoard
     ? "text-stone-100"
     : "text-gray-700",
@@ -92,27 +95,57 @@ const CellContent = ({ cell, p }: { cell: ScheduleExportCell; p: Palette }) => {
   if (cell.state === "empty") {
     return <span className={p.empty}>{EXPORT_EMPTY_SLOT_LABEL}</span>;
   }
+  const primary = cell.tokens.find((token) => !token.roleNote);
+  const shadows = cell.tokens.filter((token) => token.roleNote);
+  const equipmentRows = cell.equipment?.length ? (
+    <div className={cn("flex min-w-0 flex-col gap-0.5 text-xs leading-tight", p.equipment)}>
+      {cell.equipment.map((item, index) => {
+        const accessibleName = `${item.category}: ${item.name}`;
+        return (
+          <span
+            key={`${item.category}-${item.id}-${index}`}
+            aria-label={accessibleName}
+            title={accessibleName}
+            className="flex min-w-0 items-center gap-1"
+          >
+            {item.category === "microphone" ? (
+              <ServicePlanMicrophoneIcon
+                microphone={{ type: item.type || "Microphone" }}
+                color={item.color}
+                className="size-3.5"
+              />
+            ) : item.category === "iem" ? (
+              <ServiceEquipmentIcon
+                equipment={{ subtype: item.subtype }}
+                color={item.color}
+                className="size-3.5"
+              />
+            ) : null}
+            <span className="min-w-0 truncate">{item.name}</span>
+          </span>
+        );
+      })}
+    </div>
+  ) : null;
   return (
     <div className="space-y-0.5">
-      {cell.tokens.map((token, index) => (
+      {primary ? (
+        <div className="leading-tight">
+          <span className={cn("font-semibold", p.name, primary.highlighted && p.nameHighlight)}>
+            {primary.name}
+          </span>
+        </div>
+      ) : null}
+      {primary ? equipmentRows : null}
+      {shadows.map((token, index) => (
         <div key={`${token.name}-${index}`} className="leading-tight">
-          <span
-            className={cn(
-              "font-semibold",
-              p.name,
-              token.highlighted && p.nameHighlight,
-            )}
-          >
+          <span className={cn("font-semibold", p.name, token.highlighted && p.nameHighlight)}>
             {token.name}
           </span>
-          {token.roleNote ? (
-            <span className={cn("text-xs font-normal", p.role)}>
-              {" "}
-              ({token.roleNote})
-            </span>
-          ) : null}
+          <span className={cn("text-xs font-normal", p.role)}> ({token.roleNote})</span>
         </div>
       ))}
+      {!primary ? equipmentRows : null}
     </div>
   );
 };

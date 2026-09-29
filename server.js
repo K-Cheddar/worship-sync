@@ -1621,6 +1621,10 @@ app.post(
   authHandlers.createTeamSchedule,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/ensure",
+  authHandlers.ensureTeamScheduleForPeriod,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId",
   authHandlers.updateTeamSchedule,
 );
@@ -1677,6 +1681,10 @@ app.get(
 app.get(
   "/api/churches/:churchId/service-plans/:planKey/viewer",
   authHandlers.getServicePlanViewer,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/apply-template-bulk",
+  authHandlers.applyServicePlanTemplateBulk,
 );
 app.post(
   "/api/churches/:churchId/service-plans/:planKey",

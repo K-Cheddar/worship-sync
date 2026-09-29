@@ -14,6 +14,7 @@ import {
   type TeamsRestoreState,
   type TeamsReturnTo,
   type TeamsScheduleRestore,
+  type TeamsSchedulePeriodRestore,
   type TeamsTeamScopedRestore,
 } from "../teamsReturnNavigation";
 
@@ -58,6 +59,7 @@ export const useTeamsReturnNavigation = () => {
 
 type TeamsRestoreHandlers = {
   onScheduleRestore?: (restore: TeamsScheduleRestore) => void;
+  onSchedulePeriodRestore?: (restore: TeamsSchedulePeriodRestore) => void;
   onGroupsRestore?: (restore: TeamsGroupsRestore) => void;
   onPlansRestore?: (restore: TeamsPlansRestore) => void;
   onTeamScopedRestore?: (restore: TeamsTeamScopedRestore) => void;
@@ -65,6 +67,7 @@ type TeamsRestoreHandlers = {
 
 export const useTeamsRestoreOnMount = ({
   onScheduleRestore,
+  onSchedulePeriodRestore,
   onGroupsRestore,
   onPlansRestore,
   onTeamScopedRestore,
@@ -73,12 +76,14 @@ export const useTeamsRestoreOnMount = ({
   const navigate = useNavigate();
   const handlersRef = useRef({
     onScheduleRestore,
+    onSchedulePeriodRestore,
     onGroupsRestore,
     onPlansRestore,
     onTeamScopedRestore,
   });
   handlersRef.current = {
     onScheduleRestore,
+    onSchedulePeriodRestore,
     onGroupsRestore,
     onPlansRestore,
     onTeamScopedRestore,
@@ -90,6 +95,9 @@ export const useTeamsRestoreOnMount = ({
 
     if (restore.kind === "schedule") {
       handlersRef.current.onScheduleRestore?.(restore);
+    }
+    if (restore.kind === "schedulePeriod") {
+      handlersRef.current.onSchedulePeriodRestore?.(restore);
     }
     if (restore.kind === "groups") {
       handlersRef.current.onGroupsRestore?.(restore);

@@ -2,6 +2,8 @@ import { TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentChip } from "../../../components/ServiceEquipmentChip";
+import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../../components/ServiceEquipmentIcon";
 import {
   Select as RadixSelect,
   SelectContent,
@@ -188,14 +190,16 @@ const ScheduleMicrophoneSelect = ({
               onValueChange={(next) => onIemChange(next === NO_IEM_VALUE ? [] : [next])}
             >
               <SelectTrigger size="sm" aria-label={`${ariaLabel} IEM`} className="h-8 w-full justify-between border-cyan-900/70 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100">
-                <SelectValue placeholder="No IEM">{selectedIem?.name || "No IEM"}</SelectValue>
+                <SelectValue placeholder="No IEM">{selectedIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedIem} color={selectedIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedIem.name}</span></span> : "No IEM"}</SelectValue>
               </SelectTrigger>
               <SelectContent className="min-w-[14rem]">
                 <SelectItem value={NO_IEM_VALUE}>No IEM</SelectItem>
                 {iems.map((iem) => (
                   <SelectItem key={iem.id} value={iem.id} textValue={iem.name}>
                     <span className="inline-flex min-w-0 flex-1 items-center gap-2">
+                      <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
                       <span className="truncate">{iem.name}</span>
+                      <span className="ml-auto shrink-0 text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span>
                       {iemHoldersByIem.get(iem.id)?.filter((holder) => holder.slotKey !== slotKey).length ? (
                         <span className="ml-auto shrink-0 text-[10px] text-amber-300">Assigned elsewhere</span>
                       ) : null}
@@ -204,7 +208,7 @@ const ScheduleMicrophoneSelect = ({
                 ))}
               </SelectContent>
             </RadixSelect>
-          ) : <p className="text-[11px] text-gray-300">IEM: {selectedIem?.name || "None"}</p>}
+          ) : selectedIem ? <ServiceEquipmentChip equipment={selectedIem} className="text-[11px]" /> : <p className="text-[11px] text-gray-300">IEM: None</p>}
           {sharedIemWith.length ? <p className="mt-1 text-[11px] text-amber-300">IEM conflict: shared with {sharedIemWith.join(", ")}</p> : null}
         </div>
       ) : null}

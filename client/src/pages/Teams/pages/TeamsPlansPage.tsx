@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
+import Modal from "../../../components/Modal/Modal";
+import Select from "../../../components/Select/Select";
 import Icon from "../../../components/Icon/Icon";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import DateRangePicker from "@/components/ui/DateRangePicker";
@@ -20,6 +22,8 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
+  applyServicePlanTemplateBulk,
+  listServicePlanTemplates,
   listServicePlans,
   updateTeamScheduleAssignmentMicrophones,
 } from "../../../api/auth";
@@ -45,7 +49,6 @@ import {
 import {
   readPlansFilterPreferences,
   writePlansFilterPreferences,
-  type PlansRangePreset,
 } from "../plansFilterPersistence";
 import {
   getOccurrenceAssignmentSummary,
@@ -70,58 +73,24 @@ import {
   scheduleTodayBorderClassName,
   scheduleUpNextBorderClassName,
 } from "../schedule/scheduleUtils";
+import {
+  rangeFromPreset,
+  SCHEDULE_PERIOD_OPTIONS,
+  type SchedulePeriodPreset,
+} from "../schedule/schedulePeriodUtils";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 
-type RangePreset = PlansRangePreset;
+type RangePreset = SchedulePeriodPreset;
 
-const RANGE_PRESET_OPTIONS: { value: RangePreset; label: string }[] = [
-  { value: "thisMonth", label: "This month" },
-  { value: "nextMonth", label: "Next month" },
-  { value: "thisQuarter", label: "This quarter" },
-  { value: "nextQuarter", label: "Next quarter" },
-  { value: "custom", label: "Custom" },
-];
-
-export const rangeFromPreset = (
-  preset: Exclude<RangePreset, "custom">,
-  now = new Date(),
-) => {
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const quarterStartMonth = Math.floor(month / 3) * 3;
-  let start: Date;
-  let end: Date;
-
-  switch (preset) {
-    case "thisMonth":
-      start = new Date(year, month, 1);
-      end = new Date(year, month + 1, 0);
-      break;
-    case "nextMonth":
-      start = new Date(year, month + 1, 1);
-      end = new Date(year, month + 2, 0);
-      break;
-    case "thisQuarter":
-      start = new Date(year, quarterStartMonth, 1);
-      end = new Date(year, quarterStartMonth + 3, 0);
-      break;
-    case "nextQuarter":
-      start = new Date(year, quarterStartMonth + 3, 1);
-      end = new Date(year, quarterStartMonth + 6, 0);
-      break;
-  }
-
-  return {
-    start: formatPlainDate(start),
-    end: formatPlainDate(end),
-  };
-};
+const RANGE_PRESET_OPTIONS = SCHEDULE_PERIOD_OPTIONS;
+export { rangeFromPreset };
 
 const defaultRange = () => rangeFromPreset("thisMonth");
 
@@ -380,6 +349,13 @@ const TeamsPlansPage = () => {
   );
   const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] = useState<string | null>(null);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
+  const [bulkApplyOpen, setBulkApplyOpen] = useState(false);
+  const [bulkTemplates, setBulkTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [bulkTemplateId, setBulkTemplateId] = useState("");
+  const [bulkServiceIds, setBulkServiceIds] = useState<string[]>([]);
+  const [bulkUseDefaults, setBulkUseDefaults] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkApplyRevision, setBulkApplyRevision] = useState(0);
   // Mild placeholders for planned chips / progress / checks until listServicePlans
   // resolves. Stays false on revision refreshes so badges do not flash.
   const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
@@ -538,7 +514,7 @@ const TeamsPlansPage = () => {
     };
     // servicePlansRevision changes when another admin saves/deletes a plan, so
     // the "Add plan"/"Open plan" badges refresh instead of going stale.
-  }, [churchId, servicePlansRevision]);
+  }, [bulkApplyRevision, churchId, servicePlansRevision]);
 
   const activeServices = useMemo(
     () => pageData.services.filter(isActive),
@@ -677,6 +653,88 @@ const TeamsPlansPage = () => {
     [chronologicalEntries, planKeysWithPlans],
   );
 
+  const bulkApplyEntries = useMemo(
+    () => groups.flatMap((group) => group.occurrences.map((occurrence) => ({
+      service: group.service,
+      serviceName: group.name,
+      occurrence,
+    }))).filter((entry) =>
+      bulkServiceIds.length > 0 && (
+        entry.occurrence.serviceIds?.some((id) => bulkServiceIds.includes(id)) ||
+        bulkServiceIds.includes(entry.occurrence.serviceId)
+      ),
+    ),
+    [bulkServiceIds, groups],
+  );
+  const bulkApplyExistingCount = bulkApplyEntries.filter((entry) =>
+    planKeysWithPlans.has(getServicePlanKey(entry.occurrence)),
+  ).length;
+  const bulkApplyEligibleCount = bulkApplyEntries.length - bulkApplyExistingCount;
+  const bulkTemplate = bulkTemplates.find((template) => template.templateId === bulkTemplateId);
+
+  useEffect(() => {
+    if (!bulkApplyOpen || !churchId) return undefined;
+    let cancelled = false;
+    listServicePlanTemplates(churchId)
+      .then((response) => {
+        if (!cancelled) {
+          setBulkTemplates(response.templates || []);
+          setBulkTemplateId((current) => current || response.templates?.[0]?.templateId || "");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) showApiErrorToast(showToast, error, "Could not load service plan templates.");
+      });
+    return () => { cancelled = true; };
+  }, [bulkApplyOpen, churchId, showToast]);
+
+  const openBulkApply = () => {
+    setBulkServiceIds(selectedServiceIds.length ? selectedServiceIds : activeServices.map((service) => service.serviceId));
+    setBulkUseDefaults(false);
+    setBulkApplyOpen(true);
+  };
+
+  const applyBulkTemplate = async () => {
+    if (!churchId || !canEditServices || bulkApplying || bulkApplyEligibleCount === 0) return;
+    setBulkApplying(true);
+    try {
+      const activeServiceIds = new Set(activeServices.map((service) => service.serviceId));
+      const targets = bulkApplyEntries
+        .filter((entry) => !planKeysWithPlans.has(getServicePlanKey(entry.occurrence)))
+        .map(({ occurrence }) => {
+          const serviceIds = (occurrence.serviceIds || [occurrence.serviceId])
+            .filter((serviceId) => activeServiceIds.has(serviceId));
+          const serviceId = serviceIds.includes(occurrence.serviceId)
+            ? occurrence.serviceId
+            : serviceIds[0] || occurrence.serviceId;
+          return {
+          serviceId,
+          serviceIds,
+          ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
+          occurrenceId: occurrence.occurrenceId,
+          startsAt: occurrence.startsAt,
+          date: getOccurrenceDate(occurrence),
+          };
+        });
+      const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
+        ...(bulkUseDefaults ? { useServiceDefaults: true } : { templateId: bulkTemplateId }),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        targets,
+        existingPlanMode: "skip",
+      }));
+      setBulkApplyRevision((revision) => revision + 1);
+      showToast(
+        `Applied templates to ${response.created.length} service ${response.created.length === 1 ? "date" : "dates"}.${response.skippedExisting.length ? ` ${response.skippedExisting.length} existing ${response.skippedExisting.length === 1 ? "plan was" : "plans were"} skipped.` : ""}${response.skippedNoTemplate.length ? ` ${response.skippedNoTemplate.length} without a default template were skipped.` : ""}${response.failed.length ? ` ${response.failed.length} could not be created.` : ""}`,
+        response.failed.length ? "neutral" : "success",
+      );
+      setBulkApplyOpen(false);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not apply the service plan template.");
+    } finally {
+      setBulkApplying(false);
+    }
+  };
+
   const entryByOccurrenceId = useMemo(() => {
     const map = new Map<
       string,
@@ -773,6 +831,44 @@ const TeamsPlansPage = () => {
     },
     [navigate, selection],
   );
+
+  const openGeneratedSchedulePeriod = useCallback(() => {
+    if (!selection) return;
+    const date = getOccurrenceDate(selection.occurrence);
+    const parsedDate = new Date(`${date}T12:00:00`);
+    const startDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth(), 1));
+    const endDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth() + 1, 0));
+    const requirementPositionIds = new Set(
+      selection.occurrence.positionRequirements?.map((requirement) => requirement.positionId) || [],
+    );
+    const relatedTeamIds = pageData.positions
+      .filter((position) => requirementPositionIds.has(position.positionId))
+      .map((position) => position.teamId);
+    const teamId = pageData.teams.find((team) => relatedTeamIds.includes(team.teamId) && isActive(team))?.teamId
+      || pageData.teams.find(isActive)?.teamId;
+    if (!teamId) {
+      showToast("Add a team before opening its schedule.", "neutral");
+      return;
+    }
+    const returnTo = buildPlansReturnTo({
+      serviceId: selection.service.serviceId,
+      occurrenceId: selection.occurrence.occurrenceId,
+      date,
+    });
+    persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
+    navigate(TEAMS_SECTION_PATHS.schedules, {
+      state: buildPlanToScheduleNavigationState({
+        returnTo,
+        restore: {
+          kind: "schedulePeriod",
+          teamId,
+          startDate,
+          endDate,
+          occurrenceId: selection.occurrence.occurrenceId,
+        },
+      }),
+    });
+  }, [navigate, pageData.positions, pageData.teams, selection, showToast]);
 
   /**
    * Previous/next within the current date window. By service stays on that
@@ -885,6 +981,11 @@ const TeamsPlansPage = () => {
 
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
+        <div className="flex justify-end">
+          <Button type="button" variant="tertiary" svg={CalendarDays} onClick={openGeneratedSchedulePeriod}>
+            View schedule
+          </Button>
+        </div>
         <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ServicePlanEditor
@@ -1123,6 +1224,11 @@ const TeamsPlansPage = () => {
                     className="w-full max-w-xs"
                     inputClassName="py-1 text-xs"
                   />
+                ) : null}
+                {canEditServices ? (
+                  <Button type="button" variant="secondary" onClick={openBulkApply}>
+                    Apply template
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -1413,6 +1519,71 @@ const TeamsPlansPage = () => {
           })}
         </div>
       )}
+      <Modal
+        isOpen={bulkApplyOpen}
+        onClose={() => { if (!bulkApplying) setBulkApplyOpen(false); }}
+        title="Apply plan templates"
+        description="Apply a template to empty service plans in the selected date range. Existing plans are skipped."
+        size="lg"
+      >
+        <div className="space-y-4">
+          <Checkbox
+            label="Apply each service’s default template"
+            checked={bulkUseDefaults}
+            onCheckedChange={() => setBulkUseDefaults((current) => !current)}
+          />
+          {!bulkUseDefaults ? (
+            <Select
+              label="Template"
+              value={bulkTemplateId}
+              options={bulkTemplates.map((template) => ({ label: template.name, value: template.templateId }))}
+              onChange={setBulkTemplateId}
+            />
+          ) : null}
+          <fieldset className="space-y-1">
+            <legend className="mb-2 text-sm font-semibold text-gray-100">Services</legend>
+            {activeServices.map((service) => (
+              <Checkbox
+                key={service.serviceId}
+                label={service.name}
+                checked={bulkServiceIds.includes(service.serviceId)}
+                onCheckedChange={() => setBulkServiceIds((current) =>
+                  current.includes(service.serviceId)
+                    ? current.filter((id) => id !== service.serviceId)
+                    : [...current, service.serviceId],
+                )}
+              />
+            ))}
+          </fieldset>
+          <section className="rounded-md border border-gray-700 bg-gray-950/60 p-3" aria-live="polite">
+            <p className="font-medium text-white">
+              {bulkUseDefaults ? "Each service’s default template" : bulkTemplate?.name || "Choose a template"}
+            </p>
+            <p className="mt-1 text-sm text-gray-300">
+              {bulkServiceIds.length
+                ? activeServices.filter((service) => bulkServiceIds.includes(service.serviceId)).map((service) => service.name).join(", ")
+                : "No services selected"}
+              {" · "}{formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
+            </p>
+            <p className="mt-2 text-sm text-gray-200">
+              {bulkApplyEntries.length} service {bulkApplyEntries.length === 1 ? "date" : "dates"}; {bulkApplyExistingCount} already have plans and will be skipped.
+            </p>
+            <p className="mt-1 text-sm text-gray-400">
+              Apply to {bulkApplyEligibleCount} empty {bulkApplyEligibleCount === 1 ? "plan" : "plans"}.
+            </p>
+          </section>
+          <div className="flex justify-end gap-2">
+            <Button variant="tertiary" disabled={bulkApplying} onClick={() => setBulkApplyOpen(false)}>Cancel</Button>
+            <Button
+              variant="cta"
+              disabled={bulkApplying || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplateId) || bulkApplyEligibleCount === 0}
+              onClick={() => void applyBulkTemplate()}
+            >
+              {bulkApplying ? "Applying…" : `Apply to ${bulkApplyEligibleCount} dates`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

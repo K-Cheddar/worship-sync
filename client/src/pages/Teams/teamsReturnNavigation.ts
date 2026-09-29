@@ -44,6 +44,14 @@ export type TeamsScheduleRestore = {
   membersPanelOpen?: boolean;
 };
 
+export type TeamsSchedulePeriodRestore = {
+  kind: "schedulePeriod";
+  teamId: string;
+  startDate: string;
+  endDate: string;
+  occurrenceId: string;
+};
+
 export type TeamsGroupsRestore = {
   kind: "groups";
   editTeamId: string;
@@ -72,6 +80,7 @@ export type TeamsTeamScopedRestore = {
 
 export type TeamsRestoreState =
   | TeamsScheduleRestore
+  | TeamsSchedulePeriodRestore
   | TeamsGroupsRestore
   | TeamsPlansRestore
   | TeamsTeamScopedRestore;
@@ -134,6 +143,15 @@ export const readTeamsRestore = (state: unknown): TeamsRestoreState | null => {
   if (!restore || typeof restore !== "object" || !("kind" in restore))
     return null;
   if (restore.kind === "schedule" && typeof restore.scheduleId === "string") {
+    return restore;
+  }
+  if (
+    restore.kind === "schedulePeriod" &&
+    typeof restore.teamId === "string" &&
+    typeof restore.startDate === "string" &&
+    typeof restore.endDate === "string" &&
+    typeof restore.occurrenceId === "string"
+  ) {
     return restore;
   }
   if (restore.kind === "groups" && typeof restore.editTeamId === "string") {
@@ -289,7 +307,7 @@ export const buildPlanToScheduleNavigationState = ({
   restore,
 }: {
   returnTo: TeamsReturnTo;
-  restore: TeamsScheduleRestore;
+  restore: TeamsScheduleRestore | TeamsSchedulePeriodRestore;
 }): TeamsReturnNavigationState => ({
   ...buildTeamsReturnNavigationState(returnTo),
   ...buildTeamsRestoreNavigationState(restore),

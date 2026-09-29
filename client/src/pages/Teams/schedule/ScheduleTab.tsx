@@ -11,6 +11,8 @@ import {
 } from "react";
 import {
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Clipboard,
@@ -37,6 +39,7 @@ import SegmentedControl from "../../../components/SegmentedControl/SegmentedCont
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
+import DateRangePicker from "@/components/ui/DateRangePicker";
 import {
   Popover,
   PopoverContent,
@@ -56,7 +59,17 @@ import {
 import {
   getCreateScheduleDefaultRange,
   getCreateScheduleDefaultServiceIds,
+  formatSuggestedScheduleName,
 } from "./scheduleCreateDefaults";
+import {
+  ensureTeamScheduleForPeriod,
+} from "../../../api/auth";
+import {
+  formatSchedulePeriodName,
+  rangeFromPreset,
+  SCHEDULE_PERIOD_OPTIONS,
+  type SchedulePeriodPreset,
+} from "./schedulePeriodUtils";
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
@@ -84,10 +97,6 @@ import {
   rekeyScheduleOccurrenceRowsByServiceDate,
 } from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
-import {
-  BROWSE_ALL_SCHEDULES_VALUE,
-  buildSchedulePickerOptions,
-} from "./schedulePickerOptions";
 import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
@@ -95,7 +104,7 @@ import {
   writeScheduleTeamFilter,
 } from "../teamsLocalStore";
 import SchedulePdfExportButton from "./SchedulePdfExportButton";
-import { parsePlainDate } from "@/utils/plainDate";
+import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import {
   ADMIN_SCHEDULE_LAYOUTS,
   hasStoredTeamScheduleAdminLayout,
@@ -300,7 +309,7 @@ type PendingAvailabilityConfirmation = {
 
 const ScheduleTab = ({
   data,
-  canEdit,
+  canEdit: canEditSelectedSchedule,
   editableTeamIds,
   canEditMember,
   onEditMember,
@@ -343,46 +352,9 @@ const ScheduleTab = ({
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
   const schedules = data.schedules;
-  // The picker lists every schedule (summaries included); the grid needs the
-  // hydrated record. `selectedScheduleRecord` backs the header and the picker so
-  // the chosen name still shows while its assignments are being fetched, while
-  // `selectedSchedule` stays null until the cells have actually arrived.
-  const selectedScheduleRecord = selectedScheduleId
-    ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
-    : null;
-  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
-    ? selectedScheduleRecord
-    : null;
-  const latestScheduleRef = useRef(selectedSchedule);
-  useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
-  const scheduleDisplayMembers = useMemo(
-    () => [
-      ...data.members,
-      ...(selectedSchedule?.guests || []).map((guest) =>
-        scheduleGuestToDisplayMember(guest, churchId),
-      ),
-    ],
-    [churchId, data.members, selectedSchedule?.guests],
-  );
-  const recentScheduleGuests = useMemo(() => {
-    const byId = new Map<string, TeamScheduleGuest>();
-    const newestFirst = [...schedules].sort(
-      (left, right) =>
-        String(right.startDate || "").localeCompare(String(left.startDate || "")),
-    );
-    [selectedScheduleRecord, ...newestFirst].forEach((schedule) => {
-      (schedule?.guests || []).forEach((guest) => {
-        if (!byId.has(guest.guestId)) byId.set(guest.guestId, guest);
-      });
-    });
-    return [...byId.values()];
-  }, [schedules, selectedScheduleRecord]);
-  const isSelectedScheduleLoading = Boolean(
-    selectedScheduleRecord && !selectedSchedule,
-  );
-  const draftKey = selectedScheduleRecord?.scheduleId || "new";
-  const selectedTeam =
-    data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
+  const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>("thisMonth");
+  const [periodRange, setPeriodRange] = useState(() => rangeFromPreset("thisMonth"));
+  const [viewingSavedSchedule, setViewingSavedSchedule] = useState(false);
   // Archived schedules stay out of the quick-switcher; the browse dialog's
   // status filter is the one place to go through everything.
   const [isBrowsingSchedules, setIsBrowsingSchedules] = useState(false);
@@ -411,6 +383,7 @@ const ScheduleTab = ({
   const updateScheduleTeamFilter = useCallback(
     (teamId: string) => {
       setScheduleTeamFilter(teamId);
+      setViewingSavedSchedule(false);
       writeScheduleTeamFilter(churchId, teamId || ALL_TEAMS_SCHEDULE_FILTER);
     },
     [churchId],
@@ -430,6 +403,174 @@ const ScheduleTab = ({
     );
     return firstEditable?.teamId || activeTeams[0]?.teamId || "";
   }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
+  const workspaceTeamId = (scheduleTeamFilter || defaultTeamId) ?? "";
+  const canEdit = viewingSavedSchedule
+    ? canEditSelectedSchedule
+    : Boolean(
+        (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
+        (!editableTeamIds && canEditSelectedSchedule),
+      );
+  const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
+  const periodServiceIds = useMemo(() => {
+    const generated = generateScheduleOccurrences({
+      services: activeServices,
+      serviceIds: activeServices.map((service) => service.serviceId),
+      startDate: periodRange.start,
+      endDate: periodRange.end,
+    });
+    return [...new Set(generated.flatMap((occurrence) => occurrence.serviceIds || [occurrence.serviceId]))];
+  }, [activeServices, periodRange.end, periodRange.start]);
+  const generatedPeriodOccurrences = useMemo(
+    () => generateScheduleOccurrences({
+      services: activeServices,
+      serviceIds: periodServiceIds,
+      startDate: periodRange.start,
+      endDate: periodRange.end,
+    }),
+    [activeServices, periodRange.end, periodRange.start, periodServiceIds],
+  );
+  const exactPeriodSchedules = useMemo(
+    () => schedules.filter((schedule) =>
+      !schedule.archivedAt &&
+      schedule.teamId === workspaceTeamId &&
+      schedule.startDate === periodRange.start &&
+      schedule.endDate === periodRange.end,
+    ),
+    [periodRange.end, periodRange.start, schedules, workspaceTeamId],
+  );
+  const generatedPeriodMatches = exactPeriodSchedules.filter(
+    (schedule) => schedule.source === "generated-period",
+  );
+  const matchedPeriodSchedule = generatedPeriodMatches.length === 1
+    ? generatedPeriodMatches[0]
+    : generatedPeriodMatches.length > 1
+      ? null
+      : exactPeriodSchedules.length === 1 ? exactPeriodSchedules[0] : null;
+  const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && (
+    generatedPeriodMatches.length > 1 ||
+    (generatedPeriodMatches.length === 0 && exactPeriodSchedules.length > 1)
+  );
+  const virtualPeriodSchedule = useMemo(() => {
+    if (
+      hasAmbiguousPeriodSchedules ||
+      !workspaceTeamId ||
+      generatedPeriodOccurrences.length === 0
+    ) {
+      return null;
+    }
+    return {
+      scheduleId: `virtual:${workspaceTeamId}:${periodRange.start}:${periodRange.end}`,
+      churchId,
+      name: formatSchedulePeriodName(periodRange.start, periodRange.end),
+      teamId: workspaceTeamId,
+      startDate: periodRange.start,
+      endDate: periodRange.end,
+      serviceIds: periodServiceIds,
+      occurrences: generatedPeriodOccurrences,
+      assignments: {},
+      guests: [],
+      source: "generated-period" as const,
+    };
+  }, [
+    churchId,
+    generatedPeriodOccurrences,
+    hasAmbiguousPeriodSchedules,
+    periodRange.end,
+    periodRange.start,
+    periodServiceIds,
+    workspaceTeamId,
+  ]);
+  // Normal navigation is occurrence-first. Saved schedule history is opened
+  // only by an explicit history/deep-link action.
+  const selectedScheduleRecord = viewingSavedSchedule
+    ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
+    : matchedPeriodSchedule || virtualPeriodSchedule;
+  useEffect(() => {
+    if (viewingSavedSchedule) return;
+    const nextId = matchedPeriodSchedule?.scheduleId || "";
+    if (selectedScheduleId !== nextId) setSelectedScheduleId(nextId);
+  }, [matchedPeriodSchedule, selectedScheduleId, setSelectedScheduleId, viewingSavedSchedule]);
+  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
+    ? selectedScheduleRecord
+    : null;
+  const latestScheduleRef = useRef(selectedSchedule);
+  useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
+  const [ensuringScheduleId, setEnsuringScheduleId] = useState("");
+  const pendingScheduleEnsureRef = useRef<{
+    virtualScheduleId: string;
+    promise: Promise<TeamSchedule>;
+  } | null>(null);
+  const ensureActiveSchedule = useCallback(async () => {
+    const active = latestScheduleRef.current;
+    if (!active) throw new Error("Choose a service period before scheduling.");
+    if (!active.scheduleId.startsWith("virtual:")) return active;
+    const virtualScheduleId = active.scheduleId;
+    if (!churchId) throw new Error("Church information is unavailable.");
+    const pending = pendingScheduleEnsureRef.current;
+    if (pending?.virtualScheduleId === virtualScheduleId) return pending.promise;
+    const request: { virtualScheduleId: string; promise: Promise<TeamSchedule> } = {
+      virtualScheduleId,
+      promise: Promise.resolve().then(async () => {
+        setEnsuringScheduleId(virtualScheduleId);
+        try {
+          const result = await trackTeamsSave(ensureTeamScheduleForPeriod(churchId, {
+            name: formatSuggestedScheduleName(periodRange.start, periodRange.end),
+            teamId: workspaceTeamId,
+            startDate: periodRange.start,
+            endDate: periodRange.end,
+            serviceIds: periodServiceIds,
+            occurrences: generatedPeriodOccurrences,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          }));
+          onScheduleSaved(result.schedule);
+          if (latestScheduleRef.current?.scheduleId === virtualScheduleId) {
+            setSelectedScheduleId(result.schedule.scheduleId);
+            setViewingSavedSchedule(false);
+          }
+          return result.schedule;
+        } finally {
+          if (pendingScheduleEnsureRef.current === request) {
+            pendingScheduleEnsureRef.current = null;
+            setEnsuringScheduleId("");
+          }
+        }
+      }),
+    };
+    pendingScheduleEnsureRef.current = request;
+    return request.promise;
+  }, [
+    churchId,
+    generatedPeriodOccurrences,
+    onScheduleSaved,
+    periodRange.end,
+    periodRange.start,
+    periodServiceIds,
+    setSelectedScheduleId,
+    trackTeamsSave,
+    workspaceTeamId,
+  ]);
+  const scheduleDisplayMembers = useMemo(
+    () => [
+      ...data.members,
+      ...(selectedSchedule?.guests || []).map((guest) => scheduleGuestToDisplayMember(guest, churchId)),
+    ],
+    [churchId, data.members, selectedSchedule?.guests],
+  );
+  const recentScheduleGuests = useMemo(() => {
+    const byId = new Map<string, TeamScheduleGuest>();
+    const newestFirst = [...schedules].sort((left, right) =>
+      String(right.startDate || "").localeCompare(String(left.startDate || "")),
+    );
+    [selectedScheduleRecord, ...newestFirst].forEach((schedule) => {
+      (schedule?.guests || []).forEach((guest) => {
+        if (!byId.has(guest.guestId)) byId.set(guest.guestId, guest);
+      });
+    });
+    return [...byId.values()];
+  }, [schedules, selectedScheduleRecord]);
+  const isSelectedScheduleLoading = Boolean(selectedScheduleRecord && !selectedSchedule);
+  const draftKey = selectedScheduleRecord?.scheduleId || "new";
+  const selectedTeam = data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
   const defaultRange = useMemo(
     () =>
       getCreateScheduleDefaultRange({
@@ -449,24 +590,30 @@ const ScheduleTab = ({
     [data.schedules, data.services, defaultRange, defaultTeamId],
   );
 
-  const scheduleTeamFilterOptions = useMemo(
-    () => [
-      { label: "All teams", value: "" },
-      ...activeTeams.map((team) => ({ label: team.name, value: team.teamId })),
-    ],
-    [activeTeams],
-  );
+  const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
+    setPeriodPreset(preset);
+    if (preset !== "custom") setPeriodRange(rangeFromPreset(preset));
+    setViewingSavedSchedule(false);
+  };
+  const shiftPeriod = (direction: -1 | 1) => {
+    const start = new Date(`${periodRange.start}T12:00:00`);
+    const end = new Date(`${periodRange.end}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    if (periodPreset === "custom") {
+      const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+      start.setDate(start.getDate() + days * direction);
+      end.setDate(end.getDate() + days * direction);
+      setPeriodRange({ start: formatPlainDate(start), end: formatPlainDate(end) });
+    } else {
+      const months = periodPreset.includes("Quarter") ? 3 : 1;
+      start.setDate(1);
+      start.setMonth(start.getMonth() + months * direction);
+      const nextEnd = new Date(start.getFullYear(), start.getMonth() + months, 0);
+      setPeriodRange({ start: formatPlainDate(start), end: formatPlainDate(nextEnd) });
+    }
+    setViewingSavedSchedule(false);
+  };
 
-  const scheduleOptions = useMemo(
-    () =>
-      buildSchedulePickerOptions({
-        schedules,
-        teams: data.teams,
-        selectedScheduleId,
-        teamId: scheduleTeamFilter || "",
-      }),
-    [data.teams, schedules, scheduleTeamFilter, selectedScheduleId],
-  );
   // Positions are owned by a team, so a schedule's positions are the team's own positions.
   const schedulePositions = useMemo(
     () =>
@@ -1072,7 +1219,8 @@ const ScheduleTab = ({
             schedule.scheduleId !== selectedSchedule.scheduleId &&
             schedule.teamId !== selectedSchedule.teamId &&
             !schedule.archivedAt &&
-            !isHydratedSchedule(schedule) &&
+        !isHydratedSchedule(schedule) &&
+        !selectedSchedule?.scheduleId.startsWith("virtual:") &&
             scheduleDateRangesOverlap(selectedSchedule, schedule),
         ),
       ),
@@ -1359,8 +1507,17 @@ const ScheduleTab = ({
   const { requestDiscardAction } = useTeamsNavigationGuard();
 
   useTeamsRestoreOnMount({
+    onSchedulePeriodRestore: (restore) => {
+      setViewingSavedSchedule(false);
+      updateScheduleTeamFilter(restore.teamId);
+      setPeriodPreset("custom");
+      setPeriodRange({ start: restore.startDate, end: restore.endDate });
+      setSelectedScheduleId("");
+      setDetailOccurrenceId(restore.occurrenceId);
+    },
     onScheduleRestore: (restore) => {
       if (restore.scheduleId) {
+        setViewingSavedSchedule(true);
         setSelectedScheduleId(restore.scheduleId);
       }
       if (restore.membersPanelOpen !== undefined) {
@@ -1535,12 +1692,47 @@ const ScheduleTab = ({
         </p>
       );
     }
-    if (!selectedSchedule || !selectedTeam) {
+    if (!workspaceTeamId) {
       return (
         <p className={messageClassName}>
-          Create a team, services, and a schedule to start assigning members.
+          Choose a team to see its service occurrences.
         </p>
       );
+    }
+    if (hasAmbiguousPeriodSchedules) {
+      return (
+        <p className={messageClassName}>
+          Several saved schedules use this team and date range. Open{" "}
+          <button
+            type="button"
+            className="font-medium text-cyan-300 underline"
+            onClick={() => setIsBrowsingSchedules(true)}
+          >
+            Schedule history
+          </button>
+          {" "}to choose which schedule to use.
+        </p>
+      );
+    }
+    if (generatedPeriodOccurrences.length === 0 && !viewingSavedSchedule) {
+      return (
+        <p className={messageClassName}>
+          No service occurrences are configured for this period. Visit{" "}
+          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>{" "}
+          to review service schedules.
+        </p>
+      );
+    }
+    if (scheduleOccurrences.length > 0 && scheduleColumns.length === 0) {
+      return (
+        <p className={messageClassName}>
+          These services do not have any positions configured for this team. Update position requirements in{" "}
+          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>.
+        </p>
+      );
+    }
+    if (!selectedSchedule || !selectedTeam) {
+      return <p className={messageClassName}>Choose a team and date range to view scheduling needs.</p>;
     }
     return (
       <p className={messageClassName}>
@@ -1641,9 +1833,10 @@ const ScheduleTab = ({
     if (!selectedSchedule || !churchId) return;
     setIsSendingSchedule(true);
     try {
+      const schedule = await ensureActiveSchedule();
       const result = await sendTeamSchedule(
         churchId,
-        selectedSchedule.scheduleId,
+        schedule.scheduleId,
       );
       const unreachable = result.unreachableMemberIds?.length || 0;
       const sentLabel =
@@ -1658,14 +1851,14 @@ const ScheduleTab = ({
           : sentLabel,
         unreachable > 0 ? "warning" : "success",
       );
-      onScheduleSaved({ ...selectedSchedule, sentAt: result.sentAt });
+      onScheduleSaved({ ...schedule, sentAt: result.sentAt });
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule.");
     } finally {
       setIsSendingSchedule(false);
       setIsConfirmingSend(false);
     }
-  }, [churchId, onScheduleSaved, selectedSchedule, showToast]);
+  }, [churchId, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -1690,7 +1883,7 @@ const ScheduleTab = ({
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (memberId) {
       const issue = getAssignmentIssue(memberId, serviceId, basePositionId, {
@@ -1770,7 +1963,13 @@ const ScheduleTab = ({
         return;
       }
     }
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const nextAssignments = { ...(previousSchedule.assignments || {}) };
     let targetRow = { ...(nextAssignments[serviceId] || {}) };
     if (sourceServiceId && sourcePositionSlotKey) {
       const sourceRow = { ...(nextAssignments[sourceServiceId] || {}) };
@@ -1842,14 +2041,14 @@ const ScheduleTab = ({
     );
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
     clearActiveSlot();
 
     await enqueueAssignmentSave(async () => {
       try {
         await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          previousSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -1879,12 +2078,12 @@ const ScheduleTab = ({
             isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
             onConfirm: () => {
               const retryMutationSeq = ++scheduleMutationSeqRef.current;
-              onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+              onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
               void enqueueAssignmentSave(async () => {
                 try {
                   await updateTeamScheduleAssignment(
                     churchId,
-                    selectedSchedule.scheduleId,
+                    previousSchedule.scheduleId,
                     {
                       serviceId,
                       positionSlotKey: cellKey,
@@ -1931,14 +2130,15 @@ const ScheduleTab = ({
     );
     if (!occurrence || !column) return;
 
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const before =
       previousSchedule.assignments?.[activeSlot.occurrenceId]?.[
       activeSlot.columnKey
       ] ?? "";
     try {
+      const schedule = await ensureActiveSchedule();
       const response = await enqueueAssignmentSave(() =>
-        updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+        updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
           serviceId: activeSlot.occurrenceId,
           positionSlotKey: activeSlot.columnKey,
           memberId: null,
@@ -1970,24 +2170,25 @@ const ScheduleTab = ({
 
   const commitGuestEdit = async (guest: TeamScheduleGuest) => {
     if (!canEdit || !selectedSchedule) return;
-    const guests = (selectedSchedule.guests || []).map((existingGuest) =>
-      existingGuest.guestId === guest.guestId ? guest : existingGuest,
-    );
     try {
+      const schedule = await ensureActiveSchedule();
+      const guests = (schedule.guests || []).map((existingGuest) =>
+        existingGuest.guestId === guest.guestId ? guest : existingGuest,
+      );
       const response = await enqueueAssignmentSave(() =>
-        updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
-          name: selectedSchedule.name,
-          description: selectedSchedule.description || "",
-          teamId: selectedSchedule.teamId,
-          startDate: selectedSchedule.startDate || "",
-          endDate: selectedSchedule.endDate || "",
-          serviceIds: selectedSchedule.serviceIds || [],
-          occurrences: selectedSchedule.occurrences,
-          assignments: selectedSchedule.assignments,
+        updateTeamSchedule(churchId, schedule.scheduleId, {
+          name: schedule.name,
+          description: schedule.description || "",
+          teamId: schedule.teamId,
+          startDate: schedule.startDate || "",
+          endDate: schedule.endDate || "",
+          serviceIds: schedule.serviceIds || [],
+          occurrences: schedule.occurrences,
+          assignments: schedule.assignments,
           guests,
-          microphoneAssignments: selectedSchedule.microphoneAssignments,
-          iemAssignments: selectedSchedule.iemAssignments,
-          additionalPositionSlots: selectedSchedule.additionalPositionSlots,
+          microphoneAssignments: schedule.microphoneAssignments,
+          iemAssignments: schedule.iemAssignments,
+          additionalPositionSlots: schedule.additionalPositionSlots,
         }),
       );
       onScheduleSaved(response.schedule);
@@ -2152,7 +2353,7 @@ const ScheduleTab = ({
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (action === "add") {
       const issue = getAssignmentIssue(
@@ -2233,7 +2434,13 @@ const ScheduleTab = ({
       }
     }
 
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const nextAssignments = { ...(previousSchedule.assignments || {}) };
     const targetRow = { ...(nextAssignments[serviceId] || {}) };
     const targetCell = normalizeAssignmentCell(targetRow[cellKey]);
     const nextShadows =
@@ -2275,7 +2482,7 @@ const ScheduleTab = ({
     );
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
     if (action === "add") {
       clearActiveSlot();
     }
@@ -2284,7 +2491,7 @@ const ScheduleTab = ({
       try {
         await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          previousSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2319,14 +2526,14 @@ const ScheduleTab = ({
     allowCrossTeamConflict = false,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find(
       (item) => item.occurrenceId === occurrenceId,
     );
     const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
 
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
-    const targetRow = { ...(nextAssignments[occurrenceId] || {}) };
+    let nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    let targetRow = { ...(nextAssignments[occurrenceId] || {}) };
     const applied: RowPasteApplyEntry[] = [];
     const usedMemberIds = new Set<string>();
     for (const entry of entries) {
@@ -2363,6 +2570,20 @@ const ScheduleTab = ({
       }
     }
 
+    try {
+      previousSchedule = await ensureActiveSchedule();
+      nextAssignments = { ...(previousSchedule.assignments || {}) };
+      targetRow = { ...(nextAssignments[occurrenceId] || {}) };
+      applied.forEach((entry) => {
+        const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+        const nextCell = serializeAssignmentCell({ primaryMemberId: entry.memberId, shadows: cell.shadows });
+        if (nextCell) targetRow[entry.columnKey] = nextCell;
+      });
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+
     if (Object.keys(targetRow).length > 0) {
       nextAssignments[occurrenceId] = targetRow;
     } else {
@@ -2370,12 +2591,12 @@ const ScheduleTab = ({
     }
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
 
     await enqueueAssignmentSave(async () => {
       try {
         for (const entry of applied) {
-          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+          await updateTeamScheduleAssignment(churchId, previousSchedule.scheduleId, {
             serviceId: occurrenceId,
             positionSlotKey: entry.columnKey,
             memberId: entry.memberId,
@@ -2409,7 +2630,13 @@ const ScheduleTab = ({
     unfilledCount: number,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
     const serviceDateByOccurrenceId = new Map(
       scheduleOccurrences.map((occurrence) => [
         occurrence.occurrenceId,
@@ -2419,7 +2646,7 @@ const ScheduleTab = ({
 
     // Precompute the full before/after diff up front so undo/redo treats the
     // whole batch as one step, independent of how the reveal below is paced.
-    const finalAssignments = { ...(selectedSchedule.assignments || {}) };
+    const finalAssignments = { ...(previousSchedule.assignments || {}) };
     const undoChanges: ScheduleCellChange[] = [];
     entries.forEach((entry) => {
       const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
@@ -2458,18 +2685,18 @@ const ScheduleTab = ({
     // can run together, then keep autoFilling true until this request settles.
     let saveFailed = false;
     const save = enqueueAssignmentSave(() =>
-      updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
-        name: selectedSchedule.name,
-        description: selectedSchedule.description || "",
-        teamId: selectedSchedule.teamId,
-        startDate: selectedSchedule.startDate || "",
-        endDate: selectedSchedule.endDate || "",
-        serviceIds: selectedSchedule.serviceIds || [],
+      updateTeamSchedule(churchId, previousSchedule.scheduleId, {
+        name: previousSchedule.name,
+        description: previousSchedule.description || "",
+        teamId: previousSchedule.teamId,
+        startDate: previousSchedule.startDate || "",
+        endDate: previousSchedule.endDate || "",
+        serviceIds: previousSchedule.serviceIds || [],
         occurrences: scheduleOccurrences,
         assignments: finalAssignments,
-        microphoneAssignments: selectedSchedule.microphoneAssignments,
-        iemAssignments: selectedSchedule.iemAssignments,
-        additionalPositionSlots: selectedSchedule.additionalPositionSlots,
+        microphoneAssignments: previousSchedule.microphoneAssignments,
+        iemAssignments: previousSchedule.iemAssignments,
+        additionalPositionSlots: previousSchedule.additionalPositionSlots,
       }),
     );
     // The reveal may outlast a fast rejected request. Observe it immediately so
@@ -2486,7 +2713,7 @@ const ScheduleTab = ({
     // pacing is capped so a big schedule doesn't take forever to watch, but a
     // small one still gets a visible beat per slot.
     const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
-    let revealedAssignments = { ...(selectedSchedule.assignments || {}) };
+    let revealedAssignments = { ...(previousSchedule.assignments || {}) };
     for (const entry of entries) {
       if (saveFailed) break;
       const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
@@ -2550,6 +2777,10 @@ const ScheduleTab = ({
     autoFillRunningRef.current = true;
     try {
       let getAutoFillCrossTeamConflictWarning = getCrossTeamConflictWarning;
+      const overlappingSchedule = data.schedules.find(
+        (schedule) => schedule.teamId !== selectedSchedule.teamId &&
+          !schedule.archivedAt && scheduleDateRangesOverlap(selectedSchedule, schedule),
+      );
       const hasOverlappingTeamSchedule = data.schedules.some(
         (schedule) =>
           schedule.scheduleId !== selectedSchedule.scheduleId &&
@@ -2565,7 +2796,9 @@ const ScheduleTab = ({
           // person who is already serving elsewhere.
           const detail = await getTeamScheduleDetail(
             churchId,
-            selectedSchedule.scheduleId,
+            selectedSchedule.scheduleId.startsWith("virtual:")
+              ? overlappingSchedule?.scheduleId || ""
+              : selectedSchedule.scheduleId,
           );
           getAutoFillCrossTeamConflictWarning = (memberId, occurrenceId) =>
             formatCrossTeamScheduleConflictWarning(
@@ -2646,6 +2879,7 @@ const ScheduleTab = ({
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
     try {
+      const schedule = await ensureActiveSchedule();
       const { member } = await createTeamRosterMember(churchId, {
         firstName: trimmedFirst,
         lastName: lastName.trim(),
@@ -2661,7 +2895,7 @@ const ScheduleTab = ({
       await enqueueAssignmentSave(async () => {
         const response = await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          schedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2889,9 +3123,10 @@ const ScheduleTab = ({
     if (!selectedSchedule) return;
     setCopyingLink(true);
     try {
+      const schedule = await ensureActiveSchedule();
       const { publicToken } = await getTeamSchedulePublicLink(
         churchId,
-        selectedSchedule.scheduleId,
+        schedule.scheduleId,
       );
       const url = buildTeamSchedulePublicUrl(publicToken);
       await navigator.clipboard.writeText(url);
@@ -2901,7 +3136,7 @@ const ScheduleTab = ({
     } finally {
       setCopyingLink(false);
     }
-  }, [canEdit, churchId, selectedSchedule, showToast]);
+  }, [canEdit, churchId, ensureActiveSchedule, selectedSchedule, showToast]);
 
 
   // Seed the "new schedule" draft from the selected schedule and open the form
@@ -3550,17 +3785,23 @@ const ScheduleTab = ({
       return;
     }
 
-    const previousSchedule = selectedSchedule;
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
     const nextAssignments: TeamScheduleAssignments = {
-      ...(selectedSchedule.assignments || {}),
+      ...(previousSchedule.assignments || {}),
     };
     const occurrenceAssignments = {
       ...(nextAssignments[plan.serviceId] || {}),
     };
     const previousTargetValue =
-      selectedSchedule.assignments?.[plan.serviceId]?.[plan.targetCellKey] ?? "";
+      previousSchedule.assignments?.[plan.serviceId]?.[plan.targetCellKey] ?? "";
     const previousSourceValue =
-      selectedSchedule.assignments?.[plan.serviceId]?.[plan.sourceCellKey] ?? "";
+      previousSchedule.assignments?.[plan.serviceId]?.[plan.sourceCellKey] ?? "";
     const targetCell = normalizeAssignmentCell(previousTargetValue);
     const sourceCell = normalizeAssignmentCell(previousSourceValue);
     const nextTargetValue = serializeAssignmentCell({
@@ -3602,12 +3843,12 @@ const ScheduleTab = ({
     ]);
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
     clearActiveSlot();
 
     await enqueueAssignmentSave(async () => {
       try {
-        await updateTeamScheduleAssignmentSwap(churchId, selectedSchedule.scheduleId, {
+        await updateTeamScheduleAssignmentSwap(churchId, previousSchedule.scheduleId, {
           serviceId: plan.serviceId,
           targetPositionSlotKey: plan.targetCellKey,
           sourcePositionSlotKey: plan.sourceCellKey,
@@ -3744,6 +3985,13 @@ const ScheduleTab = ({
     // over SSE — the count would only catch up on a full reload.
     selectedSchedule?.responses,
   ]);
+  const staffingProgress = useMemo(
+    () => [...fillByOccurrence.values()].reduce(
+      (total, fill) => ({ required: total.required + fill.required, filled: total.filled + fill.filled }),
+      { required: 0, filled: 0 },
+    ),
+    [fillByOccurrence],
+  );
 
   // The soonest service from today onward, highlighted in every layout.
   const nextUpcomingOccurrenceId = useMemo(
@@ -3825,8 +4073,13 @@ const ScheduleTab = ({
       microphoneIds: string[],
     ) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const baseSchedule = latestScheduleRef.current || selectedSchedule;
-      if (!baseSchedule) return;
+      let baseSchedule: TeamSchedule;
+      try {
+        baseSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
       const previousSchedule = baseSchedule;
       const assignments = { ...(baseSchedule.microphoneAssignments || {}) };
       const occurrenceAssignments = { ...(assignments[occurrenceId] || {}) };
@@ -3839,13 +4092,13 @@ const ScheduleTab = ({
       }
 
       const mutationSeq = ++scheduleMutationSeqRef.current;
-      setSavingMicrophoneSlot(`${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
+      setSavingMicrophoneSlot(`${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
       const optimisticSchedule = { ...baseSchedule, microphoneAssignments: assignments };
       latestScheduleRef.current = optimisticSchedule;
       onScheduleSaved(optimisticSchedule);
       try {
         const response = await enqueueAssignmentSave(() =>
-          updateTeamScheduleAssignmentMicrophones(churchId, selectedSchedule.scheduleId, {
+          updateTeamScheduleAssignmentMicrophones(churchId, baseSchedule.scheduleId, {
             serviceId: occurrenceId,
             positionSlotKey: columnKey,
             microphoneIds,
@@ -3872,6 +4125,7 @@ const ScheduleTab = ({
       canEdit,
       churchId,
       enqueueAssignmentSave,
+      ensureActiveSchedule,
       onScheduleSaved,
       selectedSchedule,
       showToast,
@@ -3881,8 +4135,13 @@ const ScheduleTab = ({
   const saveIemAssignment = useCallback(
     async ({ occurrenceId, columnKey }: { occurrenceId: string; columnKey: string }, iemIds: string[]) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const baseSchedule = latestScheduleRef.current || selectedSchedule;
-      if (!baseSchedule || baseSchedule.scheduleId !== selectedSchedule.scheduleId) return;
+      let baseSchedule: TeamSchedule;
+      try {
+        baseSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
       const previousSchedule = baseSchedule;
       const assignments = { ...(baseSchedule.iemAssignments || {}) };
       const row = { ...(assignments[occurrenceId] || {}) };
@@ -3891,7 +4150,7 @@ const ScheduleTab = ({
       if (Object.keys(row).length) assignments[occurrenceId] = row;
       else delete assignments[occurrenceId];
       const mutationSeq = ++scheduleMutationSeqRef.current;
-      const slotId = `${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`;
+      const slotId = `${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`;
       setSavingIemSlot(slotId);
       const optimisticSchedule = { ...baseSchedule, iemAssignments: assignments };
       latestScheduleRef.current = optimisticSchedule;
@@ -3899,7 +4158,7 @@ const ScheduleTab = ({
       try {
         const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentIems(
           churchId,
-          selectedSchedule.scheduleId,
+          baseSchedule.scheduleId,
           { serviceId: occurrenceId, positionSlotKey: columnKey, iemIds },
         ));
         if (scheduleMutationSeqRef.current === mutationSeq) {
@@ -3916,7 +4175,7 @@ const ScheduleTab = ({
         setSavingIemSlot((current) => current === slotId ? null : current);
       }
     },
-    [canEdit, churchId, enqueueAssignmentSave, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
   );
 
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
@@ -4101,21 +4360,27 @@ const ScheduleTab = ({
   const addPositionSlot = useCallback(
     async ({ serviceId, cellKey }: { serviceId: string; cellKey: string }) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const previousSchedule = selectedSchedule;
+      let previousSchedule: TeamSchedule;
+      try {
+        previousSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
       const additionalPositionSlots = {
-        ...(selectedSchedule.additionalPositionSlots || {}),
+        ...(previousSchedule.additionalPositionSlots || {}),
         [serviceId]: [
           ...new Set([
-            ...(selectedSchedule.additionalPositionSlots?.[serviceId] || []),
+            ...(previousSchedule.additionalPositionSlots?.[serviceId] || []),
             cellKey,
           ]),
         ],
       };
-      onScheduleSaved({ ...selectedSchedule, additionalPositionSlots });
+      onScheduleSaved({ ...previousSchedule, additionalPositionSlots });
       try {
         const response = await addTeamSchedulePositionSlot(
           churchId,
-          selectedSchedule.scheduleId,
+          previousSchedule.scheduleId,
           { serviceId, positionSlotKey: cellKey },
         );
         onScheduleSaved(response.schedule);
@@ -4125,7 +4390,7 @@ const ScheduleTab = ({
         showApiErrorToast(showToast, error, "Could not add this position.");
       }
     },
-    [canEdit, churchId, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
   );
 
   const addAdditionalPosition = useCallback(
@@ -4177,26 +4442,32 @@ const ScheduleTab = ({
   const confirmRemoveAdditionalPosition = useCallback(async () => {
     if (!churchId || !selectedSchedule || !pendingAdditionalPositionRemoval) return;
     const { serviceId, cellKey } = pendingAdditionalPositionRemoval;
-    const previousSchedule = selectedSchedule;
-    const additionalPositionSlots = { ...(selectedSchedule.additionalPositionSlots || {}) };
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const additionalPositionSlots = { ...(previousSchedule.additionalPositionSlots || {}) };
     const nextSlots = (additionalPositionSlots[serviceId] || []).filter(
       (slotKey) => slotKey !== cellKey,
     );
     if (nextSlots.length) additionalPositionSlots[serviceId] = nextSlots;
     else delete additionalPositionSlots[serviceId];
 
-    const assignments = { ...(selectedSchedule.assignments || {}) };
+    const assignments = { ...(previousSchedule.assignments || {}) };
     const assignmentRow = { ...(assignments[serviceId] || {}) };
     delete assignmentRow[cellKey];
     if (Object.keys(assignmentRow).length) assignments[serviceId] = assignmentRow;
     else delete assignments[serviceId];
 
-    const microphoneAssignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+    const microphoneAssignments = { ...(previousSchedule.microphoneAssignments || {}) };
     const microphoneRow = { ...(microphoneAssignments[serviceId] || {}) };
     delete microphoneRow[cellKey];
     if (Object.keys(microphoneRow).length) microphoneAssignments[serviceId] = microphoneRow;
     else delete microphoneAssignments[serviceId];
-    const iemAssignments = { ...(selectedSchedule.iemAssignments || {}) };
+    const iemAssignments = { ...(previousSchedule.iemAssignments || {}) };
     const iemRow = { ...(iemAssignments[serviceId] || {}) };
     delete iemRow[cellKey];
     if (Object.keys(iemRow).length) iemAssignments[serviceId] = iemRow;
@@ -4204,7 +4475,7 @@ const ScheduleTab = ({
 
     setPendingAdditionalPositionRemoval(null);
     onScheduleSaved({
-      ...selectedSchedule,
+      ...previousSchedule,
       additionalPositionSlots,
       assignments,
       microphoneAssignments,
@@ -4213,7 +4484,7 @@ const ScheduleTab = ({
     try {
       const response = await removeTeamSchedulePositionSlot(
         churchId,
-        selectedSchedule.scheduleId,
+        previousSchedule.scheduleId,
         { serviceId, positionSlotKey: cellKey },
       );
       onScheduleSaved(response.schedule);
@@ -4224,6 +4495,7 @@ const ScheduleTab = ({
     }
   }, [
     churchId,
+    ensureActiveSchedule,
     onScheduleSaved,
     pendingAdditionalPositionRemoval,
     selectedSchedule,
@@ -4469,54 +4741,50 @@ const ScheduleTab = ({
                   />
                 </div>
               ) : null}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
-                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-                  {/* Narrowing the picker to one team is remembered per church,
-                      so an operator who only runs Praise Team doesn't scroll
-                      past every other team's months on each visit. */}
-                  {activeTeams.length > 1 ? (
-                    <Select
-                      className="w-full sm:min-w-40 sm:w-auto"
-                      label="Filter schedules by team"
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                  <Select
+                    className="w-full sm:min-w-40 sm:w-auto"
+                    label="Team"
+                    hideLabel
+                    value={workspaceTeamId}
+                    onChange={updateScheduleTeamFilter}
+                    options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
+                    disabled={!activeTeams.length}
+                  />
+                  <Select
+                    className="w-full sm:min-w-40 sm:w-auto"
+                    label="Date range"
+                    hideLabel
+                    value={periodPreset}
+                    onChange={(value) => selectPeriodPreset(value as SchedulePeriodPreset)}
+                    options={SCHEDULE_PERIOD_OPTIONS}
+                  />
+                  <Button variant="tertiary" svg={ChevronLeft} aria-label="Previous period" onClick={() => shiftPeriod(-1)} />
+                  <span className="min-w-36 self-center text-center text-sm font-medium text-gray-200">
+                    {viewingSavedSchedule && selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
+                      ? formatSchedulePeriodName(selectedScheduleRecord.startDate, selectedScheduleRecord.endDate)
+                      : formatSchedulePeriodName(periodRange.start, periodRange.end)}
+                  </span>
+                  <Button variant="tertiary" svg={ChevronRight} aria-label="Next period" onClick={() => shiftPeriod(1)} />
+                  {periodPreset === "custom" ? (
+                    <DateRangePicker
+                      label="Custom date range"
                       hideLabel
-                      value={scheduleTeamFilter || ""}
-                      onChange={updateScheduleTeamFilter}
-                      options={scheduleTeamFilterOptions}
+                      value={{ startDate: periodRange.start, endDate: periodRange.end }}
+                      onChange={(range) => {
+                        if (range.startDate && range.endDate) setPeriodRange({ start: range.startDate, end: range.endDate });
+                        setViewingSavedSchedule(false);
+                      }}
+                      className="w-full sm:w-64"
                     />
                   ) : null}
-                  <Select
-                    className="w-full sm:min-w-48 sm:w-auto"
-                    label="Open schedule"
-                    hideLabel
-                    // Bind to the record, not the hydrated schedule, so the name
-                    // stays in the trigger while its assignments load.
-                    value={selectedScheduleRecord?.scheduleId || ""}
-                    selectedValueLabel={
-                      selectedScheduleRecord
-                        ? `${selectedScheduleRecord.name} — ${selectedTeam?.name || "No team"}`
-                        : undefined
-                    }
-                    onChange={(scheduleId) => {
-                      if (scheduleId === BROWSE_ALL_SCHEDULES_VALUE) {
-                        setIsBrowsingSchedules(true);
-                        return;
-                      }
-                      setSelectedScheduleId(scheduleId);
-                      setShowForm(false);
-                    }}
-                    options={scheduleOptions}
-                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>Schedule history</Button>
                   {canEdit ? (
-                    <Button
-                      variant="secondary"
-                      svg={Plus}
-                      iconSize="sm"
-                      onClick={() => {
-                        setSelectedScheduleId("");
-                        setShowForm(true);
-                      }}
-                    >
-                      New schedule
+                    <Button variant="tertiary" svg={Plus} iconSize="sm" onClick={() => { setSelectedScheduleId(""); setShowForm(true); }}>
+                      Create custom schedule
                     </Button>
                   ) : null}
                   {/* Confirm in a popover so the toolbar stays put; the
@@ -4574,7 +4842,7 @@ const ScheduleTab = ({
                       </PopoverContent>
                     </Popover>
                   ) : null}
-                  {canEdit && selectedSchedule ? (
+                  {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
                     <Menu
                       align="end"
                       menuItems={[
@@ -4635,6 +4903,17 @@ const ScheduleTab = ({
                   ) : null}
                 </div>
               </div>
+              {selectedSchedule && scheduleOccurrences.length > 0 ? (
+                <p className="mt-2 px-1 text-sm text-gray-400" aria-live="polite">
+                  {formatSchedulePeriodName(selectedSchedule.startDate || periodRange.start, selectedSchedule.endDate || periodRange.end)}
+                  {" · "}{scheduleOccurrences.length} {scheduleOccurrences.length === 1 ? "service" : "services"}
+                  {" · "}{selectedSchedule.scheduleId.startsWith("virtual:") && ensuringScheduleId === selectedSchedule.scheduleId
+                    ? "Starting schedule…"
+                    : selectedSchedule.scheduleId.startsWith("virtual:")
+                    ? "Staffing not started"
+                    : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`}
+                </p>
+              ) : null}
             </div>
           </section>
 
@@ -5540,8 +5819,9 @@ const ScheduleTab = ({
         teams={data.teams}
         selectedScheduleId={selectedScheduleId}
         // Opens already narrowed to the team the picker is showing.
-        initialTeamId={scheduleTeamFilter || ""}
+        initialTeamId={workspaceTeamId}
         onSelectSchedule={(scheduleId) => {
+          setViewingSavedSchedule(true);
           setSelectedScheduleId(scheduleId);
           setShowForm(false);
         }}

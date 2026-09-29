@@ -260,6 +260,138 @@ test("teams bootstrap allows view permission but mutations require edit", async 
   assert.equal(create.payload.success, false);
 });
 
+test("generated schedule ensure is idempotent and reuses an exact legacy period", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_ensure");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }],
+    members: [{ firstName: "Alex", lastName: "Rivera", positions: ["Camera"] }],
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["service-sabbath"],
+    occurrences: [{
+      occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+      serviceId: "service-sabbath",
+      name: "Sabbath Service",
+      startsAt: "2026-10-03T10:00:00.000Z",
+      positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+    }],
+  };
+  const [first, second] = await Promise.all([
+    callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body }),
+    callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body }),
+  ]);
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.equal(first.payload.schedule.scheduleId, second.payload.schedule.scheduleId);
+  assert.equal(first.payload.schedule.source, "generated-period");
+  const schedules = await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }]);
+  assert.equal(schedules.filter((schedule) => schedule.generatedPeriodKey).length, 1);
+  const assignment = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: first.payload.schedule.scheduleId },
+    body: {
+      serviceId: body.occurrences[0].occurrenceId,
+      positionSlotKey: `${positionIds.Camera}::0`,
+      memberId: memberIds.Alex,
+      serviceDate: "2026-10-03",
+    },
+  });
+  assert.equal(assignment.statusCode, 200);
+  assert.equal(
+    assignment.payload.schedule.assignments[body.occurrences[0].occurrenceId][`${positionIds.Camera}::0`].primaryMemberId,
+    memberIds.Alex,
+  );
+
+  const legacyContext = await createAdminContext("generated_schedule_legacy_reuse");
+  const legacyTeam = await seedTeam(legacyContext, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: legacyContext.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const legacy = await callHandler(authHandlers.createTeamSchedule, {
+    context: legacyContext,
+    body: { ...body, teamId: legacyTeam.teamId },
+  });
+  const reused = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: legacyContext,
+    body: { ...body, teamId: legacyTeam.teamId },
+  });
+  assert.equal(reused.statusCode, 200);
+  assert.equal(reused.payload.created, false);
+  assert.equal(reused.payload.schedule.scheduleId, legacy.payload.schedule.scheduleId);
+});
+
+test("generated schedule ensure rejects inactive services and mismatched groups", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_validation");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: "active-one", name: "First", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: "active-two", name: "Second", serviceGroupId: "other", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: "archived", name: "Old", archivedAt: "2026-01-01T00:00:00.000Z" },
+    ],
+  });
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["active-one"],
+    occurrences: [{
+      occurrenceId: "active-one@2026-10-03T10:00:00.000Z",
+      serviceId: "active-one",
+      name: "First",
+      startsAt: "2026-10-03T10:00:00.000Z",
+      positionRequirements: [],
+    }],
+  };
+  const archived = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: { ...body, serviceIds: ["archived"], occurrences: [{ ...body.occurrences[0], serviceId: "archived", occurrenceId: "archived@2026-10-03T10:00:00.000Z" }] },
+  });
+  assert.equal(archived.statusCode, 400);
+  const wrongGroup = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      ...body,
+      serviceIds: ["active-one", "active-two"],
+      occurrences: [{
+        ...body.occurrences[0],
+        serviceIds: ["active-one", "active-two"],
+        groupId: "combined",
+        occurrenceId: "group:combined@2026-10-03",
+      }],
+    },
+  });
+  assert.equal(wrongGroup.statusCode, 400);
+  const wrongWeekday = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      ...body,
+      occurrences: [{
+        ...body.occurrences[0],
+        occurrenceId: "active-one@2026-10-04T10:00:00.000Z",
+        startsAt: "2026-10-04T10:00:00.000Z",
+      }],
+    },
+  });
+  assert.equal(wrongWeekday.statusCode, 400);
+});
+
 test("Services edit can change service plans but not team records", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");
@@ -2923,6 +3055,26 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
   const cameraId = positionIds.Camera;
   const kevinId = memberIds.Kevin;
 
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [
+        { id: "mic-public", name: "Black", type: "Handheld", color: "#123456" },
+        { id: "mic-unrelated", name: "Private mic", type: "Lapel", color: "#abcdef" },
+      ],
+      audiences: [],
+    },
+  });
+  await callHandler(authHandlers.saveServiceEquipment, {
+    context,
+    body: {
+      equipment: [
+        { id: "iem-public", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
+        { id: "iem-unrelated", category: "iem", name: "Private pack", subtype: "wired-beltpack" },
+      ],
+    },
+  });
+
   const occurrenceId = "svc@2026-06-06T10:00:00.000Z";
   const schedule = await callHandler(authHandlers.createTeamSchedule, {
     context,
@@ -2940,6 +3092,16 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
           startsAt: "2026-06-06T10:00:00.000Z",
         },
       ],
+      microphoneAssignments: {
+        [occurrenceId]: {
+          [`${directorId}::0`]: ["mic-public", "mic-missing"],
+        },
+      },
+      iemAssignments: {
+        [occurrenceId]: {
+          [`${directorId}::0`]: ["iem-public", "iem-missing"],
+        },
+      },
     },
   });
   const scheduleId = schedule.payload.schedule.scheduleId;
@@ -2986,6 +3148,28 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
       .primaryMemberId,
     kevinId,
   );
+  assert.deepEqual(
+    publicRes.payload.schedule.microphoneAssignments[occurrenceId][`${directorId}::0`],
+    ["mic-public", "mic-missing"],
+  );
+  assert.deepEqual(
+    publicRes.payload.schedule.iemAssignments[occurrenceId][`${directorId}::0`],
+    ["iem-public", "iem-missing"],
+  );
+  assert.deepEqual(publicRes.payload.microphones, [
+    { id: "mic-public", name: "Black", type: "Handheld", color: "#123456", category: "microphone" },
+  ]);
+  assert.deepEqual(publicRes.payload.serviceEquipment, [
+    {
+      id: "iem-public",
+      category: "iem",
+      name: "IEM 1",
+      subtype: "wireless-beltpack",
+      color: "#654321",
+    },
+  ]);
+  assert.ok(!JSON.stringify(publicRes.payload).includes("Private mic"));
+  assert.ok(!JSON.stringify(publicRes.payload).includes("Private pack"));
 
   // Names resolved to first name; full last names never leave the server.
   const kevin = publicRes.payload.members.find(
@@ -5607,6 +5791,129 @@ test("service plan templates: create, update in place, list, scope, and delete",
     context,
   });
   assert.equal(afterDelete.payload.templates.length, 1);
+});
+
+test("bulk template application creates fresh plans, skips existing plans, and preserves scheduled roles", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_bulk_apply");
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "bulk-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const templateResponse = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: {
+      name: "Standard Sabbath",
+      sections: [{
+        id: "template-section",
+        name: "Service",
+        elements: [{
+          id: "template-song",
+          type: "free",
+          title: richText("Opening song"),
+          scheduledPositionIds: ["worship-lead"],
+        }],
+      }],
+    },
+  });
+  const templateId = templateResponse.payload.template.templateId;
+  const targets = ["2026-10-03", "2026-10-10"].map((date) => ({
+    serviceId: "bulk-sabbath",
+    serviceIds: ["bulk-sabbath"],
+    occurrenceId: `bulk-sabbath@${date}T10:00:00.000Z`,
+    startsAt: `${date}T10:00:00.000Z`,
+    date,
+  }));
+  const applied = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
+    context,
+    body: { templateId, targets, existingPlanMode: "skip", timeZone: "UTC" },
+  });
+  assert.equal(applied.statusCode, 200);
+  assert.equal(applied.payload.created.length, 2);
+  assert.deepEqual(applied.payload.skippedExisting, []);
+  const repeated = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
+    context,
+    body: { templateId, targets, existingPlanMode: "skip", timeZone: "UTC" },
+  });
+  assert.deepEqual(repeated.payload.created, []);
+  assert.equal(repeated.payload.skippedExisting.length, 2);
+
+  const plans = await callHandler(authHandlers.listServicePlans, { context });
+  const planDocs = await Promise.all(applied.payload.created.map((key) =>
+    getDoc("servicePlans", `${context.churchId}::${key}`),
+  ));
+  const sections = planDocs.map((plan) => plan.sections[0]);
+  const elements = sections.map((section) => section.elements[0]);
+  assert.equal(plans.payload.servicePlans.length, 2);
+  assert.notEqual(sections[0].id, sections[1].id);
+  assert.notEqual(elements[0].id, elements[1].id);
+  assert.deepEqual(elements[0].scheduledPositionIds, ["worship-lead"]);
+  assert.deepEqual(elements[1].scheduledPositionIds, ["worship-lead"]);
+});
+
+test("bulk service-default mode skips occurrences without a default template", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_bulk_defaults");
+  const template = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { name: "Default", sections: [] },
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: "bulk-default", name: "With default", defaultPlanTemplateId: template.payload.template.templateId, reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
+      { id: "bulk-no-default", name: "No default", reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
+    ],
+  });
+  const targets = [
+    { serviceId: "bulk-default", serviceIds: ["bulk-default"], occurrenceId: "bulk-default@2026-11-01T10:00:00.000Z", startsAt: "2026-11-01T10:00:00.000Z", date: "2026-11-01" },
+    { serviceId: "bulk-no-default", serviceIds: ["bulk-no-default"], occurrenceId: "bulk-no-default@2026-11-08T10:00:00.000Z", startsAt: "2026-11-08T10:00:00.000Z", date: "2026-11-08" },
+  ];
+  const response = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
+    context,
+    body: { useServiceDefaults: true, targets, existingPlanMode: "skip", timeZone: "UTC" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload.created, ["bulk-default@2026-11-01"]);
+  assert.deepEqual(response.payload.skippedNoTemplate, ["bulk-no-default@2026-11-08"]);
+});
+
+test("bulk template application preserves combined-service plan keys", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_bulk_combined");
+  const template = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { name: "Combined service", sections: [] },
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: "combined-early", name: "Early", serviceGroupId: "sabbath", reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
+      { id: "combined-late", name: "Late", serviceGroupId: "sabbath", reccurence: "weekly", dayOfWeek: 0, time: "11:00" },
+    ],
+  });
+  const target = {
+    serviceId: "combined-early",
+    serviceIds: ["combined-early", "combined-late"],
+    groupId: "sabbath",
+    occurrenceId: "group:sabbath@2026-11-01",
+    startsAt: "2026-11-01T10:00:00.000Z",
+    date: "2026-11-01",
+  };
+  const response = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
+    context,
+    body: {
+      templateId: template.payload.template.templateId,
+      targets: [target],
+      existingPlanMode: "skip",
+      timeZone: "UTC",
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload.created, ["group:sabbath@2026-11-01"]);
+  const plan = await getDoc("servicePlans", `${context.churchId}::group:sabbath@2026-11-01`);
+  assert.deepEqual(plan.serviceIds, ["combined-early", "combined-late"]);
+  assert.equal(plan.groupId, "sabbath");
 });
 
 test("service plan assignment history: church-scoped, deduped, and merges across saves", async (t) => {
@@ -8792,10 +9099,21 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
 
   const catalog = await callHandler(authHandlers.saveServiceEquipment, {
     context,
-    body: { equipment: [{ id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack" }] },
+    body: { equipment: [
+      { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack" },
+      { id: "iem-custom", category: "iem", name: "Custom pack", subtype: "Auracast receiver", color: "#Ab12Ef" },
+    ] },
   });
   assert.equal(catalog.statusCode, 200);
   assert.equal(catalog.payload.equipment[0].category, "iem");
+  assert.equal(catalog.payload.equipment[0].id, "iem-1");
+  assert.equal(catalog.payload.equipment[0].color, "#9ca3af");
+  assert.equal(catalog.payload.equipment[1].id, "iem-custom");
+  assert.equal(catalog.payload.equipment[1].subtype, "Auracast receiver");
+  assert.equal(catalog.payload.equipment[1].color, "#ab12ef");
+  const loadedCatalog = await callHandler(authHandlers.getServiceEquipment, { context });
+  assert.equal(loadedCatalog.statusCode, 200);
+  assert.deepEqual(loadedCatalog.payload.equipment, catalog.payload.equipment);
   await callHandler(authHandlers.saveServicePlanMicrophones, {
     context,
     body: { microphones: [{ id: "iem-1", name: "Mic 1", type: "Handheld", color: "#22d3ee" }], audiences: [] },

@@ -3,7 +3,8 @@ import type {
   TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { formatPlainDate } from "@/utils/plainDate";
+import { formatSchedulePeriodName } from "./schedulePeriodUtils";
 import { filterServicesWithOccurrencesInRange } from "@/utils/teamScheduleOccurrences";
 import { scheduleDateRangesOverlap } from "./scheduleConflicts";
 import { isActive } from "../teamsUtils";
@@ -134,44 +135,7 @@ export const getCreateScheduleDefaultServiceIds = ({
  * Suggested schedule name from a date window. Full month → "October 2026";
  * otherwise a short inclusive range label.
  */
-export const formatSuggestedScheduleName = (
-  startDate: string,
-  endDate: string,
-): string => {
-  const start = parsePlainDate(startDate);
-  const end = parsePlainDate(endDate);
-  if (!start || !end) return "";
-
-  const sameMonth =
-    start.getFullYear() === end.getFullYear() &&
-    start.getMonth() === end.getMonth();
-  const isMonthStart = start.getDate() === 1;
-  const lastDayOfEndMonth = new Date(
-    end.getFullYear(),
-    end.getMonth() + 1,
-    0,
-  ).getDate();
-  const isMonthEnd = end.getDate() === lastDayOfEndMonth;
-
-  if (sameMonth && isMonthStart && isMonthEnd) {
-    return start.toLocaleDateString(undefined, {
-      month: "long",
-      year: "numeric",
-    });
-  }
-
-  const startLabel = start.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  const endLabel = end.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  return `${startLabel} – ${endLabel}`;
-};
+export const formatSuggestedScheduleName = formatSchedulePeriodName;
 
 export const resolveScheduleNameForSave = ({
   name,

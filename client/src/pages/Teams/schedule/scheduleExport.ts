@@ -58,10 +58,31 @@ export type ScheduleExportInput = {
   assignments:
     | Record<string, Record<string, TeamScheduleCellAssignment>>
     | undefined;
+  /** Generic storage adapter for assignments to any displayable equipment. */
+  equipmentAssignments?: Record<
+    string,
+    Record<string, { id: string; category: string }[]>
+  >;
+  /** Sanitized display metadata; missing IDs are ignored safely. */
+  equipmentCatalog?: ScheduleExportEquipment[];
   members: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   /** When set, every cell holding this member is flagged for highlighting. */
   highlightMemberId?: string;
+};
+
+export type ScheduleExportEquipment = {
+  id: string;
+  category: string;
+  name: string;
+  type?: string;
+  subtype?: string;
+  color?: string;
+};
+
+export type ScheduleExportEquipmentAssignment = {
+  id: string;
+  category: string;
 };
 
 /** One assigned person within a cell. */
@@ -77,6 +98,7 @@ export type ScheduleExportCellState = "inactive" | "empty" | "filled";
 export type ScheduleExportCell = {
   state: ScheduleExportCellState;
   tokens: ScheduleExportToken[];
+  equipment?: ScheduleExportEquipment[];
   /** True when any token in the cell is the highlighted member. */
   highlighted: boolean;
 };
@@ -115,11 +137,13 @@ const buildCell = ({
   occurrenceId,
   input,
   nameOf,
+  equipmentById,
 }: {
   column: ScheduleExportColumn;
   occurrenceId: string;
   input: ScheduleExportInput;
   nameOf: (memberId: string) => string;
+  equipmentById: Map<string, ScheduleExportEquipment>;
 }): ScheduleExportCell => {
   const requiredCount = input.requiredCountFor(occurrenceId, column.positionId);
   // requiredCountFor is baseline-only; synthesize a one-position requirement so
@@ -135,7 +159,7 @@ const buildCell = ({
       input.additionalPositionSlots?.[occurrenceId],
     )
   ) {
-    return { state: "inactive", tokens: [], highlighted: false };
+    return { state: "inactive", tokens: [], equipment: [], highlighted: false };
   }
 
   const cell = input.assignments?.[occurrenceId]?.[column.columnKey];
@@ -143,6 +167,11 @@ const buildCell = ({
   const shadows = getCellShadowAssignments(cell);
 
   const tokens: ScheduleExportToken[] = [];
+  const equipment = (input.equipmentAssignments?.[occurrenceId]?.[column.columnKey] || [])
+    .flatMap(({ id, category }) => {
+      const item = equipmentById.get(`${category}\u0000${id}`);
+      return item ? [item] : [];
+    });
   if (primaryId) {
     tokens.push({
       name: nameOf(primaryId),
@@ -158,12 +187,13 @@ const buildCell = ({
     });
   });
 
-  if (tokens.length === 0) {
-    return { state: "empty", tokens: [], highlighted: false };
+  if (tokens.length === 0 && equipment.length === 0) {
+    return { state: "empty", tokens: [], equipment: [], highlighted: false };
   }
   return {
-    state: "filled",
+    state: tokens.length || equipment.length ? "filled" : "empty",
     tokens,
+    equipment,
     highlighted: tokens.some((token) => token.highlighted),
   };
 };
@@ -176,6 +206,9 @@ export const buildScheduleExportModel = (
   );
   const nameOf = (memberId: string) =>
     scheduleMemberName(memberById.get(memberId), input.duplicateFirstNames);
+  const equipmentById = new Map(
+    (input.equipmentCatalog || []).map((item) => [`${item.category}\u0000${item.id}`, item]),
+  );
 
   const groups: ScheduleExportGroup[] = input.groups.map((group) => ({
     serviceName: group.serviceName,
@@ -189,6 +222,7 @@ export const buildScheduleExportModel = (
           occurrenceId: occurrence.occurrenceId,
           input,
           nameOf,
+          equipmentById,
         }),
       ),
     })),
@@ -212,9 +246,27 @@ export const buildScheduleExportModel = (
 export const formatExportCellText = (cell: ScheduleExportCell): string => {
   if (cell.state === "inactive") return "";
   if (cell.state === "empty") return EXPORT_EMPTY_SLOT_LABEL;
-  return cell.tokens
+  const people = cell.tokens
     .map((token) =>
       token.roleNote ? `${token.name} (${token.roleNote})` : token.name,
-    )
-    .join("\n");
+    );
+  const primaryAndEquipment: string[] = [];
+  const primaryIndex = cell.tokens.findIndex((token) => !token.roleNote);
+  if (primaryIndex >= 0) {
+    primaryAndEquipment.push(people[primaryIndex]);
+  } else {
+    primaryAndEquipment.push(...people);
+  }
+  primaryAndEquipment.push(...(cell.equipment || []).map((item) => {
+    const label = item.category === "microphone"
+      ? "Mic"
+      : item.category === "iem"
+        ? "IEM"
+        : item.category.charAt(0).toUpperCase() + item.category.slice(1);
+    return `${label}: ${item.name}`;
+  }));
+  if (primaryIndex >= 0) {
+    primaryAndEquipment.push(...people.filter((_person, index) => index !== primaryIndex));
+  }
+  return primaryAndEquipment.join("\n");
 };

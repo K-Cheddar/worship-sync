@@ -1184,6 +1184,11 @@ export type TeamSchedulePayload = {
   allowCrossTeamConflict?: boolean;
 };
 
+export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
+  /** IANA zone used to validate each generated service occurrence. */
+  timeZone: string;
+};
+
 export type TeamIntakeFormPayload = {
   name: string;
   startDate: string;
@@ -2074,6 +2079,15 @@ export const createTeamSchedule = async (
     },
   );
 
+export const ensureTeamScheduleForPeriod = async (
+  churchId: string,
+  body: EnsureTeamScheduleForPeriodPayload,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean }>(
+    `api/churches/${churchId}/team-schedules/ensure`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
 export const updateTeamSchedule = async (
   churchId: string,
   scheduleId: string,
@@ -2276,6 +2290,35 @@ export const saveServicePlan = async (
       body: JSON.stringify(body),
     },
   );
+
+export type BulkServicePlanTarget = {
+  serviceId: string;
+  serviceIds: string[];
+  groupId?: string;
+  occurrenceId: string;
+  startsAt: string;
+  date: string;
+};
+
+export const applyServicePlanTemplateBulk = async (
+  churchId: string,
+  body: {
+    templateId?: string;
+    useServiceDefaults?: boolean;
+    timeZone: string;
+    targets: BulkServicePlanTarget[];
+    existingPlanMode: "skip";
+  },
+) => apiFetch<{
+  success: boolean;
+  created: string[];
+  skippedExisting: string[];
+  skippedNoTemplate: string[];
+  failed: { planKey: string; error: string }[];
+}>(`api/churches/${churchId}/service-plans/apply-template-bulk`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
 
 export const publishServicePlan = async (churchId: string, planKey: string) =>
   apiFetch<{

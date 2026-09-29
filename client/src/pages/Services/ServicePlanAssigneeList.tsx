@@ -4,6 +4,8 @@ import Button from "../../components/Button/Button";
 import HistorySuggestField from "../../components/HistorySuggestField/HistorySuggestField";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
 import { ServicePlanMicrophoneIcon } from "../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentChip } from "../../components/ServiceEquipmentChip";
+import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../components/ServiceEquipmentIcon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -570,8 +572,7 @@ const ServicePlanAssigneeList = ({
               })}
 
               {assigneeIems.map((iem) => (
-                <span key={iem.id} className="inline-flex items-center gap-1 rounded-full border border-cyan-700/60 bg-cyan-950/50 px-2 py-1 text-xs text-cyan-100">
-                  <span>{iem.name}</span>
+                <ServiceEquipmentChip key={iem.id} equipment={iem} className="gap-1 rounded-full px-2 py-1">
                   {allowEdit ? (
                     <Button
                       type="button"
@@ -590,7 +591,7 @@ const ServicePlanAssigneeList = ({
                       }}
                     />
                   ) : null}
-                </span>
+                </ServiceEquipmentChip>
               ))}
 
               {allowEdit && availableIems.length ? (
@@ -613,7 +614,11 @@ const ServicePlanAssigneeList = ({
                         onSelect={() => updateAssignee(assignee.id, {
                           iemIds: [...(assignee.iemIds || []), iem.id],
                         })}
-                      >{iem.name}</DropdownMenuItem>
+                      >
+                        <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
+                        <span className="truncate">{iem.name}</span>
+                        <span className="ml-auto shrink-0 text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span>
+                      </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>

@@ -471,7 +471,25 @@ export type TeamSchedulePublicSnapshot = {
     endDate: string;
     occurrences: TeamScheduleOccurrence[];
     assignments: TeamScheduleAssignments;
+    microphoneAssignments?: TeamScheduleMicrophoneAssignments;
+    iemAssignments?: TeamScheduleIemAssignments;
   };
+  /** Only sanitized catalog entries referenced by this schedule are returned. */
+  microphones?: {
+    id: string;
+    category: "microphone";
+    name: string;
+    type: string;
+    color: string;
+  }[];
+  /** The public snapshot currently includes only referenced IEM equipment. */
+  serviceEquipment?: {
+    id: string;
+    category: "iem";
+    name: string;
+    subtype?: string;
+    color?: string;
+  }[];
   positions: {
     positionId: string;
     name: string;
@@ -502,6 +520,10 @@ export type TeamScheduleSummary = {
   startDate?: string;
   endDate?: string;
   serviceIds: string[];
+  /** Identifies schedules created lazily for a generated team/date period. */
+  source?: "generated-period" | "custom";
+  /** Stable logical key used by the idempotent generated-period endpoint. */
+  generatedPeriodKey?: string;
   occurrences?: TeamScheduleOccurrence[];
   /** Schedule-only people available for guest assignments and recent reuse. */
   guests?: TeamScheduleGuest[];

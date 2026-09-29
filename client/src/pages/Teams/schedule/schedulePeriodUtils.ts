@@ -1,0 +1,61 @@
+import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+
+export type SchedulePeriodPreset =
+  | "thisMonth"
+  | "nextMonth"
+  | "thisQuarter"
+  | "nextQuarter"
+  | "custom";
+
+export const SCHEDULE_PERIOD_OPTIONS: { value: SchedulePeriodPreset; label: string }[] = [
+  { value: "thisMonth", label: "This month" },
+  { value: "nextMonth", label: "Next month" },
+  { value: "thisQuarter", label: "This quarter" },
+  { value: "nextQuarter", label: "Next quarter" },
+  { value: "custom", label: "Custom" },
+];
+
+export const rangeFromPreset = (
+  preset: Exclude<SchedulePeriodPreset, "custom">,
+  now = new Date(),
+) => {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const quarterStartMonth = Math.floor(month / 3) * 3;
+  let start: Date;
+  let end: Date;
+  switch (preset) {
+    case "thisMonth":
+      start = new Date(year, month, 1);
+      end = new Date(year, month + 1, 0);
+      break;
+    case "nextMonth":
+      start = new Date(year, month + 1, 1);
+      end = new Date(year, month + 2, 0);
+      break;
+    case "thisQuarter":
+      start = new Date(year, quarterStartMonth, 1);
+      end = new Date(year, quarterStartMonth + 3, 0);
+      break;
+    case "nextQuarter":
+      start = new Date(year, quarterStartMonth + 3, 1);
+      end = new Date(year, quarterStartMonth + 6, 0);
+      break;
+  }
+  return { start: formatPlainDate(start), end: formatPlainDate(end) };
+};
+
+export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
+  const start = parsePlainDate(startDate);
+  const end = parsePlainDate(endDate);
+  if (!start || !end) return "";
+  const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
+  const monthLastDate = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+  if (sameMonth && start.getDate() === 1 && end.getDate() === monthLastDate) {
+    return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+  const format = (date: Date) => date.toLocaleDateString(undefined, {
+    month: "short", day: "numeric", year: "numeric",
+  });
+  return `${format(start)} – ${format(end)}`;
+};

@@ -518,8 +518,66 @@ describe("Teams", () => {
     ).toBeInTheDocument();
     await waitForTeamsBootstrap();
     expect(
-      await screen.findByText(/Create a team, services, and a schedule/i),
+      await screen.findByText(/No service occurrences are configured for this period/i),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Service Setup" })).toHaveAttribute(
+      "href",
+      "/teams-and-services/service-setup",
+    );
+  });
+
+  it("opens the current service occurrence workspace without a render loop", async () => {
+    const serviceId = "service-current-weekly";
+    const positionId = "position-vocal";
+    mockState = {
+      undoable: {
+        present: {
+          serviceTimes: {
+            list: [
+              {
+                ...mockSharedServices[0],
+                id: serviceId,
+                name: "Weekly service",
+                reccurence: "weekly",
+                dayOfWeek: new Date().getDay(),
+                time: "10:00",
+                positionRequirements: [{ positionId, count: 1 }],
+              },
+            ],
+          },
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...baseBootstrap,
+        positions: [
+          {
+            positionId,
+            churchId: "church-1",
+            teamId: "team-main",
+            name: "Vocal",
+            icon: "mic",
+          },
+        ],
+      }),
+    );
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      renderTeams();
+
+      expect(
+        await screen.findByRole("group", { name: "Team schedule identity" }),
+      ).toBeInTheDocument();
+      expect(
+        consoleError.mock.calls
+          .flat()
+          .some((value) => String(value).includes("Maximum update depth exceeded")),
+      ).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("assigns a microphone from the selected team's schedule", async () => {

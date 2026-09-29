@@ -26,22 +26,33 @@ const cellHasAssignee = (cell: {
 export const buildPublicScheduleColumns = ({
   assignments,
   positions,
+  equipmentAssignments,
 }: {
   assignments: TeamScheduleAssignments | undefined;
   positions: PublicSchedulePosition[];
+  equipmentAssignments?: Record<string, Record<string, unknown[]>>;
 }): {
   columns: ScheduleExportColumn[];
   slotCountByPosition: Map<string, number>;
 } => {
   const maxSlotByPosition = new Map<string, number>();
-  Object.values(assignments || {}).forEach((row) => {
+  const includeSlot = (key: string) => {
+    const parsed = parseSlotKey(key);
+    if (!parsed) return;
+    const previous = maxSlotByPosition.get(parsed.positionId);
+    if (previous === undefined || parsed.slot > previous) {
+      maxSlotByPosition.set(parsed.positionId, parsed.slot);
+    }
+  };
+  Object.entries(assignments || {}).forEach(([occurrenceId, row]) => {
     Object.entries(row || {}).forEach(([key, cell]) => {
-      const parsed = parseSlotKey(key);
-      if (!parsed || !cellHasAssignee(cell)) return;
-      const previous = maxSlotByPosition.get(parsed.positionId);
-      if (previous === undefined || parsed.slot > previous) {
-        maxSlotByPosition.set(parsed.positionId, parsed.slot);
-      }
+      if (cellHasAssignee(cell)) includeSlot(key);
+      else if (equipmentAssignments?.[occurrenceId]?.[key]?.length) includeSlot(key);
+    });
+  });
+  Object.values(equipmentAssignments || {}).forEach((row) => {
+    Object.entries(row || {}).forEach(([key, values]) => {
+      if (values?.length) includeSlot(key);
     });
   });
 
@@ -79,27 +90,38 @@ export const buildPublicScheduleColumns = ({
 export const buildPublicServiceSlotCounts = ({
   assignments,
   serviceIdByOccurrence,
+  equipmentAssignments,
 }: {
   assignments: TeamScheduleAssignments | undefined;
   serviceIdByOccurrence: Map<string, string>;
+  equipmentAssignments?: Record<string, Record<string, unknown[]>>;
 }): Map<string, Map<string, number>> => {
   const byService = new Map<string, Map<string, number>>();
-  Object.entries(assignments || {}).forEach(([occurrenceId, row]) => {
+  const includeSlot = (occurrenceId: string, key: string) => {
     const serviceId = serviceIdByOccurrence.get(occurrenceId);
     if (!serviceId) return;
+    const parsed = parseSlotKey(key);
+    if (!parsed) return;
+    let positionCounts = byService.get(serviceId);
+    if (!positionCounts) {
+      positionCounts = new Map<string, number>();
+      byService.set(serviceId, positionCounts);
+    }
+    const totalSlots = parsed.slot + 1;
+    const previous = positionCounts.get(parsed.positionId);
+    if (previous === undefined || totalSlots > previous) {
+      positionCounts.set(parsed.positionId, totalSlots);
+    }
+  };
+  Object.entries(assignments || {}).forEach(([occurrenceId, row]) => {
     Object.entries(row || {}).forEach(([key, cell]) => {
-      const parsed = parseSlotKey(key);
-      if (!parsed || !cellHasAssignee(cell)) return;
-      let positionCounts = byService.get(serviceId);
-      if (!positionCounts) {
-        positionCounts = new Map<string, number>();
-        byService.set(serviceId, positionCounts);
-      }
-      const totalSlots = parsed.slot + 1;
-      const previous = positionCounts.get(parsed.positionId);
-      if (previous === undefined || totalSlots > previous) {
-        positionCounts.set(parsed.positionId, totalSlots);
-      }
+      if (cellHasAssignee(cell)) includeSlot(occurrenceId, key);
+      else if (equipmentAssignments?.[occurrenceId]?.[key]?.length) includeSlot(occurrenceId, key);
+    });
+  });
+  Object.entries(equipmentAssignments || {}).forEach(([occurrenceId, row]) => {
+    Object.entries(row || {}).forEach(([key, values]) => {
+      if (values?.length) includeSlot(occurrenceId, key);
     });
   });
   return byService;

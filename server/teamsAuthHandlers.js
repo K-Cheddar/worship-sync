@@ -803,6 +803,32 @@ export const createTeamsAuthHandlers = ({
     },
   };
 
+  // The document id is deterministic so concurrent admins ensuring the same
+  // team/range contend on one Firestore document instead of creating siblings.
+  const generatedPeriodKeyFor = ({ teamId, startDate, endDate }) =>
+    crypto
+      .createHash("sha256")
+      .update(`${teamId}\u0000${startDate}\u0000${endDate}`)
+      .digest("hex");
+  const generatedPeriodScheduleId = (key) => `generated_${key}`;
+  const generatedPeriodEnsureQueues = new Map();
+
+  const withGeneratedPeriodEnsureLock = async (key, operation) => {
+    const previous = generatedPeriodEnsureQueues.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => { release = resolve; });
+    generatedPeriodEnsureQueues.set(key, current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (generatedPeriodEnsureQueues.get(key) === current) {
+        generatedPeriodEnsureQueues.delete(key);
+      }
+    }
+  };
+
   const normalizeShortText = (value, { max = 160 } = {}) =>
     String(value || "")
       .trim()
@@ -868,6 +894,145 @@ export const createTeamsAuthHandlers = ({
       throw httpError(400, `${fieldLabel} must be a valid date.`);
     }
     return date;
+  };
+
+  const getOccurrenceCalendarParts = (startsAt, timeZone) => {
+    const instant = new Date(startsAt);
+    if (Number.isNaN(instant.getTime())) {
+      throw httpError(400, "Choose a valid service occurrence.");
+    }
+    let parts;
+    try {
+      parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(instant);
+    } catch {
+      throw httpError(400, "Choose a valid time zone for service occurrences.");
+    }
+    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    const weekdayIndex = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday);
+    return {
+      date: `${values.year}-${values.month}-${values.day}`,
+      time: `${values.hour}:${values.minute}`,
+      weekday: weekdayIndex,
+      startsAt: instant.toISOString(),
+    };
+  };
+
+  const getServiceOccurrenceTime = (service, localDate, timeZone) => {
+    if (!service || service.archivedAt) return null;
+    if (service.startDateISO && localDate < service.startDateISO) return null;
+    if (service.endDateISO && localDate > service.endDateISO) return null;
+    const date = new Date(`${localDate}T00:00:00.000Z`);
+    const weekday = date.getUTCDay();
+    if (service.reccurence === "one_time") {
+      if (!service.dateTimeISO) return null;
+      const serviceInstant = new Date(service.dateTimeISO);
+      if (Number.isNaN(serviceInstant.getTime())) return null;
+      if (getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone).date !== localDate) return null;
+      if (service.archivedAt && serviceInstant > new Date(service.archivedAt)) return null;
+      return getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone).time;
+    }
+    if (service.reccurence === "weekly") {
+      return Number(service.dayOfWeek) === weekday && /^\d{2}:\d{2}$/.test(String(service.time || ""))
+        ? service.time
+        : null;
+    }
+    if (service.reccurence === "multi_weekly") {
+      return (service.daysOfWeek || []).find((item) =>
+        Number(item?.day) === weekday && /^\d{2}:\d{2}$/.test(String(item?.time || "")),
+      )?.time || null;
+    }
+    if (service.reccurence === "monthly") {
+      const [year, month, day] = localDate.split("-").map(Number);
+      const occurrenceDate = new Date(Date.UTC(year, month - 1, day));
+      const ordinal = Number(service.ordinal);
+      const isLastWeekday = day + 7 > new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const matchesOrdinal = ordinal === 5
+        ? isLastWeekday
+        : Math.ceil(day / 7) === ordinal;
+      return occurrenceDate.getUTCDay() === Number(service.weekday) &&
+        matchesOrdinal && /^\d{2}:\d{2}$/.test(String(service.time || ""))
+        ? service.time
+        : null;
+    }
+    return null;
+  };
+
+  const assertServiceOccurrence = ({ service, localParts, timeZone }) => {
+    const scheduledTime = getServiceOccurrenceTime(service, localParts.date, timeZone);
+    if (!scheduledTime || scheduledTime !== localParts.time) {
+      throw httpError(400, "A target does not match its current service recurrence.");
+    }
+    if (
+      service.reccurence === "one_time" &&
+      new Date(service.dateTimeISO).toISOString() !== localParts.startsAt
+    ) {
+      throw httpError(400, "A target does not match its one-time service occurrence.");
+    }
+    return scheduledTime;
+  };
+
+  const assertOccurrenceServiceGroup = ({
+    serviceId,
+    serviceIds,
+    groupId,
+    occurrenceId,
+    startsAt,
+    localParts,
+    timeZone,
+    servicesById,
+  }) => {
+    const primaryService = servicesById.get(serviceId);
+    assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    const configuredGroupId = normalizeShortText(primaryService?.serviceGroupId, { max: 160 });
+    const occurringGroupServices = configuredGroupId
+      ? [...servicesById.entries()]
+        .filter(([, service]) => normalizeShortText(service?.serviceGroupId, { max: 160 }) === configuredGroupId)
+        .map(([id, service]) => ({
+          id,
+          service,
+          time: getServiceOccurrenceTime(service, localParts.date, timeZone),
+        }))
+        .filter((entry) => entry.time)
+        .sort((left, right) =>
+          left.time.localeCompare(right.time) ||
+          String(left.service?.name || "").localeCompare(String(right.service?.name || "")),
+        )
+      : [];
+
+    if (groupId) {
+      const expectedIds = occurringGroupServices.map((entry) => entry.id);
+      if (
+        configuredGroupId !== groupId ||
+        expectedIds.length < 2 ||
+        serviceIds.length !== expectedIds.length ||
+        serviceIds.some((id, index) => id !== expectedIds[index]) ||
+        serviceId !== expectedIds[0]
+      ) {
+        throw httpError(400, "A combined occurrence does not match its configured service group.");
+      }
+      if (occurrenceId !== `group:${groupId}@${startsAt.slice(0, 10)}`) {
+        throw httpError(400, "A combined occurrence has an invalid identity.");
+      }
+      return;
+    }
+
+    if (
+      serviceIds.length !== 1 ||
+      serviceIds[0] !== serviceId ||
+      occurringGroupServices.length > 1 ||
+      occurrenceId !== `${serviceId}@${startsAt}`
+    ) {
+      throw httpError(400, "A service occurrence has an invalid identity or grouping.");
+    }
   };
 
   const normalizeOptionalPlainDate = (value, fieldLabel) => {
@@ -1113,7 +1278,7 @@ export const createTeamsAuthHandlers = ({
       category: "iem",
       name,
       ...(subtype ? { subtype } : {}),
-      ...( /^#[0-9a-f]{6}$/i.test(color) ? { color } : {}),
+      color: /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#9ca3af",
     };
   };
 
@@ -3866,6 +4031,12 @@ export const createTeamsAuthHandlers = ({
       microphoneAssignments,
       iemAssignments,
       additionalPositionSlots,
+      ...(existing?.source === "generated-period" || existing?.source === "custom"
+        ? { source: existing.source }
+        : {}),
+      ...(existing?.generatedPeriodKey
+        ? { generatedPeriodKey: existing.generatedPeriodKey }
+        : {}),
     };
   };
 
@@ -5032,6 +5203,22 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicTeamScheduleSnapshot = async (schedule) => {
     const churchId = schedule.churchId;
+    const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
+      schedule.microphoneAssignments,
+    );
+    const iemAssignments = normalizeTeamScheduleIemAssignments(
+      schedule.iemAssignments,
+    );
+    const referencedMicrophoneIds = new Set(
+      Object.values(microphoneAssignments).flatMap((row) =>
+        Object.values(row).flat(),
+      ),
+    );
+    const referencedIemIds = new Set(
+      Object.values(iemAssignments).flatMap((row) =>
+        Object.values(row).flat(),
+      ),
+    );
     const scheduleGuests = normalizeTeamScheduleGuests(schedule.guests);
     const scheduleGuestById = new Map(
       scheduleGuests.map((guest) => [guest.guestId, guest]),
@@ -5070,6 +5257,14 @@ export const createTeamsAuthHandlers = ({
     const assignedMembers = members.filter(
       (member) => member && member.churchId === churchId,
     );
+    const microphones = (Array.isArray(church?.servicePlanMicrophones)
+      ? church.servicePlanMicrophones
+      : [])
+      .map(normalizeServicePlanMicrophone)
+      .filter((microphone) => microphone && referencedMicrophoneIds.has(microphone.id))
+      .map((microphone) => ({ ...microphone, category: "microphone" }));
+    const serviceEquipment = normalizeServiceEquipmentCatalog(church?.serviceEquipment)
+      .filter((equipment) => referencedIemIds.has(equipment.id));
     const referencedPositions = positions.filter(
       (position) =>
         position &&
@@ -5113,7 +5308,11 @@ export const createTeamsAuthHandlers = ({
         endDate: schedule.endDate || "",
         occurrences: schedule.occurrences || [],
         assignments: schedule.assignments || {},
+        microphoneAssignments,
+        iemAssignments,
       },
+      microphones,
+      serviceEquipment,
       positions: sortPositionsByOrder(referencedPositions).map((position) => ({
         positionId: position.positionId,
         name: position.name,
@@ -9826,6 +10025,163 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async ensureTeamScheduleForPeriod(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        let payload = await validateTeamSchedulePayload(req.body, churchId);
+        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
+        if (!timeZone) throw httpError(400, "Choose a time zone for this schedule period.");
+        const admin = await requireTeamsEditForTeam(
+          req,
+          churchId,
+          payload.teamId,
+        );
+        const activeServicesById = new Map(
+          (await readChurchServiceTimes(churchId))
+            .filter((service) => !service?.archivedAt)
+            .map((service) => [
+              normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
+              service,
+            ]),
+        );
+        if (payload.serviceIds.some((serviceId) => !activeServicesById.has(serviceId))) {
+          throw httpError(400, "Choose active services for this schedule period.");
+        }
+        for (const occurrence of payload.occurrences) {
+          const localParts = getOccurrenceCalendarParts(occurrence.startsAt, timeZone);
+          if (localParts.date < payload.startDate || localParts.date > payload.endDate) {
+            throw httpError(400, "A service occurrence falls outside this schedule period.");
+          }
+          const occurrenceServiceIds = normalizeIdArray(
+            occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+          );
+          if (occurrenceServiceIds.some((serviceId) => !payload.serviceIds.includes(serviceId))) {
+            throw httpError(400, "A schedule occurrence uses a service outside the selected period.");
+          }
+          assertOccurrenceServiceGroup({
+            serviceId: occurrence.serviceId,
+            serviceIds: occurrenceServiceIds,
+            groupId: normalizeShortText(occurrence.groupId, { max: 160 }) || undefined,
+            occurrenceId: occurrence.occurrenceId,
+            startsAt: occurrence.startsAt,
+            localParts,
+            timeZone,
+            servicesById: activeServicesById,
+          });
+        }
+        const generatedPeriodKey = generatedPeriodKeyFor(payload);
+        payload = {
+          ...payload,
+          source: "generated-period",
+          generatedPeriodKey,
+        };
+
+        const createIfMissing = async () => {
+          // Reuse a legacy/custom record only when the exact period is
+          // unambiguous. Mere overlap is not enough to transfer assignment
+          // ownership from an intentionally custom schedule.
+          const samePeriod = (await listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            churchId,
+          )).filter((schedule) =>
+            !schedule.archivedAt &&
+            schedule.teamId === payload.teamId &&
+            schedule.startDate === payload.startDate &&
+            schedule.endDate === payload.endDate,
+          );
+          if (samePeriod.length === 1) {
+            return { schedule: samePeriod[0], created: false };
+          }
+          if (samePeriod.length > 1) {
+            throw httpError(
+              409,
+              "Several schedules use this exact period. Choose one from Schedule history before editing it.",
+            );
+          }
+
+          const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
+          const db = requireFirestore();
+          if (db) {
+            return db.runTransaction(async (transaction) => {
+              const ref = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+              const snapshot = await transaction.get(ref);
+              if (snapshot.exists) {
+                const existing = { scheduleId: snapshot.id, ...snapshot.data() };
+                if (
+                  existing.churchId !== churchId ||
+                  existing.generatedPeriodKey !== generatedPeriodKey
+                ) {
+                  throw httpError(409, "The generated schedule identity is unavailable.");
+                }
+                return { schedule: existing, created: false };
+              }
+              const now = nowIso();
+              const document = {
+                ...payload,
+                scheduleId,
+                churchId,
+                archivedAt: null,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+                createdAt: now,
+                createdByUid: admin.user.uid,
+              };
+              transaction.create(ref, document);
+              return { schedule: document, created: true };
+            });
+          }
+
+          return withGeneratedPeriodEnsureLock(generatedPeriodKey, async () => {
+            const existing = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+            if (existing) return { schedule: { scheduleId, ...existing }, created: false };
+            const now = nowIso();
+            const document = {
+              ...payload,
+              scheduleId,
+              churchId,
+              archivedAt: null,
+              updatedAt: now,
+              updatedByUid: admin.user.uid,
+              createdAt: now,
+              createdByUid: admin.user.uid,
+            };
+            await setDoc(COLLECTIONS.teamSchedules, scheduleId, document);
+            return { schedule: document, created: true };
+          });
+        };
+
+        // Seed position-default microphone/IEM choices exactly as normal new
+        // schedule creation does, before the deterministic record is committed.
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, "microphoneAssignments")) {
+          payload = await applyPositionDefaultMicrophones({ churchId, payload });
+        }
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, "iemAssignments")) {
+          payload = await applyPositionDefaultIems({ churchId, payload });
+        }
+        payload = { ...payload, source: "generated-period", generatedPeriodKey };
+        const result = await createIfMissing();
+        if (result.created) {
+          await addSecurityEvent({
+            type: "team_schedule_created",
+            churchId,
+            userId: admin.user.uid,
+            scheduleId: result.schedule.scheduleId,
+          });
+          emitTeamsEvent(churchId, "schedule-updated", { schedule: result.schedule });
+          await emitPublicPlansForScheduleOccurrences({
+            churchId,
+            occurrences: result.schedule.occurrences,
+            revision: result.schedule.updatedAt || nowIso(),
+          });
+        }
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not open this schedule period.");
+      }
+    },
+
     async createTeamSchedule(req, res) {
       try {
         await assertCsrf(req);
@@ -9853,6 +10209,7 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
+        payload = { ...payload, source: "custom" };
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
@@ -10501,6 +10858,166 @@ export const createTeamsAuthHandlers = ({
           error,
           "Could not save this service plan.",
         );
+      }
+    },
+
+    async applyServicePlanTemplateBulk(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
+        const rawTargets = Array.isArray(req.body?.targets) ? req.body.targets : [];
+        if (!rawTargets.length || rawTargets.length > 100) {
+          throw httpError(400, "Choose between 1 and 100 service dates.");
+        }
+        if (req.body?.existingPlanMode !== "skip") {
+          throw httpError(400, "Existing plans can only be skipped.");
+        }
+        const useServiceDefaults = req.body?.useServiceDefaults === true;
+        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
+        if (!timeZone) throw httpError(400, "Choose a time zone for service occurrences.");
+        const templateId = normalizeShortText(req.body?.templateId, { max: 160 });
+        if (!useServiceDefaults && !templateId) {
+          throw httpError(400, "Choose a service plan template.");
+        }
+        const selectedTemplate = templateId
+          ? await getDoc(COLLECTIONS.servicePlanTemplates, templateId)
+          : null;
+        if (templateId && selectedTemplate?.churchId !== churchId) {
+          throw httpError(404, "That service plan template is no longer available.");
+        }
+        const services = await readChurchServiceTimes(churchId);
+        const servicesById = new Map(services.map((service) => [
+          normalizeShortText(service?.serviceId || service?.id, { max: 160 }), service,
+        ]));
+        const targets = rawTargets.map((raw) => {
+          const serviceId = normalizeShortText(raw?.serviceId, { max: 160 });
+          const serviceIds = normalizeIdArray(raw?.serviceIds?.length ? raw.serviceIds : [serviceId]);
+          const date = assertPlainDate(raw?.date, "Service plan date");
+          const startsAt = assertTeamScheduleDateTime(raw?.startsAt, "Service occurrence date");
+          const groupId = normalizeShortText(raw?.groupId, { max: 160 }) || undefined;
+          const occurrenceId = normalizeShortText(raw?.occurrenceId, { max: 260 });
+          if (!serviceId || !serviceIds.includes(serviceId)) {
+            throw httpError(400, "A target occurrence is missing its service identity.");
+          }
+          const expectedOccurrenceId = groupId
+            ? `group:${groupId}@${date}`
+            : `${serviceId}@${startsAt}`;
+          if (!occurrenceId || occurrenceId !== expectedOccurrenceId || startsAt.slice(0, 10) !== date) {
+            throw httpError(400, "The target does not match its service occurrence.");
+          }
+          if (serviceIds.some((id) => !servicesById.has(id) || servicesById.get(id)?.archivedAt)) {
+            throw httpError(400, "Every target must use active service definitions.");
+          }
+          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
+          assertOccurrenceServiceGroup({
+            serviceId,
+            serviceIds,
+            groupId,
+            occurrenceId,
+            startsAt,
+            localParts,
+            timeZone,
+            servicesById,
+          });
+          const planKey = groupId ? `group:${groupId}@${date}` : `${serviceId}@${date}`;
+          const payload = validateServicePlanPayload({
+            serviceId,
+            serviceIds,
+            groupId,
+            date,
+            startsAt,
+            name: servicesById.get(serviceId)?.name || "Service Plan",
+            sections: [],
+          }, { churchId, planKey });
+          return { planKey, docId: buildServicePlanDocId(churchId, planKey), payload, serviceId };
+        });
+        if (new Set(targets.map((target) => target.planKey)).size !== targets.length) {
+          throw httpError(400, "The selected dates contain duplicate plan occurrences.");
+        }
+
+        const created = [];
+        const skippedExisting = [];
+        const skippedNoTemplate = [];
+        const failed = [];
+        const db = requireFirestore();
+        for (const target of targets) {
+          const service = servicesById.get(target.serviceId);
+          const targetTemplateId = useServiceDefaults
+            ? normalizeShortText(service?.defaultPlanTemplateId, { max: 160 })
+            : templateId;
+          if (!targetTemplateId) {
+            skippedNoTemplate.push(target.planKey);
+            continue;
+          }
+          const template = targetTemplateId === templateId
+            ? selectedTemplate
+            : await getDoc(COLLECTIONS.servicePlanTemplates, targetTemplateId);
+          if (!template || template.churchId !== churchId) {
+            skippedNoTemplate.push(target.planKey);
+            continue;
+          }
+          const sections = (template.sections || []).map((section) => ({
+            ...section,
+            id: createId("servicePlanSection"),
+            elements: (section.elements || []).map((element) => ({
+              ...element,
+              id: createId("servicePlanElement"),
+              assignees: (element.assignees || []).map((assignee) => ({
+                ...assignee,
+                id: createId("servicePlanAssignee"),
+              })),
+            })),
+          }));
+          const payload = validateServicePlanPayload({
+            ...target.payload,
+            name: template.name || target.payload.name,
+            sections,
+            clonedFromPlanKey: template.templateId,
+          }, { churchId, planKey: target.planKey });
+          try {
+            let wasCreated = false;
+            if (db) {
+              wasCreated = await db.runTransaction(async (transaction) => {
+                const ref = db.collection(COLLECTIONS.servicePlans).doc(target.docId);
+                const snapshot = await transaction.get(ref);
+                if (snapshot.exists) return false;
+                transaction.create(ref, buildServicePlanSaveDocument({
+                  existing: null,
+                  payload,
+                  docId: target.docId,
+                  adminUid: actorUid,
+                  now: nowIso(),
+                }));
+                return true;
+              });
+            } else {
+              wasCreated = await withGeneratedPeriodEnsureLock(`service-plan:${target.docId}`, async () => {
+                if (await getDoc(COLLECTIONS.servicePlans, target.docId)) return false;
+                await setDoc(COLLECTIONS.servicePlans, target.docId, buildServicePlanSaveDocument({
+                  existing: null,
+                  payload,
+                  docId: target.docId,
+                  adminUid: actorUid,
+                  now: nowIso(),
+                }));
+                return true;
+              });
+            }
+            if (wasCreated) created.push(target.planKey);
+            else skippedExisting.push(target.planKey);
+          } catch (error) {
+            failed.push({ planKey: target.planKey, error: error?.message || "Could not create this plan." });
+          }
+        }
+        for (const planKey of created) {
+          const plan = await getDoc(COLLECTIONS.servicePlans, buildServicePlanDocId(churchId, planKey));
+          if (plan) emitTeamsEvent(churchId, "service-plan-updated", { servicePlan: withoutServicePlanSecrets(plan) });
+        }
+        return res.json({ success: true, created, skippedExisting, skippedNoTemplate, failed });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not apply this service plan template.");
       }
     },
 

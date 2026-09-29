@@ -18,7 +18,11 @@ import {
   getSharedOccurrenceTiming,
 } from "@/utils/teamScheduleOccurrences";
 import { parsePlainDate } from "@/utils/plainDate";
-import { buildScheduleExportModel } from "./schedule/scheduleExport";
+import {
+  buildScheduleExportModel,
+  type ScheduleExportEquipment,
+  type ScheduleExportEquipmentAssignment,
+} from "./schedule/scheduleExport";
 import {
   buildPublicScheduleColumns,
   buildPublicServiceSlotCounts,
@@ -236,13 +240,36 @@ const TeamSchedulePublic = () => {
     });
   }, [snapshot?.schedule.occurrences]);
 
-  const { columns } = useMemo(
-    () =>
-      buildPublicScheduleColumns({
-        assignments: snapshot?.schedule.assignments,
-        positions: snapshot?.positions || [],
-      }),
-    [snapshot?.schedule.assignments, snapshot?.positions],
+  const { columns, equipmentAssignments } = useMemo(
+    () => {
+      const equipmentAssignments: Record<
+        string,
+        Record<string, ScheduleExportEquipmentAssignment[]>
+      > = {};
+      const appendAssignments = (
+        source: Record<string, Record<string, string[]>> | undefined,
+        category: string,
+      ) => {
+        Object.entries(source || {}).forEach(([occurrenceId, row]) => {
+          Object.entries(row || {}).forEach(([slotKey, ids]) => {
+            const assignments = equipmentAssignments[occurrenceId] ||= {};
+            const slotAssignments = assignments[slotKey] ||= [];
+            (ids || []).forEach((id) => slotAssignments.push({ id, category }));
+          });
+        });
+      };
+      appendAssignments(snapshot?.schedule.microphoneAssignments, "microphone");
+      appendAssignments(snapshot?.schedule.iemAssignments, "iem");
+      return {
+        ...buildPublicScheduleColumns({
+          assignments: snapshot?.schedule.assignments,
+          positions: snapshot?.positions || [],
+          equipmentAssignments,
+        }),
+        equipmentAssignments,
+      };
+    },
+    [snapshot?.schedule.assignments, snapshot?.schedule.iemAssignments, snapshot?.schedule.microphoneAssignments, snapshot?.positions],
   );
 
   // Slot counts scoped per service, so a position only stays active for the
@@ -256,9 +283,20 @@ const TeamSchedulePublic = () => {
     const countsByService = buildPublicServiceSlotCounts({
       assignments: snapshot?.schedule.assignments,
       serviceIdByOccurrence,
+      equipmentAssignments,
     });
     return { serviceIdByOccurrence, countsByService };
-  }, [snapshot?.schedule.assignments, snapshot?.schedule.occurrences]);
+  }, [equipmentAssignments, snapshot?.schedule.assignments, snapshot?.schedule.occurrences]);
+
+  const equipmentCatalog = useMemo<ScheduleExportEquipment[]>(() => [
+    ...(snapshot?.microphones || []).map((microphone) => ({
+      ...microphone,
+      category: "microphone",
+    })),
+    ...(snapshot?.serviceEquipment || []).map((equipment) => ({
+      ...equipment,
+    })),
+  ], [snapshot?.microphones, snapshot?.serviceEquipment]);
 
   const model = useMemo(() => {
     if (!snapshot) return null;
@@ -288,11 +326,13 @@ const TeamSchedulePublic = () => {
         return counts?.get(positionId) || 0;
       },
       assignments: snapshot.schedule.assignments,
+      equipmentAssignments,
+      equipmentCatalog,
       members: exportMembers,
       duplicateFirstNames: noDuplicates,
       highlightMemberId: highlightMemberId || undefined,
     });
-  }, [columns, exportMembers, highlightMemberId, serviceGroups, serviceSlotCounts, snapshot]);
+  }, [columns, equipmentAssignments, equipmentCatalog, exportMembers, highlightMemberId, serviceGroups, serviceSlotCounts, snapshot]);
 
   // Only people actually on this schedule are worth offering as highlight targets.
   const highlightableMembers = useMemo(() => {

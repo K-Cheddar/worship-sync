@@ -116,9 +116,12 @@ export const teamsRowIconButtonClassName =
 export const teamsRowIconButtonPadding =
   "px-2 py-1 max-md:px-2 lg:px-1 lg:py-0.5";
 
-/** Church mic catalog tiles — as many columns as the panel width allows. */
-export const microphoneCatalogGridClassName =
+/** Equipment catalog tiles — as many columns as the panel width allows. */
+export const equipmentCatalogGridClassName =
   "grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] content-start gap-2";
+
+/** Compatibility alias for existing microphone catalog consumers. */
+export const microphoneCatalogGridClassName = equipmentCatalogGridClassName;
 
 export const inputStackClassName = "min-w-0 w-full";
 

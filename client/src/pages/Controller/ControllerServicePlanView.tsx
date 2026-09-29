@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, ExternalLink, FileText, Music } from "lucide-react";
 import { getServicePlanMicrophones, getServiceEquipment } from "../../api/auth";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
+import { ServiceEquipmentChip } from "../../components/ServiceEquipmentChip";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
 import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
@@ -241,7 +242,7 @@ const ControllerServicePlanView = ({
                     return assignedMicrophones.length || assignedIems.length ? (
                       <div key={`${element.id}:${assignee.id}`} className="flex flex-wrap items-center gap-1.5">
                         {assignedMicrophones.length ? <><span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>{assignedMicrophones.map((microphone) => <ServicePlanMicrophoneChip key={microphone.id} microphone={microphone} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}</> : null}
-                        {assignedIems.length ? <><span className="ml-1 text-[10px] font-semibold uppercase text-zinc-500">IEMs</span>{assignedIems.map((iem) => <span key={iem.id} className="rounded-full border border-cyan-700/60 bg-cyan-950/50 px-2 py-0.5 text-[11px] text-cyan-100">{iem.name}</span>)}</> : null}
+                        {assignedIems.length ? <><span className="ml-1 text-[10px] font-semibold uppercase text-zinc-500">IEMs</span>{assignedIems.map((iem) => <ServiceEquipmentChip key={iem.id} equipment={iem} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}</> : null}
                         {(effectivePreference.teamName || effectivePreference.positionIds.length) && hasUnscopedMicrophoneAssignment(assignee.microphoneIds || [], element) ? <span className="text-[10px] text-zinc-500">Role not specified</span> : null}
                       </div>
                     ) : null;

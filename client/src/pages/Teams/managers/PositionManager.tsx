@@ -14,6 +14,7 @@ import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../../components/ServiceEquipmentIcon";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -657,11 +658,11 @@ const PositionManager = ({
               onValueChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value === NO_DEFAULT_IEM_VALUE ? "" : value }))}
             >
               <SelectTrigger aria-label="Default IEM" className="w-full justify-between">
-                <SelectValue placeholder="No default IEM">{selectedDefaultIem?.name || "No default IEM"}</SelectValue>
+                <SelectValue placeholder="No default IEM">{selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : "No default IEM"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NO_DEFAULT_IEM_VALUE}>No default IEM</SelectItem>
-                {iems.map((iem) => <SelectItem key={iem.id} value={iem.id} textValue={iem.name}>{iem.name}</SelectItem>)}
+                {iems.map((iem) => <SelectItem key={iem.id} value={iem.id} textValue={iem.name}><span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span></SelectItem>)}
               </SelectContent>
             </RadixSelect>
             <p className="mt-1 text-xs text-gray-400">Applied to this position&apos;s slots when a new schedule is created.</p>
