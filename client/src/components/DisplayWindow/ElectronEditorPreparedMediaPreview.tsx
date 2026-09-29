@@ -173,6 +173,7 @@ const ElectronEditorPreparedMediaPreview = ({
         outlineId={preparedMediaContext?.outlineId}
         discovery={candidateResult.discovery}
         poolCapacity={candidateResult.poolCapacity}
+        performanceClass={candidateResult.performanceClass}
         lastMediaKey={currentMediaKey}
         outputId={undefined}
         windowRole="editor"

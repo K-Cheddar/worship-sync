@@ -2,6 +2,9 @@ import { getApiBasePath } from "../../utils/environment";
 
 export interface EventData {
   elementType: string;
+  /** Stable source identity present only on saved WorshipSync plans. */
+  sourcePlanKey?: string;
+  sourcePlanElementId?: string;
   /**
    * Attached content title when the source exposes it separately from the
    * service moment. `title` remains the legacy source-column fallback.
@@ -22,10 +25,25 @@ export interface EventData {
    * display data only; `sourceLedByRaw` retains the original source text.
    */
   assigneeNames?: string[];
+  /** Stable saved-plan assignee identities, aligned with assigneeNames. */
+  assigneeRefs?: Array<{ id: string; memberId?: string; name: string }>;
   /** 24-hour HH:mm schedule time when the printout provides one. */
   startTime?: string;
   /** Supports source durations such as 1m 30s without rounding them away. */
   durationMinutes?: number;
+  /** Saved-plan content shown in the Controller preview. */
+  contentResources?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    url?: string;
+    detail?: string;
+  }>;
+  /** Saved-plan microphone assignments, grouped by the person carrying them. */
+  microphoneAssignments?: Array<{
+    assigneeName?: string;
+    microphoneIds: string[];
+  }>;
   /** Shared/default note for everyone viewing the service. */
   note?: string;
   /** Notes from custom printout columns, scoped to their column heading. */
@@ -76,6 +94,7 @@ export interface ServicePlanningTeamAssignment {
 
 export interface ServicePlanningImportData {
   planLabel: string;
+  sourcePlanKey?: string;
   sections: ServicePlanningSection[];
   teamAssignments: ServicePlanningTeamAssignment[];
 }

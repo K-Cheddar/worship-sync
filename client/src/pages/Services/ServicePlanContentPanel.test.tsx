@@ -198,6 +198,31 @@ describe("ServicePlanContentPanel resources", () => {
     expect(onUpdate.mock.calls.at(-1)?.[0].resources).toEqual([secondResources[1]]);
   }, 15000);
 
+  it("reorders song, scripture, and custom-document attachments in one sequence", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(
+      <ServicePlanContentPanel
+        element={element({
+          songRefs: [{ id: "song-occurrence", kind: "library", songId: "song-1", songName: "Opening" }],
+          resources: [
+            { id: "scripture-occurrence", type: "scripture", title: "John 3:16", data: { scripture: { label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" } } },
+            { id: "document-occurrence", type: "custom-document", title: "Reading", data: { customDocumentId: "doc-1" } },
+          ],
+          contentOrder: ["song-occurrence", "scripture-occurrence", "document-occurrence"],
+        })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Move John 3:16 later" }));
+
+    expect(onUpdate).toHaveBeenLastCalledWith({
+      contentOrder: ["song-occurrence", "document-occurrence", "scripture-occurrence"],
+    });
+  });
+
   it("preserves stored song and scripture resource references when removing another resource", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
@@ -488,8 +513,8 @@ describe("ServicePlanContentPanel resources", () => {
       />,
     );
 
-    expect(screen.getByText("Welcome Song")).toBeInTheDocument();
-    expect(screen.getByText("John 3:16 (NIV)")).toBeInTheDocument();
+    expect(screen.getAllByText("Welcome Song").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("John 3:16 (NIV)").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Remove song Welcome Song" }));
     expect(onUpdate).toHaveBeenCalledWith({ songRef: undefined, songRefs: [] });
     await user.click(screen.getByRole("button", { name: "Remove scripture John 3:16 (NIV)" }));

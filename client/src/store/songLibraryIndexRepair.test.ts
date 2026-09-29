@@ -10,6 +10,15 @@ const songDoc = (id: string, name: string): DBItem =>
 const freeDoc = (id: string, name: string, slides = [{}]): DBItem =>
   ({ _id: id, name, type: "free", background: "blue", slides }) as DBItem;
 
+const timerDoc = (id: string, name: string, background = "timer-bg"): DBItem =>
+  ({
+    _id: id,
+    name,
+    type: "timer",
+    background,
+    timerInfo: { id, name },
+  }) as DBItem;
+
 const timerItem: ServiceItem = {
   _id: "timer-1",
   name: "Countdown",
@@ -172,5 +181,143 @@ describe("library index repair middleware", () => {
     store.dispatch(allDocsSlice.actions.updateAllFreeFormDocs([]));
 
     expect(store.getState().allItems.list).toEqual([]);
+  });
+
+  it("repairs a timer when the library index loads before timer documents", () => {
+    const store = createStore();
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([]));
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-restored", "11 AM Countdown", "navy"),
+      ]),
+    );
+
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({
+        _id: "timer-restored",
+        name: "11 AM Countdown",
+        type: "timer",
+        background: "navy",
+      }),
+    ]);
+  });
+
+  it("repairs a timer when timer documents load before the library index", () => {
+    const store = createStore();
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-restored", "5 Minute Timer"),
+      ]),
+    );
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([]));
+
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({ _id: "timer-restored", type: "timer" }),
+    ]);
+  });
+
+  it("preserves existing timer rows and avoids repeated repair entries", () => {
+    const store = createStore();
+    const existingTimer: ServiceItem = {
+      _id: "timer-existing",
+      name: "Current timer name",
+      type: "timer",
+      listId: "custom-list-id",
+      background: "current-background",
+    };
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([existingTimer]));
+    const docs = [
+      timerDoc("timer-existing", "Old document name", "old-background"),
+      timerDoc("timer-restored", "Restored timer"),
+    ];
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs(docs));
+    const repairedList = store.getState().allItems.list;
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs(docs));
+
+    expect(store.getState().allItems.list).toBe(repairedList);
+    expect(store.getState().allItems.list).toHaveLength(2);
+    expect(store.getState().allItems.list).toContainEqual(existingTimer);
+  });
+
+  it("does not restore a locally deleted timer from a stale doc snapshot", () => {
+    const store = createStore();
+    const deletedTimer: ServiceItem = {
+      _id: "timer-deleted",
+      name: "Deleted timer",
+      type: "timer",
+      listId: "timer-deleted",
+      background: "",
+    };
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([deletedTimer]));
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-deleted", "Deleted timer"),
+      ]),
+    );
+    store.dispatch(
+      allItemsSlice.actions.removeItemFromAllItemsList("timer-deleted"),
+    );
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-deleted", "Deleted timer"),
+      ]),
+    );
+    expect(store.getState().allItems.list).toEqual([]);
+
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([]));
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([]));
+    expect(store.getState().allItems.list).toEqual([]);
+  });
+
+  it("does not restore a remotely removed timer before its tombstone arrives", () => {
+    const store = createStore();
+    const timer: ServiceItem = {
+      _id: "timer-remote-deleted",
+      name: "Remote timer",
+      type: "timer",
+      listId: "timer-remote-deleted",
+      background: "",
+    };
+    const staleDoc = timerDoc("timer-remote-deleted", "Remote timer");
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([timer]));
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([staleDoc]));
+    store.dispatch(allItemsSlice.actions.updateAllItemsListFromRemote([]));
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([staleDoc]));
+    expect(store.getState().allItems.list).toEqual([]);
+
+    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([]));
+    expect(store.getState().allItems.list).toEqual([]);
+  });
+
+  it("keeps the latest remote timer row without duplicating it", () => {
+    const store = createStore();
+    const localTimer: ServiceItem = {
+      _id: "timer-shared",
+      name: "Local timer name",
+      type: "timer",
+      listId: "timer-shared",
+      background: "local-background",
+    };
+    const remoteTimer: ServiceItem = {
+      ...localTimer,
+      name: "Remote timer name",
+      background: "remote-background",
+    };
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([localTimer]));
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-shared", "Older durable name", "old-background"),
+      ]),
+    );
+    store.dispatch(
+      allItemsSlice.actions.updateAllItemsListFromRemote([remoteTimer]),
+    );
+    store.dispatch(
+      allDocsSlice.actions.updateAllTimerDocs([
+        timerDoc("timer-shared", "Older durable name", "old-background"),
+      ]),
+    );
+
+    expect(store.getState().allItems.list).toEqual([remoteTimer]);
   });
 });

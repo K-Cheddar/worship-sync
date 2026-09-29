@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useId, useRef, useState } from "react";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import Toggle from "../Toggle/Toggle";
 import QuickLink from "../QuickLink/QuickLink";
@@ -7,7 +7,7 @@ import {
   QuickLinkType,
   TimerInfo,
 } from "../../types";
-import { MonitorX, MonitorUp } from "lucide-react";
+import { EyeOff, MonitorX, MonitorUp } from "lucide-react";
 import { useDispatch } from "../../hooks";
 import { clearOutput } from "../../store/presentationSlice";
 import Button from "../Button/Button";
@@ -17,6 +17,7 @@ import PopOver from "../PopOver/PopOver";
 
 const COMPACT_QUICK_LINK_COLUMNS = 1;
 const COMPACT_QUICK_LINK_GAP = 4;
+const PREVIEW_DEEP_SUSPEND_DELAY_MS = 30_000;
 
 type PresentationPreviewProps = {
   name: string;
@@ -41,6 +42,11 @@ type PresentationPreviewProps = {
   showClockTimer?: boolean;
   /** Stream only: when true, item content is faded out (overlay only). */
   streamItemContentBlocked?: boolean;
+  /** Show confirmed operator-only manual Hide Content state on stream previews. */
+  showContentHiddenIndicator?: boolean;
+  /** The last known hidden state is being retained without a fresh connection. */
+  contentHiddenUnconfirmed?: boolean;
+  contentHiddenUnconfirmedLabel?: "Offline" | "Syncing";
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
   previewScale?: number;
   /**
@@ -48,6 +54,8 @@ type PresentationPreviewProps = {
    * Prefer this over a large previewScale when the preview must use the full column.
    */
   fillWidth?: boolean;
+  /** Center a fixed-size preview within its full-width stage and cap it to that stage. */
+  centerPreview?: boolean;
   /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
    * by the monitor preview to show the discussion board while it's on the monitor. */
   previewOverride?: ReactNode;
@@ -62,6 +70,8 @@ type PresentationPreviewProps = {
    * a parent panel stays CSS-hidden.
    */
   isVisible?: boolean;
+  /** Immediately suspend preview-only media under external resource pressure. */
+  suspendPreviewMedia?: boolean;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -83,12 +93,18 @@ const PresentationPreview = ({
   timers,
   showClockTimer = false,
   streamItemContentBlocked = false,
+  showContentHiddenIndicator = false,
+  contentHiddenUnconfirmed = false,
+  contentHiddenUnconfirmedLabel = "Offline",
   previewScale = 1,
   fillWidth = false,
+  centerPreview = false,
   previewOverride,
   footer,
   isVisible = true,
+  suspendPreviewMedia = false,
 }: PresentationPreviewProps) => {
+  const contentHiddenDescriptionId = useId();
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
   const headerRef = useRef<HTMLHeadingElement | null>(null);
@@ -108,6 +124,46 @@ const PresentationPreview = ({
     null,
   );
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
+  const [rendererIsVisible, setRendererIsVisible] = useState(
+    () => document.visibilityState !== "hidden",
+  );
+  const [isDeepSuspended, setIsDeepSuspended] = useState(false);
+
+  useEffect(() => {
+    const updateRendererVisibility = () => {
+      setRendererIsVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", updateRendererVisibility);
+    updateRendererVisibility();
+    return () =>
+      document.removeEventListener("visibilitychange", updateRendererVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (!rendererIsVisible) {
+      // A hidden Electron renderer means the controller was minimized or
+      // covered at the app level; release preview decoders immediately.
+      setIsDeepSuspended(true);
+      return;
+    }
+
+    if (isVisible) {
+      setIsDeepSuspended(false);
+      return;
+    }
+
+    // CSS-hidden tabs keep their current video element warm for quick returns.
+    setIsDeepSuspended(false);
+    const timeout = window.setTimeout(
+      () => setIsDeepSuspended(true),
+      PREVIEW_DEEP_SUSPEND_DELAY_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [isVisible, rendererIsVisible]);
+
+  const previewDeepSuspended = isDeepSuspended || suspendPreviewMedia;
+  const previewIsVisible =
+    isVisible && rendererIsVisible && !previewDeepSuspended;
 
   // This display only. The per-surface clears iterate every slot of a type, so
   // clearing Lobby would blank Main alongside it.
@@ -268,6 +324,7 @@ const PresentationPreview = ({
     prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: info.bibleInfoBox,
     ...(fillWidth || !hideQuickLinks ? {} : { width: previewWidthVw }),
+    ...(centerPreview ? { className: "max-w-full" } : {}),
     showBorder,
     // Without this the preview resolves the built-in output's settings, so a
     // second projector would render the first one's clock, timer, and background.
@@ -292,11 +349,11 @@ const PresentationPreview = ({
     prevTimerInfo,
     time: info.time,
     prevTime: prevInfo.time,
-    shouldAnimate: isVisible,
-    // Keep the stable video slots mounted while hidden so returning to Displays
-    // resumes the same preview position instead of reloading from the start.
-    shouldPlayVideo: true,
-    suspendVideoPlayback: !isVisible,
+    shouldAnimate: previewIsVisible,
+    // Keep video mounted and paused during the short CSS-hidden grace period.
+    // Long-hidden previews unmount it so Chromium can release decoder work.
+    shouldPlayVideo: !previewDeepSuspended,
+    suspendVideoPlayback: !previewIsVisible,
     videoPreloadRole: "preview",
     showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
@@ -310,8 +367,8 @@ const PresentationPreview = ({
     videoPlayback: info.videoPlayback,
     // Same-machine booth tiles must show live local video, not still previews,
     // so operators can trust what the audience sees.
-    canCaptureLocalVideo: isVisible,
-    directLocalVideoCapture: isVisible,
+    canCaptureLocalVideo: previewIsVisible,
+    directLocalVideoCapture: previewIsVisible,
     playLocalVideoAudio: false,
   } as const;
 
@@ -327,7 +384,7 @@ const PresentationPreview = ({
           <div
             ref={previewColumnRef}
             className={cn(
-              "flex flex-col self-start",
+              "@container/preview flex flex-col self-start",
               (hideQuickLinks || fillWidth) && "w-full min-w-0",
               fillWidth && "items-stretch",
               hideQuickLinks && !fillWidth && "items-center",
@@ -390,6 +447,19 @@ const PresentationPreview = ({
                 )}
               </h2>
             )}
+            {info.displayType === "stream" &&
+              streamItemContentBlocked &&
+              showContentHiddenIndicator && (
+                <p
+                  aria-hidden="true"
+                  data-testid="content-hidden-preview-header-hint"
+                  className="block truncate border-b border-amber-300/20 bg-amber-950/35 px-2 py-1 text-center text-[10px] font-semibold text-amber-200 @sm/preview:hidden"
+                >
+                  {contentHiddenUnconfirmed
+                    ? `Content Hidden · ${contentHiddenUnconfirmedLabel} · ${name}`
+                    : `Content Hidden · ${name}`}
+                </p>
+              )}
             {!hideHeader && !minimalHeader && (
               <>
                 <div
@@ -451,11 +521,43 @@ const PresentationPreview = ({
               </>
             )}
             <div
-              className={cn(info.displayType === "stream" && "bg-gray-500/35")}
+              className={cn(
+                "relative @container/preview",
+                centerPreview && "flex w-full min-w-0 justify-center",
+                info.displayType === "stream" && "bg-gray-500/35",
+              )}
+              data-testid="content-hidden-preview-stage"
             >
-              {/* Keep DisplayWindow mounted while the parent tab is only
-                  CSS-hidden. Its file-video elements remain mounted but are
-                  paused by suspendVideoPlayback. */}
+              {info.displayType === "stream" &&
+                streamItemContentBlocked &&
+                showContentHiddenIndicator && (
+                  <div
+                    role="status"
+                    aria-label={`Content Hidden on ${name}`}
+                    aria-describedby={contentHiddenDescriptionId}
+                    data-testid="content-hidden-preview-badge"
+                    className={cn(
+                      "pointer-events-none absolute right-1 top-1 z-[60] inline-flex max-w-[calc(100%-0.5rem)] items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold leading-none text-amber-100 shadow-sm ring-1",
+                      contentHiddenUnconfirmed
+                        ? "border border-dashed border-amber-300/60 bg-amber-950/75 ring-transparent"
+                        : "bg-amber-950/95 ring-amber-300/40",
+                    )}
+                  >
+                    <EyeOff aria-hidden="true" className="h-3 w-3 shrink-0" />
+                    <span className="hidden truncate @sm/preview:inline">
+                      {contentHiddenUnconfirmed
+                        ? `Content Hidden · ${contentHiddenUnconfirmedLabel}`
+                        : "Content Hidden"}
+                    </span>
+                    <span id={contentHiddenDescriptionId} className="sr-only">
+                      {contentHiddenUnconfirmed
+                        ? `Last known hidden state for ${name}; the remote stream state is unconfirmed while ${contentHiddenUnconfirmedLabel.toLowerCase()}.`
+                        : `Confirmed active Hide Content state for ${name}.`}
+                    </span>
+                  </div>
+                )}
+              {/* Keep the DisplayWindow mounted so its current slide and
+                  controls stay current while preview-only media is suspended. */}
               {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
           </div>

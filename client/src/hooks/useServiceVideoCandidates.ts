@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
+import { GlobalInfoContext } from "../context/globalInfo";
 import { useGlobalBroadcast } from "./useGlobalBroadcast";
 import type {
   DBItem,
@@ -27,10 +28,13 @@ import {
   peekLocalVideoFileUrl,
 } from "../utils/localVideoFileUrlCache";
 import {
+  resolveElectronMediaSurfaceBudget,
   selectElectronMediaSurfaceCandidates,
+  type ElectronMediaSurfacePerformanceClass,
   type ElectronMediaSurfaceCandidate,
 } from "../utils/electronMediaSurfacePool";
 import {
+  subscribeToElectronMediaSurfaceDiagnostics,
   type ElectronMediaCandidateSourceKind,
   type ElectronMediaCandidateCacheStatus,
   type ElectronMediaCandidateStatus,
@@ -38,7 +42,6 @@ import {
   type ElectronMediaDiscovery,
   type ElectronMediaDiscoveryRenderer,
 } from "../utils/electronMediaSurfaceDiagnostics";
-import { DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET } from "../utils/electronMediaSurfacePool";
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
 
@@ -52,6 +55,7 @@ type ServiceItemMedia = {
 };
 
 type CacheRequestState = {
+  source?: string;
   state:
     | "in-flight"
     | "succeeded"
@@ -65,12 +69,14 @@ type CacheRequestState = {
 
 const CACHE_RETRY_DELAYS_MS = [250, 500, 1000];
 const MAX_CACHE_ATTEMPTS = CACHE_RETRY_DELAYS_MS.length;
+const INVENTORY_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 
 export type ServiceVideoCandidateResult = {
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
   discovery: ElectronMediaDiscovery;
   poolCapacity: number;
+  performanceClass: ElectronMediaSurfacePerformanceClass;
   posterUrls: string[];
 };
 
@@ -79,6 +85,7 @@ type PouchAllDocsResult = {
     id?: string;
     key?: string;
     error?: string;
+    value?: { deleted?: boolean };
     doc?: unknown;
   }>;
 };
@@ -506,6 +513,7 @@ export const useServiceVideoCandidates = ({
   outlineId,
   protectedMediaKeys,
   maxSurfaces,
+  performanceClass = "normal",
   scope = "service",
   renderer = "projector",
   controllerProfileId,
@@ -524,6 +532,7 @@ export const useServiceVideoCandidates = ({
   outlineId?: string | null;
   protectedMediaKeys?: string[];
   maxSurfaces?: number;
+  performanceClass?: ElectronMediaSurfacePerformanceClass;
   scope?: "service" | "current-item";
   renderer?: ElectronMediaDiscoveryRenderer;
   controllerProfileId?: string;
@@ -536,6 +545,7 @@ export const useServiceVideoCandidates = ({
     | "effective mirrored output source";
 }): ServiceVideoCandidateResult => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
+  const { churchId } = useContext(GlobalInfoContext) || {};
   const [serviceMedia, setServiceMedia] = useState<ServiceItemMedia[]>([]);
   const [currentMediaDiscovery, setCurrentMediaDiscovery] = useState<{
     candidate?: ElectronMediaSurfaceCandidate;
@@ -548,12 +558,16 @@ export const useServiceVideoCandidates = ({
   const activeListIdRef = useRef<string | undefined>(undefined);
   const serviceItemIdsRef = useRef<Set<string>>(new Set());
   const retryTimerRef = useRef<number | undefined>(undefined);
-  const cacheRetryTimerRef = useRef<number | undefined>(undefined);
+  const cacheRetryTimersRef = useRef(new Map<string, number>());
+  const serviceMediaRef = useRef<ServiceItemMedia[]>([]);
+  const activeMediaTargetRef = useRef<string | undefined>(undefined);
   const loadServiceMediaRef = useRef<
     ((isRetry?: boolean) => Promise<void>) | undefined
   >(undefined);
   const outlineRetryAttemptRef = useRef(0);
   const lastLoadTargetRef = useRef<string | undefined>(undefined);
+  const lastLoadDbRef = useRef<typeof db>(undefined);
+  const lastMissingItemIdsRef = useRef<string[]>([]);
   const [outlineLoad, setOutlineLoad] = useState<{
     targetOutlineId?: string | null;
     loadedOutlineId?: string;
@@ -562,6 +576,10 @@ export const useServiceVideoCandidates = ({
     error?: string;
     retryAttempt: number;
     retryAt?: number;
+    expectedItemCount?: number;
+    inventoryState?: "complete" | "incomplete" | "invalid";
+    missingItemIds?: string[];
+    invalidItemIds?: string[];
   }>({ state: "loading", retryAttempt: 0 });
 
   useEffect(() => {
@@ -586,16 +604,43 @@ export const useServiceVideoCandidates = ({
   }, [cacheRevision, currentItemId, currentMedia]);
 
   const loadServiceMedia = useCallback(async (isRetry = false) => {
-    const loadTarget = `${scope}:${outlineId === undefined ? "fallback" : outlineId ?? "none"}`;
-    if (!isRetry && lastLoadTargetRef.current !== loadTarget) {
+    const loadTarget = `${churchId ?? "no-church"}:${scope}:${outlineId === undefined ? "fallback" : outlineId ?? "none"}`;
+    if (!isRetry && (lastLoadTargetRef.current !== loadTarget || lastLoadDbRef.current !== db)) {
       outlineRetryAttemptRef.current = 0;
+      lastMissingItemIdsRef.current = [];
       lastLoadTargetRef.current = loadTarget;
+      lastLoadDbRef.current = db;
+      // Outline and church identity changes must not briefly publish the old
+      // inventory while the replacement PouchDB read is still in flight.
+      serviceMediaRef.current = [];
+      setServiceMedia([]);
+      activeMediaTargetRef.current = undefined;
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+      cacheRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      cacheRetryTimersRef.current.clear();
+      cacheRequestsRef.current.forEach((request, key) => {
+        if (request.state === "retry-scheduled") {
+          cacheRequestsRef.current.set(key, { ...request, state: "unavailable" });
+        }
+      });
     }
     const generation = ++loadGenerationRef.current;
     const apply = (next: ServiceItemMedia[]) => {
-      if (generation === loadGenerationRef.current) setServiceMedia(next);
+      if (generation === loadGenerationRef.current) {
+        serviceMediaRef.current = next;
+        setServiceMedia(next);
+      }
     };
     if (!enabled || !db) {
+      outlineRetryAttemptRef.current = 0;
+      lastMissingItemIdsRef.current = [];
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
       activeListIdRef.current = undefined;
       serviceItemIdsRef.current = new Set();
       apply([]);
@@ -654,6 +699,11 @@ export const useServiceVideoCandidates = ({
       // output leaks sanctuary media into auxiliary screens.
       const activeListId =
         outlineId === undefined ? lists?.activeList?._id : outlineId;
+      if (activeMediaTargetRef.current && activeMediaTargetRef.current !== activeListId) {
+        activeMediaTargetRef.current = undefined;
+        serviceMediaRef.current = [];
+        apply([]);
+      }
       setOutlineLoad((current) => ({
         ...current,
         targetOutlineId: activeListId,
@@ -668,6 +718,9 @@ export const useServiceVideoCandidates = ({
           loadedOutlineId: undefined,
           loadedOutlineName: undefined,
           error: undefined,
+          inventoryState: "complete",
+          missingItemIds: [],
+          invalidItemIds: [],
         }));
         return;
       }
@@ -682,6 +735,10 @@ export const useServiceVideoCandidates = ({
         .filter((itemId): itemId is string => Boolean(itemId));
       if (itemIds.length === 0) {
         activeListIdRef.current = activeListId;
+        if (activeMediaTargetRef.current !== activeListId) {
+          activeMediaTargetRef.current = activeListId;
+          serviceMediaRef.current = [];
+        }
         serviceItemIdsRef.current = new Set();
         apply([]);
         setOutlineLoad((current) => ({
@@ -690,6 +747,10 @@ export const useServiceVideoCandidates = ({
           loadedOutlineId: activeListId,
           loadedOutlineName: list.name,
           error: undefined,
+          inventoryState: "complete",
+          expectedItemCount: 0,
+          missingItemIds: [],
+          invalidItemIds: [],
         }));
         return;
       }
@@ -699,10 +760,36 @@ export const useServiceVideoCandidates = ({
         include_docs: true,
       })) as PouchAllDocsResult;
       if (generation !== loadGenerationRef.current) return;
+      const rowsById = new Map(
+        (response.rows ?? []).map((row) => {
+          const docId = row.doc && typeof row.doc === "object"
+            ? (row.doc as { _id?: unknown })._id
+            : undefined;
+          return [row.key ?? row.id ?? (typeof docId === "string" ? docId : ""), row];
+        }),
+      );
       const docsById = new Map<string, SlideBearingDocument>();
-      for (const row of response.rows ?? []) {
-        if (row.error || !isSlideBearingDocument(row.doc)) continue;
-        docsById.set(row.doc._id, row.doc);
+      const missingItemIds: string[] = [];
+      const invalidItemIds: string[] = [];
+      for (const itemId of itemIds) {
+        const row = rowsById.get(itemId);
+        const isHeading = Boolean(
+          row?.doc &&
+          typeof row.doc === "object" &&
+          (row.doc as { type?: unknown }).type === "heading",
+        );
+        if (row?.value?.deleted || isHeading) {
+          continue;
+        }
+        if (!row || row.error === "not_found" || !row.doc) {
+          missingItemIds.push(itemId);
+          continue;
+        }
+        if (!isSlideBearingDocument(row.doc)) {
+          invalidItemIds.push(itemId);
+          continue;
+        }
+        docsById.set(itemId, row.doc);
       }
       const nextServiceMedia = (
         await Promise.all(
@@ -721,15 +808,104 @@ export const useServiceVideoCandidates = ({
       if (generation !== loadGenerationRef.current) return;
       activeListIdRef.current = activeListId;
       serviceItemIdsRef.current = new Set(itemIds);
-      apply(nextServiceMedia);
+      if (activeMediaTargetRef.current !== activeListId) {
+        activeMediaTargetRef.current = activeListId;
+        serviceMediaRef.current = [];
+      }
+      const discoveredById = new Map(nextServiceMedia.map((media) => [media.itemId, media]));
+      if (missingItemIds.length > 0) {
+        serviceMediaRef.current.forEach((media) => {
+          if (!discoveredById.has(media.itemId) && !missingItemIds.includes(media.itemId)) return;
+          if (!discoveredById.has(media.itemId)) discoveredById.set(media.itemId, media);
+        });
+      }
+      const usableMedia = [...discoveredById.values()].sort((left, right) => left.itemIndex - right.itemIndex);
+      apply(usableMedia);
+      if (invalidItemIds.length > 0) {
+        const message = `Some service items are invalid and could not be prepared (${invalidItemIds.length})`;
+        setOutlineLoad((current) => ({
+          ...current,
+          expectedItemCount: itemIds.length,
+          state: "error",
+          inventoryState: "invalid",
+          invalidItemIds,
+          missingItemIds,
+          error: message,
+          retryAt: undefined,
+        }));
+        return;
+      }
+      if (missingItemIds.length > 0) {
+        const previousMissing = lastMissingItemIdsRef.current;
+        if (missingItemIds.length < previousMissing.length) {
+          // A newly replicated document is meaningful progress. Give the
+          // remaining missing rows a fresh bounded replication window.
+          outlineRetryAttemptRef.current = 0;
+          if (retryTimerRef.current !== undefined) {
+            window.clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = undefined;
+          }
+        }
+        lastMissingItemIdsRef.current = missingItemIds;
+        const attemptsFired = outlineRetryAttemptRef.current;
+        const retryDelay = INVENTORY_RETRY_DELAYS_MS[attemptsFired];
+        if (retryDelay !== undefined) {
+          const retryAt = Date.now() + retryDelay;
+          setOutlineLoad((current) => ({
+            ...current,
+            expectedItemCount: itemIds.length,
+            targetOutlineId: activeListId,
+            state: "retrying",
+            inventoryState: "incomplete",
+            missingItemIds,
+            invalidItemIds: [],
+            error: `${missingItemIds.length} service item${missingItemIds.length === 1 ? " is" : "s are"} not available from local replication yet`,
+            retryAttempt: attemptsFired + 1,
+            retryAt,
+          }));
+          if (retryTimerRef.current === undefined) {
+            const retryTarget = loadTarget;
+            const retryDb = db;
+            retryTimerRef.current = window.setTimeout(() => {
+              retryTimerRef.current = undefined;
+              if (lastLoadTargetRef.current !== retryTarget || lastLoadDbRef.current !== retryDb) return;
+              outlineRetryAttemptRef.current += 1;
+              void loadServiceMediaRef.current?.(true);
+            }, retryDelay);
+          }
+        } else {
+          setOutlineLoad((current) => ({
+            ...current,
+            expectedItemCount: itemIds.length,
+            targetOutlineId: activeListId,
+            state: "error",
+            inventoryState: "incomplete",
+            missingItemIds,
+            error: `${missingItemIds.length} service item${missingItemIds.length === 1 ? " is" : "s are"} still missing after retries`,
+            retryAttempt: attemptsFired,
+            retryAt: undefined,
+          }));
+        }
+        return;
+      }
       setOutlineLoad((current) => ({
         ...current,
+        expectedItemCount: itemIds.length,
         state: "loaded",
         loadedOutlineId: activeListId,
         loadedOutlineName: list.name,
         error: undefined,
         retryAttempt: 0,
+        retryAt: undefined,
+        inventoryState: "complete",
+        missingItemIds: [],
+        invalidItemIds: [],
       }));
+      if (retryTimerRef.current !== undefined) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+      lastMissingItemIdsRef.current = [];
       outlineRetryAttemptRef.current = 0;
     } catch (error) {
       if (generation !== loadGenerationRef.current) return;
@@ -743,48 +919,54 @@ export const useServiceVideoCandidates = ({
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const attempt = outlineRetryAttemptRef.current + 1;
-      outlineRetryAttemptRef.current = attempt;
-      const retryDelay = CACHE_RETRY_DELAYS_MS[Math.min(attempt - 1, CACHE_RETRY_DELAYS_MS.length - 1)] ?? 1000;
-      if (attempt <= MAX_CACHE_ATTEMPTS) {
+      const attemptsFired = outlineRetryAttemptRef.current;
+      const retryDelay = INVENTORY_RETRY_DELAYS_MS[attemptsFired];
+      if (retryDelay !== undefined) {
         const retryAt = Date.now() + retryDelay;
         setOutlineLoad((current) => ({
           ...current,
           state: "retrying",
+          inventoryState: scope === "service" ? "incomplete" : current.inventoryState,
           error: message,
-          retryAttempt: attempt,
+          retryAttempt: attemptsFired + 1,
           retryAt,
         }));
-        retryTimerRef.current = window.setTimeout(() => {
-          retryTimerRef.current = undefined;
-          void loadServiceMediaRef.current?.(true);
-        }, retryDelay);
+        if (retryTimerRef.current === undefined) {
+          const retryTarget = loadTarget;
+          const retryDb = db;
+          retryTimerRef.current = window.setTimeout(() => {
+            retryTimerRef.current = undefined;
+            if (lastLoadTargetRef.current !== retryTarget || lastLoadDbRef.current !== retryDb) return;
+            outlineRetryAttemptRef.current += 1;
+            void loadServiceMediaRef.current?.(true);
+          }, retryDelay);
+        }
       } else {
         setOutlineLoad((current) => ({
           ...current,
           state: "error",
+          inventoryState: scope === "service" ? "incomplete" : current.inventoryState,
           error: message,
-          retryAttempt: attempt,
+          retryAttempt: attemptsFired,
           retryAt: undefined,
         }));
       }
     }
-  }, [currentItemId, db, enabled, outlineId, scope]);
+  }, [churchId, currentItemId, db, enabled, outlineId, scope]);
 
   loadServiceMediaRef.current = loadServiceMedia;
 
   useEffect(() => {
     void loadServiceMedia();
+    const cacheRetryTimers = cacheRetryTimersRef.current;
     return () => {
       loadGenerationRef.current += 1;
       if (retryTimerRef.current !== undefined) {
         window.clearTimeout(retryTimerRef.current);
         retryTimerRef.current = undefined;
       }
-      if (cacheRetryTimerRef.current !== undefined) {
-        window.clearTimeout(cacheRetryTimerRef.current);
-        cacheRetryTimerRef.current = undefined;
-      }
+      cacheRetryTimers.forEach((timer) => window.clearTimeout(timer));
+      cacheRetryTimers.clear();
     };
   }, [loadServiceMedia]);
 
@@ -799,6 +981,29 @@ export const useServiceVideoCandidates = ({
     ].forEach((diagnostic) => {
       if (!diagnosticsByKey.has(diagnostic.mediaKey)) {
         diagnosticsByKey.set(diagnostic.mediaKey, diagnostic);
+      }
+    });
+    const availableSources = new Map(
+      [...diagnosticsByKey.values()].map((diagnostic) => [diagnostic.mediaKey, diagnostic.originalSource]),
+    );
+    cacheRetryTimersRef.current.forEach((timer, mediaKey) => {
+      if (!availableSources.has(mediaKey)) {
+        window.clearTimeout(timer);
+        cacheRetryTimersRef.current.delete(mediaKey);
+        cacheRequestsRef.current.delete(mediaKey);
+      }
+    });
+      cacheRequestsRef.current.forEach((request, mediaKey) => {
+        if (!availableSources.has(mediaKey)) {
+          cacheRequestsRef.current.delete(mediaKey);
+          return;
+        }
+        const source = availableSources.get(mediaKey);
+      if (source && request.source && request.source !== source) {
+        const timer = cacheRetryTimersRef.current.get(mediaKey);
+        if (timer !== undefined) window.clearTimeout(timer);
+        cacheRetryTimersRef.current.delete(mediaKey);
+        cacheRequestsRef.current.delete(mediaKey);
       }
     });
     const currentServiceIndex = serviceMedia.find(
@@ -843,6 +1048,7 @@ export const useServiceVideoCandidates = ({
       const attempt = (current?.attempt ?? 0) + 1;
       cacheRequestsRef.current.set(diagnostic.mediaKey, {
         state: "in-flight",
+        source: diagnostic.originalSource,
         attempt,
         lastResult: `cache request in progress (attempt ${attempt}/${MAX_CACHE_ATTEMPTS})`,
       });
@@ -861,29 +1067,19 @@ export const useServiceVideoCandidates = ({
           "retry-scheduled",
       );
       if (!retryRequests.length) return false;
-      const retryAt = Math.min(
-        ...retryRequests.map(
-          (request) =>
-            cacheRequestsRef.current.get(request.mediaKey)?.retryAt ??
-            Date.now(),
-        ),
-      );
-      if (cacheRetryTimerRef.current !== undefined) {
-        window.clearTimeout(cacheRetryTimerRef.current);
-      }
-      cacheRetryTimerRef.current = window.setTimeout(() => {
-        cacheRetryTimerRef.current = undefined;
-        retryRequests.forEach((request) => {
+      retryRequests.forEach((request) => {
+        const previousTimer = cacheRetryTimersRef.current.get(request.mediaKey);
+        if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+        const retryAt = cacheRequestsRef.current.get(request.mediaKey)?.retryAt ?? Date.now();
+        const timer = window.setTimeout(() => {
+          cacheRetryTimersRef.current.delete(request.mediaKey);
           const current = cacheRequestsRef.current.get(request.mediaKey);
-          if (current?.state === "retry-scheduled") {
-            cacheRequestsRef.current.set(request.mediaKey, {
-              ...current,
-              state: "retry-ready",
-            });
-          }
-        });
-        void loadServiceMediaRef.current?.();
-      }, Math.max(0, retryAt - Date.now()));
+          if (current?.state !== "retry-scheduled") return;
+          cacheRequestsRef.current.set(request.mediaKey, { ...current, state: "retry-ready" });
+          void loadServiceMediaRef.current?.();
+        }, Math.max(0, retryAt - Date.now()));
+        cacheRetryTimersRef.current.set(request.mediaKey, timer);
+      });
       return true;
     };
     void ensure
@@ -896,6 +1092,7 @@ export const useServiceVideoCandidates = ({
           if (resolved && isPlayableMediaSource(resolved) && !isHLSVideoSource(resolved)) {
             cacheRequestsRef.current.set(request.mediaKey, {
               state: "succeeded",
+              source: request.originalSource,
               attempt: current?.attempt ?? 1,
               lastResult: "cached finite rendition available",
             });
@@ -909,6 +1106,7 @@ export const useServiceVideoCandidates = ({
             const retryAt = Date.now() + CACHE_RETRY_DELAYS_MS[attempt - 1];
             cacheRequestsRef.current.set(request.mediaKey, {
               state: "retry-scheduled",
+              source: request.originalSource,
               attempt,
               retryAt,
               lastResult: `Mux finite rendition returned no cache entry; retry ${attempt}/${MAX_CACHE_ATTEMPTS} scheduled`,
@@ -916,6 +1114,7 @@ export const useServiceVideoCandidates = ({
           } else {
             cacheRequestsRef.current.set(request.mediaKey, {
               state: "unavailable",
+              source: request.originalSource,
               attempt,
               lastResult: isMux
                 ? `Mux finite rendition unavailable after ${attempt}/${MAX_CACHE_ATTEMPTS} attempts; fallback-only`
@@ -941,6 +1140,7 @@ export const useServiceVideoCandidates = ({
           if (isMux && attempt < MAX_CACHE_ATTEMPTS) {
             cacheRequestsRef.current.set(request.mediaKey, {
               state: "retry-scheduled",
+              source: request.originalSource,
               attempt,
               retryAt: Date.now() + CACHE_RETRY_DELAYS_MS[attempt - 1],
               lastResult: `cache request failed (${message}); retry ${attempt}/${MAX_CACHE_ATTEMPTS} scheduled`,
@@ -948,6 +1148,7 @@ export const useServiceVideoCandidates = ({
           } else {
             cacheRequestsRef.current.set(request.mediaKey, {
               state: "unavailable",
+              source: request.originalSource,
               attempt,
               lastResult: `cache unavailable (${message}); fallback-only`,
             });
@@ -994,6 +1195,48 @@ export const useServiceVideoCandidates = ({
   }, [enabled, handleUpdate, updater]);
 
   useGlobalBroadcast(handleUpdate);
+
+  useEffect(() => subscribeToElectronMediaSurfaceDiagnostics(
+    () => undefined,
+    undefined,
+    (request) => {
+      if (request.outputId !== outputId) return;
+      const targetKeys = new Set(request.mediaKeys);
+      cacheRequestsRef.current.forEach((requestState, mediaKey) => {
+        if (
+          (targetKeys.size === 0 || targetKeys.has(mediaKey)) &&
+          requestState.state === "unavailable"
+        ) {
+          const timer = cacheRetryTimersRef.current.get(mediaKey);
+          if (timer !== undefined) window.clearTimeout(timer);
+          cacheRetryTimersRef.current.delete(mediaKey);
+          cacheRequestsRef.current.delete(mediaKey);
+        }
+      });
+      void loadServiceMediaRef.current?.();
+    },
+  ), [outputId]);
+
+  useEffect(() => {
+    const retryUnavailableMuxCaches = () => {
+      if (document.visibilityState !== "visible") return;
+      let resetAny = false;
+      cacheRequestsRef.current.forEach((request, mediaKey) => {
+        if (
+          request.state === "unavailable" &&
+          request.source &&
+          isMuxVideoSource(request.source) &&
+          isHLSVideoSource(request.source)
+        ) {
+          cacheRequestsRef.current.delete(mediaKey);
+          resetAny = true;
+        }
+      });
+      if (resetAny) void loadServiceMediaRef.current?.();
+    };
+    document.addEventListener("visibilitychange", retryUnavailableMuxCaches);
+    return () => document.removeEventListener("visibilitychange", retryUnavailableMuxCaches);
+  }, []);
 
   const posterUrls = useMemo(() => {
     const currentItemIndex = serviceMedia.find(
@@ -1065,6 +1308,7 @@ export const useServiceVideoCandidates = ({
       currentItemId,
       protectedMediaKeys,
       maxSurfaces,
+      performanceClass,
     });
     const discoveryItems = serviceMedia.map((item) => {
       const videos = new Map<string, ElectronMediaSurfaceCandidateDiagnostic>();
@@ -1095,7 +1339,7 @@ export const useServiceVideoCandidates = ({
     });
     const finiteVideoKeys = new Set(
       diagnostics
-        .filter((diagnostic) => diagnostic.status !== "excluded")
+        .filter((diagnostic) => diagnostic.status === "eligible")
         .map((diagnostic) => diagnostic.mediaKey),
     );
     const discovery: ElectronMediaDiscovery = {
@@ -1115,9 +1359,33 @@ export const useServiceVideoCandidates = ({
       outlineLoadError: outlineLoad.error,
       outlineRetryAttempt: outlineLoad.retryAttempt,
       outlineRetryAt: outlineLoad.retryAt,
+      inventoryState: outlineLoad.inventoryState ?? "complete",
+      missingItemIds: outlineLoad.missingItemIds ?? [],
+      invalidItemIds: outlineLoad.invalidItemIds ?? [],
       contextSource,
       currentItemId,
+      expectedItemCount: outlineLoad.expectedItemCount ?? serviceMedia.length,
       itemCount: serviceMedia.length,
+      uniqueVideoInventoryCount: new Set(
+        discoveryItems.flatMap((item) => item.videos.map((video) => video.mediaKey)),
+      ).size,
+      finitePlayableSourceCount: diagnosticsByKey.size === 0
+        ? 0
+        : new Set(
+            [...diagnosticsByKey.values()]
+              .filter((diagnostic) => diagnostic.status === "eligible")
+              .map((diagnostic) => diagnostic.mediaKey),
+          ).size,
+      pendingHlsCacheCount: new Set(
+        [...diagnosticsByKey.values()]
+          .filter((diagnostic) => diagnostic.status === "pending-cache")
+          .map((diagnostic) => diagnostic.mediaKey),
+      ).size,
+      intentionallyExcludedVideoCount: new Set(
+        [...diagnosticsByKey.values()]
+          .filter((diagnostic) => diagnostic.status === "excluded")
+          .map((diagnostic) => diagnostic.mediaKey),
+      ).size,
       uniqueFiniteVideoCount: finiteVideoKeys.size,
       items: discoveryItems,
     };
@@ -1127,8 +1395,9 @@ export const useServiceVideoCandidates = ({
       discovery,
       poolCapacity: Math.max(
         0,
-        Math.floor(maxSurfaces ?? DEFAULT_ELECTRON_MEDIA_SURFACE_BUDGET),
+        resolveElectronMediaSurfaceBudget(performanceClass, maxSurfaces).budget,
       ),
+      performanceClass,
       posterUrls,
     };
   }, [
@@ -1137,6 +1406,7 @@ export const useServiceVideoCandidates = ({
     currentItemId,
     currentMedia,
     maxSurfaces,
+    performanceClass,
     outlineId,
     outlineName,
     outlineLoad,

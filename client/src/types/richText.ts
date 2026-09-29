@@ -34,6 +34,8 @@ export const MAX_RICH_TEXT_LIST_INDENT = 4;
 
 export type RichTextBlock = {
   type: "paragraph" | "list-item";
+  /** Stable identity for source-managed note blocks; absent on ordinary text. */
+  id?: string;
   align?: RichTextAlign;
   size?: RichTextSize;
   /** Legacy list items omit this and render as bullets. */
@@ -126,6 +128,9 @@ export const normalizeRichTextDocument = (
       if (type === "list-item" && !hasText) return null;
       return {
         type,
+        ...(typeof record.id === "string" && record.id.trim()
+          ? { id: record.id.trim().slice(0, 160) }
+          : {}),
         ...(align ? { align } : {}),
         ...(size ? { size } : {}),
         ...(listStyle ? { listStyle } : {}),
@@ -150,6 +155,54 @@ export const normalizeRichTextDocument = (
   }
   return { blocks: normalizedBlocks };
 };
+
+/**
+ * Returns the serialized content that determines whether two rich-text
+ * documents mean the same thing. Span boundaries with the same marks are
+ * insignificant, but their text (including whitespace) is not. Block IDs
+ * and harmless default-value differences are serialization details.
+ */
+export const richTextSemanticValue = (
+  value: RichTextDocument | undefined | null | unknown,
+) => normalizeRichTextDocument(value).blocks.map((block) => ({
+  type: block.type,
+  align: block.align || "left",
+  size: block.size || "normal",
+  listStyle: block.type === "list-item" ? block.listStyle || "bullet" : undefined,
+  indent: block.type === "list-item" ? block.indent || 0 : 0,
+  listStart: block.type === "list-item" && block.listStyle === "ordered"
+    ? block.listStart || 1
+    : undefined,
+  spans: block.spans.reduce<Array<{
+    text: string;
+    bold: boolean;
+    italic: boolean;
+    underline: boolean;
+    color: string;
+  }>>((spans, span) => {
+    const next = {
+      text: span.text.replace(/\r\n?/g, "\n"),
+      bold: Boolean(span.bold),
+      italic: Boolean(span.italic),
+      underline: Boolean(span.underline),
+      color: span.color?.toLowerCase() || "",
+    };
+    const previous = spans.at(-1);
+    if (previous && previous.bold === next.bold && previous.italic === next.italic &&
+      previous.underline === next.underline && previous.color === next.color) {
+      previous.text += next.text;
+    } else {
+      spans.push(next);
+    }
+    return spans;
+  }, []),
+}));
+
+export const richTextSemanticEqual = (
+  left: RichTextDocument | undefined | null | unknown,
+  right: RichTextDocument | undefined | null | unknown,
+): boolean => JSON.stringify(richTextSemanticValue(left)) ===
+  JSON.stringify(richTextSemanticValue(right));
 
 export const isRichTextEmpty = (
   doc: RichTextDocument | undefined | null,

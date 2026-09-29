@@ -16,6 +16,7 @@ import {
   sortPositionsByOrder,
 } from "../pages/Teams/teamsUtils";
 import { resolveMemberMinorStatus } from "../pages/Teams/memberPreferences";
+import { getServicePlanKey } from "./servicePlanKeys";
 
 export type TeamScheduleCreditEntry = {
   heading: string;
@@ -40,6 +41,8 @@ type BuildTeamScheduleCreditEntriesInput = {
   now?: Date;
   mediaTeamName?: string;
   serviceWindowMinutes?: number;
+  /** Selected dated service plan; overrides the default in-progress/upcoming heuristic. */
+  servicePlanKey?: string;
 };
 
 export type TeamScheduleCreditsResult = {
@@ -137,6 +140,7 @@ const findTargetOccurrence = (
   schedules: (TeamSchedule | TeamScheduleSummary)[],
   now: Date,
   serviceWindowMinutes: number,
+  servicePlanKey?: string,
 ): ScheduleOccurrenceWithOwner | null => {
   const nowMs = now.getTime();
   const serviceWindowMs = Math.max(serviceWindowMinutes, 0) * 60 * 1000;
@@ -148,6 +152,10 @@ const findTargetOccurrence = (
         : [];
     }),
   );
+
+  if (servicePlanKey) {
+    return occurrences.find((entry) => getServicePlanKey(entry.occurrence) === servicePlanKey) || null;
+  }
 
   const inProgress = occurrences
     .filter(
@@ -235,6 +243,7 @@ export const buildTeamScheduleCreditEntries = ({
   now = new Date(),
   mediaTeamName = MEDIA_TEAM_NAME,
   serviceWindowMinutes = DEFAULT_CREDITS_SERVICE_WINDOW_MINUTES,
+  servicePlanKey,
 }: BuildTeamScheduleCreditEntriesInput): TeamScheduleCreditsResult => {
   const mediaTeam = findMediaTeam(teams, mediaTeamName);
   if (!mediaTeam) return { entries: [], scheduleUnavailable: false };
@@ -242,7 +251,7 @@ export const buildTeamScheduleCreditEntries = ({
   const teamSchedules = schedules.filter(
     (schedule) => !schedule.archivedAt && schedule.teamId === mediaTeam.teamId,
   );
-  const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes);
+  const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes, servicePlanKey);
   if (!target) return { entries: [], scheduleUnavailable: false };
   // The schedule the credits would come from is outside the bootstrap's
   // hydrated window. Reporting no names would be indistinguishable from an

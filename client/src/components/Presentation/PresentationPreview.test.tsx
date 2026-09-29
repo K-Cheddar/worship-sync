@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PresentationPreview from "./PresentationPreview";
 
@@ -129,6 +129,36 @@ describe("PresentationPreview", () => {
     expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
   });
 
+  it("centers a fixed-size preview and caps it to its available stage width", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        hideQuickLinks
+        centerPreview
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass(
+      "flex",
+      "w-full",
+      "min-w-0",
+      "justify-center",
+    );
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        width: 14,
+        className: "max-w-full",
+      }),
+    );
+  });
+
   it("keeps Clear labeled before Live when space is limited", async () => {
     headerWidth = 220;
 
@@ -151,6 +181,186 @@ describe("PresentationPreview", () => {
     expect(
       screen.queryByRole("switch", { name: "Live:" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the manual Content Hidden badge only on a confirmed hidden stream preview", () => {
+    const { rerender } = render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{
+          ...basePresentation,
+          displayType: "stream",
+          participantOverlayInfo: { id: "overlay", name: "Name", time: 1 },
+        }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+      />,
+    );
+
+    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute(
+      "aria-describedby",
+      expect.any(String),
+    );
+    expect(screen.getByText("Confirmed active Hide Content state for Lobby Stream.")).toBeInTheDocument();
+    expect(badge).toHaveClass("pointer-events-none", "max-w-[calc(100%-0.5rem)]");
+    expect(badge).not.toHaveAttribute("tabindex");
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Lobby Stream",
+    );
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveClass(
+      "block",
+      "@sm/preview:hidden",
+    );
+    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass("@container/preview");
+    expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "@sm/preview:inline");
+
+    rerender(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked={false}
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps a compact accessible badge when hidden state is unconfirmed", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        contentHiddenUnconfirmed
+      />,
+    );
+
+    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    expect(badge).toHaveAttribute("aria-describedby", expect.any(String));
+    expect(
+      screen.getByText(
+        "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while offline.",
+      ),
+    ).toBeInTheDocument();
+    expect(badge).toHaveClass("border-dashed");
+    expect(screen.getByTestId("content-hidden-preview-badge")).toBeInTheDocument();
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Offline · Lobby Stream",
+    );
+    expect(screen.getByText("Content Hidden · Offline")).toHaveClass(
+      "hidden",
+      "truncate",
+      "@sm/preview:inline",
+    );
+  });
+
+  it("explains a reconnection sync state in the compact header", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        contentHiddenUnconfirmed
+        contentHiddenUnconfirmedLabel="Syncing"
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Syncing · Lobby Stream",
+    );
+    expect(screen.getByRole("status")).toHaveAccessibleDescription(
+      "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while syncing.",
+    );
+  });
+
+  it("keeps the explanation discoverable when a focused preview omits its header", () => {
+    render(
+      <PresentationPreview
+        name="Lobby Stream"
+        outputId="out_lobby_stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+        hideHeader
+        contentHiddenUnconfirmed
+        contentHiddenUnconfirmedLabel="Syncing"
+      />,
+    );
+
+    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
+      "Content Hidden · Syncing · Lobby Stream",
+    );
+  });
+
+  it("does not show the badge for overlay-only hiding or non-stream displays", () => {
+    const { rerender } = render(
+      <PresentationPreview
+        name="Stream"
+        outputId="stream"
+        info={{
+          ...basePresentation,
+          displayType: "stream",
+          participantOverlayInfo: { id: "overlay", name: "Name", time: 1 },
+        }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked={false}
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={{ ...basePresentation, displayType: "projector" }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        streamItemContentBlocked
+        showContentHiddenIndicator
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("hides both labels when the header is too narrow", async () => {
@@ -302,6 +512,133 @@ describe("PresentationPreview", () => {
         videoPreloadRole: "preview",
         canCaptureLocalVideo: true,
         directLocalVideoCapture: true,
+      }),
+    );
+  });
+
+  it("deep-suspends long-hidden preview media and restores the latest state", () => {
+    jest.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={basePresentation}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible={false}
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: true,
+          suspendVideoPlayback: true,
+        }),
+      );
+
+      act(() => {
+        jest.advanceTimersByTime(30_000);
+      });
+
+      expect(screen.getByTestId("display-window")).toBeInTheDocument();
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: false,
+          suspendVideoPlayback: true,
+          canCaptureLocalVideo: false,
+        }),
+      );
+
+      const latestInfo = { ...basePresentation, time: 84 } as typeof basePresentation;
+      rerender(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={latestInfo}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          time: 84,
+          shouldPlayVideo: true,
+          suspendVideoPlayback: false,
+          canCaptureLocalVideo: true,
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("deep-suspends immediately when the controller renderer becomes hidden", () => {
+    const originalVisibilityState = document.visibilityState;
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+
+    try {
+      render(
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={basePresentation}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={[]}
+          timers={[]}
+          isVisible
+        />,
+      );
+
+      expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          shouldPlayVideo: false,
+          suspendVideoPlayback: true,
+          canCaptureLocalVideo: false,
+        }),
+      );
+    } finally {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: originalVisibilityState,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+
+  it("accepts an external request to deep-suspend preview-only media", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        suspendPreviewMedia
+      />,
+    );
+
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        shouldPlayVideo: false,
+        suspendVideoPlayback: true,
+        canCaptureLocalVideo: false,
       }),
     );
   });

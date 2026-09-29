@@ -1,5 +1,5 @@
-import { Activity } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Activity, Copy, RotateCw } from "lucide-react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import cn from "classnames";
 import Drawer from "../../../components/Drawer/Drawer";
@@ -7,108 +7,313 @@ import Button from "../../../components/Button/Button";
 import { useSelector } from "../../../hooks";
 import { selectDisplayOutputs } from "../../../store/displayOutputsSlice";
 import {
+  closeElectronMediaSurfaceDiagnostics,
   requestElectronMediaSurfaceDiagnostics,
+  requestElectronMediaSurfaceRetry,
   subscribeToElectronMediaSurfaceDiagnostics,
   type ElectronMediaSurfacePoolDiagnostics,
 } from "../../../utils/electronMediaSurfaceDiagnostics";
-import type { PreparedVideoMetrics } from "../../../types/electron";
+import type { PreparedVideoMetricValue, PreparedVideoMetrics } from "../../../types/electron";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import {
+  MEDIA_READINESS_STATUS_EVENT,
+  MEDIA_PREPARATION_PUBLISHER_SESSION_ID,
+  readMediaPreparationPublicationStatus,
+  useRemoteMediaPreparationManifest,
+  useRemoteMediaPreparationReadinessReports,
+  type MediaPreparationPublicationStatus,
+  type MediaReadinessLocalStatus,
+} from "../../../hooks/useMediaPreparationManifest";
+import {
+  buildMediaPreparationReadinessVideos,
+  getMediaReadinessFileName,
+  sanitizeMediaPreparationReadinessText,
+  type MediaPreparationReadinessReport,
+  type MediaPreparationReadinessVideo,
+} from "../../../utils/mediaPreparationManifest";
 
 type ReceivedDiagnostics = ElectronMediaSurfacePoolDiagnostics & {
   receivedAt: number;
 };
 
-const getTransitionVisualLabel = (entry: ReceivedDiagnostics): string => {
-  switch (entry.lastSendPath) {
-    case "prepared-video":
-      return "prepared video";
-    case "poster-then-video":
-      return "poster handoff";
-    case "video-fallback":
-      return "fallback video frame";
-    case "waiting-for-visual":
-      return "waiting for visual";
-    default:
-      if (entry.posterShown == null) return "not recorded";
-      return entry.posterShown ? "poster/fallback" : "fallback video frame";
+const METRICS_STALE_MS = 12_000;
+const DIAGNOSTICS_STALE_MS = 15_000;
+
+const formatMetric = (
+  value: PreparedVideoMetricValue | undefined,
+  unit: "MB" | "%",
+): string => {
+  if (value?.status !== "available" || typeof value.value !== "number") {
+    return value?.reason ?? "Unavailable";
+  }
+  return unit === "MB"
+    ? `≈${(value.value / 1024).toFixed(0)} MB`
+    : `${value.value.toFixed(1)}%`;
+};
+
+const getPrimaryAppMemory = (metrics: PreparedVideoMetrics | undefined) => {
+  const privateMemory = metrics?.total?.privateMemory;
+  if (privateMemory?.status === "available") return { label: "App RAM", value: privateMemory };
+  const workingSet = metrics?.total?.workingSetMemory;
+  if (workingSet?.status === "available") return { label: "App RAM (working set)", value: workingSet };
+  return { label: "App RAM", value: privateMemory ?? workingSet };
+};
+
+const readinessStatusLabels = {
+  playing: "Playing",
+  ready: "Ready",
+  preparing: "Preparing",
+  failed: "Failed",
+  "pending-cache": "Pending cache",
+  deferred: "Deferred",
+  excluded: "Excluded",
+} as const;
+
+const readinessStatusIcons = {
+  playing: "▶",
+  ready: "✓",
+  preparing: "…",
+  failed: "⚠",
+  "pending-cache": "⏳",
+  deferred: "○",
+  excluded: "○",
+} as const;
+
+const ReadinessVideos = ({
+  videos,
+  preparedCount,
+  finiteCount,
+  unavailable,
+  truncated,
+}: {
+  videos?: MediaPreparationReadinessVideo[];
+  preparedCount: number;
+  finiteCount: number;
+  unavailable?: boolean;
+  truncated?: boolean;
+}) => {
+  if (unavailable) return <p className="mt-2 text-xs text-gray-400">Per-video details unavailable from this device version.</p>;
+  if (!videos?.length) return null;
+  return (
+    <details className="mt-3 border-t border-gray-700 pt-2">
+      <summary className="cursor-pointer text-xs font-medium text-gray-300">Videos {preparedCount}/{finiteCount} prepared</summary>
+      <ul className="mt-2 space-y-1.5 text-xs">
+        {videos.map((video) => (
+          <li key={video.mediaKey} className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span aria-hidden="true" className={video.status === "failed" ? "text-red-300" : "text-gray-400"}>{readinessStatusIcons[video.status]}</span>
+              <span className="break-words text-gray-200">{video.name || video.itemName || video.mediaKey}</span>
+              {video.itemName && video.name !== video.itemName && <span className="text-gray-500">· {video.itemName}</span>}
+              <strong className={video.status === "failed" ? "text-red-200" : "text-gray-400"}>{readinessStatusLabels[video.status]}</strong>
+            </div>
+            {video.error && <p className="ml-5 break-words text-red-200">{video.error}</p>}
+          </li>
+        ))}
+      </ul>
+      {truncated && <p className="mt-2 text-gray-500">Showing the first 64 videos by readiness status.</p>}
+    </details>
+  );
+};
+
+export const removeSensitiveQueryParameters = (value: string): string => {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/s--[^/]+--(?=\/|$)/gi, "/s--[redacted]--");
+    return url.toString();
+  } catch {
+    return value.replace(/[?#].*$/, "");
   }
 };
 
-const formatMetric = (
-  value: PreparedVideoMetrics | undefined,
-  key: "memory" | "cpu",
-): string => {
-  const metric = value?.[key];
-  if (metric?.status === "available" && typeof metric.value === "number") {
-    return key === "memory"
-      ? `${(metric.value / 1024).toFixed(1)} MB`
-      : `${metric.value.toFixed(1)}%`;
+const secretField = /(?:^|[-_])(?:authorization|proxy-authorization|auth|cookie|set-cookie|token|secret|credential|password|signature|sig|key)(?:$|[-_])|(?:access|refresh|id|api|private|client)[-_]?(?:token|secret|key)|x[-_](?:amz|goog)[-_]/i;
+
+export const sanitizeForCopy = (value: unknown, key = ""): unknown => {
+  const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  if (normalizedKey !== "media-key" && secretField.test(normalizedKey)) {
+    return "[redacted]";
   }
-  return metric?.reason ?? "—";
+  if (typeof value === "string") {
+    return value
+      .replace(/\bfile:\/\/[^\s"'<>]+/gi, "[local path]")
+      .replace(/\b[A-Za-z]:\\(?:[^\s"'<>\\]+\\)*[^\s"'<>]*/g, "[local path]")
+      .replace(/\\\\[^\s"'<>]+/g, "[local path]")
+      .replace(/\/(?:Users|home|private|tmp|var|mnt|media)\/[^\s"'<>]+/gi, "[local path]")
+      .replace(/(^|[\s(])\/[A-Za-z0-9._-]+(?:\/[^\s,;)]*)*/g, "$1[local path]")
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, removeSensitiveQueryParameters)
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+      .replace(/\b((?:access|refresh|id)?token|api[-_]?key|auth[-_]?key|key|sig(?:nature)?|secret|credential|password|cookie|x-amz-(?:credential|signature|security-token)|x-goog-(?:credential|signature|security-token))\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
+  }
+  if (Array.isArray(value)) return value.map((entry) => sanitizeForCopy(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([childKey, child]) => [
+      childKey,
+      sanitizeForCopy(child, childKey),
+    ]),
+  );
+};
+
+const getOutputName = (
+  entry: ReceivedDiagnostics,
+  outputs: ReturnType<typeof selectDisplayOutputs>,
+) => {
+  if (entry.windowRole === "editor") return "Editor Preview";
+  const output = outputs.find((candidate) => candidate.id === entry.outputId);
+  return output?.name ?? entry.outputId ?? entry.windowRole;
+};
+
+const getInventoryCount = (entry: ReceivedDiagnostics) =>
+  entry.discovery?.uniqueVideoInventoryCount ??
+  new Set((entry.candidateDetails ?? []).map((candidate) => candidate.mediaKey)).size;
+
+const getFiniteCount = (entry: ReceivedDiagnostics) =>
+  entry.discovery?.finitePlayableSourceCount ??
+  new Set(
+    (entry.candidateDetails ?? [])
+      .filter((candidate) => candidate.status === "eligible")
+      .map((candidate) => candidate.mediaKey),
+  ).size;
+
+const getPreparedKeys = (entry: ReceivedDiagnostics) =>
+  new Set(
+    entry.surfaces
+      .filter((surface) => surface.phase === "ready" || surface.phase === "playing")
+      .map((surface) => surface.mediaKey),
+  );
+
+const getLocalReadinessVideos = (entry: ReceivedDiagnostics) => {
+  const surfaceByKey = new Map(entry.surfaces.map((surface) => [surface.mediaKey, surface]));
+  return buildMediaPreparationReadinessVideos((entry.candidateDetails ?? []).map((candidate) => {
+    const surface = surfaceByKey.get(candidate.mediaKey);
+    return {
+      mediaKey: candidate.mediaKey,
+      name: getMediaReadinessFileName(candidate.originalSource),
+      itemId: candidate.itemId,
+      itemName: candidate.itemName,
+      status: candidate.status,
+      selected: candidate.selected,
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  }));
+};
+
+const getActionIssues = (entry: ReceivedDiagnostics): string[] => {
+  const issues: string[] = [];
+  if (entry.discovery?.outlineLoadState === "retrying") {
+    issues.push(entry.discovery.outlineLoadError || "Waiting for service items to replicate");
+  }
+  if (entry.discovery?.outlineLoadState === "error") {
+    issues.push(entry.discovery.outlineLoadError || "The service video inventory is incomplete");
+  }
+  const failed = entry.surfaces.filter((surface) => surface.phase === "error");
+  failed.slice(0, 3).forEach((surface) => {
+    issues.push(`${surface.mediaKey}: ${surface.error || "video could not be prepared"}`);
+  });
+  if (failed.length > 3) issues.push(`${failed.length - 3} more video preparation failures`);
+  return issues;
 };
 
 const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const [open, setOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Record<string, ReceivedDiagnostics>>({});
+  const [remoteReadinessReports, setRemoteReadinessReports] = useState<Record<string, MediaPreparationReadinessReport[]>>({});
+  const [metrics, setMetrics] = useState<PreparedVideoMetrics>();
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const displayOutputs = useSelector(selectDisplayOutputs);
-  const selectedOutline = useSelector(
-    (state) => state.undoable.present.itemLists.selectedList,
-  );
-  const selectedOutlineScope = useSelector(
-    (state) => state.undoable.present.itemLists.scope,
-  );
+
+  useEffect(() => subscribeToElectronMediaSurfaceDiagnostics((next) => {
+    const key = next.diagnosticId ?? `${next.outputId || ""}:${next.windowRole}`;
+    setDiagnostics((current) => ({
+      ...current,
+      [key]: { ...next, receivedAt: Date.now() },
+    }));
+  }), []);
 
   useEffect(() => {
-    const unsubscribe = subscribeToElectronMediaSurfaceDiagnostics((next) => {
-      const key = `${next.outputId || ""}:${next.windowRole}`;
-      setDiagnostics((current) => ({
-        ...current,
-        [key]: { ...next, receivedAt: Date.now() },
-      }));
-    });
+    if (!open) return;
+    const api = window.electronAPI;
+    const unsubscribeMetrics = api?.onPreparedVideoMetrics?.(setMetrics);
+    void api?.subscribePreparedVideoMetrics?.().catch(() => undefined);
     requestElectronMediaSurfaceDiagnostics();
     const intervalId = window.setInterval(() => {
       requestElectronMediaSurfaceDiagnostics();
-      const cutoff = Date.now() - 10_000;
-      setDiagnostics((current) =>
-        Object.fromEntries(
+      setDiagnostics((current) => {
+        const cutoff = Date.now() - DIAGNOSTICS_STALE_MS;
+        return Object.fromEntries(
           Object.entries(current).filter(([, value]) => value.receivedAt >= cutoff),
-        ),
+        );
+      });
+      setMetrics((current) =>
+        current?.timestamp && Date.now() - current.timestamp > METRICS_STALE_MS
+          ? { ...current, status: "stale", reason: "Metrics are stale; waiting for the next app sample" }
+          : current,
       );
-    }, 5_000);
+    }, 4000);
     return () => {
-      unsubscribe();
       window.clearInterval(intervalId);
+      unsubscribeMetrics?.();
+      void api?.unsubscribePreparedVideoMetrics?.().catch(() => undefined);
+      closeElectronMediaSurfaceDiagnostics();
     };
-  }, []);
+  }, [open]);
 
   const entries = useMemo(
-    () => Object.values(diagnostics).sort((left, right) => left.windowRole.localeCompare(right.windowRole)),
-    [diagnostics],
+    () => Object.values(diagnostics).sort((left, right) => {
+      const leftName = getOutputName(left, displayOutputs);
+      const rightName = getOutputName(right, displayOutputs);
+      return leftName.localeCompare(rightName) || left.windowRole.localeCompare(right.windowRole);
+    }),
+    [diagnostics, displayOutputs],
   );
-  const ready = entries.reduce((total, entry) => total + entry.readyCount, 0);
-  const candidates = entries.reduce((total, entry) => total + entry.candidateCount, 0);
-  const label = entries.length === 1 ? `Videos ${ready}/${candidates}` : "Videos";
+  const outputEntries = entries.filter((entry) => entry.windowRole !== "editor" && !entry.windowRole.endsWith("preview"));
+  const editorPreviewEntries = entries.filter((entry) => entry.windowRole === "editor" || entry.windowRole.endsWith("preview"));
+  const issues = outputEntries.reduce((count, entry) => count + getActionIssues(entry).length, 0);
+  const toolbarSummary = outputEntries.length === 1
+    ? `Videos · ${getPreparedKeys(outputEntries[0]).size}/${getInventoryCount(outputEntries[0])}`
+    : issues > 0
+      ? `Videos · ${issues} issue${issues === 1 ? "" : "s"}`
+      : "Videos";
+  const metricAvailable = metrics?.status === "available" && metrics.total;
+  const appMemory = getPrimaryAppMemory(metrics);
+  const { churchId } = useContext(GlobalInfoContext) || {};
+  const receiveRemoteReports = useCallback((outputId: string, reports: MediaPreparationReadinessReport[]) => {
+    setRemoteReadinessReports((current) => {
+      const previous = current[outputId] ?? [];
+      const unchanged = previous.length === reports.length && previous.every((report, index) => report === reports[index]);
+      return unchanged ? current : { ...current, [outputId]: reports };
+    });
+  }, []);
+  useEffect(() => {
+    if (!open) setRemoteReadinessReports({});
+  }, [open]);
+  const electronMetricsLabel = !window.electronAPI
+    ? "Unavailable — Electron only"
+    : metricAvailable
+      ? `App CPU ${formatMetric(metrics!.total!.cpu, "%")} · ${appMemory.label} ${formatMetric(appMemory.value, "MB")}`
+      : metrics?.status === "stale"
+        ? "Metrics are stale"
+        : metrics?.timestamp
+          ? `App CPU ${formatMetric(metrics.total?.cpu, "%")} · ${appMemory.label} ${formatMetric(appMemory.value, "MB")}`
+          : "Measuring app usage…";
 
-  const displayName = (entry: ReceivedDiagnostics): string =>
-    entry.windowRole === "editor"
-      ? "Editor Preview"
-      : entry.windowRole.endsWith("-preview")
-        ? `${
-            displayOutputs.find((output) => output.id === entry.outputId)?.name ||
-            entry.outputId ||
-            entry.windowRole.replace(/-preview$/, "")
-          } Preview`
-      :
-    displayOutputs.find((output) => output.id === entry.outputId)?.name ||
-    entry.outputId ||
-    entry.windowRole;
-
-  const sectionName = (entry: ReceivedDiagnostics): string =>
-    entry.windowRole === "editor"
-      ? "EDITOR PREVIEW"
-      : entry.windowRole === "projector"
-        ? "PROJECTOR"
-        : displayName(entry);
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(sanitizeForCopy({
+        generatedAt: new Date().toISOString(),
+        appProcesses: metrics,
+        outputs: entries,
+        remoteReadiness: remoteReadinessReports,
+      }), null, 2));
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  };
 
   return (
     <>
@@ -121,7 +326,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
         aria-expanded={open}
         data-testid="media-surface-diagnostics-trigger"
       >
-        {label}
+        {toolbarSummary}
       </Button>
       <Drawer
         isOpen={open}
@@ -132,152 +337,311 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
         contentClassName="min-h-0 overflow-auto"
       >
         <div className="space-y-4 text-sm text-gray-200" data-testid="media-surface-diagnostics-panel">
-          {!entries.length && (
-            <p className="text-gray-400">No connected Electron display has reported readiness yet.</p>
+          <section className="rounded border border-gray-700 px-3 py-2" aria-label="Computer health">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-semibold text-white">This computer</h2>
+              <span className="text-xs text-gray-400">
+                {electronMetricsLabel}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-gray-400">
+              Private RAM is the better estimate of memory owned by WorshipSync. Summed working sets can include overlapping shared pages, and neither value is an exact Windows Task Manager match. CPU can exceed 100% on multicore computers.
+            </p>
+          </section>
+
+          {!outputEntries.length && (
+            <p className="text-gray-400">No output has reported video readiness on this computer yet.</p>
           )}
-          {entries.map((entry) => (
-            <section key={`${entry.outputId || ""}:${entry.windowRole}`} className="rounded border border-gray-700 p-3">
-              <h2 className="mb-3 font-semibold text-white">{sectionName(entry)}</h2>
-              {sectionName(entry) !== displayName(entry) && (
-                <p className="mb-3 text-xs text-gray-400">{displayName(entry)}</p>
-              )}
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
-                <Metric
-                  label="Preparation source"
-                  value={
-                    entry.preparationSource === "server-manifest"
-                      ? "server manifest"
-                      : entry.preparationSource === "local-pouchdb"
-                        ? "local PouchDB"
-                        : "—"
-                  }
-                />
-                <Metric label="Transition" value={entry.transitionDurationMs == null ? "—" : `${entry.transitionDurationMs}ms`} />
-                <Metric label="Manifest outline" value={entry.manifestOutlineName || entry.manifestOutlineId || "—"} />
-                <Metric label="Manifest revision" value={entry.manifestRevision ?? "—"} />
-                <Metric label="Manifest generated" value={entry.manifestPublishedAt ? new Date(entry.manifestPublishedAt).toLocaleString() : "—"} />
-                <Metric label="Controller selected outline" value={selectedOutline?.name || "—"} />
-                <Metric label="Controller selected ID" value={selectedOutline?._id || "—"} />
-                <Metric label="Controller selected scope" value={selectedOutlineScope || "—"} />
-                <Metric label="Controller/profile" value={entry.discovery?.controllerProfileName ? `${entry.discovery.controllerProfileName} (${entry.discovery.controllerProfileId || "—"})` : entry.discovery?.controllerProfileId || "—"} />
-                <Metric label="Target preparation outline" value={entry.discovery?.targetOutlineName || entry.discovery?.targetOutlineId || "—"} />
-                <Metric label="Loaded preparation outline" value={entry.discovery?.loadedOutlineName || entry.discovery?.loadedOutlineId || "—"} />
-                <Metric label="Outline load state" value={entry.discovery?.outlineLoadState || "—"} />
-                <Metric label="Outline load error/retry" value={entry.discovery?.outlineLoadError ? `${entry.discovery.outlineLoadError} (attempt ${entry.discovery.outlineRetryAttempt ?? 0})` : entry.discovery?.outlineRetryAt ? `retry at ${new Date(entry.discovery.outlineRetryAt).toLocaleTimeString()}` : "—"} />
-                <Metric label="Prepared outline" value={entry.discovery?.outlineName || "—"} />
-                <Metric label="Prepared outline ID" value={entry.discovery?.outlineId || "—"} />
-                <Metric label="Prepared outline scope" value={entry.discovery?.outlineScope || "—"} />
-                <Metric label="Preparation context" value={entry.discovery?.contextSource || "—"} />
-                <Metric label="Service items" value={entry.serviceItemCount ?? entry.discovery?.itemCount ?? "—"} />
-                <Metric label="Finite videos discovered" value={entry.finiteVideoCount ?? entry.discoveredCount ?? entry.candidateDetails?.length ?? entry.candidateCount} />
-                <Metric label="Pending cache" value={entry.pendingCacheCount ?? 0} />
-                <Metric label="Candidates selected" value={entry.candidateCount} />
-                <Metric label="Pool capacity" value={entry.poolCapacity ?? "—"} />
-                <Metric label="Surfaces" value={entry.surfaceCount} />
-                <Metric label="Ready" value={entry.readyCount} />
-                <Metric label="Preparing" value={entry.preparingCount} />
-                <Metric label="Playing" value={entry.playingCount} />
-                <Metric label="Errors" value={entry.errorCount} />
-                <Metric label="Evictions" value={entry.evictions.length} />
-                <Metric label="Current item" value={entry.currentItemId || "—"} />
-                <Metric label="Current-item videos" value={entry.currentItemVideoCount ?? "—"} />
-                <Metric label="Current-item ready" value={entry.currentItemReadyCount ?? "—"} />
-                <Metric label="Last send path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
-                <Metric
-                  label="Transition visual"
-                  value={getTransitionVisualLabel(entry)}
-                />
-                <Metric label="Renderer memory" value={formatMetric(entry.rendererMetrics, "memory")} />
-                <Metric label="CPU" value={formatMetric(entry.rendererMetrics, "cpu")} />
-              </dl>
-              <p className="mt-3 break-all text-xs text-gray-400">
-                Last media: {entry.lastMediaKey || "—"}
-              </p>
-              {entry.evictions.length > 0 && (
-                <p className="mt-2 break-all text-xs text-gray-400">
-                  Eviction reasons: {entry.evictions.join(", ")}
+          {outputEntries.map((entry) => {
+            const inventoryCount = getInventoryCount(entry);
+            const finiteCount = getFiniteCount(entry);
+            const preparedCount = getPreparedKeys(entry).size;
+            const readinessVideos = getLocalReadinessVideos(entry);
+            const pendingCount = entry.discovery?.pendingHlsCacheCount ?? entry.pendingCacheCount;
+            const excludedCount = entry.discovery?.intentionallyExcludedVideoCount ?? 0;
+            const activeSurface = entry.lastMediaKey
+              ? entry.surfaces.find((surface) => surface.mediaKey === entry.lastMediaKey)
+              : undefined;
+            const playingHealthy = Boolean(activeSurface?.phase === "playing" || entry.playingCount > 0);
+            const loadState = entry.discovery?.outlineLoadState;
+            const inventoryIssue = loadState === "retrying" || loadState === "error";
+            const actionIssues = getActionIssues(entry);
+            const plan = entry.preparationSource === "server-manifest"
+              ? entry.manifestOutlineName || entry.manifestOutlineId
+              : entry.discovery?.targetOutlineName || entry.discovery?.loadedOutlineName || entry.discovery?.targetOutlineId || "No service plan selected";
+            const receivedAt = Date.now() - entry.receivedAt;
+
+            return (
+              <section key={entry.diagnosticId ?? `${entry.outputId || ""}:${entry.windowRole}`} className="rounded border border-gray-700 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-white">{getOutputName(entry, displayOutputs)}</h2>
+                    <p className="text-xs text-gray-400">Preparing: {plan}</p>
+                  </div>
+                  <span className={cn("rounded px-2 py-1 text-xs", actionIssues.length ? "bg-red-950 text-red-200" : "bg-emerald-950 text-emerald-200")}>
+                    {actionIssues.length ? `${actionIssues.length} issue${actionIssues.length === 1 ? "" : "s"}` : "No action needed"}
+                  </span>
+                </div>
+
+                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+                  <Count label="Distinct videos" value={inventoryCount} help="Unique media identities across the complete service video inventory." />
+                  <Count label="Finite playable" value={finiteCount} help="Distinct videos with a finite playable source. Pending HLS sources are not counted here." />
+                  <Count label="Prepared" value={preparedCount} help="Distinct videos with a prepared starting frame, including a video already playing." />
+                  <Count label="Preparing" value={entry.preparingCount} help="Mounted output surfaces currently loading or decoding a starting frame." />
+                  <Count label="Pending cache" value={pendingCount} help="HLS videos waiting for a finite cached rendition." />
+                  <Count label="Failed" value={entry.errorCount + (loadState === "error" ? 1 : 0)} />
+                  <Count label="Excluded" value={excludedCount} help="Distinct video sources that cannot be prepared as finite video." />
+                  <Count label="Selected surfaces" value={entry.surfaceCount} help="Surfaces mounted in this output's bounded preparation pool; this is not the plan's video count." />
+                </dl>
+
+                <ReadinessVideos videos={readinessVideos.videos} preparedCount={preparedCount} finiteCount={finiteCount} truncated={readinessVideos.videosTruncated} />
+
+                <p className="mt-3 text-xs text-gray-300">
+                  Playing video: <Status good={playingHealthy}>{playingHealthy ? "Frames advancing" : activeSurface?.phase === "error" ? "Needs attention" : "No video playing"}</Status>
+                  <span className="mx-2 text-gray-600">·</span>
+                  Source: <Status good={entry.preparationSource === "server-manifest" || entry.preparationSource === "local-pouchdb"}>{entry.preparationSource === "server-manifest" ? `Received remote manifest${entry.manifestRevision ? ` r${entry.manifestRevision}` : ""}` : entry.preparationSource === "cached-manifest" ? `Cached manifest${entry.manifestRevision ? ` r${entry.manifestRevision}` : ""} · live receipt pending` : entry.preparationSource === "local-pouchdb" ? "Local discovery" : entry.preparationSource === "local-fallback" ? "Local fallback" : "Waiting for source"}</Status>
+                  <span className="mx-2 text-gray-600">·</span>
+                  Report: {receivedAt <= DIAGNOSTICS_STALE_MS ? "Connected" : "Stale"}
                 </p>
-              )}
-              <details className="mt-3">
-                <summary className="cursor-pointer text-xs text-gray-300">
-                  Candidate details ({entry.candidateDetails?.length ?? 0})
-                </summary>
-                <div className="mt-2 max-h-72 space-y-2 overflow-auto text-xs">
-                  {(entry.candidateDetails ?? []).map((candidate) => (
-                    <div key={candidate.mediaKey} className="border-t border-gray-700 pt-2">
-                      <div className="break-all font-medium text-white">
-                        {candidate.mediaKey} · {candidate.status || (candidate.eligible ? "eligible" : "excluded")}
-                      </div>
-                      <div>{candidate.reason} · cache {candidate.cacheStatus || "unknown"}</div>
-                      <div className="break-all text-gray-400">
-                        original: {candidate.originalSource}
-                      </div>
-                      {candidate.resolvedSource && (
-                        <div className="break-all text-gray-400">
-                          resolved: {candidate.resolvedSource}
-                        </div>
-                      )}
-                      <div className="text-gray-400">
-                        item {candidate.itemIndex ?? "—"} · {candidate.itemName || "unknown item"} · {candidate.itemId || "—"}
-                      </div>
-                      <div className="text-gray-400">
-                        source {candidate.sourceKind} · cache {candidate.cacheStatus || "unknown"} · surface {candidate.surfaceState || "—"}
-                      </div>
+
+                {inventoryIssue && (
+                  <p className="mt-2 text-xs text-amber-200" role="status">
+                    {entry.discovery?.outlineLoadError || "Service video inventory is still loading."}
+                    {entry.discovery?.missingItemIds?.length ? ` · ${entry.discovery.missingItemIds.length} item${entry.discovery.missingItemIds.length === 1 ? "" : "s"} missing` : ""}
+                  </p>
+                )}
+                {actionIssues.length > 0 && (
+                  <div className="mt-3 space-y-2" role="alert">
+                    {actionIssues.slice(0, 3).map((issue) => <p key={issue} className="break-words text-xs text-red-200">{issue}</p>)}
+                    <Button svg={RotateCw} variant="secondary" className="text-xs" onClick={() => requestElectronMediaSurfaceRetry({
+                      outputId: entry.outputId,
+                      mediaKeys: entry.surfaces.filter((surface) => surface.phase === "error").map((surface) => surface.mediaKey),
+                    })}>
+                      Retry preparation
+                    </Button>
+                  </div>
+                )}
+
+                {(inventoryIssue || entry.discovery?.targetOutlineId !== entry.discovery?.loadedOutlineId) && (
+                  <p className="mt-2 text-xs text-gray-400">
+                    Requested plan: {entry.discovery?.targetOutlineName || entry.discovery?.targetOutlineId || "—"}
+                    {entry.discovery?.loadedOutlineId ? ` · Last loaded: ${entry.discovery.loadedOutlineName || entry.discovery.loadedOutlineId}` : ""}
+                  </p>
+                )}
+
+                <details className="mt-3 border-t border-gray-700 pt-2">
+                  <summary className="cursor-pointer text-xs font-medium text-gray-300">Advanced diagnostics</summary>
+                  <div className="mt-3 space-y-3 text-xs text-gray-300">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <Metric label="App CPU" value={formatMetric(metrics?.total?.cpu, "%")} />
+                      <Metric label="App private RAM" value={formatMetric(metrics?.total?.privateMemory, "MB")} />
+                      <Metric label="Summed working sets" value={formatMetric(metrics?.total?.workingSetMemory, "MB")} />
+                      <Metric label="Process count" value={metrics?.total?.processCount ?? "—"} />
+                      <Metric label="Pool capacity" value={entry.poolCapacity ?? "—"} />
+                      <Metric label="Selected candidates" value={entry.candidateCount} />
+                      <Metric label="Transition path" value={(entry.renderPath || entry.lastSendPath || "—").toUpperCase()} />
+                      <Metric label="Last manifest change" value={entry.manifestPublishedAt ? new Date(entry.manifestPublishedAt).toLocaleString() : "—"} />
+                      <Metric label="Inventory state" value={entry.discovery?.inventoryState || "—"} />
+                      <Metric label="Requested outline ID" value={entry.discovery?.targetOutlineId || "—"} />
+                      <Metric label="Loaded outline ID" value={entry.discovery?.loadedOutlineId || "—"} />
+                      <Metric label="Current item ID" value={entry.currentItemId || "—"} />
+                      <Metric label="Current item videos" value={entry.currentItemVideoCount ?? "—"} />
+                      <Metric label="Evicted surfaces" value={entry.evictions.length} />
                     </div>
-                  ))}
-                </div>
-              </details>
-              <details className="mt-3">
-                <summary className="cursor-pointer text-xs text-gray-300">Surface details ({entry.surfaces.length})</summary>
-                <div className="mt-2 max-h-64 space-y-2 overflow-auto text-xs">
-                  {entry.surfaces.map((surface) => (
-                    <div key={surface.mediaKey} className="border-t border-gray-700 pt-2">
-                      <div className="break-all font-medium text-white">{surface.mediaKey}</div>
-                      <div>
-                        {surface.surfaceState ?? surface.phase} · {surface.sourceKind} · priority {surface.priority ?? "—"} · protected {surface.protected ? "yes" : "no"} · geometry {surface.geometryReady == null ? "—" : surface.geometryReady ? "ready" : `not ready (${surface.geometryReason || "unknown"})`}
+                    <details>
+                      <summary className="cursor-pointer">Electron process breakdown ({metrics?.processes?.length ?? 0})</summary>
+                      <p className="mt-1 text-gray-400">Private RAM is the better estimate of app-owned memory. Working sets can overlap through shared pages. CPU is app-process CPU and may exceed 100%.</p>
+                      <div className="mt-2 space-y-1">
+                        {(metrics?.processes ?? []).map((process) => (
+                          <p key={process.pid}>{process.labels.length ? `${process.labels.join(", ")} · ${process.processType}` : process.processType} (PID {process.pid}) · CPU {formatMetric(process.cpu, "%")} · Private RAM {formatMetric(process.memory.private, "MB")} · Working set {formatMetric(process.memory.workingSet, "MB")}</p>
+                        ))}
                       </div>
-                      <div className="text-gray-400">
-                        frame presented {surface.framePresentedReady == null ? "—" : surface.framePresentedReady ? "yes" : "no"} · canonical source {surface.canonicalSourceMatch == null ? "—" : surface.canonicalSourceMatch ? "match" : "mismatch"}
-                      </div>
-                      <div className="text-gray-400">
-                        prepare→frame ready {surface.prepareToFrameReadyMs?.toFixed(0) ?? "—"} ms · send→transition {surface.sendToTransitionStartMs?.toFixed(0) ?? "—"} ms · send→play {surface.sendToPlayRequestMs?.toFixed(0) ?? "—"} ms · send→resolved {surface.sendToPlayResolvedMs?.toFixed(0) ?? "—"} ms · send→advancing frame {surface.sendToFirstAdvancingFrameMs?.toFixed(0) ?? "—"} ms
-                      </div>
-                      <div className="text-gray-400">
-                        send state {surface.sendStateBeforeRequest ?? "—"} · last used {surface.lastUsedAt ? new Date(surface.lastUsedAt).toLocaleTimeString() : "—"}
-                      </div>
-                      <div className="text-gray-400">
-                        send {surface.sendTimestamp?.toFixed(1) ?? "—"} · transition {surface.transitionStartTimestamp?.toFixed(1) ?? "—"} · play request {surface.playRequestTimestamp?.toFixed(1) ?? "—"} · play resolved {surface.playResolvedTimestamp?.toFixed(1) ?? "—"} · first advancing frame {surface.firstAdvancingFrameTimestamp?.toFixed(1) ?? "—"} · complete {surface.transitionCompleteTimestamp?.toFixed(1) ?? "—"}
-                      </div>
-                      <div className="text-gray-400">
-                        surface rect {surface.surfaceRect ? `${surface.surfaceRect.width.toFixed(0)}×${surface.surfaceRect.height.toFixed(0)}` : "—"} · video rect {surface.videoRect ? `${surface.videoRect.width.toFixed(0)}×${surface.videoRect.height.toFixed(0)}` : "—"} · intrinsic {surface.intrinsicVideoSize ? `${surface.intrinsicVideoSize.width}×${surface.intrinsicVideoSize.height}` : "—"}
-                      </div>
-                      <div className="text-gray-400">
-                        object-fit {surface.objectFit || "—"} · source {surface.sourceUnchanged == null ? "—" : surface.sourceUnchanged ? "unchanged" : "changed"}
-                      </div>
-                      <div className="break-all text-gray-400">
-                        expected: {surface.expectedSource || "—"} · currentSrc: {surface.actualCurrentSrc || "—"}
-                      </div>
-                      <div className="text-gray-400">
-                        send snapshot t={surface.sendCurrentTime?.toFixed(2) ?? "-"} · readyState {surface.sendReadyState ?? "-"} · paused {surface.sendPaused == null ? "-" : surface.sendPaused ? "yes" : "no"} · seeking {surface.sendSeeking == null ? "-" : surface.sendSeeking ? "yes" : "no"} · buffered {surface.sendBufferedRanges?.map(([start, end]) => `${start.toFixed(2)}-${end.toFixed(2)}`).join(", ") || "-"}
-                      </div>
-                      {surface.error && <div className="text-red-300">{surface.error}</div>}
-                    </div>
-                  ))}
-                </div>
+                    </details>
+                    <details>
+                      <summary className="cursor-pointer">Candidate details ({entry.candidateDetails?.length ?? 0})</summary>
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(sanitizeForCopy(entry.candidateDetails ?? []), null, 2)}</pre>
+                    </details>
+                    <details>
+                      <summary className="cursor-pointer">Prepared surfaces ({entry.surfaces.length})</summary>
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(sanitizeForCopy(entry.surfaces), null, 2)}</pre>
+                    </details>
+                  </div>
+                </details>
+              </section>
+            );
+          })}
+
+          {editorPreviewEntries.length > 0 && (
+            <section className="rounded border border-gray-700 p-3">
+              <h3 className="font-semibold">Editor preview · separate preparation pool</h3>
+              <p className="text-xs text-gray-400">These counts describe editor preview surfaces only; they do not indicate projector or service-wide readiness.</p>
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                {editorPreviewEntries.map((entry) => (
+                  <span key={entry.diagnosticId ?? entry.windowRole}>
+                    {entry.windowRole}: {getPreparedKeys(entry).size} ready or playing / {entry.candidateCount} selected
+                  </span>
+                ))}
+              </div>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs">Editor preview diagnostics</summary>
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(sanitizeForCopy(editorPreviewEntries), null, 2)}</pre>
               </details>
             </section>
+          )}
+
+          {displayOutputs.filter((output) => output.enabled).map((output) => (
+            <RemoteReadiness key={output.id} outputId={output.id} outputName={output.name} enabled={open} churchId={churchId} onReports={receiveRemoteReports} />
           ))}
+
+          <div className="flex items-center gap-3 border-t border-gray-700 pt-3">
+            <Button svg={Copy} variant="secondary" className="text-xs" onClick={() => void copyReport()}>
+              Copy diagnostic report
+            </Button>
+            <span className="text-xs text-gray-400" role="status">
+              {copyState === "copied" ? "Copied. Sensitive URL query values were removed." : copyState === "failed" ? "Clipboard access is unavailable." : ""}
+            </span>
+          </div>
         </div>
       </Drawer>
     </>
   );
 };
 
-const Metric = ({ label, value }: { label: string; value: ReactNode }) => (
-  <div>
-    <dt className="text-gray-400">{label}</dt>
-    <dd className="font-medium text-white">{value}</dd>
+const Count = ({ label, value, help }: { label: string; value: number; help?: string }) => (
+  <div title={help}>
+    <dt className="text-xs text-gray-400">{label}{help ? <span aria-hidden="true"> ⓘ</span> : null}</dt>
+    <dd className="font-semibold text-white">{value}</dd>
   </div>
 );
+
+const Metric = ({ label, value }: { label: string; value: ReactNode }) => (
+  <div><dt className="text-gray-400">{label}</dt><dd className="break-words font-medium text-white">{value}</dd></div>
+);
+
+const Status = ({ good, children }: { good: boolean; children: ReactNode }) => (
+  <span className={good ? "text-emerald-200" : "text-amber-200"}>{children}</span>
+);
+
+const RemoteReadiness = ({
+  outputId,
+  outputName,
+  enabled,
+  churchId,
+  onReports,
+}: {
+  outputId: string;
+  outputName: string;
+  enabled: boolean;
+  churchId?: string;
+  onReports: (outputId: string, reports: MediaPreparationReadinessReport[]) => void;
+}) => {
+  const authoritativeManifest = useRemoteMediaPreparationManifest({ enabled, outputId, useCachedManifest: false, warmCache: false });
+  const reports = useRemoteMediaPreparationReadinessReports({ enabled, outputId });
+  const [now, setNow] = useState(Date.now());
+  const [reportingStatus, setReportingStatus] = useState<MediaReadinessLocalStatus["state"]>();
+  const [publication, setPublication] = useState(() =>
+    readMediaPreparationPublicationStatus(churchId, outputId),
+  );
+  useEffect(() => {
+    if (enabled) onReports(outputId, reports);
+  }, [enabled, onReports, outputId, reports]);
+  useEffect(() => {
+    setPublication(readMediaPreparationPublicationStatus(churchId, outputId));
+    setReportingStatus(undefined);
+    if (!enabled) return;
+    const tick = window.setInterval(() => setNow(Date.now()), 5000);
+    const update = (event: Event) => {
+      const status = (event as CustomEvent<Partial<MediaPreparationPublicationStatus>>).detail;
+      if (
+        status?.outputId === outputId &&
+        status.churchId === churchId &&
+        (status.state === "publishing" || status.state === "retrying" || status.state === "published" || status.state === "failed") &&
+        typeof status.publishedAt === "number"
+      ) {
+        setPublication(status as MediaPreparationPublicationStatus);
+      }
+    };
+    const updateReadinessStatus = (event: Event) => {
+      const status = (event as CustomEvent<MediaReadinessLocalStatus>).detail;
+      if (status?.outputId === outputId && status.churchId === churchId) setReportingStatus(status.state);
+    };
+    window.addEventListener("worship-sync-media-manifest-publish-status", update);
+    window.addEventListener(MEDIA_READINESS_STATUS_EVENT, updateReadinessStatus);
+    return () => {
+      window.clearInterval(tick);
+      window.removeEventListener("worship-sync-media-manifest-publish-status", update);
+      window.removeEventListener(MEDIA_READINESS_STATUS_EVENT, updateReadinessStatus);
+    };
+  }, [churchId, enabled, outputId]);
+
+  if (!enabled) return null;
+  const currentPublication = publication?.publisherSessionId === MEDIA_PREPARATION_PUBLISHER_SESSION_ID ? publication : undefined;
+  const reportsByDevice = new Map<string, MediaPreparationReadinessReport[]>();
+  reports.forEach((report) => {
+    reportsByDevice.set(report.deviceId, [...(reportsByDevice.get(report.deviceId) ?? []), report]);
+  });
+  const sortedDeviceIds = [...reportsByDevice.keys()].sort();
+  const deviceNumbers = new Map(sortedDeviceIds.map((deviceId, index) => [deviceId, index + 1]));
+  const sessionCards = [...reportsByDevice.entries()].flatMap(([deviceId, sessions]) => {
+    const sorted = sessions.sort((a, b) => b.reportedAt - a.reportedAt);
+    const activeSessions = sorted.filter((session) => now - session.reportedAt < 45_000);
+    const visibleSessions = activeSessions.length > 0 ? activeSessions : sorted.slice(0, 1);
+    return visibleSessions.map((report, index) => ({
+      report,
+      concurrentIndex: index + 1,
+      concurrentCount: activeSessions.length,
+      superseded: sorted.filter((session) => !visibleSessions.includes(session) && now - session.reportedAt >= 45_000),
+    }));
+  }).sort((a, b) => a.report.deviceId.localeCompare(b.report.deviceId) || a.report.sessionId.localeCompare(b.report.sessionId))
+    .map((card) => ({ ...card, deviceNumber: deviceNumbers.get(card.report.deviceId) ?? 0 }));
+  const desiredRevision = currentPublication?.desiredRevision;
+  const authoritativeRevision = authoritativeManifest.manifest?.revision;
+  const confirmedPublication = currentPublication?.state === "published" && authoritativeRevision === currentPublication.desiredRevision;
+  const publisherMessage = currentPublication?.state === "publishing"
+    ? `Publishing r${currentPublication.desiredRevision ?? "?"}`
+    : currentPublication?.state === "retrying"
+      ? `Retrying publish r${currentPublication.desiredRevision ?? "?"}`
+      : currentPublication?.state === "failed"
+        ? `Publish failed${currentPublication.error ? ` — ${currentPublication.error}` : ""}`
+        : currentPublication?.state === "published"
+          ? confirmedPublication ? `Published r${currentPublication.desiredRevision ?? "?"}` : `Publish r${currentPublication.desiredRevision ?? "?"} not confirmed by Firebase`
+          : authoritativeRevision != null
+            ? `Firebase has r${authoritativeRevision}; current publish result unavailable`
+            : "No current publish result";
+  return (
+    <section className="rounded border border-gray-700 p-3" aria-label={`${outputName} remote readiness`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-white">Remote devices · {outputName}</h2>
+        <Status good={confirmedPublication}>{publisherMessage}</Status>
+      </div>
+      <p className="mt-1 text-xs text-gray-400">Publication is separate from each device’s receipt and preparation.</p>
+      {reportingStatus && <p className="mt-1 text-xs text-amber-200" role="status">Local diagnostics link: {reportingStatus === "permission-denied" ? "blocked by Firebase permissions" : reportingStatus === "temporarily-unavailable" ? "temporarily unable to update" : reportingStatus === "disconnected" ? "disconnected" : reportingStatus === "subscribing" ? "reconnecting" : reportingStatus === "connected" ? "connected to readiness feed" : "reporting"}</p>}
+      {sessionCards.length === 0 && <p className="mt-2 text-xs text-gray-400">No authenticated readiness report has arrived from this output.</p>}
+      <div className="mt-2 space-y-2">
+        {sessionCards.map(({ report: device, concurrentIndex, concurrentCount, superseded, deviceNumber }) => {
+          const age = Math.max(0, now - device.reportedAt);
+          const connection = age < 45_000 ? "Connected" : age < 120_000 ? "Stale" : "Disconnected";
+          const revisionReceived = Boolean(desiredRevision != null && device.manifestRevision === desiredRevision && device.manifestReceivedAt != null);
+          const hasSelectedCounts = device.selectedCandidateCount !== undefined;
+          const selectedFiniteCount = device.selectedFiniteCandidateCount ?? 0;
+          const selectedPendingCount = device.selectedPendingCacheCount ?? 0;
+          const selectedReady = hasSelectedCounts && selectedFiniteCount > 0 && device.readyCount === selectedFiniteCount && device.preparingCount === 0 && device.failedCount === 0 && selectedPendingCount === 0 && (device.pendingCacheFailedCount ?? 0) === 0 && (device.excludedFailedCount ?? 0) === 0;
+          const ready = connection === "Connected" && confirmedPublication && revisionReceived && device.source === "remote-manifest" && selectedReady;
+          return (
+            <article key={`${device.deviceId}:${device.sessionId}`} role="group" className="rounded bg-gray-900/60 px-2 py-2 text-xs text-gray-300" aria-label={`Remote device ${deviceNumber}${concurrentCount > 1 ? `, window ${concurrentIndex}` : ""}`}>
+              <div className="flex items-center justify-between gap-2"><strong className="text-white">Device {deviceNumber}{concurrentCount > 1 ? ` · window ${concurrentIndex}` : ""}</strong><Status good={ready}>{ready ? "Ready" : connection}</Status></div>
+              <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : desiredRevision != null ? ` · desired r${desiredRevision} not confirmed` : " · controller publication unknown"}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
+              <p title="Inventory is unique media in the received manifest. Selected counts describe the actual bounded preparation pool, including protected transition media; deferred finite videos are outside that pool.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · inventory {device.candidateCount} ({device.finiteCandidateCount} finite, {device.pendingCacheCount} pending cache, {device.excludedCount ?? 0} excluded) · {hasSelectedCounts ? `selected ${device.readyCount}/${selectedFiniteCount} finite ready · ${device.preparingCount} preparing · ${device.failedCount} failed · ${selectedPendingCount} pending cache · ${device.deferredFiniteCount ?? 0} deferred · ${device.mountedSurfaceCount ?? 0} mounted` : "selected preparation counts unavailable (older report)"}{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
+              <ReadinessVideos videos={device.videos} preparedCount={device.readyCount} finiteCount={device.selectedFiniteCandidateCount ?? device.finiteCandidateCount} unavailable={!device.videos} truncated={device.videosTruncated} />
+              {device.errors.length > 0 && <p className="mt-1 break-words text-red-200">{sanitizeMediaPreparationReadinessText(device.errors[0], 180)}</p>}
+              <p className="mt-1 text-gray-400">Last report {Math.floor(age / 1000)}s ago · {connection}</p>
+              {superseded.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-gray-400">{superseded.length} superseded session(s)</summary><ul className="mt-1 space-y-1">{superseded.map((old) => <li key={old.sessionId}>Previous window · r{old.manifestRevision ?? "—"} · report {new Date(old.reportedAt).toLocaleString()} · {old.readyCount} ready / {old.failedCount} failed</li>)}</ul></details>}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
 
 export default MediaSurfaceDiagnostics;

@@ -5,6 +5,7 @@ import {
   type MediaType,
 } from "../types";
 import {
+  hasSupersededMediaReferences,
   replaceMediaReferencesForReplacement,
   sweepMediaReferencesBeforeDelete,
 } from "./mediaReferenceSweep";
@@ -396,5 +397,21 @@ describe("replaceMediaReferencesForReplacement", () => {
 
     expect(result.ok).toBe(false);
     expect(result.rollbackStatus).toBe("uncertain");
+  });
+
+  it("detects saved references that still point at a superseded rendition", async () => {
+    const oldMedia = { id: "canva-ref", background: "https://cdn.example/old.png", publicId: "old" } as MediaType;
+    const currentMedia = { ...oldMedia, background: "https://cdn.example/new.png", publicId: "new" } as MediaType;
+    const docs = new Map<string, any>([
+      ["media", { _id: "media", list: [currentMedia] }],
+      ["item-stale", { _id: "item-stale", type: "free", slides: [{ boxes: [{ mediaInfo: oldMedia, background: oldMedia.background }] }] }],
+    ]);
+    const db = {
+      allDocs: jest.fn(async () => ({ rows: [...docs.values()].map((doc) => ({ id: doc._id, doc })) })),
+    } as unknown as PouchDB.Database;
+
+    await expect(hasSupersededMediaReferences(db, oldMedia, currentMedia)).resolves.toBe(true);
+    docs.set("item-stale", { _id: "item-stale", type: "free", slides: [{ boxes: [{ mediaInfo: currentMedia, background: currentMedia.background }] }] });
+    await expect(hasSupersededMediaReferences(db, oldMedia, currentMedia)).resolves.toBe(false);
   });
 });

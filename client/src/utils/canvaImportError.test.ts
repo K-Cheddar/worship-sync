@@ -38,3 +38,11 @@ test("formats known provider reconciliation and Canva rate limit errors safely",
     ),
   ).toMatch(/temporarily limiting/i);
 });
+
+test("keeps media reconciliation guidance visible in the transfer panel", () => {
+  const error = new CanvaImportError(
+    "Canva media references need reconciliation. Both provider files were kept.",
+    { code: "CANVA_MEDIA_RECONCILIATION_REQUIRED" },
+  );
+  expect(formatCanvaImportError(error, "png")).toBe(error.message);
+});

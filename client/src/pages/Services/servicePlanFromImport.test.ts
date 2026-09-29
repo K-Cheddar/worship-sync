@@ -5,6 +5,7 @@ import {
 } from "./servicePlanFromImport";
 import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import { richTextToPlainText } from "../../types/richText";
+import { getServicePlanResourceText } from "./servicePlanResources";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 describe("guessServicePlanElementType", () => {
@@ -66,6 +67,26 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(sections[1].name).toBe("Message");
     expect(sections[0].elements).toHaveLength(2);
     expect(sections[1].elements).toHaveLength(1);
+  });
+
+  it("retains an empty external Title as a reviewable source ambiguity", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday Service",
+      sections: [{
+        sectionName: "Program",
+        rows: [{ elementType: "Special Feature", title: "", ledBy: "", note: "Original note" }],
+      }],
+      teamAssignments: [],
+    }, songs, { classifyExternalTitle: true });
+
+    expect(section.elements[0].importAmbiguity).toMatchObject({
+      sourceTitle: "",
+      sourceElementType: "Special Feature",
+      sourceNote: "Original note",
+      status: "unresolved",
+      reasons: ["The source title is empty."],
+      parts: [],
+    });
   });
 
   it("matches a song row against the library and captures ledBy as the assignment", () => {
@@ -201,6 +222,99 @@ describe("buildServicePlanSectionsFromImport", () => {
     });
   });
 
+  it("classifies external Service Planning Title text without changing other import sources by default", () => {
+    const mixed: ServicePlanningImportData = {
+      ...data,
+      sections: [{ sectionName: "Reading", rows: [{
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+      }] }],
+    };
+    const ordinary = buildServicePlanSectionsFromImport(mixed, songs);
+    const external = buildServicePlanSectionsFromImport(mixed, songs, {
+      classifyExternalTitle: true,
+      knownPeople: ["Jasmine Williams", "Jeriyah Brown"],
+    });
+    expect(ordinary[0].elements[0].importAmbiguity).toBeUndefined();
+    expect(external[0].elements[0].scriptureRef?.book).toBe("Psalms");
+    expect(external[0].elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Jeriyah Brown",
+      "Jasmine Williams",
+    ]);
+    expect(external[0].elements[0].importAmbiguity).toMatchObject({ status: "confirmed" });
+    expect(external[0].elements[0].importAmbiguity?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "scripture", managed: expect.objectContaining({ kind: "scripture" }) }),
+      expect.objectContaining({ kind: "person", value: "Jasmine Williams", managed: expect.objectContaining({ kind: "assignee" }) }),
+    ]));
+  });
+
+  it("keeps uncertain descriptive title text visible as content and reviewable", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Program", rows: [{
+        elementType: "Special Feature",
+        title: "Skit/Mime – Walking With Jesus",
+        ledBy: "",
+      }] }],
+    }, songs, { classifyExternalTitle: true });
+
+    expect(section.elements[0].resources).toEqual([
+      expect.objectContaining({
+        type: "text",
+        title: "Imported description",
+        data: { text: expect.anything() },
+      }),
+    ]);
+    expect(section.elements[0].importAmbiguity?.status).toBe("unresolved");
+    expect(richTextToPlainText(getServicePlanResourceText(section.elements[0].resources![0]))).toBe("Skit/Mime – Walking With Jesus");
+    expect(section.elements[0].importAmbiguity?.parts[0].managed).toMatchObject({
+      kind: "resource",
+      id: section.elements[0].resources![0].id,
+    });
+  });
+
+  it("keeps clear links out of the ambiguity prompt while preserving attachment authorization", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Program", rows: [{
+        elementType: "Special Feature",
+        title: "https://youtu.be/abc?t=45",
+        ledBy: "",
+      }] }],
+    }, songs, { classifyExternalTitle: true });
+    const element = section.elements[0];
+
+    expect(element.importAmbiguity).toMatchObject({
+      status: "confirmed",
+      reasons: [],
+      authorizationPending: true,
+    });
+    expect(element.resources).toBeUndefined();
+  });
+
+  it("merges title people with Led By in source order without duplicating names", () => {
+    const mixed: ServicePlanningImportData = {
+      ...data,
+      sections: [{ sectionName: "Teaching & Mission", rows: [{
+        elementType: "Sabbath School",
+        title: "Sabbath School — Candace Bailey, Oneil Campbell, Jacqueline Mullings",
+        ledBy: "Clarence Jones",
+      }] }],
+    };
+    const [section] = buildServicePlanSectionsFromImport(mixed, songs, {
+      classifyExternalTitle: true,
+      knownPeople: ["Candace Bailey", "Oneil Campbell", "Jacqueline Mullings", "Clarence Jones"],
+    });
+    expect(section.elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones",
+      "Candace Bailey",
+      "Oneil Campbell",
+      "Jacqueline Mullings",
+    ]);
+    expect(section.elements[0].sourceLedByRaw).toBe("Clarence Jones");
+  });
+
   it("matches a marked song against the library on the marked title alone", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {
@@ -314,6 +428,10 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(element.durationMinutes).toBe(1.5);
     expect(element.durationSeconds).toBe(90);
     expect(richTextToPlainText(element.notes)).toBe("Invite everyone to sing.");
+    expect(element.notes?.blocks[0].id).toBeTruthy();
+    expect(element.servicePlanningImport?.managedNotes).toEqual([
+      { id: element.notes!.blocks[0].id, fingerprint: expect.any(String) },
+    ]);
     expect(
       element.teamNotes?.map(({ label, note }) => ({
         label,

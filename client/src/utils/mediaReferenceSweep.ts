@@ -271,6 +271,54 @@ export type MediaReferenceReplacementResult = MediaReferenceSweepResult & {
   updatedDocs?: Record<string, unknown>[];
 };
 
+/**
+ * Check whether saved documents still contain references to an older
+ * rendition. This is intentionally read-only and is used only when a Canva
+ * replacement needs recovery after an ambiguous write.
+ */
+export async function hasSupersededMediaReferences(
+  db: PouchDB.Database,
+  oldMedia: MediaType,
+  currentMedia: MediaType,
+): Promise<boolean> {
+  const oldUrls = new Set(
+    [oldMedia.background, oldMedia.thumbnail, oldMedia.placeholderImage]
+      .filter((url): url is string => Boolean(url))
+      .map(stripUrlQuery),
+  );
+  const currentUrls = new Set(
+    [currentMedia.background, currentMedia.thumbnail, currentMedia.placeholderImage]
+      .filter((url): url is string => Boolean(url))
+      .map(stripUrlQuery),
+  );
+  const hasOldUrl = (value: unknown) =>
+    typeof value === "string" && oldUrls.has(stripUrlQuery(value)) && !currentUrls.has(stripUrlQuery(value));
+  const mediaInfoIsOld = (value: unknown) => {
+    if (!value || typeof value !== "object") return false;
+    const info = value as Partial<MediaType>;
+    if (info.id !== oldMedia.id) return false;
+    // Sparse legacy references cannot prove which rendition they point at.
+    if (!info.background && !info.publicId && !info.muxAssetId && !info.canvaSource?.revision) return true;
+    return (info.background !== undefined && info.background !== currentMedia.background) ||
+      (info.publicId !== undefined && info.publicId !== currentMedia.publicId) ||
+      (info.muxAssetId !== undefined && info.muxAssetId !== currentMedia.muxAssetId) ||
+      (info.canvaSource?.revision !== undefined && info.canvaSource.revision !== currentMedia.canvaSource?.revision);
+  };
+  const containsOldReference = (value: unknown, key = ""): boolean => {
+    if (key === "mediaInfo" && mediaInfoIsOld(value)) return true;
+    if ((key === "background" || key === "imageUrl") && hasOldUrl(value)) return true;
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) return value.some((entry) => containsOldReference(entry));
+    return Object.entries(value as Record<string, unknown>)
+      .some(([childKey, child]) => containsOldReference(child, childKey));
+  };
+
+  const allDocs = (await db.allDocs({ include_docs: true })) as allDocsType;
+  return allDocs.rows.some(({ id, doc }) =>
+    id !== "media" && Boolean(doc) && containsOldReference(doc),
+  );
+}
+
 function buildDeletedUrlSet(rows: MediaType[]): Set<string> {
   const s = new Set<string>();
   for (const m of rows) {

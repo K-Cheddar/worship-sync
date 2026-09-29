@@ -79,7 +79,7 @@ export const scheduleWorkspacePanelClassName =
 
 /** Grid + members row inside the team schedule panel. */
 export const scheduleWorkspaceBodyRowClassName =
-  "mt-4 flex flex-col gap-4 max-lg:flex-none lg:min-h-0 lg:flex-1 lg:flex-row lg:items-stretch";
+  "relative mt-4 flex min-h-0 min-w-0 flex-col gap-4 max-lg:flex-none lg:flex-1 lg:flex-row lg:items-stretch";
 
 /** Main column for the schedule grid. */
 export const scheduleWorkspaceMainColumnClassName =

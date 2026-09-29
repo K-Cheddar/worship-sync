@@ -3610,3 +3610,69 @@ describe("item list outline persistence", () => {
     );
   });
 });
+
+const loadStoreWithAllItemsPersistence = () => {
+  let storeModule: any;
+  let allItemsSliceModule: any;
+  const postMessage = jest.fn();
+  const db = {
+    get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
+    put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: { postMessage },
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    allItemsSliceModule = require("./allItemsSlice");
+  });
+
+  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db };
+};
+
+describe("allItems persistence", () => {
+  it("keeps timer search changes UI-only while persisting library mutations", async () => {
+    jest.useFakeTimers();
+    const { store, allItemsSlice, db } = loadStoreWithAllItemsPersistence();
+    store.dispatch(allItemsSlice.setIsInitialized(true));
+
+    store.dispatch(allItemsSlice.setTimerSearchValue("countdown"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).not.toHaveBeenCalled();
+
+    store.dispatch(
+      allItemsSlice.addItemToAllItemsList({
+        _id: "timer-1",
+        name: "Countdown",
+        type: "timer",
+        listId: "timer-1",
+        background: "",
+      }),
+    );
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "allItems",
+        items: [expect.objectContaining({ _id: "timer-1" })],
+      }),
+    );
+    jest.useRealTimers();
+  });
+});

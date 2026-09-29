@@ -1062,6 +1062,7 @@ export const useTeamsPageState = () => {
   );
 
   return {
+    churchId,
     loading,
     canEditTeams,
     canEditAnyTeam,

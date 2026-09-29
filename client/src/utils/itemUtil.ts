@@ -497,6 +497,7 @@ export const updateFormattedSections = ({
 };
 
 type CreateNewFreeFormType = {
+  id?: string;
   name: string;
   text: string;
   list: ServiceItem[];
@@ -519,6 +520,7 @@ type CreateNewFreeFormType = {
 };
 
 export const createNewFreeForm = async ({
+  id,
   name,
   text,
   list,
@@ -584,7 +586,7 @@ export const createNewFreeForm = async ({
   const newItem: ItemState = {
     name: _name,
     type: "free",
-    _id: _name,
+    _id: id || _name,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -728,6 +730,25 @@ type CreateNewItemInDbType = {
   item: ItemState;
   db: PouchDB.Database | undefined;
 };
+
+/** Share one in-flight custom-item retry across repeated local clicks. */
+export async function runCanvaCustomItemCreationOnce(
+  inFlight: Map<string, Promise<string>>,
+  idempotencyKey: string | undefined,
+  create: () => Promise<string>,
+): Promise<string> {
+  if (!idempotencyKey) return create();
+  const existing = inFlight.get(idempotencyKey);
+  if (existing) return existing;
+  const creation = create();
+  inFlight.set(idempotencyKey, creation);
+  try {
+    return await creation;
+  } finally {
+    if (inFlight.get(idempotencyKey) === creation) inFlight.delete(idempotencyKey);
+  }
+}
+
 export const createNewItemInDb = async ({
   item,
   db,
@@ -737,6 +758,7 @@ export const createNewItemInDb = async ({
     const response: DBItem = await db.get(item._id);
     return {
       ...item,
+      ...response,
       _id: response._id,
       name: response.name,
       slides: response.slides,
@@ -981,8 +1003,8 @@ export const createItemListFromExisting = async ({
     });
     const newOverlays: string[] = [];
     for (const overlayId of response.overlays) {
-      const { _id, _rev, ...overlayDetails }: DBOverlay | undefined =
-        await db.get(`overlay-${overlayId}`);
+      const overlay = (await db.get(`overlay-${overlayId}`)) as DBOverlay;
+      const { _id, _rev, ...overlayDetails } = overlay;
 
       const newId = generateRandomId();
       const copiedOverlay = {

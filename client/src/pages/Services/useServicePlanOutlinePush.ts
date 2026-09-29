@@ -6,7 +6,7 @@
  * Persisting the returned updatedSections back to the ServicePlan
  * (via saveServicePlan) is left to the caller, which already owns that flow.
  */
-import { useCallback, useContext } from "react";
+import { useCallback, useContext, useRef } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
@@ -29,12 +29,27 @@ export const useServicePlanOutlinePush = () => {
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
   );
+  const contextRef = useRef({ currentList, selectedList, db, bibleDb, songs, customDocuments });
+  contextRef.current = { currentList, selectedList, db, bibleDb, songs, customDocuments };
 
   const pushPlanToOutline = useCallback(
-    async (plan: ServicePlan): Promise<ServicePlanOutlinePushResult> => {
+    async (
+      plan: ServicePlan,
+      isSourcePlanCurrent: () => boolean = () => true,
+    ): Promise<ServicePlanOutlinePushResult> => {
       if (!selectedList) {
         throw new Error("Open or create an item list in the Controller first.");
       }
+      const startingContext = contextRef.current;
+      const isContextCurrent = () =>
+        isSourcePlanCurrent()
+        &&
+        contextRef.current.selectedList?._id === startingContext.selectedList?._id
+        && contextRef.current.currentList === startingContext.currentList
+        && contextRef.current.db === startingContext.db
+        && contextRef.current.bibleDb === startingContext.bibleDb
+        && contextRef.current.songs === startingContext.songs
+        && contextRef.current.customDocuments === startingContext.customDocuments;
       const result = await buildServicePlanOutlineItems({
         plan,
         currentList,
@@ -42,7 +57,11 @@ export const useServicePlanOutlinePush = () => {
         bibleDb,
         songs,
         customDocuments,
+        isContextCurrent,
       });
+      if (!isContextCurrent()) {
+        throw new Error("The selected outline changed before the service plan could be imported.");
+      }
       const existingCustomDocumentIds = new Set(
         customDocuments.map((document) => document._id),
       );

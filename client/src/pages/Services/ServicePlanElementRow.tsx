@@ -127,6 +127,7 @@ import {
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
   getServicePlanRoleNotePositionIds,
+  isUnassignedServicePlanAssignee,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 
@@ -1137,6 +1138,7 @@ type ServicePlanElementRowProps = {
   onOpenAssignment?: (trigger?: HTMLElement) => void;
   onOpenContent?: (trigger?: HTMLElement) => void;
   onOpenSongDetails?: (songRef: ServicePlanSongReference) => void;
+  onReviewImportAmbiguity?: () => void;
 };
 
 /**
@@ -1191,6 +1193,7 @@ const ServicePlanElementRow = ({
   onOpenAssignment,
   onOpenContent,
   onOpenSongDetails,
+  onReviewImportAmbiguity,
 }: ServicePlanElementRowProps) => {
   const globalInfo = useContext(GlobalInfoContext);
   const churchId = globalInfo?.churchId || "";
@@ -1316,23 +1319,45 @@ const ServicePlanElementRow = ({
   const canAddTeamNote = !hideNotes && teamNoteOptions.length > 0;
   const canAddRoleNote = !hideNotes && roleNoteOptions.length > 0;
   const leadAssignee = getServicePlanElementLead(element);
-  const namedAssignees = assignees.filter((assignee) => assignee.name?.trim());
+  const participantAssignees = assignees.filter(
+    (assignee) => !isUnassignedServicePlanAssignee(assignee),
+  );
+  const namedAssignees = participantAssignees.filter((assignee) => assignee.name?.trim());
   const [leadInputAssigneeId, setLeadInputAssigneeId] = useState<string | undefined>(
     leadAssignee?.id,
   );
-  useEffect(() => {
-    if (leadInputAssigneeId && assignees.some((assignee) => assignee.id === leadInputAssigneeId)) {
-      return;
-    }
-    setLeadInputAssigneeId(leadAssignee?.id);
-  }, [assignees, leadAssignee?.id, leadInputAssigneeId]);
   const leadInputAssignee = assignees.find(
     (assignee) => assignee.id === leadInputAssigneeId,
   );
+  useEffect(() => {
+    const currentLeadInputAssignee = assignees.find(
+      (assignee) => assignee.id === leadInputAssigneeId,
+    );
+    // Clearing a lead intentionally leaves the input on that blank assignment;
+    // a deliberate Make lead reorder should move it to the new lead instead.
+    if (currentLeadInputAssignee && !currentLeadInputAssignee.name?.trim()) return;
+    if (leadInputAssigneeId === leadAssignee?.id) return;
+    setLeadInputAssigneeId(leadAssignee?.id);
+  }, [assignees, leadAssignee?.id, leadInputAssigneeId]);
   const hasLeadAssignee = Boolean(leadAssignee?.name?.trim());
   const assigneeSummary = leadAssignee?.name?.trim() ||
     (assignees.some((assignee) => !assignee.name?.trim()) ? "Unassigned" : "");
-  const additionalAssigneeCount = Math.max(0, namedAssignees.length - 1);
+  const participantCount = participantAssignees.length;
+  // Assignment IDs identify the participant records. Keep each named record
+  // in assignment order, even when two records share the same display name.
+  const namedParticipants = namedAssignees.flatMap((assignee) => {
+    const name = assignee.name?.trim();
+    return name ? [{ assignee, name }] : [];
+  });
+  const participantNames = namedParticipants.map(({ name }) => name);
+  const participantNamesLabel = participantNames.join(", ");
+  const additionalParticipantNamesLabel = namedParticipants
+    .filter(({ assignee }) => assignee.id !== leadInputAssigneeId)
+    .map(({ name }) => name)
+    .join(", ");
+  const participantDetailsLabel = participantCount
+    ? `Show all ${participantCount} participant${participantCount === 1 ? "" : "s"} for ${itemLabel}`
+    : undefined;
   const scheduledPositionIds = element.scheduledPositionIds ??
     (element.positionId ? [element.positionId] : []);
   const scheduledPositionLabel = scheduledPositionIds.length
@@ -1431,9 +1456,9 @@ const ServicePlanElementRow = ({
     <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 max-w-full items-center overflow-visible bg-transparent")}>
       {allowEdit ? (
         <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
-          {/* HistorySuggestField's flex-1 sits under PopoverAnchor, so wrap so the
-              name field claims column width and the add button stays icon-sized. */}
-          <div className="min-w-0 flex-1">
+          {/* HistorySuggestField's inner anchor can shrink; give the editable
+              field twice the space and hide the summary on tablet widths. */}
+          <div className="min-w-0 flex-[2_1_0%]">
             <DebouncedAssigneeNameField
               value={leadInputAssignee?.name || ""}
               onCommit={(name) => {
@@ -1456,50 +1481,70 @@ const ServicePlanElementRow = ({
               compact
             />
           </div>
+          {additionalParticipantNamesLabel ? (
+            <span
+              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 lg:block"
+              title={additionalParticipantNamesLabel}
+            >
+              {additionalParticipantNamesLabel}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="tertiary"
-            svg={UserPlus}
+            svg={participantCount ? Users : UserPlus}
             iconSize="sm"
-            className="h-full max-h-full min-h-0 w-9 flex-none shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
-            aria-label={`${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
+            className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 justify-center gap-1 rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
+            aria-label={participantDetailsLabel
+              ? participantDetailsLabel
+              : `${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
+            aria-expanded={usesAssignmentPanel ? undefined : assignmentSheetOpen}
             onClick={(event) => {
               event.stopPropagation();
               openAssignment(event.currentTarget);
             }}
           >
-            {additionalAssigneeCount > 0 ? additionalAssigneeCount : null}
+            {participantCount > 0 ? participantCount : null}
           </Button>
         </div>
       ) : (
-        <Popover open={leadPopoverOpen} onOpenChange={setLeadPopoverOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
-                "flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white",
-                hasLeadAssignee
-                  ? "text-gray-100"
-                  : "italic text-gray-500",
-              )}
-              aria-label={`View people and microphones for ${itemLabel}`}
-            >
-              <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-none">
-                {assigneeSummary || "Unassigned"}
-              </span>
-              {additionalAssigneeCount > 0 ? (
-                <span className="shrink-0 text-gray-400">+{additionalAssigneeCount}</span>
-              ) : null}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-2 text-gray-100"
+        <div className={cn(
+          SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+          "flex w-full min-w-0 items-center gap-1 overflow-hidden rounded bg-transparent",
+        )}>
+          <span
+            className={cn(
+              "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap leading-none",
+              hasLeadAssignee ? "text-gray-100" : "italic text-gray-500",
+            )}
+            title={participantNamesLabel || assigneeSummary || "Unassigned"}
           >
-            {readOnlyLeadDetails}
-          </PopoverContent>
-        </Popover>
+            {participantNamesLabel || assigneeSummary || "Unassigned"}
+          </span>
+          <Popover open={leadPopoverOpen} onOpenChange={setLeadPopoverOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={Users}
+                iconSize="sm"
+                className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 gap-1 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400 [&_svg]:size-4"
+                aria-label={participantDetailsLabel
+                  ? participantDetailsLabel
+                  : `View people and microphones for ${itemLabel}`}
+                aria-expanded={leadPopoverOpen}
+              >
+                {participantCount > 0 ? participantCount : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-2 text-gray-100"
+            >
+              {readOnlyLeadDetails}
+            </PopoverContent>
+          </Popover>
+        </div>
       )}
     </div>
   ) : null;
@@ -2501,6 +2546,13 @@ const ServicePlanElementRow = ({
   const visibleReadOnlyAssigneesBlock = shouldShowAssigneesBlock
     ? readOnlyAssigneesBlock
     : null;
+  const importNeedsReview = Boolean(
+    element.importAmbiguity && (
+      element.importAmbiguity.authorizationPending ||
+      (element.importAmbiguity.status !== "confirmed" &&
+        element.importAmbiguity.status !== "acknowledged")
+    ),
+  );
 
   return (
     <div
@@ -2601,6 +2653,18 @@ const ServicePlanElementRow = ({
           </div>
 
           <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:col-start-5 max-md:ml-auto max-md:row-start-1")}>
+            {importNeedsReview ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                className="text-amber-300 hover:text-amber-200"
+                svg={TriangleAlert}
+                aria-label={`Review import interpretation for ${itemLabel}`}
+                title="Import needs review"
+                onClick={(event) => { event.stopPropagation(); onReviewImportAmbiguity?.(); }}
+              />
+            ) : null}
             {renderItemActionsMenu()}
             {liveControls}
           </div>
@@ -2635,6 +2699,19 @@ const ServicePlanElementRow = ({
             {formattedDurationDisplay || "—"}
           </span>
           <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5 max-md:col-start-4 max-md:row-start-1 max-md:flex max-md:min-h-[2rem] max-md:items-center max-md:self-center max-md:px-1.5")}>
+            {importNeedsReview ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                className="mr-1 shrink-0 text-amber-300 hover:text-amber-200"
+                svg={TriangleAlert}
+                aria-label={`Review import interpretation for ${itemLabel}`}
+                title="Import needs review"
+                disabled={!canEdit || !onReviewImportAmbiguity}
+                onClick={(event) => { event.stopPropagation(); onReviewImportAmbiguity?.(); }}
+              />
+            ) : null}
             <Popover open={titlePopoverOpen} onOpenChange={setTitlePopoverOpen}>
               <PopoverTrigger asChild>
                 <button

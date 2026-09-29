@@ -970,6 +970,11 @@ export const createCanvaService = ({
       Number(design.thumbnail?.height || 0) >
       Number(design.thumbnail?.width || 0);
     const assets = [];
+    const failedPages = [];
+    const getPageExportFailureMessage = (error) =>
+      error?.statusCode === 429
+        ? "Canva is temporarily limiting export requests. Wait a moment, then retry this page."
+        : "Could not export this page. Try again.";
     const createdCloudinaryPublicIds = new Set();
     const committedCloudinaryPublicIds = new Set();
     let cleanupCreatedCloudinaryAssets = null;
@@ -1060,22 +1065,11 @@ export const createCanvaService = ({
               }
               return pageUrls[0];
             } catch (error) {
-              if (error?.statusCode) {
-                await importPageProgress(pageNumber, "error", {
-                  error: error.message,
-                });
-                throw createClientError(
-                  `Could not export Canva page ${pageNumber}. ${error.message}`,
-                  error.statusCode,
-                );
-              }
               await importPageProgress(pageNumber, "error", {
                 error: `Could not export Canva page ${pageNumber}. Try again.`,
               });
-              throw createClientError(
-                `Could not export Canva page ${pageNumber}. Try again.`,
-                422,
-              );
+              failedPages.push({ page: pageNumber, error: getPageExportFailureMessage(error) });
+              return undefined;
             }
           }),
         );
@@ -1088,6 +1082,7 @@ export const createCanvaService = ({
       }
       for (let index = 0; index < pageUrls.length; index += 1) {
         const pageNumber = selectedPages[index];
+        if (!pageUrls[index]) continue;
         if (isCancelled?.())
           throw createClientError("Canva import cancelled.", 499);
         await importPageProgress(pageNumber, "processing");
@@ -1108,7 +1103,8 @@ export const createCanvaService = ({
           await importPageProgress(pageNumber, "error", {
             error: `Could not save Canva page ${pageNumber}. Try again.`,
           });
-          throw error;
+          failedPages.push({ page: pageNumber, error: "Could not save this page. Try again." });
+          continue;
         }
         if (uploaded?.public_id) {
           createdCloudinaryPublicIds.add(uploaded.public_id);
@@ -1146,6 +1142,7 @@ export const createCanvaService = ({
           ? selectedPages.map((pageNumber) => [pageNumber])
           : [selectedPages];
       const createdMuxAssetIds = new Set();
+      const muxAssetIdByPage = new Map();
       cleanupCreatedMuxAssets = async () => {
         const deleteAsset = mux.video.assets.delete;
         if (typeof deleteAsset !== "function") return;
@@ -1187,6 +1184,9 @@ export const createCanvaService = ({
           static_renditions: [{ resolution: "highest" }],
           meta: { title, creator_id: churchId, external_id: designId },
         });
+        for (const pageNumber of pageNumbers) {
+          if (asset?.id) muxAssetIdByPage.set(pageNumber, asset.id);
+        }
         if (asset?.id) createdMuxAssetIds.add(asset.id);
         const processingDeadline = now() + resolvedMuxProcessingDeadlineMs;
         const maxProcessingPolls = Math.max(
@@ -1305,6 +1305,18 @@ export const createCanvaService = ({
           await importPageProgress(pageNumber, "ready", { exported: true });
           return asset;
         } catch (error) {
+          const failedAssetId = muxAssetIdByPage.get(pageNumber);
+          if (failedAssetId) {
+            try {
+              await mux.video.assets.delete?.call(mux.video.assets, failedAssetId);
+              createdMuxAssetIds.delete(failedAssetId);
+            } catch (cleanupError) {
+              console.warn("Could not remove failed Canva Mux page asset:", {
+                assetId: failedAssetId,
+                cleanupError,
+              });
+            }
+          }
           await importPageProgress(pageNumber, "error", {
             error: `Page ${pageNumber} could not finish video processing. Try again.`,
           });
@@ -1368,7 +1380,10 @@ export const createCanvaService = ({
           throw createClientError("Canva import cancelled.", 499);
         }
         if (exportedPages.errors.length > 0) {
-          throw exportedPages.errors[0].error;
+          for (const failure of exportedPages.errors) {
+            const page = pageSelections[failure.index]?.[0];
+            if (page) failedPages.push({ page, error: getPageExportFailureMessage(failure.error) });
+          }
         }
         const processedPages = {
           results: processedResults,
@@ -1378,7 +1393,10 @@ export const createCanvaService = ({
           throw createClientError("Canva import cancelled.", 499);
         }
         if (processedPages.errors.length > 0) {
-          throw processedPages.errors[0].error;
+          for (const failure of processedPages.errors) {
+            const page = pageSelections[failure.index]?.[0];
+            if (page) failedPages.push({ page, error: "Could not process this video. Try again." });
+          }
         }
         assets.push(...processedPages.results.filter(Boolean));
       } else {
@@ -1466,7 +1484,7 @@ export const createCanvaService = ({
           committedMuxAssetIds.add(asset.data.assetId);
         }
       }
-      return { assets, skippedCount, revision };
+      return { assets, skippedCount, revision, ...(failedPages.length ? { failedPages } : {}) };
     } catch (error) {
       await cleanupCreatedCloudinaryAssets?.();
       await cleanupCreatedMuxAssets?.();

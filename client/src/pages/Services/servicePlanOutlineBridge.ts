@@ -32,7 +32,6 @@ import type { DBItem, ServiceItem } from "../../types";
 import { createNewFreeForm, createNewHeading } from "../../utils/itemUtil";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import generateRandomId from "../../utils/generateRandomId";
-import { resolveServicePlanSongRef } from "./servicePlanSongResolution";
 import {
   richTextToFormattedPlainText,
   richTextToPlainText,
@@ -45,8 +44,7 @@ import type {
 } from "../../types/servicePlan";
 import {
   getServicePlanCustomDocumentId,
-  getServicePlanElementScriptureRefs,
-  getServicePlanElementSongRefs,
+  getServicePlanElementContentResources,
 } from "../../types/servicePlan";
 
 export type ServicePlanOutlinePushResult = {
@@ -145,58 +143,65 @@ const planElementOutlineItems = (
   let hasUnresolvedAttachment = false;
   // An element may legitimately attach the same song twice (a reprise); the
   // occurrence count keeps those from collapsing onto one listId.
-  const keyUses = new Map<string, number>();
-  const listIdFor = (key: string) => {
-    const used = keyUses.get(key) ?? 0;
-    keyUses.set(key, used + 1);
-    return outlineListIdFor(element, key, used);
-  };
-
-  for (const storedSongRef of getServicePlanElementSongRefs(element)) {
-    // A song the import couldn't find may have been added to the library since,
-    // so the stored reference is re-checked rather than trusted — otherwise a
-    // song that plainly exists is dropped on its way to the screen.
-    const songRef = resolveServicePlanSongRef(storedSongRef, songs);
-    if (songRef?.kind === "library") {
+  for (const [attachmentIndex, resource] of getServicePlanElementContentResources(element).entries()) {
+    const occurrenceId = resource.id || `${resource.type}-${attachmentIndex}`;
+    const listId = outlineListIdFor(element, `attachment:${occurrenceId}`, 0);
+    if (resource.type === "song") {
+      const storedSongRef = resource.data?.songRef;
+      const songRef = storedSongRef && typeof storedSongRef === "object"
+        ? storedSongRef as { kind?: string; songId?: string; songName?: string; title?: string }
+        : null;
+      const linkedSongId = songRef?.kind === "library"
+        ? String(songRef.songId || "").trim()
+        : typeof resource.data?.songId === "string"
+          ? resource.data.songId.trim()
+          : "";
+      const linkedSong = linkedSongId
+        ? songs.find((candidate) => candidate._id === linkedSongId && candidate.type === "song")
+        : null;
+      if (linkedSong) {
       planned.push({
         kind: "song",
-        listId: listIdFor(`song:${songRef.songId}`),
-        songId: songRef.songId,
-        songName: songRef.songName,
+        listId,
+        songId: linkedSong._id,
+        songName: linkedSong.name,
       });
       continue;
-    }
-    // Still nothing in the library to reference. The rest of the element is
-    // pushed regardless — one unmatched song is no reason to leave an operator
-    // without the songs and scripture that did resolve.
-    hasUnresolvedAttachment = true;
-  }
-
-  for (const scriptureRef of getServicePlanElementScriptureRefs(element)) {
-    planned.push({
-      kind: "scripture",
-      listId: listIdFor(
-        `bible:${scriptureRef.book}:${scriptureRef.chapter}:${scriptureRef.verseRange}:${scriptureRef.version}`,
-      ),
-      scriptureRef,
-    });
-  }
-
-  for (const resource of element.resources ?? []) {
-    if (resource.type !== "custom-document") continue;
-    const documentId = getServicePlanCustomDocumentId(resource);
-    const document = customDocuments.find(
-      (candidate) => candidate._id === documentId && candidate.type === "free",
-    );
-    if (!documentId || !document) {
+      }
+      // A saved-plan link is authoritative. Never substitute a same-titled
+      // song when its id is missing or no longer resolves.
       hasUnresolvedAttachment = true;
       continue;
     }
-    planned.push({
-      kind: "custom-document",
-      listId: listIdFor(`custom-document:${documentId}`),
-      document,
-    });
+    if (resource.type === "scripture") {
+      const storedReference = resource.data?.scripture;
+      const scriptureRef = storedReference && typeof storedReference === "object"
+        ? storedReference as ServicePlanScriptureReference
+        : resource.data && typeof resource.data.book === "string"
+            ? resource.data as unknown as ServicePlanScriptureReference
+            : undefined;
+      if (scriptureRef?.book && scriptureRef.chapter && scriptureRef.verseRange) {
+        planned.push({ kind: "scripture", listId, scriptureRef });
+      } else {
+        hasUnresolvedAttachment = true;
+      }
+      continue;
+    }
+    if (resource.type === "custom-document") {
+      const documentId = getServicePlanCustomDocumentId(resource);
+      const document = customDocuments.find(
+        (candidate) => candidate._id === documentId && candidate.type === "free",
+      );
+      if (!documentId || !document) {
+        hasUnresolvedAttachment = true;
+        continue;
+      }
+      planned.push({ kind: "custom-document", listId, document });
+      continue;
+    }
+    // Other resource references remain available in the controller plan but
+    // are not outline items. If no presentation attachment exists, the plan
+    // element still gets its ordinary editable placeholder below.
   }
 
   if (!planned.length && !hasUnresolvedAttachment) {
@@ -300,6 +305,7 @@ export const buildServicePlanOutlineItems = async ({
   bibleDb,
   songs,
   customDocuments = [],
+  isContextCurrent = () => true,
 }: {
   plan: ServicePlan;
   currentList: ServiceItem[];
@@ -310,7 +316,14 @@ export const buildServicePlanOutlineItems = async ({
   songs: ServiceItem[];
   /** Current church free-form library, used to resolve custom-document refs. */
   customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
+  /** Prevents stale async work from adding to another selected live outline. */
+  isContextCurrent?: () => boolean;
 }): Promise<ServicePlanOutlinePushResult> => {
+  const assertCurrentContext = () => {
+    if (!isContextCurrent()) {
+      throw new Error("The selected outline changed before the service plan could be imported.");
+    }
+  };
   const items: ServiceItem[] = [];
   const skippedTitles: string[] = [];
   const updatedSections: ServicePlanSection[] = [];
@@ -318,6 +331,7 @@ export const buildServicePlanOutlineItems = async ({
   let insertedCount = 0;
 
   for (const section of plan.sections) {
+    assertCurrentContext();
     const elementPlans = section.elements.map((element) =>
       planElementOutlineItems(element, songs, customDocuments),
     );
@@ -341,6 +355,7 @@ export const buildServicePlanOutlineItems = async ({
       continue;
     }
 
+    assertCurrentContext();
     const headingResult = await createNewHeading({
       name: section.name || "Section",
       list: workingList,
@@ -363,6 +378,7 @@ export const buildServicePlanOutlineItems = async ({
 
       const elementItems: ServiceItem[] = [];
       for (const planned of additions) {
+        assertCurrentContext();
         // eslint-disable-next-line no-await-in-loop -- each item may write a new library doc, order matters
         const item = await buildOutlineItem({
           planned,
@@ -389,5 +405,6 @@ export const buildServicePlanOutlineItems = async ({
     updatedSections.push({ ...section, elements: updatedElements });
   }
 
+  assertCurrentContext();
   return { items, updatedSections, insertedCount, skippedTitles };
 };

@@ -57,8 +57,7 @@ export const useCurrentServicePlanSource = () => {
   const { canViewServices, canViewTeams, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
-  const { loadPlanPreview, isServicePlanningEnabled } =
-    useServicePlanningImport();
+  const { loadPlanPreview } = useServicePlanningImport();
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
   );
@@ -148,8 +147,7 @@ export const useCurrentServicePlanSource = () => {
   const isEnabled = Boolean(
     churchId &&
       canViewServices &&
-      loginState !== "guest" &&
-      isServicePlanningEnabled,
+      loginState !== "guest",
   );
   churchIdRef.current = churchId ?? null;
   isEnabledRef.current = isEnabled;
@@ -847,6 +845,8 @@ export const useCurrentServicePlanSource = () => {
   return {
     savedPlans,
     selectedPlan,
+    selectedPlanDetails:
+      planRef.current?.planKey === selectedPlanKey ? planRef.current : null,
     selectedPlanKey,
     selectPlan,
     occurrences,

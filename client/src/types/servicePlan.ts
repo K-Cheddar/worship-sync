@@ -113,6 +113,67 @@ export type ServicePlanSourceLedByAssignment = {
   name: string;
 };
 
+export type ServicePlanImportAmbiguity = {
+  source: "servicePlanning";
+  sourceKey: string;
+  sourceElementType: string;
+  sourceTitle: string;
+  sourceLedBy: string;
+  sourceNote?: string;
+  parts: Array<{
+    kind: "scripture" | "url" | "person" | "description";
+    value: string;
+    destination: "scripture" | "resource" | "assignee" | "content" | "notes" | "unassigned";
+    /** External field that produced this interpretation. Older plans omit it. */
+    sourceField?: "title" | "note" | "ledBy";
+    /** Exact source-created representation; only this may be reconciled away. */
+    managed?: {
+      kind: "assignee" | "scripture" | "resource" | "note";
+      id: string;
+      fingerprint: string;
+    };
+  }>;
+  reasons: string[];
+  status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
+  sourceFingerprint: string;
+  /** Pending source songs that may correspond to more than one existing library occurrence. */
+  songMappings?: Array<{
+    incoming: Extract<ServicePlanSongReference, { kind: "pending" }>;
+    candidateOccurrenceIds: string[];
+    /** Stable within this source song occurrence; legacy records may omit it. */
+    mappingId?: string;
+    sourceFingerprint: string;
+    resolution?: { kind: "keep" } | { kind: "replace"; occurrenceId: string };
+  }>;
+  /** URL extraction can be clear while attaching an external link still needs operator approval. */
+  authorizationPending?: boolean;
+};
+
+export type ServicePlanningSourceSnapshot = {
+  elementType: string;
+  title: string;
+  ledBy: string;
+  note: string;
+};
+
+export type ServicePlanImportSourceState = {
+  observed: ServicePlanningSourceSnapshot;
+  applied: ServicePlanningSourceSnapshot;
+  pendingFields: Array<"elementType" | "title" | "ledBy" | "note">;
+  /** Exact imported assignee occurrences and their source fields. */
+  managedAssignees?: Array<{
+    id: string;
+    fields: Array<"title" | "ledBy">;
+    ledByIdentity?: string;
+    fingerprint: string;
+  }>;
+  /** Exact source-created shared Note paragraphs; older imports may omit provenance. */
+  managedNotes?: Array<{
+    id: string;
+    fingerprint: string;
+  }>;
+};
+
 /**
  * Either a link to a real song already in the presentation-controller library,
  * or a not-yet-created song captured as raw lyrics text. The "pending" case
@@ -121,8 +182,8 @@ export type ServicePlanSourceLedByAssignment = {
  * lyrics attached to the plan now so nothing is lost waiting on that step.
  */
 export type ServicePlanSongReference =
-  | { kind: "library"; songId: string; songName: string; key?: string }
-  | { kind: "pending"; title: string; lyricsText: string; key?: string };
+  | { id?: string; kind: "library"; songId: string; songName: string; key?: string }
+  | { id?: string; kind: "pending"; title: string; lyricsText: string; key?: string };
 
 /**
  * A scripture passage attached to an element. Stored as a parsed reference
@@ -131,6 +192,8 @@ export type ServicePlanSongReference =
  * the Controller's import uses), so the plan stays a light planning document.
  */
 export type ServicePlanScriptureReference = {
+  /** Stable identity for this occurrence, including intentional repetitions. */
+  id?: string;
   /** Display label, e.g. "John 3:16-18 (NIV)". */
   label: string;
   book: string;
@@ -221,6 +284,8 @@ export type ServicePlanElement = {
   scriptureRefs?: ServicePlanScriptureReference[];
   /** New extensible attachments. Legacy song/scripture fields remain readable. */
   resources?: ServicePlanContentResource[];
+  /** Ordered attachment occurrence ids. Older plans without this field retain their legacy ordering. */
+  contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
   /**
@@ -249,6 +314,11 @@ export type ServicePlanElement = {
   sourceElementTypeRaw?: string;
   /** Raw attached content title retained independently of the element label. */
   sourceContentTitleRaw?: string;
+  sourceNoteRaw?: string;
+  /** External Service Planning extraction and review state, retained with its source row. */
+  importAmbiguity?: ServicePlanImportAmbiguity;
+  /** Distinguishes latest observed source from fields accepted into this plan. */
+  servicePlanningImport?: ServicePlanImportSourceState;
   /**
    * The source classified this row as a song, but an operator explicitly
    * removed its inferred attachment. Keep the raw source value for refreshes
@@ -320,13 +390,14 @@ export const getServicePlanElementContentResources = (
     | "songRefs"
     | "scriptureRef"
     | "scriptureRefs"
+    | "contentOrder"
 >,
 ): ServicePlanContentResource[] => {
   const resources = [...(element.resources || [])];
   const legacyResources: ServicePlanContentResource[] = [];
   getServicePlanElementSongRefs(element).forEach((songRef, index) => {
     legacyResources.push({
-      id: `legacy-song-${index}-${songRef.kind}`,
+      id: songRef.id || `legacy-song-${index}-${songRef.kind}`,
       type: "song",
       title: songRef.kind === "pending" ? songRef.title : songRef.songName,
       data: { songRef },
@@ -334,7 +405,7 @@ export const getServicePlanElementContentResources = (
   });
   getServicePlanElementScriptureRefs(element).forEach((scripture, index) => {
     legacyResources.push({
-      id: `legacy-scripture-${index}`,
+      id: scripture.id || `legacy-scripture-${index}`,
       type: "scripture",
       title: scripture.label,
       data: { scripture },
@@ -360,7 +431,29 @@ export const getServicePlanElementContentResources = (
     }
     return true;
   });
-  return [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  if (!element.contentOrder?.length) return allResources;
+  const byId = new Map(allResources.map((resource) => [resource.id, resource]));
+  const ordered = element.contentOrder.flatMap((id) => {
+    const resource = byId.get(id);
+    if (!resource) return [];
+    byId.delete(id);
+    return [resource];
+  });
+  return [...ordered, ...byId.values()];
+};
+
+/** Keep existing attachment order while appending newly-added occurrences in operator order. */
+export const getNextServicePlanContentOrder = (
+  current: Pick<ServicePlanElement, "resources" | "songRef" | "songRefs" | "scriptureRef" | "scriptureRefs" | "contentOrder">,
+  next: Pick<ServicePlanElement, "resources" | "songRef" | "songRefs" | "scriptureRef" | "scriptureRefs" | "contentOrder">,
+): string[] => {
+  const nextResources = getServicePlanElementContentResources(next);
+  const available = new Set(nextResources.map((resource) => resource.id));
+  const currentOrder = getServicePlanElementContentResources(current).map((resource) => resource.id);
+  const retained = currentOrder.filter((id) => available.has(id));
+  const retainedSet = new Set(retained);
+  return [...retained, ...nextResources.map((resource) => resource.id).filter((id) => !retainedSet.has(id))];
 };
 
 /**
@@ -525,6 +618,8 @@ export type ServicePlan = {
   pushedToOutlineAt?: string | null;
   /** Incremented by the server on each content save for conflict detection. */
   revision?: number;
+  /** Opaque last-save correlation id used only for autosave recovery. */
+  lastSaveOperationId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };

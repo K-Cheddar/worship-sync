@@ -22,6 +22,7 @@ export type LocalVideoQualityDemand = {
   subscriberId: string;
   targetWidth: number;
   targetHeight: number;
+  frameRate?: number;
   cssWidth?: number;
   cssHeight?: number;
   devicePixelRatio?: number;
@@ -58,8 +59,10 @@ type DiagnosticView = {
   decoderInterval: DiagnosticValues;
   decoderInstanceId?: string;
   decoderInstanceStartedAt?: string;
+  decoderInstanceActive: boolean;
   decoderInstanceResets: number;
   decoderInstanceCount: number;
+  decoderInstancesDestroyed: number;
   lastDecoderResetInstanceId?: string;
   lastDecoderResetAt?: string;
   decoderLifecycle: DecoderLifecycleEvent[];
@@ -321,8 +324,10 @@ const report = () => {
       keyframeWaitMsTotal: Number(view.decoder.keyframeWaitMs ?? 0),
       decoderInstanceId: view.decoderInstanceId ?? "",
       decoderInstanceStartedAt: view.decoderInstanceStartedAt ?? "",
+      decoderInstanceActive: view.decoderInstanceActive,
       decoderInstanceResets: view.decoderInstanceResets,
       decoderInstanceCount: view.decoderInstanceCount,
+      decoderInstancesDestroyed: view.decoderInstancesDestroyed,
       lastDecoderResetInstanceId: view.lastDecoderResetInstanceId ?? "",
       lastDecoderResetAt: view.lastDecoderResetAt ?? "",
       decoderLifecycle: view.decoderLifecycle,
@@ -516,6 +521,7 @@ export const setLocalVideoDecoderInstance = (
   if (!view) return;
   view.decoderInstanceId = instanceId;
   view.decoderInstanceStartedAt = new Date().toISOString();
+  view.decoderInstanceActive = true;
   view.decoderInstanceResets = 0;
   view.decoderInstanceCount += 1;
   ensureReporting();
@@ -530,6 +536,14 @@ export const recordLocalVideoDecoderLifecycle = (
   const view = sourceFor(sourceId).views.get(viewId);
   if (!view) return;
   view.decoderLifecycle.push({ ...event, at: new Date().toISOString() });
+  if (event.event === "destroy") {
+    view.decoderInstancesDestroyed += 1;
+    if (view.decoderInstanceId === event.instanceId) {
+      view.decoderInstanceActive = false;
+      view.decoderInstanceId = undefined;
+      view.decoderInstanceStartedAt = undefined;
+    }
+  }
   if (view.decoderLifecycle.length > 100) view.decoderLifecycle.shift();
   ensureReporting();
 };
@@ -573,7 +587,7 @@ export const setLocalVideoSubscriberCount = (sourceId: string, subscribers: numb
 export const startLocalVideoView = (
   sourceId: string,
   viewId: string,
-  view: Omit<DiagnosticView, "startedAt" | "firstFrameMs" | "canvasSize" | "renderedFrames" | "renderedFramesTotal" | "decoder" | "decoderInterval" | "decoderInstanceResets" | "decoderInstanceCount" | "decoderLifecycle">,
+  view: Omit<DiagnosticView, "startedAt" | "firstFrameMs" | "canvasSize" | "renderedFrames" | "renderedFramesTotal" | "decoder" | "decoderInterval" | "decoderInstanceActive" | "decoderInstanceResets" | "decoderInstanceCount" | "decoderInstancesDestroyed" | "decoderLifecycle">,
 ) => {
   if (!enabled()) return;
   sourceFor(sourceId).views.set(viewId, {
@@ -583,8 +597,10 @@ export const startLocalVideoView = (
     renderedFramesTotal: 0,
     decoder: {},
     decoderInterval: {},
+    decoderInstanceActive: false,
     decoderInstanceResets: 0,
     decoderInstanceCount: 0,
+    decoderInstancesDestroyed: 0,
     decoderLifecycle: [],
   });
   ensureReporting();

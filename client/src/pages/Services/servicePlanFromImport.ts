@@ -25,13 +25,25 @@ import {
   multilineTextToRichText,
   plainTextToRichText,
 } from "../../types/richText";
-import { getServicePlanElementType } from "../../types/servicePlan";
+import { getServicePlanElementScriptureRefs, getServicePlanElementType } from "../../types/servicePlan";
 import type {
+  ServicePlanAssignee,
   ServicePlanElement,
   ServicePlanElementType,
   ServicePlanSection,
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
+import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
+import { createServicePlanTextResource } from "./servicePlanResources";
+import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+
+type ImportedAssigneeWithProvenance = ServicePlanAssignee & {
+  servicePlanningImport?: {
+    fields: Array<"title" | "ledBy">;
+    ledByIdentity?: string;
+    fingerprint: string;
+  };
+};
 
 /**
  * These labels describe a content kind rather than a distinct service moment.
@@ -136,8 +148,18 @@ const buildElementFromRow = <
   row: EventData,
   songs: T[],
   sourceMarksSongs: boolean,
+  options: { classifyExternalTitle?: boolean; knownPeople?: string[]; sourceKey?: string } = {},
 ): ServicePlanElement => {
   const contentTitle = getImportedContentTitle(row);
+  const classification = options.classifyExternalTitle
+    ? classifyServicePlanningTitle({
+        title: contentTitle,
+        note: row.note,
+        ledBy: row.ledBy,
+        songTitle: row.songTitle,
+        knownPeople: options.knownPeople,
+      })
+    : undefined;
   const type =
     row.songTitle || hasPlanningKeySuffix(contentTitle)
       ? "song"
@@ -155,13 +177,21 @@ const buildElementFromRow = <
     .filter((assignment) => assignment.kind === "person")
     .map((assignment) => assignment.name.trim())
     .filter(Boolean);
-  const resolvedAssigneeNames = assigneeNames.length
+  const sourceAssigneeNames = assigneeNames.length
     ? assigneeNames
     : row.ledByAssignments?.length
       ? structuredPersonNames
     : ledBy
       ? splitServicePlanningLedByNames(ledBy)
       : [];
+  const resolvedAssigneeNames = Array.from(new Map(
+    [
+      ...sourceAssigneeNames,
+      ...(classification?.suggestedAssignees || []).filter((name) =>
+        options.knownPeople?.some((known) => known.toLocaleLowerCase() === name.toLocaleLowerCase()),
+      ),
+    ].map((name) => [name.toLocaleLowerCase(), name]),
+  ).values());
   const sourceLedByRaw =
     row.sourceLedByRaw?.trim() ||
     ledBy ||
@@ -184,16 +214,39 @@ const buildElementFromRow = <
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
     ...(contentTitle ? { sourceContentTitleRaw: contentTitle } : {}),
+    ...(row.note ? { sourceNoteRaw: row.note } : {}),
     ...(sourceLedByAssignments
       ? { sourceLedByAssignments }
       : {}),
     ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(resolvedAssigneeNames.length
       ? {
-          assignees: resolvedAssigneeNames.map((name) => ({
-            id: generateRandomId(),
-            name,
-          })),
+          assignees: resolvedAssigneeNames.map((name) => {
+            const matchingSource = sourceAssigneeNames.find((sourceName) =>
+              sourceName.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const structuredSource = row.ledByAssignments?.find((assignment) =>
+              assignment.kind === "person" && assignment.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const titleDerived = (classification?.suggestedAssignees || []).some((sourceName) =>
+              sourceName.toLocaleLowerCase() === name.toLocaleLowerCase(),
+            );
+            const fields = [
+              ...(titleDerived ? ["title" as const] : []),
+              ...(matchingSource ? ["ledBy" as const] : []),
+            ];
+            return {
+              id: generateRandomId(),
+              name,
+              ...(fields.length ? {
+                servicePlanningImport: {
+                  fields,
+                  ...(structuredSource?.id ? { ledByIdentity: structuredSource.id } : {}),
+                  fingerprint: JSON.stringify({ name }),
+                },
+              } : {}),
+            };
+          }),
         }
       : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
@@ -206,7 +259,14 @@ const buildElementFromRow = <
     // Notes are the one imported field that carries line structure (bullet
     // lists of mic assignments and the like), so they keep their own blocks
     // rather than collapsing into a single run-on paragraph.
-    ...(row.note ? { notes: multilineTextToRichText(row.note) } : {}),
+    ...(row.note ? {
+      notes: {
+        blocks: multilineTextToRichText(row.note).blocks.map((block) => ({
+          ...block,
+          id: block.id || generateRandomId(),
+        })),
+      },
+    } : {}),
     ...(row.teamNotes?.length
       ? {
           teamNotes: row.teamNotes.map((teamNote) => ({
@@ -249,13 +309,14 @@ const buildElementFromRow = <
     // Prefer structured refs from parsers that already extracted Scripture lines
     // (Planning Center), including when the item title is not itself a reference.
     element.scriptureRefs = row.scriptureRefs;
-  } else if (type === "bible") {
+  } else if (classification?.scripture || type === "bible") {
     // The source's own row is free text ("Reading: John 3:16"), so only attach
     // when it actually parses as a reference — otherwise it stays a plain item
     // the operator can attach scripture to by hand.
-    const parsed = parseBibleReference(contentTitle);
+    const parsed = classification?.scripture || parseBibleReference(contentTitle);
     if (parsed) {
       element.scriptureRef = {
+        id: generateRandomId(),
         label: getBibleImportDisplayName(parsed, parsed.version),
         book: parsed.book,
         chapter: parsed.chapter,
@@ -264,6 +325,137 @@ const buildElementFromRow = <
       };
     }
   }
+
+  let importedParts = classification?.parts || [];
+  if (classification && classification.parts.length) {
+    const descriptionParts = classification.parts.filter(
+      (part) => part.kind === "description" &&
+        part.destination === "content" &&
+        part.value.trim().toLocaleLowerCase() !== (row.elementType || "").trim().toLocaleLowerCase(),
+    );
+    if (descriptionParts.length) {
+      element.resources = descriptionParts.map((part) => createServicePlanTextResource({
+        title: "Imported description",
+        text: multilineTextToRichText(part.value),
+      }));
+    }
+    const descriptions = new Map(
+      descriptionParts.map((part, index) => [part.value, element.resources![index]]),
+    );
+    importedParts = importedParts.map((part) => {
+        if (part.kind === "description" && part.destination === "content") {
+          const resource = descriptions.get(part.value);
+          if (resource) return {
+            ...part,
+            managed: {
+              kind: "resource" as const,
+              id: resource.id,
+              fingerprint: servicePlanResourceFingerprint(resource),
+            },
+          };
+        }
+        if (part.kind === "person" && part.destination === "assignee") {
+          const wasLedBy = sourceAssigneeNames.some((name) =>
+            name.toLocaleLowerCase() === part.value.toLocaleLowerCase(),
+          );
+          const assignee = !wasLedBy
+            ? element.assignees?.find((item) =>
+                item.name?.toLocaleLowerCase() === part.value.toLocaleLowerCase(),
+              )
+            : undefined;
+          if (assignee) return {
+            ...part,
+            managed: {
+              kind: "assignee" as const,
+              id: assignee.id,
+              fingerprint: JSON.stringify({ name: assignee.name }),
+            },
+          };
+        }
+        if (part.kind === "scripture" && part.destination === "scripture") {
+          const parsed = parseBibleReference(part.value);
+          const refs = getServicePlanElementScriptureRefs(element);
+          const matches = parsed ? refs.filter((reference) =>
+            reference.book.toLocaleLowerCase() === parsed.book.toLocaleLowerCase() &&
+            reference.chapter === parsed.chapter && reference.verseRange === parsed.verseRange &&
+            reference.version.toLocaleLowerCase() === parsed.version.toLocaleLowerCase(),
+          ) : [];
+          const scriptureRef = matches.length === 1 ? matches[0] : undefined;
+          if (scriptureRef?.id) return {
+            ...part,
+            managed: {
+              kind: "scripture" as const,
+              id: scriptureRef.id,
+              fingerprint: JSON.stringify({
+                label: scriptureRef.label,
+                book: scriptureRef.book,
+                chapter: scriptureRef.chapter,
+                verseRange: scriptureRef.verseRange,
+                version: scriptureRef.version,
+              }),
+            },
+          };
+        }
+        return part;
+    });
+  }
+
+  if (
+    classification &&
+    (classification.parts.length > 0 || classification.reasons.length > 0 || classification.urls.length > 0)
+  ) {
+    const unresolved = classification.reasons.length > 0;
+    element.importAmbiguity = {
+      source: "servicePlanning",
+      sourceKey: options.sourceKey || "",
+      sourceElementType: row.elementType || "",
+      sourceTitle: row.title || "",
+      sourceLedBy: row.sourceLedByRaw || row.ledBy || "",
+      ...(row.note ? { sourceNote: row.note } : {}),
+      parts: importedParts,
+      reasons: classification.reasons,
+      status: unresolved ? "unresolved" : "confirmed",
+      sourceFingerprint: JSON.stringify([
+        row.elementType || "",
+        row.title || "",
+        row.sourceLedByRaw || row.ledBy || "",
+        row.note || "",
+      ]),
+      ...(!unresolved && classification.urls.length
+        ? { authorizationPending: true }
+        : {}),
+    };
+  }
+
+  const sourceSnapshot = {
+    elementType: row.elementType || "",
+    title: row.title || "",
+    ledBy: row.sourceLedByRaw || row.ledBy || "",
+    note: row.note || "",
+  };
+  const importedAssignees = (element.assignees || []) as ImportedAssigneeWithProvenance[];
+  const managedAssignees = importedAssignees.flatMap((assignee) =>
+    assignee.servicePlanningImport
+      ? [{ id: assignee.id, ...assignee.servicePlanningImport }]
+      : [],
+  );
+  const managedNotes = (element.notes?.blocks || []).flatMap((block) =>
+    block.id ? [{ id: block.id, fingerprint: servicePlanNoteFingerprint(block) }] : [],
+  );
+  if (importedAssignees.length) {
+    element.assignees = importedAssignees.map((assignee) => {
+      const cleaned = { ...assignee };
+      delete cleaned.servicePlanningImport;
+      return cleaned;
+    });
+  }
+  element.servicePlanningImport = {
+    observed: sourceSnapshot,
+    applied: sourceSnapshot,
+    pendingFields: [],
+    ...(managedAssignees.length ? { managedAssignees } : {}),
+    ...(managedNotes.length ? { managedNotes } : {}),
+  };
 
   // Kind follows the attachment that actually resolved, so a "Scripture" row
   // whose reference didn't parse doesn't claim to be a Bible item. Video,
@@ -280,6 +472,7 @@ export const buildServicePlanSectionsFromImport = <
 >(
   data: ServicePlanningImportData,
   songs: T[],
+  options: { classifyExternalTitle?: boolean; knownPeople?: string[] } = {},
 ): ServicePlanSection[] => {
   // Service Planning marks its own songs with a music icon. When a plan uses
   // those markers they settle the question completely — an unmarked row is not
@@ -289,12 +482,15 @@ export const buildServicePlanSectionsFromImport = <
     section.rows.some((row) => Boolean(row.songTitle)),
   );
 
-  return data.sections.map((section) => ({
+  return data.sections.map((section, sectionIndex) => ({
     id: generateRandomId(),
     sourcePlanningManaged: true,
     name: section.sectionName?.trim() || "Section",
-    elements: section.rows.map((row) =>
-      buildElementFromRow(row, songs, sourceMarksSongs),
+    elements: section.rows.map((row, rowIndex) =>
+      buildElementFromRow(row, songs, sourceMarksSongs, {
+        ...options,
+        sourceKey: `${section.sectionName || sectionIndex}:${rowIndex}`,
+      }),
     ),
   }));
 };

@@ -77,6 +77,13 @@ jest.mock("../../../utils/desktopCapture", () => ({
 }));
 jest.mock("../../../utils/localVideoQuality", () => ({
   applyLocalVideoCaptureProfile: jest.fn(() => Promise.resolve()),
+  getLocalVideoCaptureFrameRateForRole: jest.fn((windowRole?: string) =>
+    windowRole === "editor" ||
+    windowRole === "slide" ||
+    windowRole?.endsWith("-preview")
+      ? 30
+      : 60,
+  ),
 }));
 
 const mockGetOrCreateDeviceId = jest.mocked(getOrCreateDeviceId);
@@ -362,6 +369,7 @@ describe("LocalVideoInputView", () => {
       expect.any(Number),
       expect.any(Number),
       "source-1",
+      60,
     );
     expect(video.muted).toBe(false);
     play.mockRestore();
@@ -425,6 +433,75 @@ describe("LocalVideoInputView", () => {
     expect(mockSubscribeMedia).not.toHaveBeenCalled();
   });
 
+  it("suspends owned-capture fallback relays while hidden and resumes once", async () => {
+    mockSupportsRealtime.mockReturnValue(true);
+    const { LocalVideoCaptureOwnedError } = jest.requireActual(
+      "../../../utils/localVideoCapturePool",
+    ) as typeof import("../../../utils/localVideoCapturePool");
+    mockAcquireWarmCapture.mockRejectedValue(new LocalVideoCaptureOwnedError());
+
+    const realtimeStops: jest.Mock[] = [];
+    const bufferedStops: jest.Mock[] = [];
+    let onRealtimeFallback: (() => void) | undefined;
+    mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
+      onRealtimeFallback = options?.onFallback;
+      const relay = {
+        stop: jest.fn(),
+        setVolume: jest.fn(),
+        setAudioEnabled: jest.fn(),
+      };
+      realtimeStops.push(relay.stop);
+      return relay;
+    });
+    mockSubscribeMedia.mockImplementation(() => {
+      const stopRelay = jest.fn();
+      bufferedStops.push(stopRelay);
+      return stopRelay;
+    });
+
+    const view = render(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled
+        receiveHighQuality
+      />,
+    );
+
+    await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalledTimes(1));
+    act(() => onRealtimeFallback?.());
+    expect(mockSubscribeMedia).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <LocalVideoInputView
+        input={input}
+        isActive={false}
+        captureEnabled={false}
+        receiveHighQuality={false}
+        publishPreview={false}
+      />,
+    );
+
+    expect(realtimeStops[0]).toHaveBeenCalledTimes(1);
+    expect(bufferedStops[0]).toHaveBeenCalledTimes(1);
+    expect(mockSubscribeMedia).toHaveBeenCalledTimes(1);
+    expect(mockSubscribeCaptureQuality).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <LocalVideoInputView
+        input={input}
+        captureEnabled
+        receiveHighQuality
+      />,
+    );
+
+    await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalledTimes(2));
+    expect(mockSubscribeMedia).toHaveBeenCalledTimes(1);
+    expect(realtimeStops[0]).toHaveBeenCalledTimes(1);
+    expect(mockSubscribeCaptureQuality).toHaveBeenCalledTimes(2);
+    view.unmount();
+    expect(realtimeStops[1]).toHaveBeenCalledTimes(1);
+  });
+
   it("uses Electron's realtime relay instead of the buffered relay", () => {
     mockSupportsRealtime.mockReturnValue(true);
     let onStarted: (() => void) | undefined;
@@ -457,6 +534,7 @@ describe("LocalVideoInputView", () => {
       "source-1",
       expect.any(Number),
       expect.any(Number),
+      { frameRate: 60 },
     );
 
     act(() => onStarted?.());
@@ -566,16 +644,19 @@ describe("LocalVideoInputView", () => {
     localStorage.setItem("worshipsync_local_video_debug", "true");
     mockSupportsRealtime.mockReturnValue(true);
     let onFallback: (() => void) | undefined;
+    const stopRealtime = jest.fn();
+    const stopBuffered = jest.fn();
     mockSubscribeRealtime.mockImplementation((_sourceId, _canvas, options) => {
       onFallback = options?.onFallback;
       return {
-        stop: jest.fn(),
+        stop: stopRealtime,
         setVolume: jest.fn(),
         setAudioEnabled: jest.fn(),
       };
     });
+    mockSubscribeMedia.mockReturnValue(stopBuffered);
 
-    render(
+    const { unmount } = render(
       <LocalVideoInputView
         input={input}
         captureEnabled={false}
@@ -591,6 +672,8 @@ describe("LocalVideoInputView", () => {
     });
 
     act(() => onFallback?.());
+    expect(stopRealtime).toHaveBeenCalledTimes(1);
+    expect(mockSubscribeMedia).toHaveBeenCalledTimes(1);
 
     const fallbackView = [
       ...(__getLocalVideoDiagnosticsForTests().get("source-1")?.views.values() ?? []),
@@ -604,6 +687,9 @@ describe("LocalVideoInputView", () => {
       }),
     );
     expect(fallbackView?.decoder.frames).toBe(7);
+
+    unmount();
+    expect(stopBuffered).toHaveBeenCalledTimes(1);
   });
 
   it("keeps audience errors off the projector surface", () => {

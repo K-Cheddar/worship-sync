@@ -5,16 +5,39 @@ import type { WindowType } from "./windowState";
 /** Persisted session partition; must match main process and any window.open / middle-click children. */
 export const WORSHIPSYNC_SESSION_PARTITION = "persist:worshipsync";
 
-const sharedChildWindowWebPreferences = (
+export type BrowserWindowRole =
+  | "controller"
+  | "audience-output"
+  | "capture-host"
+  | "same-app-child"
+  | "incidental-popup";
+
+const BACKGROUND_THROTTLING_BY_ROLE: Record<BrowserWindowRole, boolean> = {
+  controller: true,
+  "audience-output": false,
+  "capture-host": false,
+  "same-app-child": true,
+  "incidental-popup": true,
+};
+
+export const getBackgroundThrottlingForRole = (
+  role: BrowserWindowRole,
+): boolean => BACKGROUND_THROTTLING_BY_ROLE[role];
+
+export const createAppWindowWebPreferences = (
   electronMainDirname: string,
+  role: BrowserWindowRole,
 ): Electron.WebPreferences => ({
   preload: join(electronMainDirname, "../preload/preload.mjs"),
   partition: WORSHIPSYNC_SESSION_PARTITION,
   nodeIntegration: false,
   contextIsolation: true,
   sandbox: false,
-  backgroundThrottling: false,
+  backgroundThrottling: getBackgroundThrottlingForRole(role),
 });
+
+const sharedChildWindowWebPreferences = (electronMainDirname: string) =>
+  createAppWindowWebPreferences(electronMainDirname, "same-app-child");
 
 const EXTERNAL_CHILD_WINDOW_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 const OAUTH_POPUP_HOST_PATTERNS = [
@@ -185,7 +208,7 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
       ? { transparent: true, backgroundColor: "#00000000" }
       : {}),
     webPreferences: {
-      ...sharedChildWindowWebPreferences(config.dirname),
+      ...createAppWindowWebPreferences(config.dirname, "audience-output"),
       // Dedicated outputs receive presentation changes without a local click.
       // Allow routed capture sound to start with the live video stream.
       autoplayPolicy: "no-user-gesture-required",

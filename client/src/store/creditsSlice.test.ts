@@ -286,6 +286,34 @@ describe("creditsSlice", () => {
       expect(store.getState().credits.list[0].heading).toBe("Updated");
     });
 
+    it("tracks edits against a generated baseline without losing provenance", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.initiateCreditsList([{
+        ...createCreditsInfo({ id: "c1", heading: "Welcome", text: "Plan name" }),
+        generatedBaselineText: "Plan name",
+        generatedSource: "Service plan",
+        generatedTextOverridden: false,
+      }]));
+      store.dispatch(creditsSlice.actions.updateCredit({
+        ...createCreditsInfo({ id: "c1", heading: "Welcome", text: "Corrected name" }),
+      }));
+      expect(store.getState().credits.list[0]).toEqual(expect.objectContaining({
+        text: "Corrected name",
+        generatedBaselineText: "Plan name",
+        generatedSource: "Service plan",
+        generatedTextOverridden: true,
+      }));
+      store.dispatch(creditsSlice.actions.updateCreditFromGeneration({
+        ...createCreditsInfo({ id: "c1", heading: "Welcome", text: "Plan update" }),
+        generatedSource: "Service plan",
+      }));
+      expect(store.getState().credits.list[0]).toEqual(expect.objectContaining({
+        text: "Plan update",
+        generatedBaselineText: "Plan update",
+        generatedTextOverridden: false,
+      }));
+    });
+
     it("updateInitialList snapshots the current list ids", () => {
       const store = createStore();
       store.dispatch(

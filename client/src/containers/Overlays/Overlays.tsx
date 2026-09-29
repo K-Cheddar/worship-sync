@@ -51,6 +51,7 @@ import {
 } from "../../store/overlaySlice";
 import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { trackServicePlanOverlayEdit } from "../../integrations/servicePlanning/servicePlanningOverlayClone";
 import OverlayEditor from "./OverlayEditor";
 import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import {
@@ -317,17 +318,22 @@ const Overlays = ({
   const handleOverlayUpdate = useCallback(
     async (overlay: OverlayInfo) => {
       if (!overlay.id) return;
+      const existing = (store.getState() as RootState).undoable.present.overlays.list
+        .find((candidate) => candidate.id === overlay.id);
+      const trackedOverlay = existing
+        ? trackServicePlanOverlayEdit(existing, overlay)
+        : overlay;
 
       // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
       if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
-        dispatch(updateOverlayInList(overlay));
+        dispatch(updateOverlayInList(trackedOverlay));
         if (!db) return;
         try {
           const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
           const updatedAt = new Date().toISOString();
           const merged = applyPouchAudit(
             dbOverlay,
-            { ...dbOverlay, ...overlay, updatedAt },
+            { ...dbOverlay, ...trackedOverlay, updatedAt },
             { isNew: false },
           );
           await db.put(merged);
@@ -337,10 +343,10 @@ const Overlays = ({
         return;
       }
 
-      dispatch(updateOverlay(overlay));
-      dispatch(updateOverlayInList(overlay));
+      dispatch(updateOverlay(trackedOverlay));
+      dispatch(updateOverlayInList(trackedOverlay));
     },
-    [db, dispatch, selectedOverlay.id],
+    [db, dispatch, selectedOverlay.id, store],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
@@ -444,14 +450,19 @@ const Overlays = ({
     const newId = generateRandomId();
     try {
       dispatch(setIsOverlayLoading(true));
+      const copyableOverlay = { ...selectedOverlay };
+      delete copyableOverlay.servicePlanSource;
+      delete copyableOverlay.servicePlanBaseline;
+      delete copyableOverlay.servicePlanOverrides;
+      delete copyableOverlay.servicePlanReviewRequired;
       const newOverlay: OverlayInfo = {
-        ...selectedOverlay,
+        ...copyableOverlay,
         id: newId,
       };
 
       await db?.put({
         _id: `overlay-${newId}`,
-        ...selectedOverlay,
+        ...copyableOverlay,
         id: newId,
       });
       dispatch(

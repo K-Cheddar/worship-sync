@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   LayoutTemplate,
+  LocateFixed,
   Mail,
   MoreHorizontal,
   Pencil,
@@ -89,6 +90,8 @@ import {
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
+import useFollowLiveScroll from "../../hooks/useFollowLiveScroll";
+import { ANIMATE_COLLAPSE_DURATION_MS } from "../../components/AnimateCollapse/AnimateCollapse";
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
@@ -116,10 +119,12 @@ import PlanningCenterAccountImportFields from "./PlanningCenterAccountImportFiel
 import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  getNewServicePlanImportAmbiguityIds,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
 } from "./servicePlanImportSync";
 import ServicePlanImportReviewWindow from "./ServicePlanImportReviewWindow";
+import ServicePlanAmbiguityReview from "./ServicePlanAmbiguityReview";
 import {
   applySelectedServicePlanImportChanges,
   summarizeServicePlanImport,
@@ -168,6 +173,10 @@ import {
   useServicePlanDraftHistory,
   type ServicePlanDraftSnapshot,
 } from "./useServicePlanDraftHistory";
+import ServicePlanConflictDialog from "./ServicePlanConflictDialog";
+import { mergeServicePlan, applyServicePlanMergeChoices, type ServicePlanMergeResult } from "./servicePlanMerge";
+import { clearServicePlanRecoveryDraft, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
+import { logAuthDiagnostic } from "../../utils/authDiagnostics";
 import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
@@ -214,6 +223,33 @@ import {
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 
 const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
+
+const getServicePlanLiveItem = (container: HTMLElement, itemId: string) => {
+  const item = document.getElementById(servicePlanElementDomId(itemId));
+  return item instanceof HTMLElement && container.contains(item) ? item : null;
+};
+
+const isServicePlanLiveItemReady = (item: HTMLElement, container: HTMLElement) => {
+  if (item.closest('[aria-hidden="true"]')) return false;
+  for (let ancestor = item.parentElement; ancestor && ancestor !== container; ancestor = ancestor.parentElement) {
+    if (ancestor.getAnimations?.().some((animation) => animation.playState === "running")) return false;
+  }
+  const itemRect = item.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  return itemRect.width > 0 && itemRect.height > 0
+    && containerRect.width > 0 && containerRect.height > 0;
+};
+
+const isServicePlanLiveItemVisible = (item: HTMLElement, container: HTMLElement) => {
+  const itemRect = item.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const viewportTop = containerRect.top + container.clientTop;
+  const viewportBottom = viewportTop + (container.clientHeight || containerRect.height);
+  return itemRect.bottom > viewportTop && itemRect.top < viewportBottom;
+};
+
+const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
+  keepElementInView({ child: item, parent: container, shouldScrollToCenter: true });
 
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
@@ -459,7 +495,7 @@ const ServicePlanEditor = ({
   occurrenceSwitcher,
   onPlanTimingChange,
 }: ServicePlanEditorProps) => {
-  const { churchId, access, churchBranding, churchIntegrations } =
+  const { churchId, userId, access, churchBranding, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
@@ -519,6 +555,9 @@ const ServicePlanEditor = ({
   }, [db, dispatch, isAllItemsInitialized]);
 
   const planKey = getServicePlanKey(occurrence);
+  const editorIdentityKey = `${userId || ""}:${churchId || ""}:${planKey}`;
+  const currentEditorIdentityRef = useRef(editorIdentityKey);
+  currentEditorIdentityRef.current = editorIdentityKey;
   const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
 
   const [plan, setPlan] = useState<ServicePlan | null>(null);
@@ -566,6 +605,7 @@ const ServicePlanEditor = ({
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
+  const [ambiguityDialog, setAmbiguityDialog] = useState<{ prompt: boolean; elementIds?: string[] } | null>(null);
   const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
     DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   );
@@ -576,7 +616,21 @@ const ServicePlanEditor = ({
   const [publicUrls, setPublicUrls] = useState<ServicePlanPublicUrls | null>(null);
   const [nowMs, setNowMs] = useState(() => serverNow());
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
+  const draftChangeVersionRef = useRef(draftChangeVersion);
+  draftChangeVersionRef.current = draftChangeVersion;
+  const [acknowledgedDraftVersion, setAcknowledgedDraftVersion] = useState(0);
   const [conflictPlan, setConflictPlan] = useState<ServicePlan | null>(null);
+  const [mergeReview, setMergeReview] = useState<ServicePlanMergeResult | null>(null);
+  const [mergeChoices, setMergeChoices] = useState<Record<string, "local" | "remote">>({});
+  const [mergeApplying, setMergeApplying] = useState(false);
+  const [restoringRecovery, setRestoringRecovery] = useState(false);
+  const mergeApplyingRef = useRef(false);
+  const mergeApplyAttemptRef = useRef(0);
+  const [recoveryDraft, setRecoveryDraft] = useState<ReturnType<typeof readServicePlanRecoveryDraft>>(null);
+  const basePlanRef = useRef<ServicePlan | null>(null);
+  const loadedEditorIdentityRef = useRef("");
+  const editorInstanceIdRef = useRef(typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const liveSyncStateRef = useRef("connecting");
   // An SSE message can arrive after our write commits but before its response.
   // Hold a truly newer remote revision until the local acknowledgement lands.
   const pendingRemotePlanRef = useRef<ServicePlan | null>(null);
@@ -592,6 +646,7 @@ const ServicePlanEditor = ({
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Microphones live beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
+  const servicePlanScrollRef = useRef<HTMLDivElement | null>(null);
   const planTabPlanKeyRef = useRef(planKey);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -711,6 +766,11 @@ const ServicePlanEditor = ({
   }, [canEdit, churchId, showToast]);
 
   useEffect(() => {
+    mergeApplyAttemptRef.current += 1;
+    mergeApplyingRef.current = false;
+    setMergeApplying(false);
+    setRestoringRecovery(false);
+    loadedEditorIdentityRef.current = "";
     onPlanTimingChange?.(null);
     setPlan(null);
     setSections(null);
@@ -722,11 +782,17 @@ const ServicePlanEditor = ({
     setImportUrl("");
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     setImportPreview(null);
+    setAmbiguityDialog(null);
     setPublicUrls(null);
     setEmailModalOpen(false);
     setConflictPlan(null);
+    setMergeReview(null);
+    setMergeChoices({});
+    setRecoveryDraft(null);
+    basePlanRef.current = null;
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
+    setAcknowledgedDraftVersion(0);
     setIsEditing(initialEditing);
     setShowServiceDetails(false);
     // A different date is a different running order — open on it, not on
@@ -743,6 +809,9 @@ const ServicePlanEditor = ({
     getServicePlan(churchId, planKey)
       .then((res) => {
         if (cancelled) return;
+        loadedEditorIdentityRef.current = editorIdentityKey;
+        basePlanRef.current = res.servicePlan;
+        setRecoveryDraft(userId && churchId ? readServicePlanRecoveryDraft(userId, churchId, planKey) : null);
         setPlan(res.servicePlan);
         setSections(res.servicePlan?.sections ?? null);
         notifyPlanTimingChange(
@@ -768,7 +837,7 @@ const ServicePlanEditor = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId, notifyPlanTimingChange, occurrence.startsAt, planKey]);
+  }, [churchId, editorIdentityKey, notifyPlanTimingChange, occurrence.startsAt, planKey, userId]);
 
   // Assignment suggestions are church-wide, not per-occurrence, so this loads
   // once per church rather than resetting on every occurrence switch.
@@ -867,11 +936,11 @@ const ServicePlanEditor = ({
   }, [occurrence, planName, planTimezone, sections, sourceImport]);
 
   const saveAutosavePayload = useCallback(
-    (payload: ServicePlanPayload, baseRevision: number) => {
+    (payload: ServicePlanPayload, baseRevision: number, operationId?: string) => {
       if (!churchId) return Promise.reject(new Error("A church is required."));
       // Autosave consumes the saved plan itself, not the response envelope —
       // handing back the wrapper would leave `sections`/`revision` undefined.
-      return saveServicePlan(churchId, planKey, { ...payload, baseRevision })
+      return saveServicePlan(churchId, planKey, { ...payload, baseRevision, saveOperationId: operationId })
         .then((res) => res.servicePlan);
     },
     [churchId, planKey],
@@ -897,7 +966,7 @@ const ServicePlanEditor = ({
 
   const autosave = useServicePlanAutosave({
     enabled: Boolean(canEdit && churchId && sections),
-    resetKey: planKey,
+    resetKey: editorIdentityKey,
     changeVersion: draftChangeVersion,
     // The previous occurrence's plan stays in state until its fetch effect
     // clears it. Feeding that revision in as the new plan's base is what
@@ -906,7 +975,7 @@ const ServicePlanEditor = ({
     buildPayload: buildAutosavePayload,
     save: saveAutosavePayload,
     getConflictPlan,
-    isOwnWrite: isMatchingServicePlanWrite,
+    isOwnWrite: (doc, payload, operationId) => Boolean(operationId && doc.lastSaveOperationId === operationId) || isMatchingServicePlanWrite(doc, payload),
     loadLatest: loadLatestPlan,
     onSaved: (savedPlan) => {
       // Defence in depth alongside the hook's generation guard: this editor
@@ -914,14 +983,56 @@ const ServicePlanEditor = ({
       // describe a plan the operator has already navigated away from.
       if (savedPlan.planKey && savedPlan.planKey !== planKey) return;
       setPlan(savedPlan);
+      basePlanRef.current = savedPlan;
       notifyPlanTimingChange(savedPlan.sections, savedPlan);
       rememberAssignmentHistory(savedPlan.sections);
     },
+    onSaveAcknowledged: setAcknowledgedDraftVersion,
     onConflict: (latestPlan) => {
+      if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
       if (latestPlan.planKey && latestPlan.planKey !== planKey) return;
       pendingRemotePlanRef.current = null;
+      const baseline = basePlanRef.current || plan || {
+        ...latestPlan, name: occurrence.name || "", sections: [], sourceImport: undefined,
+      };
+      basePlanRef.current = baseline;
+      if (!baseline || !sections) { setConflictPlan(latestPlan); return; }
+      const local = { ...baseline, name: planName, sections, sourceImport, timezone: baseline.timezone };
+      const result = mergeServicePlan(baseline, local, latestPlan);
+      if (!result.conflicts.length) {
+        if (userId && churchId) saveServicePlanRecoveryDraft(userId, churchId, planKey, {
+          savedAt: Date.now(), base: baseline,
+          local: { name: planName, timezone: baseline.timezone, sourceImport, sections },
+        });
+        basePlanRef.current = latestPlan;
+        setPlan(latestPlan);
+        setSections(result.plan.sections);
+        setPlanName(result.plan.name);
+        setSourceImport(result.plan.sourceImport);
+        notifyPlanTimingChange(result.plan.sections, latestPlan);
+        resetDraftHistory();
+        setMergeReview(null);
+        setMergeChoices({});
+        setConflictPlan(null);
+        autosaveRef.current.acceptRemoteRevision(latestPlan);
+        setDraftChangeVersion((version) => version + 1);
+        return;
+      }
+      setMergeReview(result);
+      setMergeChoices({});
       setConflictPlan(latestPlan);
+      logAuthDiagnostic("warn", "service_plan_conflict_confirmed", {
+        editorInstanceId: editorInstanceIdRef.current, churchId, planKey,
+        expectedRevision: autosaveRef.current.getRevision(), actualRevision: latestPlan.revision,
+        eventAt: Date.now(), classification: result.conflicts.length ? "field_conflict" : "revision_race_auto_mergeable",
+      });
     },
+    onDiagnostic: (event, details) => logAuthDiagnostic(event.includes("conflict") ? "warn" : "debug", event, {
+      ...details, editorInstanceId: editorInstanceIdRef.current, churchId, planKey,
+      connectionState: liveSyncStateRef.current,
+      networkOnline: typeof navigator === "undefined" ? undefined : navigator.onLine,
+      visibilityState: typeof document === "undefined" ? undefined : document.visibilityState,
+    }),
   });
 
   // The hook returns a fresh object every render, so an effect depending on
@@ -931,13 +1042,14 @@ const ServicePlanEditor = ({
   const {
     state: autosaveState,
     getRevision: getAutosaveRevision,
-    markConflict: markAutosaveConflict,
   } = autosave;
 
   const planRef = useRef<ServicePlan | null>(plan);
   planRef.current = plan;
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
   const planKeyRef = useRef(planKey);
   planKeyRef.current = planKey;
   const autosaveRef = useRef(autosave);
@@ -955,11 +1067,17 @@ const ServicePlanEditor = ({
 
   const applyRemoteServicePlan = useCallback(
     (servicePlan: ServicePlan) => {
+      if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
       if (servicePlan.planKey !== planKeyRef.current) return;
       const currentAutosave = autosaveRef.current;
       const incomingRevision = servicePlan.revision ?? 0;
       const knownRevision = currentAutosave.getRevision();
       if (incomingRevision <= knownRevision) {
+        logAuthDiagnostic("debug", "service_plan_remote_event_ignored", {
+          editorInstanceId: editorInstanceIdRef.current, churchId: churchIdRef.current,
+          planKey: servicePlan.planKey, expectedRevision: knownRevision,
+          actualRevision: incomingRevision, eventAt: Date.now(), classification: "stale_or_duplicate",
+        });
         // Publishing and live-progress changes share the document but do not
         // alter editable plan content. Keep those controls current without
         // turning a local text edit into a content conflict.
@@ -984,16 +1102,60 @@ const ServicePlanEditor = ({
       if (expectedInFlightRevision !== null) {
         // A revision beyond the expected acknowledgement is a real concurrent
         // edit. Defer the conflict until our save response advances its revision.
-        pendingRemotePlanRef.current = servicePlan;
+        if ((pendingRemotePlanRef.current?.revision ?? 0) < incomingRevision) {
+          pendingRemotePlanRef.current = servicePlan;
+        }
         return;
       }
       if (currentAutosave.state !== "saved") {
-        // Never replace unsaved operator work with a resume snapshot. The
-        // existing revision/conflict UI remains the recovery boundary.
+        const baseline = basePlanRef.current || {
+          ...servicePlan, name: occurrence.name || "", sections: [], sourceImport: undefined,
+        };
+        const localSections = sections;
+        if (baseline && localSections) {
+          basePlanRef.current = baseline;
+          const result = mergeServicePlan(baseline, {
+            ...baseline, name: planName, sections: localSections, sourceImport,
+          }, servicePlan);
+          if (result.conflicts.length === 0) {
+            if (userIdRef.current && churchIdRef.current) saveServicePlanRecoveryDraft(userIdRef.current, churchIdRef.current, servicePlan.planKey, {
+              savedAt: Date.now(), base: baseline,
+              local: { name: planName, timezone: baseline.timezone, sourceImport, sections: localSections },
+            });
+            basePlanRef.current = servicePlan;
+            setPlan(servicePlan);
+            setSections(result.plan.sections);
+            setPlanName(result.plan.name);
+            setSourceImport(result.plan.sourceImport);
+            setMergeReview(null);
+            setMergeChoices({});
+            setConflictPlan(null);
+            resetDraftHistory();
+            currentAutosave.acceptRemoteRevision(servicePlan);
+            setDraftChangeVersion((version) => version + 1);
+            notifyPlanTimingChange(result.plan.sections, servicePlan);
+            logAuthDiagnostic("debug", "service_plan_remote_changes_merged", {
+              editorInstanceId: editorInstanceIdRef.current, churchId: churchIdRef.current,
+              planKey: servicePlan.planKey, expectedRevision: knownRevision,
+              actualRevision: incomingRevision, detectedAt: Date.now(), classification: "independent_edits",
+            });
+            return;
+          }
+          setMergeReview(result);
+          setMergeChoices({});
+          logAuthDiagnostic("warn", "service_plan_conflict_confirmed", {
+            editorInstanceId: editorInstanceIdRef.current, churchId: churchIdRef.current,
+            planKey: servicePlan.planKey, expectedRevision: knownRevision,
+            actualRevision: incomingRevision, eventAt: Date.now(),
+            classification: result.conflicts.length ? "field_conflict" : "auto_merge_unavailable",
+            conflictingFieldCount: result.conflicts.length,
+          });
+        }
         setConflictPlan(servicePlan);
         currentAutosave.markConflict();
         return;
       }
+      basePlanRef.current = servicePlan;
       setPlan(servicePlan);
       setSections(servicePlan.sections);
       setPlanName(servicePlan.name || occurrence.name || "");
@@ -1002,7 +1164,7 @@ const ServicePlanEditor = ({
       resetDraftHistory();
       currentAutosave.acceptRemoteRevision(servicePlan);
     },
-    [notifyPlanTimingChange, occurrence.name, resetDraftHistory],
+    [editorIdentityKey, notifyPlanTimingChange, occurrence.name, resetDraftHistory, sections, planName, sourceImport],
   );
 
   const reconcilePlanOnResume = useCallback(async () => {
@@ -1048,10 +1210,27 @@ const ServicePlanEditor = ({
 
   // Clean editors follow remote plan changes. Local edits are never silently
   // replaced; the server's revision check turns that situation into a conflict.
-  useTeamsLiveSync(churchId, (event) => {
+  const liveSync = useTeamsLiveSync(churchId, (event) => {
     if (!isServicePlanUpdatedEvent(event)) return;
+    if (event.saveOperationId && event.saveOperationId === autosaveRef.current.getActiveOperationId()) {
+      logAuthDiagnostic("debug", "service_plan_self_notification", {
+        editorInstanceId: editorInstanceIdRef.current, operationId: event.saveOperationId,
+        churchId: churchIdRef.current, planKey: event.servicePlan.planKey,
+        revision: event.servicePlan.revision, eventAt: Date.now(), classification: "self_save",
+      });
+      return;
+    }
     applyRemoteServicePlan(event.servicePlan);
   });
+  liveSyncStateRef.current = liveSync.connectionState;
+
+  useEffect(() => {
+    if (liveSync.connectionState === "connecting" || liveSync.connectionState === "unavailable") return;
+    logAuthDiagnostic("warn", "service_plan_sync_state", {
+      editorInstanceId: editorInstanceIdRef.current, churchId, planKey,
+      connectionState: liveSync.connectionState, observedAt: Date.now(),
+    });
+  }, [churchId, planKey, liveSync.connectionState]);
 
   useEffect(() => {
     const pendingRemotePlan = pendingRemotePlanRef.current;
@@ -1061,9 +1240,8 @@ const ServicePlanEditor = ({
       return;
     }
     pendingRemotePlanRef.current = null;
-    setConflictPlan(pendingRemotePlan);
-    markAutosaveConflict();
-  }, [autosaveState, getAutosaveRevision, markAutosaveConflict]);
+    applyRemoteServicePlan(pendingRemotePlan);
+  }, [autosaveState, getAutosaveRevision, applyRemoteServicePlan]);
 
   // Undo/redo shortcuts, edit mode only. Fields that own their own undo keep
   // it: TipTap handles the keystroke inside a rich-text field (and marks it
@@ -1101,7 +1279,15 @@ const ServicePlanEditor = ({
   }, [autosave.state]);
 
   const reloadConflictPlan = () => {
-    if (!conflictPlan) return;
+    if (!conflictPlan || loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    if (loadedEditorIdentityRef.current === editorIdentityKey && userId && churchId && basePlanRef.current && sections) {
+      const snapshot = {
+        savedAt: Date.now(), base: basePlanRef.current,
+        local: { name: planName, timezone: basePlanRef.current.timezone, sourceImport, sections },
+      };
+      saveServicePlanRecoveryDraft(userId, churchId, planKey, snapshot);
+      setRecoveryDraft(snapshot);
+    }
     setPlan(conflictPlan);
     setSections(conflictPlan.sections);
     notifyPlanTimingChange(conflictPlan.sections, conflictPlan);
@@ -1111,7 +1297,168 @@ const ServicePlanEditor = ({
     pendingRemotePlanRef.current = null;
     resetDraftHistory();
     autosave.acceptRemoteRevision(conflictPlan);
+    basePlanRef.current = conflictPlan;
+    setMergeReview(null);
   };
+
+  const applyReviewedMerge = async () => {
+    if (mergeApplyingRef.current || !mergeReview || !conflictPlan || !churchId || !userId || loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    const baseline = basePlanRef.current;
+    if (!baseline || !sections) return;
+    mergeApplyingRef.current = true;
+    setMergeApplying(true);
+    const attempt = ++mergeApplyAttemptRef.current;
+    const identityAtStart = editorIdentityKey;
+    if (userId) saveServicePlanRecoveryDraft(userId, churchId, planKey, {
+      savedAt: Date.now(), base: baseline,
+      local: { name: planName, timezone: baseline.timezone, sourceImport, sections },
+    });
+    let latest = conflictPlan;
+    try {
+      const response = await getServicePlan(churchId, planKey);
+      if (attempt !== mergeApplyAttemptRef.current || currentEditorIdentityRef.current !== identityAtStart) return;
+      if (!response.servicePlan) {
+        showToast("This plan is no longer available. Your draft is saved in this tab.", "error");
+        return;
+      }
+      if (response.servicePlan && (response.servicePlan.revision ?? 0) > (conflictPlan.revision ?? 0)) {
+        latest = response.servicePlan;
+        const refreshed = mergeServicePlan(baseline, {
+          ...baseline, name: planName, sections, sourceImport,
+        }, latest);
+        setConflictPlan(latest);
+        setMergeReview(refreshed);
+        setMergeChoices({});
+        if (!refreshed.conflicts.length) {
+          basePlanRef.current = latest;
+          setPlan(latest);
+          setSections(refreshed.plan.sections);
+          setPlanName(refreshed.plan.name);
+          setSourceImport(refreshed.plan.sourceImport);
+          notifyPlanTimingChange(refreshed.plan.sections, latest);
+          resetDraftHistory();
+          setMergeReview(null);
+          setConflictPlan(null);
+          setRecoveryDraft(null);
+          autosave.acceptRemoteRevision(latest);
+          setDraftChangeVersion((version) => version + 1);
+          return;
+        }
+        logAuthDiagnostic("warn", "service_plan_merge_review_restarted", {
+          editorInstanceId: editorInstanceIdRef.current, churchId, planKey,
+          expectedRevision: conflictPlan.revision, actualRevision: latest.revision,
+          eventAt: Date.now(), classification: "remote_changed_during_review",
+        });
+        return;
+      }
+    } catch (error) {
+      if (attempt !== mergeApplyAttemptRef.current) return;
+      showToast("Could not verify the latest plan. Your draft is saved in this tab; try again.", "error");
+      logAuthDiagnostic("error", "service_plan_merge_recheck_failed", {
+        editorInstanceId: editorInstanceIdRef.current, churchId, planKey,
+        expectedRevision: conflictPlan.revision, eventAt: Date.now(), classification: "revision_recheck_unavailable",
+      });
+      return;
+    } finally {
+      if (attempt === mergeApplyAttemptRef.current) {
+        mergeApplyingRef.current = false;
+        setMergeApplying(false);
+      }
+    }
+    const merged = applyServicePlanMergeChoices(mergeReview.plan, mergeReview.conflicts, mergeChoices);
+    basePlanRef.current = latest;
+    setPlan(latest);
+    setSections(merged.sections);
+    setPlanName(merged.name);
+    setSourceImport(merged.sourceImport);
+    notifyPlanTimingChange(merged.sections, latest);
+    resetDraftHistory();
+    setMergeReview(null);
+    setConflictPlan(null);
+    setMergeChoices({});
+    setRecoveryDraft(null);
+    autosave.acceptRemoteRevision(latest);
+    setDraftChangeVersion((version) => version + 1);
+  };
+
+  const restoreRecoveryDraft = async () => {
+    if (restoringRecovery || !recoveryDraft || !plan || !churchId || !userId || loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    const identityAtStart = editorIdentityKey;
+    const versionAtStart = draftChangeVersionRef.current;
+    setRestoringRecovery(true);
+    try {
+      // Finish any save already in flight before rebasing the recovered content.
+      // This prevents its older response from becoming the accepted baseline.
+      const currentSaveFinished = await autosave.flush();
+      if (currentEditorIdentityRef.current !== identityAtStart) return;
+      if (!currentSaveFinished) throw new Error("The current plan save has not finished.");
+      const latest = await loadLatestPlan();
+      if (currentEditorIdentityRef.current !== identityAtStart) return;
+      if (draftChangeVersionRef.current !== versionAtStart) throw new Error("The current draft changed during recovery.");
+      if (!latest) {
+        showToast("This plan is no longer available. Your draft is saved in this tab.", "error");
+        return;
+      }
+      const result = mergeServicePlan(recoveryDraft.base, {
+        ...recoveryDraft.base, ...recoveryDraft.local,
+      }, latest);
+      if (result.conflicts.length) {
+        setPlan(latest);
+        basePlanRef.current = recoveryDraft.base;
+        setSections(recoveryDraft.local.sections);
+        setPlanName(recoveryDraft.local.name);
+        setSourceImport(recoveryDraft.local.sourceImport);
+        setConflictPlan(latest);
+        setMergeReview(result);
+        setMergeChoices({});
+        autosave.markConflict();
+      } else {
+        basePlanRef.current = latest;
+        setPlan(latest);
+        setSections(result.plan.sections);
+        setPlanName(result.plan.name);
+        setSourceImport(result.plan.sourceImport);
+        notifyPlanTimingChange(result.plan.sections, latest);
+        autosave.acceptRemoteRevision(latest);
+        markDraftChanged();
+        setRecoveryDraft(null);
+      }
+      setIsEditing(true);
+    } catch {
+      showToast("Could not restore the saved draft. It is still available in this tab; try again.", "error");
+    } finally {
+      setRestoringRecovery(false);
+    }
+  };
+
+  const openMergeReview = () => {
+    if (!conflictPlan || !basePlanRef.current || !sections) return;
+    const result = mergeServicePlan(basePlanRef.current, {
+      ...basePlanRef.current, name: planName, sections, sourceImport,
+    }, conflictPlan);
+    setMergeReview(result);
+    setMergeChoices({});
+  };
+
+  const cancelMergeReview = () => {
+    mergeApplyAttemptRef.current += 1;
+    mergeApplyingRef.current = false;
+    setMergeApplying(false);
+    setMergeReview(null);
+  };
+
+  useEffect(() => {
+    if (loadedEditorIdentityRef.current !== editorIdentityKey) return;
+    if (userId && churchId && draftChangeVersion > 0 && acknowledgedDraftVersion >= draftChangeVersion && !recoveryDraft) {
+      clearServicePlanRecoveryDraft(userId, churchId, planKey);
+    }
+    if (!userId || !churchId || !sections || !basePlanRef.current || draftChangeVersion === 0) return;
+    if (!["dirty", "saving", "retrying", "conflict", "error"].includes(autosaveState)) return;
+    saveServicePlanRecoveryDraft(userId, churchId, planKey, {
+      savedAt: Date.now(), base: basePlanRef.current,
+      local: { name: planName, timezone: basePlanRef.current.timezone, sourceImport, sections },
+    });
+  }, [acknowledgedDraftVersion, autosaveState, churchId, draftChangeVersion, editorIdentityKey, plan, planKey, planName, recoveryDraft, sections, sourceImport, userId]);
 
   /** Undo history is scoped to a single editing session: Done commits the
    * plan, so there is nothing left to step back through. */
@@ -1228,7 +1575,16 @@ const ServicePlanEditor = ({
       planningCenterPlanId?: string;
     } = {},
   ) => {
-    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs);
+    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
+      classifyExternalTitle: source === "servicePlanning",
+      knownPeople: [
+        ...members.map((member) => memberName(member)),
+        ...(churchIntegrations?.servicePlanning?.people || []).flatMap((person) => [
+          person.displayName,
+          ...person.names,
+        ]),
+      ],
+    });
     const hasElements = importedSections.some((section) => section.elements.length > 0);
     const hasSourceTiming = importedSections.some((section) =>
       section.elements.some((element) => Boolean(element.startTime)),
@@ -1283,6 +1639,10 @@ const ServicePlanEditor = ({
       planName: occurrence.name || service.name || "",
       sourceImport: nextSourceImport,
     });
+    const newAmbiguities = nextSections.flatMap((section) =>
+      section.elements.filter((element) => element.importAmbiguity?.status === "unresolved").map((element) => element.id),
+    );
+    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
     setShowImport(false);
     setImportUrl("");
     setIsEditing(true);
@@ -1374,16 +1734,22 @@ const ServicePlanEditor = ({
 
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
-    applyImportedDraft({
-      sections: applySelectedServicePlanImportChanges(
+    const selectedSections = applySelectedServicePlanImportChanges(
         importPreview.currentSections,
         importPreview.sections,
         importPreview.summary,
         new Set(selectedChangeKeys),
-      ),
+      );
+    applyImportedDraft({
+      sections: selectedSections,
       planName: occurrence.name || service.name || "",
       sourceImport: importPreview.sourceImport,
     });
+    const newAmbiguities = getNewServicePlanImportAmbiguityIds(
+      importPreview.currentSections,
+      selectedSections,
+    );
+    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
     setImportPreview(null);
     setImportUrl("");
     setIsEditing(true);
@@ -1953,39 +2319,29 @@ const ServicePlanEditor = ({
       ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
       : null;
   const liveElementId = liveProgress?.current?.item.id ?? null;
-  const followedLiveElementIdRef = useRef<string | null>(null);
-
-  // In view mode, keep the live row centered in the plan list as the schedule advances.
-  useEffect(() => {
-    if (isEditing) return;
-    if (!liveElementId) {
-      followedLiveElementIdRef.current = null;
-      return;
-    }
-    if (followedLiveElementIdRef.current === liveElementId) return;
-    followedLiveElementIdRef.current = liveElementId;
-    const scrollToLive = () => {
-      const child = document.getElementById(
-        servicePlanElementDomId(liveElementId),
-      );
-      const parent = document.getElementById(SERVICE_PLAN_LIST_SCROLL_ID);
-      if (!child || !parent) return;
-      keepElementInView({
-        child,
-        parent,
-        shouldScrollToCenter: true,
-      });
-    };
-    // Double rAF matches ItemSlides: wait for section expand / layout first.
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(scrollToLive);
-    });
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      window.cancelAnimationFrame(innerFrame);
-    };
-  }, [isEditing, liveElementId]);
+  const {
+    isFollowingLive,
+    pauseLiveFollow,
+    handleScroll: handlePlanScroll,
+    notePointerScrollIntent,
+    handleKeyDown,
+    resumeFollowing,
+  } = useFollowLiveScroll({
+    itemId: liveElementId,
+    resetKey: planKey,
+    enabled: !isEditing && activeTab === "plan",
+    suspensionReason: isEditing
+      ? "editing"
+      : activeTab === "plan"
+        ? null
+        : "inactive",
+    settleDelayMs: ANIMATE_COLLAPSE_DURATION_MS,
+    containerRef: servicePlanScrollRef,
+    getItem: getServicePlanLiveItem,
+    isItemReady: isServicePlanLiveItemReady,
+    isItemVisible: isServicePlanLiveItemVisible,
+    scrollToItem: centerServicePlanLiveItem,
+  });
 
   const liveStartedAt = getServicePlanLiveStartedAt(plan);
   const liveStartedAtLabel = liveStartedAt
@@ -2527,86 +2883,83 @@ const ServicePlanEditor = ({
 
       {hasSections && sections ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <ServicePlanSectionList
-            sections={sections}
-            canEdit={canEdit}
-            isEditing={isEditing}
-            sectionLabelColor={churchBranding?.colors?.[1]?.value}
-            sectionBorderColor={churchBranding?.colors?.[0]?.value}
-            onSectionsChange={updateDraftSections}
-            selection={selectedPlanTarget}
-            onSelectionChange={setSelectedPlanTarget}
-            scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
-            header={
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-gray-100">
-                  {planName.trim() || occurrence.name || service.name}
-                </p>
-                {anchorStartTime ? (
-                  <p className="mt-0.5 text-xs text-gray-400">
-                    Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+          <div
+            className="relative flex min-h-0 min-w-0 flex-1"
+            onScrollCapture={handlePlanScroll}
+            onWheel={pauseLiveFollow}
+            onTouchMove={pauseLiveFollow}
+            onPointerDown={notePointerScrollIntent}
+            onKeyDown={handleKeyDown}
+          >
+            <ServicePlanSectionList
+              sections={sections}
+              canEdit={canEdit}
+              isEditing={isEditing}
+              sectionLabelColor={churchBranding?.colors?.[1]?.value}
+              sectionBorderColor={churchBranding?.colors?.[0]?.value}
+              onSectionsChange={updateDraftSections}
+              selection={selectedPlanTarget}
+              onSelectionChange={setSelectedPlanTarget}
+              scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
+              scrollContainerRef={servicePlanScrollRef}
+              header={
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-100">
+                    {planName.trim() || occurrence.name || service.name}
                   </p>
-                ) : null}
-              </div>
-            }
-            assignedToHistoryValues={assignedToSuggestions}
-            onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
-            isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
-            roleNoteOptions={roleNoteOptions}
-            scheduledPositionOptions={scheduledPositionOptions}
-            teamNoteOptions={teamNoteOptions}
-            microphones={microphones}
-            microphoneAudiences={microphoneAudiences}
-            scheduledMicrophoneHolders={scheduledMicrophoneHolders}
-            scheduledAssignmentRows={scheduledAssignmentRows}
-            onOpenScheduledAssignment={onOpenScheduledAssignment}
-            isServiceDay={isServiceDay}
-            liveElementId={liveElementId}
-            isManualLive={isManualLive}
-            isTimelineAdjusted={isTimelineAdjusted}
-            adjustedStartTimes={adjustedStartTimes}
-            liveStartedAtLabel={liveStartedAtLabel}
-            publicLiveBusy={updatingPublicLive}
-            onMakePublicLive={handleMakePublicLive}
-            hideNotes={hideNotes}
-            teamNotesFilter={teamNotesFilter}
-            roleNotesFilter={roleNotesFilter}
-            onViewSongLyrics={setViewSongRef}
-            allSongDocs={allSongDocs}
-            canCreateLibrarySong={canCreateLibrarySong}
-            onCreatePendingSong={openPendingSongCreator}
-            resolvedSongRefs={resolvedSongRefs}
-          />
-
-          {/* Autosave state is rendered in the plan toolbar under the tabs.
-            <div
-              className={cn(
-                "hidden flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs",
-                autosave.state === "conflict"
-                  ? "border-amber-700/70 bg-amber-950/30 text-amber-100"
-                  : autosave.state === "error"
-                    ? "border-red-800/70 bg-red-950/30 text-red-100"
-                    : "border-slate-700 bg-slate-900/70 text-slate-300",
-              )}
-              role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
-            >
-              {autosave.state === "dirty" ? "Changes waiting to save." : null}
-              {autosave.state === "saving" ? "Saving changes…" : null}
-              {autosave.state === "retrying" ? "Could not save. Retrying…" : null}
-              {autosave.state === "error" ? "Could not save your changes." : null}
-              {autosave.state === "conflict" ? "Another editor changed this plan." : null}
-              {autosave.state === "error" ? (
-                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
-                  Retry
-                </Button>
-              ) : null}
-              {autosave.state === "conflict" ? (
-                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
-                  Reload latest
-                </Button>
-              ) : null}
-            </div>
-          */}
+                  {anchorStartTime ? (
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+                    </p>
+                  ) : null}
+                </div>
+              }
+              assignedToHistoryValues={assignedToSuggestions}
+              onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
+              isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
+              roleNoteOptions={roleNoteOptions}
+              scheduledPositionOptions={scheduledPositionOptions}
+              teamNoteOptions={teamNoteOptions}
+              microphones={microphones}
+              microphoneAudiences={microphoneAudiences}
+              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledAssignmentRows={scheduledAssignmentRows}
+              onOpenScheduledAssignment={onOpenScheduledAssignment}
+              isServiceDay={isServiceDay}
+              liveElementId={liveElementId}
+              isManualLive={isManualLive}
+              isTimelineAdjusted={isTimelineAdjusted}
+              adjustedStartTimes={adjustedStartTimes}
+              liveStartedAtLabel={liveStartedAtLabel}
+              publicLiveBusy={updatingPublicLive}
+              onMakePublicLive={handleMakePublicLive}
+              hideNotes={hideNotes}
+              teamNotesFilter={teamNotesFilter}
+              roleNotesFilter={roleNotesFilter}
+              onViewSongLyrics={setViewSongRef}
+              allSongDocs={allSongDocs}
+              canCreateLibrarySong={canCreateLibrarySong}
+              onCreatePendingSong={openPendingSongCreator}
+              resolvedSongRefs={resolvedSongRefs}
+              onReviewImportAmbiguity={(elementId) => {
+                setIsEditing(true);
+                setAmbiguityDialog({ prompt: false, elementIds: [elementId] });
+              }}
+              followLiveControl={
+                liveElementId && !isEditing && activeTab === "plan" && !isFollowingLive ? (
+                  <Button
+                    type="button"
+                    variant="cta"
+                    svg={LocateFixed}
+                    className="absolute bottom-3 right-3 z-10 shadow-xl max-md:min-h-0"
+                    onClick={resumeFollowing}
+                  >
+                    Follow live
+                  </Button>
+                ) : null
+              }
+            />
+          </div>
 
         </div>
       ) : null}
@@ -2702,8 +3055,8 @@ const ServicePlanEditor = ({
             </Button>
           ) : null}
           {autosave.state === "conflict" ? (
-            <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
-              Reload latest
+            <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={openMergeReview}>
+              Review changes
             </Button>
           ) : null}
         </div>
@@ -3142,6 +3495,36 @@ const ServicePlanEditor = ({
           onClose={() => setImportPreview(null)}
         />
       ) : null}
+      {ambiguityDialog ? (
+        <ServicePlanAmbiguityReview
+          sections={sections || []}
+          elementIds={ambiguityDialog.elementIds || []}
+          prompt={ambiguityDialog.prompt}
+          onLater={() => {
+            if (!sections) { setAmbiguityDialog(null); return; }
+            const ids = new Set(ambiguityDialog.elementIds || []);
+            updateDraftSections(sections.map((section) => ({
+              ...section,
+              elements: section.elements.map((element) => ids.has(element.id) && element.importAmbiguity
+                ? { ...element, importAmbiguity: { ...element.importAmbiguity, status: "deferred" } }
+                : element),
+            })));
+            setAmbiguityDialog(null);
+          }}
+          onResolve={(elementId, changes) => {
+            if (!sections) return;
+            updateDraftSections(sections.map((section) => ({
+              ...section,
+              elements: section.elements.map((element) => element.id === elementId ? { ...element, ...changes } : element),
+            })));
+            setAmbiguityDialog((current) => {
+              if (!current) return null;
+              const remainingIds = (current.elementIds || []).filter((id) => id !== elementId);
+              return remainingIds.length ? { prompt: false, elementIds: remainingIds } : null;
+            });
+          }}
+        />
+      ) : null}
 
       {templateModal && churchId ? (
         <ServicePlanTemplateModal
@@ -3181,6 +3564,26 @@ const ServicePlanEditor = ({
           startInCreate
           onClose={() => setPendingSongCreateRef(null)}
           onSelectSong={handlePendingSongCreated}
+        />
+      ) : null}
+
+      {recoveryDraft && plan && loadedEditorIdentityRef.current === editorIdentityKey ? (
+        <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-amber-700/70 bg-gray-900 px-4 py-3 text-sm text-white shadow-xl" role="status">
+          <span>{restoringRecovery ? "Restoring saved changes…" : "Unsaved plan changes are available from this tab."}</span>
+          <Button variant="cta" disabled={restoringRecovery} onClick={() => { void restoreRecoveryDraft(); }}>{restoringRecovery ? "Restoring…" : "Restore draft"}</Button>
+          <Button variant="tertiary" disabled={restoringRecovery} onClick={() => { if (userId && churchId) clearServicePlanRecoveryDraft(userId, churchId, planKey); setRecoveryDraft(null); }}>Discard draft</Button>
+        </div>
+      ) : null}
+
+      {mergeReview && conflictPlan ? (
+        <ServicePlanConflictDialog
+          conflicts={mergeReview.conflicts}
+          choices={mergeChoices}
+          onChoose={(path, choice) => setMergeChoices((current) => ({ ...current, [path]: choice }))}
+          onApply={() => { void applyReviewedMerge(); }}
+          applying={mergeApplying}
+          onUseLatest={() => { if (!mergeApplying) reloadConflictPlan(); }}
+          onCancel={cancelMergeReview}
         />
       ) : null}
 

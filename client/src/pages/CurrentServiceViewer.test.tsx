@@ -211,6 +211,14 @@ describe("CurrentServiceViewer", () => {
         type: "text",
         title: "Call notes",
         detail: "Bring the spare cable.",
+        richTextContent: {
+          blocks: [
+            {
+              type: "paragraph",
+              spans: [{ text: "Bring the spare cable." }],
+            },
+          ],
+        },
       },
     ]);
     expect(JSON.stringify(snapshot)).not.toContain("private-document-id");

@@ -85,6 +85,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
         items: [],
       } satisfies ElectronMediaDiscovery,
       poolCapacity: 1,
+      performanceClass: "normal",
       posterUrls: [],
     });
   });

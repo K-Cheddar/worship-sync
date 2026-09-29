@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { ChevronLeft, ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
@@ -18,7 +18,6 @@ import {
   memberMatchesScheduleQuery,
   scheduleMemberName,
   sortScheduleMembersForPanel,
-  defaultScheduleMembersSort,
   type MemberServingHistory,
   type ScheduleMembersSort as ScheduleMembersSortState,
 } from "../teamsUtils";
@@ -39,6 +38,11 @@ export type ScheduleMembersPanelMode = "browse" | "assign";
 
 type ScheduleMembersPanelProps = {
   open: boolean;
+  drawer?: boolean;
+  expandedMemberIds: string[];
+  onExpandedMemberIdsChange: Dispatch<SetStateAction<string[]>>;
+  membersSort: ScheduleMembersSortState;
+  onMembersSortChange: (sort: ScheduleMembersSortState) => void;
   onOpenChange: (open: boolean) => void;
   mode: ScheduleMembersPanelMode;
   activeTeamMembers: TeamRosterMember[];
@@ -75,6 +79,11 @@ type ScheduleMembersPanelProps = {
 
 const ScheduleMembersPanel = ({
   open,
+  drawer = false,
+  expandedMemberIds,
+  onExpandedMemberIdsChange,
+  membersSort,
+  onMembersSortChange,
   onOpenChange,
   mode,
   activeTeamMembers,
@@ -105,23 +114,15 @@ const ScheduleMembersPanel = ({
   const isAssignMode = mode === "assign" && Boolean(slotContext);
   const searchValue = isAssignMode ? assignmentQuery : membersPanelQuery;
   const onSearchChange = isAssignMode ? onAssignmentQueryChange : onMembersPanelQueryChange;
-  const [expandedMemberIds, setExpandedMemberIds] = useState<string[]>([]);
-  const [membersSort, setMembersSort] = useState<ScheduleMembersSortState>(
-    defaultScheduleMembersSort,
-  );
   const expandedMemberIdSet = new Set(expandedMemberIds);
 
-  useEffect(() => {
-    setExpandedMemberIds([]);
-  }, [isAssignMode, slotContext?.positionId]);
-
   const toggleExpandedMember = useCallback((memberId: string) => {
-    setExpandedMemberIds((current) =>
+    onExpandedMemberIdsChange((current) =>
       current.includes(memberId)
         ? current.filter((id) => id !== memberId)
         : [...current, memberId],
     );
-  }, []);
+  }, [onExpandedMemberIdsChange]);
 
   const renderMemberDetails = (member: TeamRosterMember) => {
     const positionNames = getScheduleMemberPositionNames(member, schedulePositions);
@@ -322,32 +323,37 @@ const ScheduleMembersPanel = ({
 
   return (
     <aside
+      id="schedule-members-panel"
       data-schedule-members-panel
       className={cn(
         "relative flex min-h-0 shrink-0 flex-col self-stretch rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out",
-        open ? "w-full lg:w-80" : "w-10",
+        open ? (drawer ? "h-full w-full" : "w-full lg:w-80") : "w-10",
         isAssignMode ? "border-orange-400/40" : "border-gray-700",
       )}
       aria-label="Members"
     >
-      <Button
-        type="button"
-        variant="tertiary"
-        padding="p-0"
-        className={cn(
-          "absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
-          isAssignMode ? "border-orange-400/40" : "border-gray-700",
-        )}
-        aria-expanded={open}
-        aria-label={open ? "Hide members" : "Show members"}
-        onClick={() => onOpenChange(!open)}
-      >
-        {open ? (
-          <ChevronRight className="size-4 shrink-0" aria-hidden />
-        ) : (
-          <ChevronLeft className="size-4 shrink-0" aria-hidden />
-        )}
-      </Button>
+      {!drawer ? (
+        <Button
+          type="button"
+          variant="tertiary"
+          padding="p-0"
+          className={cn(
+            "absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
+            isAssignMode ? "border-orange-400/40" : "border-gray-700",
+          )}
+          aria-expanded={open}
+          aria-controls="schedule-members-panel"
+          aria-label={open ? "Hide members" : "Show members"}
+          title={open ? "Hide members" : "Show members"}
+          onClick={() => onOpenChange(!open)}
+        >
+          {open ? (
+            <ChevronRight className="size-4 shrink-0" aria-hidden />
+          ) : (
+            <ChevronLeft className="size-4 shrink-0" aria-hidden />
+          )}
+        </Button>
+      ) : null}
       {open ? (
         <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg p-3">
           {isAssignMode && slotContext ? (
@@ -357,7 +363,7 @@ const ScheduleMembersPanel = ({
               currentAssigneeLabel={slotContext.currentAssigneeLabel}
               onDone={onClearSlot}
             />
-          ) : (
+          ) : drawer ? null : (
             <div className="shrink-0">
               <div className="flex items-center justify-center gap-2">
                 <Icon
@@ -386,7 +392,7 @@ const ScheduleMembersPanel = ({
                 {!isAssignMode ? (
                   <ScheduleMembersSort
                     value={membersSort}
-                    onChange={setMembersSort}
+                    onChange={onMembersSortChange}
                   />
                 ) : null}
               </div>

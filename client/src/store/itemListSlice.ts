@@ -187,6 +187,28 @@ export const itemListSlice = createSlice({
         state.hasPendingUpdate = true;
       },
     },
+    ensureCanvaItemInItemList: {
+      prepare: (item: ServiceItem) => ({
+        payload: { ...item, listId: generateRandomId() },
+      }),
+      reducer: (state, action: PayloadAction<ServiceItem>) => {
+        const newItem = action.payload;
+        if (state.list.some((item) => item._id === newItem._id)) return;
+        const anchorIndex = state.insertPointIndex >= 0
+          ? state.insertPointIndex
+          : state.list.findIndex((item) => item.listId === state.selectedItemListId);
+        const insertAt = anchorIndex >= 0
+          ? newItem.type === "heading" ? anchorIndex : anchorIndex + 1
+          : newItem.type === "heading" ? 0 : state.list.length;
+        const index = Math.max(0, Math.min(insertAt, state.list.length));
+        state.list.splice(index, 0, newItem);
+        if (newItem.type !== "heading") {
+          state.selectedItemListId = newItem.listId;
+          state.insertPointIndex = index;
+        }
+        state.hasPendingUpdate = true;
+      },
+    },
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
@@ -210,6 +232,7 @@ export const {
   removeItemFromList,
   removeItemsFromList,
   addItemToItemList,
+  ensureCanvaItemInItemList,
   initiateItemList,
   setIsInitialized,
   setActiveItemInList,

@@ -10,17 +10,14 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { MediaFolder, MediaType } from "../../types";
 import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
-import Button from "../../components/Button/Button";
-import { ArrowUp, Folder } from "lucide-react";
 import {
-  MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS,
-  MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS,
-  MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
-} from "./mediaLibraryOrangeFolderIcon";
+  MediaLibraryFolderChip,
+  MediaLibraryUpChip,
+} from "./MediaLibraryFolderChip";
 
 const COL_GAP = 8;  // gap-x-2
 const ROW_GAP = 4;  // gap-y-1
-const FOLDER_ROW_HEIGHT = 28;
+const FOLDER_ROW_ESTIMATE_HEIGHT = 32;
 const INITIAL_TILE_ROW_HEIGHT = 80; // fallback before first real measurement
 
 const getUsableScrollViewport = (element: HTMLElement | null) => {
@@ -40,9 +37,9 @@ const findMediaElement = (container: HTMLElement, id: string) =>
   ).find((element) => element.dataset.mediaId === id) ?? null;
 
 type UpRow = { type: "up"; label: string };
-type FolderRow = { type: "folder"; folder: MediaFolder };
+type FoldersRow = { type: "folders"; folders: MediaFolder[] };
 type TilesRow = { type: "tiles"; items: MediaType[]; startIndex: number };
-type VirtualRow = UpRow | FolderRow | TilesRow;
+type VirtualRow = UpRow | FoldersRow | TilesRow;
 
 export type VirtualMediaGridHandle = {
   scrollToMediaId: (
@@ -110,20 +107,25 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     },
     ref,
   ) => {
-    // Start with a fallback height. The first time a tile row renders and is
-    // measured, we update this to the real height and call virtualizer.measure()
-    // to flush the stale estimates. This avoids relying on a ResizeObserver to
-    // compute containerWidth (which fails inside Radix dialog portals).
+    // Keep a measured tile row height as the estimate for rows that have not
+    // been rendered yet. Individual row measurements remain owned by TanStack.
     const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
     const tileRowHeightRef = useRef(tileRowHeight);
     tileRowHeightRef.current = tileRowHeight;
-    const shouldSyncTileRowHeightRef = useRef(true);
+    const [gridWidth, setGridWidth] = useState(0);
     const gridRef = useRef<HTMLDivElement>(null);
+    const tileLayoutKey = JSON.stringify([
+      showBottomName,
+      bottomNameClassName ?? "",
+      imageContainerClassName ?? "",
+    ]);
     const rows = useMemo<VirtualRow[]>(() => {
       const result: VirtualRow[] = [];
       if (showFolders) {
         if (canGoUp) result.push({ type: "up", label: currentFolderName ?? "" });
-        for (const folder of childFolders) result.push({ type: "folder", folder });
+        if (childFolders.length > 0) {
+          result.push({ type: "folders", folders: childFolders });
+        }
       }
       for (let i = 0; i < mediaItems.length; i += cols) {
         result.push({ type: "tiles", items: mediaItems.slice(i, i + cols), startIndex: i });
@@ -136,12 +138,72 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     const mediaItemsRef = useRef(mediaItems);
     mediaItemsRef.current = mediaItems;
 
+    const rowKeys = useMemo(
+      () =>
+        rows.map((row) => {
+          if (row.type === "up") return `up:${row.label}`;
+          if (row.type === "folders") {
+            return `folders:${JSON.stringify(
+              row.folders.map(({ id, name }) => [id, name]),
+            )}`;
+          }
+          return `tiles:${JSON.stringify([
+            cols,
+            gridWidth,
+            tileLayoutKey,
+            row.items.map(({ id, name }) => [
+              id,
+              showBottomName ? name : "",
+            ]),
+          ])}`;
+        }),
+      [cols, gridWidth, rows, showBottomName, tileLayoutKey],
+    );
+    const rowKeysRef = useRef(rowKeys);
+    rowKeysRef.current = rowKeys;
+    const rowKeySignature = useMemo(() => JSON.stringify(rowKeys), [rowKeys]);
+    const folderRowIndex = useMemo(
+      () => rows.findIndex((row) => row.type === "folders"),
+      [rows],
+    );
+    const getRowKey = useCallback(
+      (index: number) =>
+        rowKeysRef.current[index] ??
+        `${rowKeySignature}:${tileRowHeight}:${index}`,
+      [rowKeySignature, tileRowHeight],
+    );
+    const rangeExtractor = useCallback(
+      ({ startIndex, endIndex, overscan, count }: {
+        startIndex: number;
+        endIndex: number;
+        overscan: number;
+        count: number;
+      }) => {
+        const first = Math.max(startIndex - overscan, 0);
+        const last = Math.min(endIndex + overscan, count - 1);
+        const indexes = Array.from(
+          { length: Math.max(last - first + 1, 0) },
+          (_, offset) => first + offset,
+        );
+        if (folderRowIndex >= 0 && !indexes.includes(folderRowIndex)) {
+          indexes.push(folderRowIndex);
+          indexes.sort((a, b) => a - b);
+        }
+        return indexes;
+      },
+      [folderRowIndex],
+    );
+
     const virtualizer = useVirtualizer({
       count: rows.length,
+      getItemKey: getRowKey,
       getScrollElement: () =>
         scrollElement === undefined ? scrollRef.current : scrollElement,
       estimateSize: (index) =>
-        rowsRef.current[index]?.type === "tiles" ? tileRowHeightRef.current : FOLDER_ROW_HEIGHT,
+        rowsRef.current[index]?.type === "tiles"
+          ? tileRowHeightRef.current
+          : FOLDER_ROW_ESTIMATE_HEIGHT,
+      rangeExtractor,
       overscan: 3,
       paddingStart: 16,
       paddingEnd: 16,
@@ -156,59 +218,35 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       if (!el) return;
 
       const row = rowsRef.current[Number(el.dataset.index)];
-      // Update the tile height estimate from the first real measurement.
-      if (row?.type === "tiles" && shouldSyncTileRowHeightRef.current) {
+      // Measured tile rows provide a current estimate for unrendered rows.
+      if (row?.type === "tiles") {
         const h = el.getBoundingClientRect().height;
-        if (h > 0) {
-          shouldSyncTileRowHeightRef.current = false;
-          if (Math.abs(h - tileRowHeightRef.current) > 1) {
-            setTileRowHeight(h);
-          }
+        if (h > 0 && Math.abs(h - tileRowHeightRef.current) > 1) {
+          tileRowHeightRef.current = h;
+          setTileRowHeight(h);
         }
       }
     }, []);
 
-    const measureVisibleRows = useCallback(() => {
-      gridRef.current
-        ?.querySelectorAll<HTMLDivElement>("[data-index]")
-        .forEach(measureRowElement);
-    }, [measureRowElement]);
-
-    // Folder rows have a different fixed size than tile rows. Invalidate the
-    // index-based cache only when that folder-row prefix changes; media
-    // updates keep the shared tile estimate and need no row remeasurement.
-    const folderRowCount = showFolders
-      ? childFolders.length + (canGoUp ? 1 : 0)
-      : 0;
-    const previousFolderRowCountRef = useRef(folderRowCount);
+    // The folder row stays in the virtual range even offscreen, so TanStack's
+    // row ResizeObserver can update its wrapping height without clearing the
+    // size cache for every other row.
     useLayoutEffect(() => {
-      if (previousFolderRowCountRef.current === folderRowCount) return;
-      previousFolderRowCountRef.current = folderRowCount;
-      virtualizerRef.current.measure();
-    }, [folderRowCount]);
+      const gridElement = gridRef.current;
+      if (!gridElement || typeof ResizeObserver === "undefined") return;
 
-    // Flush stale size cache when the measured tile height changes.
-    const prevTileRowHeightRef = useRef(tileRowHeight);
-    useLayoutEffect(() => {
-      if (prevTileRowHeightRef.current !== tileRowHeight) {
-        prevTileRowHeightRef.current = tileRowHeight;
-        virtualizerRef.current.measure();
-      }
-    }, [tileRowHeight]);
+      let previousWidth = gridElement.getBoundingClientRect().width;
+      const resizeObserver = new ResizeObserver(([entry]) => {
+        const nextWidth = entry?.contentRect.width ?? 0;
+        if (Math.abs(nextWidth - previousWidth) <= 1) return;
 
-    // When cols change (zoom), reset the measured height so the next render
-    // re-measures tiles at their new size and flushes the cache.
-    const prevColsRef = useRef(cols);
-    useLayoutEffect(() => {
-      if (prevColsRef.current !== cols) {
-        prevColsRef.current = cols;
-        shouldSyncTileRowHeightRef.current = true;
-        setTileRowHeight(INITIAL_TILE_ROW_HEIGHT);
-        prevTileRowHeightRef.current = INITIAL_TILE_ROW_HEIGHT;
-        virtualizerRef.current.measure();
-        measureVisibleRows();
-      }
-    }, [cols, measureVisibleRows]);
+        previousWidth = nextWidth;
+        setGridWidth(Math.round(nextWidth));
+      });
+      resizeObserver.observe(gridElement);
+
+      return () => resizeObserver.disconnect();
+    }, []);
 
     useImperativeHandle(
       ref,
@@ -324,6 +362,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
             <div
               key={virtualRow.key}
               data-index={virtualRow.index}
+              data-row-type={row.type}
               ref={measureRowElement}
               className="absolute left-0 top-0 w-full"
               style={{
@@ -331,36 +370,25 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
               }}
             >
               {row.type === "up" && (
-                <div className="flex items-center gap-2 px-4 py-0.5">
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
-                    onClick={onGoUp}
-                    title="Up one level"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5 shrink-0 text-zinc-200" aria-hidden />
-                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>Up</span>
-                  </Button>
-                  {row.label && <p className="text-xs text-zinc-200">{row.label}</p>}
+                <div className="px-4">
+                  <MediaLibraryUpChip
+                    currentFolderName={row.label}
+                    onGoUp={onGoUp}
+                  />
                 </div>
               )}
-              {row.type === "folder" && (
-                <div className="flex items-center px-4 py-0.5">
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
-                    onClick={() => onOpenFolder(row.folder.id)}
-                    title={row.folder.name}
-                  >
-                    <Folder
-                      {...MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE}
-                      className="h-3.5 w-3.5 shrink-0 text-orange-400"
-                      aria-hidden
+              {row.type === "folders" && (
+                <div
+                  data-testid="media-library-folder-grid"
+                  className="flex min-w-0 flex-wrap items-start gap-2 px-4"
+                >
+                  {row.folders.map((folder) => (
+                    <MediaLibraryFolderChip
+                      key={folder.id}
+                      folder={folder}
+                      onOpen={onOpenFolder}
                     />
-                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>{row.folder.name}</span>
-                  </Button>
+                  ))}
                 </div>
               )}
               {row.type === "tiles" && (

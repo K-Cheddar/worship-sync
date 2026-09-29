@@ -10,12 +10,18 @@ import {
 } from "react-router-dom";
 
 import FilteredItems from "./FilteredItems";
+import {
+  FILTERED_ITEM_GRID_COLUMNS,
+  FILTERED_SONG_GRID_COLUMNS,
+} from "./FilteredItem";
 import { createItemSlice, initialCreateItemState } from "../../store/createItemSlice";
 import { createMockControllerContext, createMockGlobalContext } from "../../test/mocks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
+import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import type { LibraryFilter } from "../../store/allItemsSlice";
 
 jest.mock("../../api/lrclib", () => ({
   searchLrclibTracks: jest.fn(),
@@ -87,6 +93,388 @@ describe("FilteredItems", () => {
 
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
+  });
+
+  it.each([
+    { type: "song", label: "song", name: "Song title" },
+    { type: "free", label: "custom item", name: "Custom title" },
+    { type: "timer", label: "timer", name: "Timer title" },
+  ])("shows the type column and accessible $type icon", async ({ type, label, name }) => {
+    const item = {
+      _id: `${type}-1`,
+      name,
+      type,
+      listId: `${type}-1`,
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type={type}
+                heading={type}
+                label={label}
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: label })).toHaveAttribute(
+      "title",
+      label,
+    );
+    expect(screen.getByRole("img", { name: label })).toHaveClass(
+      "justify-center",
+    );
+    expect(screen.getByTitle(name)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
+  });
+
+  it("keeps the type column fixed while songs show artist metadata below the name on narrow layouts", async () => {
+    const song = {
+      _id: "song-with-artist",
+      name: "Song with artist",
+      type: "song",
+      listId: "song-with-artist",
+    } as any;
+    const songDoc = {
+      ...song,
+      songMetadata: { artistName: "Traditional" },
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[songDoc]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
+    expect(FILTERED_ITEM_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_15rem]");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
+    expect(FILTERED_SONG_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_21rem]");
+    await waitFor(() => {
+      expect(screen.getByText("Traditional")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Artist")).not.toBeInTheDocument();
+    expect(screen.getByText("Traditional")).toHaveClass("text-sm");
+    expect(screen.getByRole("img", { name: "song" })).toHaveClass(
+      "justify-center",
+    );
+  });
+
+  it("keeps one search across filters and searches song lyrics, artists, and custom slide text", async () => {
+    const song = {
+      _id: "song-library-1",
+      name: "Quiet Hymn",
+      type: "song",
+      listId: "song-library-1",
+    } as any;
+    const custom = {
+      _id: "custom-library-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "custom-library-1",
+    } as any;
+    const timer = {
+      _id: "timer-library-1",
+      name: "Five Minute Timer",
+      type: "timer",
+      listId: "timer-library-1",
+    } as any;
+    const documents = [
+      {
+        ...song,
+        songMetadata: { artistName: "The Harbor Choir" },
+        arrangements: [
+          { formattedLyrics: [{ words: "The Lord is my shepherd" }] },
+        ],
+      },
+      {
+        ...custom,
+        slides: [{ boxes: [{ words: "Welcome our shepherd" }] }],
+      },
+    ] as any[];
+
+    const UnifiedLibraryHarness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      const [search, setSearch] = React.useState("");
+      return (
+        <FilteredItems
+          list={[song, custom, timer]}
+          type="all"
+          heading="All Items"
+          label="item"
+          isLoading={false}
+          allDocs={documents}
+          searchValue={search}
+          setSearchValue={setSearch}
+          libraryFilter={filter}
+          onLibraryFilterChange={setFilter}
+        />
+      );
+    };
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={["/controller/songs"]}>
+              <UnifiedLibraryHarness />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    const searchInput = screen.getByLabelText(/Search/);
+    fireEvent.change(searchInput, { target: { value: "shepherd" } });
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    expect(searchInput).toHaveValue("shepherd");
+    expect(await screen.findByTitle(custom.name)).toBeInTheDocument();
+    expect(screen.queryByTitle(song.name)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Songs" }));
+    expect(searchInput).toHaveValue("shepherd");
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+    expect(screen.queryByTitle(custom.name)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search external lyrics" })).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "harbor choir" } });
+    expect(await screen.findByTitle(song.name)).toBeInTheDocument();
+  });
+
+  it("shows no column headers in All Items and defaults creation by filter", async () => {
+    const song = {
+      _id: "all-song",
+      name: "All Song",
+      type: "song",
+      listId: "all-song",
+    } as any;
+    const custom = {
+      _id: "all-custom",
+      name: "All Custom",
+      type: "free",
+      listId: "all-custom",
+    } as any;
+    const UnifiedLibraryHarness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      return (
+        <FilteredItems
+          list={[song, custom]}
+          type="all"
+          heading="All Items"
+          label="item"
+          isLoading={false}
+          allDocs={[
+            { ...song, songMetadata: { artistName: "The Harbor Choir" } } as any,
+          ]}
+          searchValue=""
+          setSearchValue={jest.fn()}
+          libraryFilter={filter}
+          onLibraryFilterChange={setFilter}
+        />
+      );
+    };
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={["/controller/timers"]}>
+              <UnifiedLibraryHarness />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(screen.queryByText("Artist")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Items" })).toHaveClass(
+      "bg-cyan-500/20",
+      "border-cyan-300/50",
+    );
+    expect(await screen.findByTitle("The Harbor Choir")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create a new item" })).toHaveAttribute(
+      "href",
+      "/controller/create",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Timers" }));
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Create a new timer" })).toHaveAttribute(
+        "href",
+        "/controller/create?type=timer&name=",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Timers" })).toHaveClass(
+      "bg-cyan-500/20",
+      "border-cyan-300/50",
+    );
+  });
+
+  it("keeps library mutations and creation hidden for view-only access", async () => {
+    const item = {
+      _id: "view-only-custom",
+      name: "Read Only Item",
+      type: "free",
+      listId: "view-only-custom",
+    } as any;
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider
+            value={createMockGlobalContext({ access: "view" }) as any}
+          >
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type="all"
+                heading="All Items"
+                label="item"
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+                libraryFilter="all"
+                onLibraryFilterChange={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await screen.findByTitle(item.name);
+    expect(screen.queryByRole("link", { name: "Create a new item" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add to outline/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Read Only Item" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a readable fallback when song artist metadata is missing", async () => {
+    const song = {
+      _id: "song-without-artist",
+      name: "Song without artist",
+      type: "song",
+      listId: "song-without-artist",
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
+    });
+    expect(screen.queryByTitle("No artist listed")).not.toBeInTheDocument();
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+  });
+
+  it("keeps the type icon visible when a virtualized lyric match expands", async () => {
+    const song = {
+      _id: "song-lyric-match",
+      name: "Song title",
+      type: "song",
+      listId: "song-lyric-match",
+    } as any;
+    const songDoc = {
+      ...song,
+      arrangements: [
+        { formattedLyrics: [{ words: "The Lord is my shepherd" }] },
+      ],
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[songDoc]}
+                searchValue="shepherd"
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("shepherd")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
   });
 
   it("removes an attached MP3 from storage after deleting its song document", async () => {
@@ -142,6 +530,46 @@ describe("FilteredItems", () => {
       songId: "song-1",
       audio,
     });
+  });
+
+  it("hides library delete controls in controller present mode", async () => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "present");
+    const item = {
+      _id: "custom-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "custom-1",
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <PresentationControllerModeProvider>
+              <MemoryRouter>
+                <FilteredItems
+                  list={[item]}
+                  type="free"
+                  heading="Custom"
+                  label="custom item"
+                  isLoading={false}
+                  allDocs={[]}
+                  searchValue=""
+                  setSearchValue={jest.fn()}
+                />
+              </MemoryRouter>
+            </PresentationControllerModeProvider>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Delete Welcome Slides" })).not.toBeInTheDocument();
   });
 
   it("searches external lyrics and opens a prefilled create song draft", async () => {

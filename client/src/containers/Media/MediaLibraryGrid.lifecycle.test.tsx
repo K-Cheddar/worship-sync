@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import MediaLibraryGrid from "./MediaLibraryGrid";
-import type { MediaType } from "../../types";
+import type { MediaFolder, MediaType } from "../../types";
 import type { VirtualMediaGridHandle } from "./VirtualMediaGrid";
 
 let mockViewportHeight = 600;
@@ -126,6 +126,7 @@ const renderGrid = (
   isMediaExpanded: boolean,
   mediaListRef: React.RefObject<HTMLElement | null>,
   mediaGridRef: React.RefObject<VirtualMediaGridHandle | null>,
+  options: { showAll?: boolean; childFolders?: MediaFolder[] } = {},
 ) => (
   <MediaLibraryGrid
     isPanelVariant
@@ -136,10 +137,10 @@ const renderGrid = (
     mediaListRef={mediaListRef}
     mediaGridRef={mediaGridRef}
     filteredList={mediaItems}
-    showAll
+    showAll={options.showAll ?? true}
     showNamesInPanelGrid={false}
     searchTerm=""
-    childFolders={[]}
+    childFolders={options.childFolders ?? []}
     canGoUp={false}
     onGoUp={jest.fn()}
     onOpenFolder={jest.fn()}
@@ -255,5 +256,25 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
     );
     expect(screen.getAllByTestId("media-grid-tile")).toHaveLength(20);
     expect(screen.getByText("Media 20")).toBeInTheDocument();
+  });
+
+  it("shows compact folders together in a wrapping row in the main Media panel", () => {
+    const mediaListRef = { current: null } as React.RefObject<HTMLElement | null>;
+    const mediaGridRef = {
+      current: null,
+    } as React.RefObject<VirtualMediaGridHandle | null>;
+    const folders = ["Images", "Backgrounds", "Logos"].map((name, index) => ({
+      id: `panel-folder-${index}`,
+      name,
+      parentId: null,
+      createdAt: "",
+      updatedAt: "",
+    })) as MediaFolder[];
+
+    render(renderGrid(true, mediaListRef, mediaGridRef, { showAll: false, childFolders: folders }));
+
+    const folderGrid = screen.getByTestId("media-library-folder-grid");
+    expect(within(folderGrid).getAllByRole("button")).toHaveLength(3);
+    expect(within(folderGrid).getByRole("button", { name: "Backgrounds" })).toBeInTheDocument();
   });
 });

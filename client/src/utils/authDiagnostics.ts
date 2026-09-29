@@ -1,4 +1,4 @@
-type DiagnosticLevel = "warn" | "error";
+type DiagnosticLevel = "debug" | "warn" | "error";
 
 export const getAuthErrorDetails = (error: unknown) => {
   if (!error || typeof error !== "object") {

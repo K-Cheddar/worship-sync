@@ -152,6 +152,26 @@ describe("useServicePlanAutosave", () => {
     );
   });
 
+  it("recovers a committed write by operation id when the response is lost and server normalization differs", async () => {
+    let operationId = "";
+    const normalized = { ...planFor("plan-a", 6), lastSaveOperationId: "" };
+    const save = jest.fn(async (_payload: unknown, _revision: number, id?: string) => {
+      operationId = id || "";
+      throw new Error("response lost after commit");
+    });
+    const { view, options } = setup({
+      baseRevision: 5,
+      save,
+      isOwnWrite: (doc, _payload, id) => (doc as ServicePlan & { lastSaveOperationId?: string }).lastSaveOperationId === id,
+      loadLatest: async () => ({ ...normalized, lastSaveOperationId: operationId }),
+    });
+    view.rerender({ ...options, changeVersion: 1 });
+    await act(async () => { jest.advanceTimersByTime(1_200); await Promise.resolve(); });
+    await waitFor(() => expect(view.result.current.state).toBe("saved"));
+    expect(operationId).toBeTruthy();
+    expect(view.result.current.getRevision()).toBe(6);
+  });
+
   it("ignores a save that resolves after the editor moved to another plan", async () => {
     // Regression: the editor stays mounted across prev/next, so an in-flight
     // save for plan A used to land on plan B — applying A's revision and
@@ -186,6 +206,90 @@ describe("useServicePlanAutosave", () => {
 
     // A's result must not be applied to the editor now showing B.
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("keeps the active request owned through an A to B to C switch", async () => {
+    let resolveA1: (plan: ServicePlan) => void = () => {};
+    let resolveB1: (plan: ServicePlan) => void = () => {};
+    const saveA = jest.fn(
+      () => new Promise<ServicePlan>((resolve) => { resolveA1 = resolve; }),
+    );
+    let saveBCallCount = 0;
+    const saveB = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, baseRevision) => {
+        saveBCallCount += 1;
+        return saveBCallCount === 1
+          ? new Promise<ServicePlan>((resolve) => { resolveB1 = resolve; })
+          : Promise.resolve(planFor("plan-b", baseRevision + 1));
+      },
+    );
+    const saveC = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async () => planFor("plan-c", 1),
+    );
+    const { view, onSaved, options } = setup({ save: saveA });
+
+    // A1 remains pending when the mounted editor switches to B.
+    view.rerender({
+      ...options,
+      save: saveA,
+      changeVersion: 1,
+      buildPayload: () => payloadFor("A1"),
+    });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(saveA).toHaveBeenCalledTimes(1));
+
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 0,
+      save: saveB,
+      buildPayload: () => payloadFor("B1"),
+    });
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 1,
+      save: saveB,
+      buildPayload: () => payloadFor("B1"),
+    });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(saveB).toHaveBeenCalledTimes(1));
+
+    // Capture a newer B snapshot, then leave for C while B1 is still pending.
+    view.rerender({
+      ...options,
+      resetKey: "plan-b",
+      baseRevision: 10,
+      changeVersion: 2,
+      save: saveB,
+      buildPayload: () => payloadFor("B2"),
+    });
+    view.rerender({
+      ...options,
+      resetKey: "plan-c",
+      baseRevision: 0,
+      changeVersion: 0,
+      save: saveC,
+      buildPayload: () => payloadFor("C"),
+    });
+
+    // A1 resolves after B1 has taken ownership of the active slot. It must not
+    // detach B1; B2 stays queued until B1 returns the revision it created.
+    await act(async () => { resolveA1(planFor("plan-a", 7)); });
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(view.result.current.getRevision()).toBe(0);
+    expect(saveB).toHaveBeenCalledTimes(1);
+    expect(saveC).not.toHaveBeenCalled();
+
+    await act(async () => { resolveB1(planFor("plan-b", 11)); });
+    await waitFor(() => expect(saveB).toHaveBeenCalledTimes(2));
+    expect(saveB.mock.calls[1][0]).toMatchObject({ name: "B2" });
+    expect(saveB.mock.calls[1][1]).toBe(11);
+    expect(saveC).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(view.result.current.getRevision()).toBe(0);
   });
 
   it("persists a pending edit to the plan it belongs to when switching away", async () => {
@@ -369,6 +473,30 @@ describe("useServicePlanAutosave", () => {
     expect(save.mock.calls[0][1]).toBe(10);
     expect(save.mock.calls[1][0]).toMatchObject({ name: "B" });
     expect(save.mock.calls[1][1]).toBe(11);
+  });
+
+  it("acknowledges only the sent version when a newer local edit is waiting", async () => {
+    let resolveFirst: (plan: ServicePlan) => void = () => {};
+    let callCount = 0;
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      (_payload, baseRevision) => {
+        callCount += 1;
+        if (callCount === 1) return new Promise<ServicePlan>((resolve) => { resolveFirst = resolve; });
+        return Promise.resolve(planFor("plan-a", baseRevision + 1));
+      },
+    );
+    const onSaveAcknowledged = jest.fn();
+    const { view, options } = setup({ save, onSaveAcknowledged });
+
+    view.rerender({ ...options, save, onSaveAcknowledged, changeVersion: 1 });
+    await act(async () => { jest.advanceTimersByTime(1_500); });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    view.rerender({ ...options, save, onSaveAcknowledged, changeVersion: 2, buildPayload: () => payloadFor("B") });
+    await act(async () => { resolveFirst(planFor("plan-a", 1)); });
+
+    expect(onSaveAcknowledged).toHaveBeenCalledTimes(1);
+    expect(onSaveAcknowledged).toHaveBeenCalledWith(1);
+    expect(view.result.current.state).toBe("dirty");
   });
 
   it("keeps the expected acknowledgement revision while a failed save is retrying", async () => {

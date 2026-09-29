@@ -35,6 +35,21 @@ export type ServicePlanningLineItem = {
   }>;
   /** Current Service Plan assignees; imported rows use `ledBy` as a fallback. */
   assigneeNames?: string[];
+  startTime?: string;
+  durationMinutes?: number;
+  note?: string;
+  teamNotes?: Array<{ teamName: string; note: string }>;
+  contentResources?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    url?: string;
+    detail?: string;
+  }>;
+  microphoneAssignments?: Array<{
+    assigneeName?: string;
+    microphoneIds: string[];
+  }>;
   attachedSongs?: Array<{ title: string; songId?: string; inLibrary: boolean }>;
   attachedCustomDocuments?: Array<{
     documentId: string;
@@ -56,6 +71,10 @@ export type OverlaySyncPlanItem = {
   title: string;
   ledBy: string;
   personIndex: number;
+  sourcePlanKey?: string;
+  sourcePlanElementId?: string;
+  sourceCandidateId?: string;
+  sourceValues?: { name?: string; title?: string; event?: string };
   rawNameToken: string;
   action: "update" | "clone" | "create" | "skip";
   placementOnly?: boolean;

@@ -37,6 +37,24 @@ export const canvaSourcesMatch = (
   normalizePages(left.pageNumbers).join(",") ===
     normalizePages(right.pageNumbers).join(",");
 
+export const hasValidCanvaRefreshMetadata = (
+  source: CanvaMediaSource | undefined,
+  importKey: string | undefined,
+  expectedFormat: CanvaMediaSource["format"],
+) => {
+  if (
+    !source ||
+    !importKey ||
+    !source.designId ||
+    source.format !== expectedFormat ||
+    !Number.isFinite(Number(source.revision)) ||
+    !source.pageNumbers?.length ||
+    source.pageNumbers.some((page) => !Number.isInteger(page) || page < 1 || page > 500)
+  ) return false;
+  const expectedKey = `canva:${source.designId}:rev:${source.revision}:${expectedFormat}:${[...source.pageNumbers].sort((a, b) => a - b).join(",")}`;
+  return importKey === expectedKey;
+};
+
 export const isCanvaSourceCurrent = (
   source: CanvaMediaSource,
   currentRevision: number | string,

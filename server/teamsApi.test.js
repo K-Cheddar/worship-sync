@@ -15,6 +15,7 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
 import {
@@ -30,6 +31,10 @@ const {
   seedChurchServiceTimesForServerTests,
   seedSmsConsentForServerTests,
   queryDocs,
+  recoverPendingIntakeSubmissionDigests,
+  setIntakeDigestSchedulingFailureForServerTests,
+  setIntakeNotifyRecipientsForServerTests,
+  setSendEmailForServerTests,
   setDoc,
 } = await import("../authService.js");
 import {
@@ -3079,6 +3084,15 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
     submitRes,
   );
   assert.equal(submitRes.statusCode, 200);
+  assert.deepEqual(Object.keys(submitRes.payload).sort(), ["submissionId", "success"]);
+  await flushAsyncWork();
+  const scheduledForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+  assert.ok(scheduledForm.pendingDigestSince);
+  const persistedSubmission = await getDoc(
+    "teamIntakeSubmissions",
+    submitRes.payload.submissionId,
+  );
+  assert.equal(persistedSubmission.digestBatchId, scheduledForm.pendingDigestBatchId);
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -3090,6 +3104,99 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
   assert.equal(submission.lastName, "");
   assert.equal(submission.email, "");
   assert.equal(submission.notes, "");
+});
+
+test("a rejected public intake submission does not schedule a digest", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_failed_submit_no_digest");
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Rejected submission",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+    },
+  });
+  const rejected = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: "not-a-valid-token" },
+      body: { firstName: "Avery" },
+    },
+    rejected,
+  );
+  await flushAsyncWork();
+  assert.equal(rejected.statusCode, 404);
+  const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+  assert.equal(storedForm.pendingDigestSince, undefined);
+});
+
+test("a failed scheduler leaves a persisted regular submission recoverable", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_schedule_failure");
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Scheduler failure",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+    },
+  });
+  const sent = [];
+  setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  setSendEmailForServerTests(async ({ to }) => sent.push(to));
+  setIntakeDigestSchedulingFailureForServerTests(true);
+  try {
+    const response = createRes();
+    await authHandlers.submitTeamIntake(
+      {
+        params: {},
+        headers: {},
+        session: createSession(),
+        query: { token: form.payload.publicToken },
+        body: {
+          firstName: "Avery",
+          lastName: "Stone",
+          email: "avery@example.test",
+        },
+      },
+      response,
+    );
+    await flushAsyncWork();
+    assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+    assert.deepEqual(Object.keys(response.payload).sort(), [
+      "submissionId",
+      "success",
+    ]);
+    const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+    const storedSubmission = await getDoc(
+      "teamIntakeSubmissions",
+      response.payload.submissionId,
+    );
+    assert.ok(storedForm.pendingDigestSince);
+    assert.equal(storedSubmission.digestBatchId, storedForm.pendingDigestBatchId);
+
+    setIntakeDigestSchedulingFailureForServerTests(false);
+    await setDoc(
+      "teamIntakeForms",
+      form.payload.form.formId,
+      {
+        pendingDigestSince: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+      },
+      { merge: true },
+    );
+    await recoverPendingIntakeSubmissionDigests();
+    assert.deepEqual(sent, ["lead@example.test"]);
+  } finally {
+    setIntakeDigestSchedulingFailureForServerTests(false);
+    setIntakeNotifyRecipientsForServerTests(null);
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("intake profile and scheduling fields carry onto a created member", async (t) => {
@@ -4255,6 +4362,48 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
               sourceContentTitleRaw: "Great Are You Lord",
+              sourceNoteRaw: "Read from the printed plan",
+              servicePlanningImport: {
+                observed: {
+                  elementType: "Reading the Word",
+                  title: "Psalms 97 (NLT) Jasmine Williams",
+                  ledBy: "Jeriyah Brown",
+                  note: "Read from the printed plan",
+                },
+                applied: {
+                  elementType: "Reading the Word",
+                  title: "Psalms 97 (NLT) Jasmine Williams",
+                  ledBy: "Jeriyah Brown",
+                  note: "Read from the printed plan",
+                },
+                pendingFields: [],
+              },
+              importAmbiguity: {
+                source: "servicePlanning",
+                sourceKey: "Worship:0",
+                sourceElementType: "Reading the Word",
+                sourceTitle: "Psalms 97 (NLT) Jasmine Williams",
+                sourceLedBy: "Jeriyah Brown",
+                sourceNote: "Read from the printed plan",
+                parts: [
+                  { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+                  {
+                    kind: "person",
+                    value: "Jasmine Williams",
+                    destination: "assignee",
+                    sourceField: "title",
+                    managed: {
+                      kind: "assignee",
+                      id: "title-assignee-1",
+                      fingerprint: '{"name":"Jasmine Williams"}',
+                    },
+                  },
+                  { kind: "unknown", value: "unsafe", destination: "content" },
+                ],
+                reasons: ["Review the remaining title text."],
+                status: "deferred",
+                sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+              },
               sourceLedByAssignments: [
                 { kind: "person", id: "person-1", name: "Jane Doe" },
                 { kind: "teamPosition", id: "position-1", name: "Choir" },
@@ -4286,6 +4435,56 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     created.payload.servicePlan.sections[0].elements[0].sourceContentTitleRaw,
     "Great Are You Lord",
   );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceNoteRaw,
+    "Read from the printed plan",
+  );
+  assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].servicePlanningImport,
+    {
+      observed: {
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+        note: "Read from the printed plan",
+      },
+      applied: {
+        elementType: "Reading the Word",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jeriyah Brown",
+        note: "Read from the printed plan",
+      },
+      pendingFields: [],
+    },
+  );
+  assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].importAmbiguity,
+    {
+      source: "servicePlanning",
+      sourceKey: "Worship:0",
+      sourceElementType: "Reading the Word",
+      sourceTitle: "Psalms 97 (NLT) Jasmine Williams",
+      sourceLedBy: "Jeriyah Brown",
+      sourceNote: "Read from the printed plan",
+      parts: [
+        { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+        {
+          kind: "person",
+          value: "Jasmine Williams",
+          destination: "assignee",
+          sourceField: "title",
+          managed: {
+            kind: "assignee",
+            id: "title-assignee-1",
+            fingerprint: '{"name":"Jasmine Williams"}',
+          },
+        },
+      ],
+      reasons: ["Review the remaining title text."],
+      status: "deferred",
+      sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+    },
+  );
   assert.deepEqual(
     created.payload.servicePlan.sections[0].elements[0].sourceLedByAssignments,
     [
@@ -4315,12 +4514,25 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(fetched.statusCode, 200);
   assert.equal(fetched.payload.servicePlan.name, "Sunday Service");
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.status,
+    "deferred",
+  );
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.parts[1].managed.id,
+    "title-assignee-1",
+  );
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].servicePlanningImport.observed.note,
+    "Read from the printed plan",
+  );
 
   const updated = await callHandler(authHandlers.saveServicePlan, {
     context,
     params: { planKey },
     body: {
       baseRevision: created.payload.servicePlan.revision,
+      saveOperationId: "autosave-operation-0001",
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
@@ -4337,6 +4549,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               id: "el-1",
               type: "song",
               title: richText("Great Are You Lord"),
+              songRefs: [{ id: "song-ref-1", kind: "pending", title: "Draft song", lyricsText: "lyrics" }],
+              scriptureRefs: [{ id: "scripture-ref-1", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
               durationMinutes: 5,
               notes: richText("Red mic"),
               teamNotes: [
@@ -4356,7 +4570,15 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.payload.servicePlan.revision, 2);
+  assert.equal(updated.payload.servicePlan.saveOperationId, undefined);
+  const updateEvent = sseClient.events().filter((event) => event.type === "service-plan-updated").at(-1);
+  assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
+  assert.equal(updateEvent.servicePlan.lastSaveOperationId, undefined);
+  const recovered = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+  assert.equal(recovered.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
   assert.equal(updated.payload.servicePlan.sections[0].elements.length, 2);
+  assert.equal(updated.payload.servicePlan.sections[0].elements[0].songRefs[0].id, "song-ref-1");
+  assert.equal(updated.payload.servicePlan.sections[0].elements[0].scriptureRefs[0].id, "scripture-ref-1");
   assert.equal(
     updated.payload.servicePlan.sections[0].elements[1].durationMinutes,
     1.5,
@@ -4385,6 +4607,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(staleSave.statusCode, 409);
   assert.equal(staleSave.payload.conflict, true);
   assert.equal(staleSave.payload.servicePlan.revision, 2);
+  assert.equal(staleSave.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
 
   const published = await callHandler(authHandlers.publishServicePlan, {
     context,
@@ -6765,6 +6988,12 @@ test("an emailed token answers one assignment without any session", async (t) =>
   );
   assert.equal(saved.responses[occurrenceId][cellKey].response, "accepted");
   assert.equal(saved.responses[occurrenceId][cellKey].memberId, memberId);
+  const confirmationPreviews = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_confirmation" },
+  ]);
+  assert.equal(confirmationPreviews.length, 1);
+  assert.equal(confirmationPreviews[0].status, "preview");
 });
 
 test("a tampered or unsigned token is refused", async (t) => {
@@ -7040,6 +7269,30 @@ test("an emailed token stops working once the slot moves on", async (t) => {
   assert.equal(res.statusCode, 409);
 });
 
+test("declining an assignment records a vacancy without messaging the volunteer who declined", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("decline_vacancy_no_invite");
+  const { memberId, scheduleId } = await seedAssignedSchedule(context, "declinevacancy");
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+
+  const response = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "declined" },
+  });
+  assert.equal(response.statusCode, 200);
+  const intents = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "sourceId", value: scheduleId },
+  ]);
+  assert.equal(intents.filter((intent) => intent.intentType === "replacement_request").length, 0);
+  assert.equal(intents.length, 0, "recording a decline does not create an SMS draft");
+});
+
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");
@@ -7062,6 +7315,12 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   assert.equal(first.payload.notified, 1);
   assert.ok(first.payload.sentAt, "sending records when it happened");
   assert.deepEqual(first.payload.unreachableMemberIds, []);
+  const assignmentMessagePreviews = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_notification" },
+  ]);
+  assert.equal(assignmentMessagePreviews.length, 1);
+  assert.equal(assignmentMessagePreviews[0].status, "preview");
 
   // Pressing send again must not re-mail anyone.
   const second = await callHandler(authHandlers.sendTeamSchedule, {
@@ -7071,6 +7330,11 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   assert.equal(second.statusCode, 200);
   assert.equal(second.payload.notified, 0);
   assert.equal(second.payload.alreadyNotified, 1);
+  const previewsAfterRepeat = await queryDocs("notificationIntents", [
+    { field: "churchId", value: context.churchId },
+    { field: "intentType", value: "assignment_notification" },
+  ]);
+  assert.equal(previewsAfterRepeat.length, 1);
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -7784,6 +8048,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.ok(!link.payload.publicUrl.includes("Kevin"));
   assert.ok(!link.payload.publicUrl.includes(recipient.recipientId));
   const token = link.payload.publicUrl.split("/a/")[1];
+  assert.equal(isPublicSharePathname(`/a/${token}`), true);
   assert.match(token, /^r_[A-Za-z0-9_-]{24}$/);
   assert.equal(token.length, 26);
   const storedRecipient = await getDoc(
@@ -7861,6 +8126,11 @@ test("individual intake recipients personalize and automatically apply one audit
 
   const firstSubmit = await submit("unavailable");
   assert.equal(firstSubmit.statusCode, 200, JSON.stringify(firstSubmit.payload));
+  await flushAsyncWork();
+  assert.ok(
+    (await getDoc("teamIntakeForms", formId)).pendingDigestSince,
+    "individualized submissions schedule the same digest",
+  );
   const firstSubmissionId = firstSubmit.payload.submissionId;
   const afterFirst = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -7966,6 +8236,40 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(reactivatedPreview.statusCode, 200);
 });
 
+test("notification requests accept personalized forms with blockout and notes fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_form_response_request");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Kevin", lastName: "Cheddar" }],
+  });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "September Schedule",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      responseDeadline: "2026-09-30",
+      teamIds: [teamId],
+      enabledFields: ["firstName", "lastName", "email", "blockoutDates", "notes", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  const prepared = await authHandlers.prepareAvailabilityNotificationRecipients({
+    churchId: context.churchId,
+    formId: form.payload.form.formId,
+    memberIds: [memberIds.Kevin],
+    purpose: "availability_request",
+    actorUid: "admin",
+  });
+  assert.equal(prepared.results.length, 1);
+  assert.ok(prepared.results[0].recipient.recipientId);
+  assert.match(prepared.results[0].publicUrl, /\/a\//);
+  assert.equal(prepared.results[0].eligible, false);
+  assert.equal(prepared.results[0].exclusionReason, "No valid mobile number.");
+});
+
 test("individual intake recipient creation requires Teams edit permission", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("individual_intake_permission");
@@ -8041,7 +8345,7 @@ test("individual intake recipient creation validates the full set before writing
   );
 });
 
-test("individual intake SMS creates auditable attempts, retries preserve history, and bootstrap exposes derived state", async (t) => {
+test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");
   const { teamId, memberIds } = await seedTeam(context, {
@@ -8086,14 +8390,29 @@ test("individual intake SMS creates auditable attempts, retries preserve history
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
+  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
+    context,
+    params: { formId, recipientId },
+  });
   const fake = createFakeSmsProvider({
     response: { providerMessageId: "SM_first", status: "queued" },
   });
   setSmsProviderForServerTests(fake);
   try {
-    const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+    const unconfirmed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { recipientId },
+      body: {},
+    });
+    assert.equal(unconfirmed.statusCode, 400);
+    assert.equal(fake.calls.length, 0, "an individual send requires explicit operator confirmation");
+    const preview = await previewSms();
+    assert.equal(preview.statusCode, 200);
+    assert.equal(preview.payload.preview.eligible, true);
+    const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+      context,
+      params: { formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
     assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
     assert.equal(first.payload.attempt.status, "accepted");
@@ -8113,14 +8432,15 @@ test("individual intake SMS creates auditable attempts, retries preserve history
     };
     const second = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
-      params: { recipientId },
+      params: { formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
-    assert.equal(second.statusCode, 200);
-    assert.notEqual(second.payload.attempt.attemptId, first.payload.attempt.attemptId);
+    assert.equal(second.statusCode, 409);
     const attempts = await queryDocs("smsDeliveryAttempts", [
       { field: "recipientId", value: recipientId },
     ]);
-    assert.equal(attempts.length, 2);
+    assert.equal(attempts.length, 1);
+    assert.equal(fake.calls.length, 1);
 
     const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
       context,
@@ -8135,7 +8455,7 @@ test("individual intake SMS creates auditable attempts, retries preserve history
       params: { formId },
     });
     assert.equal(history.statusCode, 200);
-    assert.equal(history.payload.attempts.length, 2);
+    assert.equal(history.payload.attempts.length, 1);
   } finally {
     setSmsProviderForServerTests(null);
   }
@@ -8167,12 +8487,22 @@ test("individual intake SMS records provider failure and blocks missing consent,
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
-  const noConsent = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
+  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
+    params: { formId: form.payload.form.formId, recipientId },
   });
-  assert.equal(noConsent.statusCode, 400);
-  assert.match(noConsent.payload.errorMessage, /consent/i);
+  await setDoc("churchMessagingConfigs", context.churchId, {
+    churchId: context.churchId,
+    provider: "twilio",
+    providerAccountId: "AC_test",
+    messagingServiceId: "MG_test",
+    registrationStatus: "approved",
+    enabled: true,
+  }, { merge: false });
+  const noConsent = await previewSms();
+  assert.equal(noConsent.statusCode, 200);
+  assert.equal(noConsent.payload.preview.eligible, false);
+  assert.equal(noConsent.payload.preview.eligibilityStatus, "consent_needed");
 
   await seedSmsConsentForServerTests({
     churchId: context.churchId,
@@ -8185,6 +8515,8 @@ test("individual intake SMS records provider failure and blocks missing consent,
     {
       churchId: context.churchId,
       provider: "twilio",
+      providerAccountId: "AC_test",
+      messagingServiceId: "MG_test",
       registrationStatus: "approved",
       enabled: true,
     },
@@ -8199,9 +8531,11 @@ test("individual intake SMS records provider failure and blocks missing consent,
   });
   setSmsProviderForServerTests(failingProvider);
   try {
+    const preview = await previewSms();
     const failed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
-      params: { recipientId },
+      params: { formId: form.payload.form.formId, recipientId },
+      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
     });
     assert.equal(failed.statusCode, 502);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -8213,6 +8547,9 @@ test("individual intake SMS records provider failure and blocks missing consent,
     setSmsProviderForServerTests(null);
   }
 
+  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
+  const beforeDisabled = await previewSms();
+
   await setDoc(
     "churchMessagingConfigs",
     context.churchId,
@@ -8221,19 +8558,24 @@ test("individual intake SMS records provider failure and blocks missing consent,
   );
   const disabled = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeDisabled.payload.preview.approvalVersion },
   });
   assert.equal(disabled.statusCode, 503);
 
+  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
   await setDoc(
     "teamIntakeForms",
     form.payload.form.formId,
-    { active: false },
+    { active: true },
     { merge: true },
   );
+  const beforeClosed = await previewSms();
+  await setDoc("teamIntakeForms", form.payload.form.formId, { active: false }, { merge: true });
   const closed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(closed.statusCode, 400);
   assert.match(closed.payload.errorMessage, /closed/i);
@@ -8245,7 +8587,8 @@ test("individual intake SMS records provider failure and blocks missing consent,
   assert.equal(revoked.statusCode, 200);
   const revokedSend = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
-    params: { recipientId },
+    params: { formId: form.payload.form.formId, recipientId },
+    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(revokedSend.statusCode, 404);
 });

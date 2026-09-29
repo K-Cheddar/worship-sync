@@ -11,12 +11,17 @@ const sortSongsAlphabetically = (songs: DBItem[]): DBItem[] =>
     if (nameDiff !== 0) return nameDiff;
     const artistA = a.songMetadata?.artistName?.trim() || "";
     const artistB = b.songMetadata?.artistName?.trim() || "";
-    return artistA.localeCompare(artistB, "en", { numeric: true });
+    return (
+      artistA.localeCompare(artistB, "en", { numeric: true }) ||
+      a._id.localeCompare(b._id)
+    );
   });
 
 type SearchRankFields = {
   titleMatch: number;
   matchRank: number;
+  type?: string;
+  id?: string;
 };
 
 /**
@@ -32,7 +37,9 @@ export const compareItemSearchRanks = (
   return (
     bHasTitle - aHasTitle ||
     b.matchRank - a.matchRank ||
-    a.name.localeCompare(b.name, "en", { numeric: true })
+    a.name.localeCompare(b.name, "en", { numeric: true }) ||
+    (a.type || "").localeCompare(b.type || "") ||
+    (a.id || "").localeCompare(b.id || "")
   );
 };
 
@@ -44,6 +51,11 @@ export const computeSongSearchEnrichment = (
   const name = song.name.toLowerCase();
   const titleMatch = getMatchForString({
     string: name,
+    searchValue: cleanSearchValue,
+    allowPartial: true,
+  });
+  const artistMatch = getMatchForString({
+    string: song.songMetadata?.artistName || "",
     searchValue: cleanSearchValue,
     allowPartial: true,
   });
@@ -71,11 +83,12 @@ export const computeSongSearchEnrichment = (
     wordMatches,
   });
 
-  const matchRank = titleMatch + updatedMatch;
+  const matchRank = titleMatch + updatedMatch + artistMatch;
   const hasLyricMatch = wordMatches.length > 0;
 
   return {
     titleMatch,
+    artistMatch,
     matchRank,
     matchedWords: updatedMatchedWords,
     showWords: hasLyricMatch && titleMatch === 0,

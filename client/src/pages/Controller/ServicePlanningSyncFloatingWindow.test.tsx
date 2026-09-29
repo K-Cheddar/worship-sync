@@ -27,6 +27,9 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
 }));
+jest.mock("../Services/useServicePlanOutlinePush", () => ({
+  useServicePlanOutlinePush: () => ({ pushPlanToOutline: jest.fn() }),
+}));
 // Covered by useCurrentServicePlanSource.test.tsx. Stubbed here so these tests
 // stay about the window itself and don't need Teams state in the store.
 const mockPlanSource = {
@@ -43,6 +46,7 @@ const mockPlanSource = {
     name: string;
     date: string;
   },
+  selectedPlanDetails: null as any,
   selectedPlanKey: null as string | null,
   selectPlan: jest.fn(),
   occurrences: [] as Array<{
@@ -119,6 +123,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     } as any);
     mockPlanSource.savedPlans = [];
     mockPlanSource.selectedPlan = null;
+    mockPlanSource.selectedPlanDetails = null;
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
@@ -182,6 +187,98 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         name: "Select service plan: May 2, 2026 - 10 AM",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("shows saved plan timing, content, notes, and microphones in the plan preview", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+      },
+    });
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [
+          {
+            sectionName: "Pathfinder Presentation",
+            headingName: null,
+            sourceRowIndex: 0,
+            elementType: "video",
+            title: "Pathfinder Welcome Video",
+            cleanedTitle: "Pathfinder Welcome Video",
+            ledBy: "Mikaela Cox",
+            assigneeNames: ["Mikaela Cox"],
+            startTime: "10:59",
+            durationMinutes: 1.5,
+            contentResources: [
+              {
+                id: "resource-1",
+                type: "url",
+                title: "Dropbox video",
+                url: "https://example.com/video",
+                detail: "Play the intro before the welcome.",
+              },
+            ],
+            note: "Keep the lights low.",
+            teamNotes: [{ teamName: "Media Team", note: "Check playback." }],
+            microphoneAssignments: [
+              { assigneeName: "Mikaela Cox", microphoneIds: ["mic-orange"] },
+            ],
+            selectedForOutline: false,
+            outlineItemType: "none",
+            matchedLibraryItem: null,
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(screen.getByText("10:59 AM")).toBeInTheDocument();
+    expect(screen.getByText("1:30")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Dropbox video/ })).toHaveAttribute(
+      "href",
+      "https://example.com/video",
+    );
+    expect(screen.getByText("Play the intro before the welcome.")).toBeInTheDocument();
+    expect(screen.getByText("Keep the lights low.")).toBeInTheDocument();
+    expect(screen.getByText("Media Team:")).toBeInTheDocument();
+    expect(screen.getByText("mic-orange")).toBeInTheDocument();
+  });
+
+  it("renders a native saved plan when no legacy import preview exists", async () => {
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-1",
+          type: "free",
+          title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+        }],
+      }],
+    };
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(await screen.findByText("Welcome")).toBeInTheDocument();
   });
 
   // Regression: the menu was portaled, which escapes the floating window's

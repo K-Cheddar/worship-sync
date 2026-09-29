@@ -64,16 +64,42 @@ import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../compone
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { getServicePlanMicrophones } from "../../api/auth";
+import type { ServicePlanMicrophone } from "../../types/servicePlan";
 import { useControllerBasePath } from "../../context/activeController";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { formatServicePlanDuration } from "../Services/servicePlanDuration";
+import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
 import {
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
+import ControllerServicePlanView from "./ControllerServicePlanView";
+import { useServicePlanOutlinePush } from "../Services/useServicePlanOutlinePush";
 
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+
+const formatPreviewStartTime = (value: string) => {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return value;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return value;
+  const period = hours >= 12 ? "PM" : "AM";
+  return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${period}`;
+};
+
+const isPreviewHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 const StatusBadge = ({
   className,
@@ -296,8 +322,10 @@ const ServicePlanningSyncFloatingWindow = ({
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
-  const { churchBranding } = useContext(GlobalInfoContext) || {};
+  const controllerProfile = useActiveControllerProfile();
+  const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
+  const { pushPlanToOutline } = useServicePlanOutlinePush();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -306,11 +334,15 @@ const ServicePlanningSyncFloatingWindow = ({
   const [activePlanKey, setActivePlanKey] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [microphoneRefreshVersion, setMicrophoneRefreshVersion] = useState(0);
   // Keeps the Controller's copy of the plan in step with the Services editor.
   const {
     savedPlans,
     selectedPlan,
+    selectedPlanDetails,
     selectedPlanKey,
     selectPlan,
     occurrence,
@@ -324,6 +356,8 @@ const ServicePlanningSyncFloatingWindow = ({
     refresh: refreshPlan,
     refreshPlans,
   } = useCurrentServicePlanSource();
+  const currentPlanRef = useRef(selectedPlanDetails);
+  currentPlanRef.current = selectedPlanDetails;
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
@@ -341,6 +375,23 @@ const ServicePlanningSyncFloatingWindow = ({
   const selectedList = useSelector(
     (s: RootState) => s.undoable?.present?.itemLists?.selectedList,
   );
+  const activeItemListId = useSelector(
+    (s: RootState) => s.undoable?.present?.itemList?.selectedItemListId,
+  );
+  const activePlanElementId = useMemo(() => {
+    if (!isPlanSourced || !selectedPlanDetails || !activeItemListId) return undefined;
+    for (const section of selectedPlanDetails.sections) {
+      for (const element of section.elements) {
+        const pushedIds = element.pushedOutlineListIds?.length
+          ? element.pushedOutlineListIds
+          : element.pushedOutlineListId ? [element.pushedOutlineListId] : [];
+        if (pushedIds.includes(activeItemListId) || activeItemListId.startsWith(`${element.id}::attachment:`)) {
+          return element.id;
+        }
+      }
+    }
+    return undefined;
+  }, [activeItemListId, isPlanSourced, selectedPlanDetails]);
   const targetOutlineLoading = useSelector(
     (s: RootState) => s.undoable?.present?.itemList?.isLoading ?? false,
   );
@@ -354,6 +405,24 @@ const ServicePlanningSyncFloatingWindow = ({
     (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
   );
   const prevRestoreIdRef = useRef(floatingWindowRestoreId);
+  useEffect(() => {
+    if (!churchId) {
+      setMicrophones([]);
+      return;
+    }
+    let cancelled = false;
+    getServicePlanMicrophones(churchId)
+      .then(({ microphones: result }) => {
+        if (!cancelled) setMicrophones(result);
+      })
+      .catch(() => {
+        if (!cancelled) setMicrophones([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId, microphoneRefreshVersion]);
+
   useEffect(() => {
     if (floatingWindowRestoreId !== prevRestoreIdRef.current) {
       prevRestoreIdRef.current = floatingWindowRestoreId;
@@ -405,6 +474,7 @@ const ServicePlanningSyncFloatingWindow = ({
       setIsRefreshing(true);
       try {
         await refreshPlan();
+        setMicrophoneRefreshVersion((version) => version + 1);
         showToast("Plan refreshed", "success");
       } catch {
         showToast("Failed to refresh plan", "error");
@@ -419,6 +489,7 @@ const ServicePlanningSyncFloatingWindow = ({
     try {
       const result = await loadPreview(url);
       dispatch(setServicePlanningServiceOutline(result));
+      setMicrophoneRefreshVersion((version) => version + 1);
       showToast("Plan refreshed", "success");
     } catch {
       showToast("Failed to refresh plan", "error");
@@ -442,12 +513,42 @@ const ServicePlanningSyncFloatingWindow = ({
     !isContextChanging &&
     hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline =
-    !isContextChanging && Boolean(selectedList) && hasSyncableOutlineItems(preview);
+    !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
+      ? selectedPlanDetails.sections.length > 0
+      : hasSyncableOutlineItems(preview));
   const canSyncAny = allowOverlaySync
     ? canSyncOverlays || canSyncOutline
     : canSyncOutline;
 
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
+    if (mode !== "overlays" && isPlanSourced && selectedPlanDetails && canSyncOutline) {
+      if (isPushingSavedPlan || isContextChanging || !selectedList) return;
+      setIsPushingSavedPlan(true);
+      const sourcePlan = selectedPlanDetails;
+      void pushPlanToOutline(
+        sourcePlan,
+        () => currentPlanRef.current === sourcePlan,
+      )
+        .then((result) => {
+          const added = result.items.filter((item) => item.type !== "heading").length;
+          if (result.skippedTitles.length) {
+            showToast(`${added} item${added === 1 ? "" : "s"} added; review unresolved attachments in the service plan.`, "info");
+          } else if (added) {
+            showToast(`${added} item${added === 1 ? "" : "s"} added to the live outline.`, "success");
+          } else {
+            showToast("All attached content is already in the live outline.", "success");
+          }
+          if (mode === "both" && allowOverlaySync && canSyncOverlays) {
+            dispatch(setServicePlanningFloatingWindowDismissed(false));
+            dispatch(startServicePlanningSync({ mode: "overlays" }));
+          }
+        })
+        .catch((error: unknown) => {
+          showToast(error instanceof Error ? error.message : "Could not add plan content to the outline.", "error");
+        })
+        .finally(() => setIsPushingSavedPlan(false));
+      return;
+    }
     const effectiveMode = allowOverlaySync ? mode : "outline";
     const shouldSyncOverlays = effectiveMode !== "outline" && canSyncOverlays;
     const shouldSyncOutline = effectiveMode !== "overlays" && canSyncOutline;
@@ -461,7 +562,7 @@ const ServicePlanningSyncFloatingWindow = ({
           : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode: nextMode }));
-  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch]);
+  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch, isContextChanging, isPlanSourced, isPushingSavedPlan, pushPlanToOutline, selectedList, selectedPlanDetails, showToast]);
 
   const handleStopSync = useCallback(() => {
     dispatch(cancelServicePlanningSync());
@@ -596,10 +697,10 @@ const ServicePlanningSyncFloatingWindow = ({
     },
     {
       id: "sync-outline",
-      label: "Sync outline",
-      disabled: isSyncActive || !canSyncOutline,
+      label: isPushingSavedPlan ? "Importing…" : "Sync outline",
+      disabled: isSyncActive || isPushingSavedPlan || !canSyncOutline,
       renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>{isPushingSavedPlan ? "Importing…" : "Sync outline"}</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
@@ -628,7 +729,7 @@ const ServicePlanningSyncFloatingWindow = ({
     return allowOverlaySync
       ? items
       : items.filter((item) => item.id !== "sync-all" && item.id !== "sync-overlays");
-  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
+  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isPushingSavedPlan, isRefreshing, isSyncActive, isSyncStopping]);
 
 
 
@@ -1048,9 +1149,18 @@ const ServicePlanningSyncFloatingWindow = ({
           </div>
         ) : null}
 
-        {!isLoading && preview ? (
+        {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
             {activeTab === "plan" ? (
+              isPlanSourced && selectedPlanDetails ? (
+                <ControllerServicePlanView
+                  key={`${churchId}:${controllerProfile.id}`}
+                  plan={selectedPlanDetails}
+                  churchId={churchId || ""}
+                  controllerProfileId={controllerProfile.id}
+                  activeItemId={activePlanElementId}
+                />
+              ) : (
               <div className="flex flex-col gap-2 pr-1">
                 {Array.from(lineItemsBySection.entries()).map(([sectionName, items]) => (
                   <div
@@ -1163,6 +1273,14 @@ const ServicePlanningSyncFloatingWindow = ({
                             className="flex flex-col gap-1.5 px-2.5 py-2"
                           >
                             <div className="flex flex-col gap-1.5">
+                              {item.startTime || (item.durationMinutes ?? 0) > 0 ? (
+                                <div className="flex flex-wrap gap-x-3 text-[11px] text-zinc-400">
+                                  {item.startTime ? <span>{formatPreviewStartTime(item.startTime)}</span> : null}
+                                  {(item.durationMinutes ?? 0) > 0 ? (
+                                    <span>{formatServicePlanDuration({ durationMinutes: item.durationMinutes })}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <div className="flex items-start gap-2">
                                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                                   {item.outlineItemType === "song" && (
@@ -1228,6 +1346,36 @@ const ServicePlanningSyncFloatingWindow = ({
                                 </div>
                               ) : null}
 
+                              {item.contentResources?.length ? (
+                                <div className="flex flex-col gap-1 border-l border-blue-500/40 pl-2 text-xs text-blue-100">
+                                  {item.contentResources.map((resource) => {
+                                    const content = (
+                                      <>
+                                        <span className="text-zinc-500">{getServicePlanResourceTypeLabel(resource.type)}:</span>{" "}
+                                        <span className="wrap-break-word">{resource.title}</span>
+                                      </>
+                                    );
+                                    return (
+                                      <div key={resource.id} className="flex flex-col gap-0.5">
+                                        {resource.url && isPreviewHttpUrl(resource.url) ? (
+                                          <a
+                                            href={resource.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="wrap-break-word underline decoration-blue-400/40 underline-offset-2 hover:text-blue-200"
+                                          >
+                                            {content}
+                                          </a>
+                                        ) : <div>{content}</div>}
+                                        {resource.detail ? (
+                                          <div className="whitespace-pre-wrap wrap-break-word text-zinc-300">{resource.detail}</div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+
                               {(item.assigneeNames?.length || item.ledBy) && (
                                 <div className="flex flex-wrap gap-x-1.5 text-xs text-zinc-400">
                                   <span>{item.assigneeNames?.length ? "Assigned:" : "Led by:"}</span>
@@ -1236,6 +1384,44 @@ const ServicePlanningSyncFloatingWindow = ({
                                   </span>
                                 </div>
                               )}
+                              {item.microphoneAssignments?.length ? (
+                                <div className="flex flex-col gap-1 text-xs text-zinc-400">
+                                  {item.microphoneAssignments.map((assignment, assignmentIndex) => (
+                                    <div key={`${assignment.assigneeName || "unassigned"}-${assignmentIndex}`} className="flex flex-wrap items-center gap-1.5">
+                                      <span>{assignment.assigneeName || "Unassigned"}</span>
+                                      {assignment.microphoneIds.map((microphoneId) => {
+                                        const microphone = microphones.find((candidate) => candidate.id === microphoneId);
+                                        const label = microphone
+                                          ? `${microphone.name}${microphone.type ? ` · ${microphone.type}` : ""}`
+                                          : microphoneId;
+                                        return (
+                                          <span
+                                            key={microphoneId}
+                                            className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/70 px-1.5 py-0.5"
+                                          >
+                                            {microphone ? <span className="size-2 rounded-full" style={{ backgroundColor: microphone.color }} aria-hidden /> : null}
+                                            {label}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {item.note ? (
+                                <div className="whitespace-pre-wrap wrap-break-word rounded bg-zinc-900/70 px-2 py-1.5 text-xs text-zinc-300">
+                                  <span className="mr-1 text-zinc-500">Notes</span>{item.note}
+                                </div>
+                              ) : null}
+                              {item.teamNotes?.length ? (
+                                <div className="flex flex-col gap-1">
+                                  {item.teamNotes.map((teamNote, noteIndex) => (
+                                    <div key={`${teamNote.teamName}-${noteIndex}`} className="whitespace-pre-wrap wrap-break-word text-xs text-zinc-400">
+                                      <span className="text-zinc-500">{teamNote.teamName}:</span>{" "}{teamNote.note}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
 
                               {!hideOutlineActions &&
                                 item.outlineItemType === "bible" &&
@@ -1290,6 +1476,7 @@ const ServicePlanningSyncFloatingWindow = ({
                   </div>
                 ))}
               </div>
+              )
             ) : (
               <div className="flex flex-col gap-2 pr-1">
                 <p className="text-xs text-zinc-400">Only teams that have at least one assignment will be shown.</p>
@@ -1341,7 +1528,7 @@ const ServicePlanningSyncFloatingWindow = ({
           </div>
         ) : null}
 
-        {(!preview || isLoading) && !isFailed ? (
+        {((!preview && !(isPlanSourced && selectedPlanDetails)) || isLoading) && !isFailed ? (
           <div
             className="flex items-center gap-2 text-zinc-400"
             role={isLoading ? "status" : undefined}
