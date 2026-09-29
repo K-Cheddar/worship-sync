@@ -601,6 +601,17 @@ export type TeamsBootstrap = {
   truncated?: boolean;
 };
 
+export type PortableDataType = "members" | "teams" | "positions" | "services" | "schedules";
+export type PortableImportAction = "create" | "update" | "review" | "invalid";
+export type PortableImportRow = {
+  row: number;
+  record: Record<string, string>;
+  action: PortableImportAction;
+  matchedId: string | null;
+  candidates: Array<{ id: string; name: string }>;
+  issues: Array<{ field: string; code: string; message: string; candidates?: Array<{ id: string; name: string }> }>;
+};
+
 export type TeamIntakeAvailabilityService = {
   serviceId: string;
   name: string;

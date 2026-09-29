@@ -417,12 +417,12 @@ describe("Teams", () => {
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Audio Equipment$/i }),
+      screen.getByRole("link", { name: /^Equipment$/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /^Services$/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: /^Audio Equipment$/i }));
+    await user.click(screen.getByRole("link", { name: /^Equipment$/i }));
     expect(
       await screen.findByRole(
         "button",

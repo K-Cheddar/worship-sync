@@ -72,6 +72,8 @@ import type {
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
   TeamsBootstrap,
+  PortableDataType,
+  PortableImportRow,
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
@@ -2742,3 +2744,72 @@ export const confirmRecoveryRequest = async (token: string) =>
     method: "POST",
     body: JSON.stringify({ token }),
   });
+
+export const inspectPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  csv: string,
+) => apiFetch<{
+  success: boolean;
+  headers: string[];
+  rowCount: number;
+  columnCount: number;
+  issues: Array<{ row: number; code: string; message: string }>;
+  mapping: Record<string, string>;
+  sampleRows: Array<Record<string, string>>;
+}>(`api/churches/${churchId}/data-transfer/inspect`, {
+  method: "POST",
+  body: JSON.stringify({ type, csv }),
+});
+
+export const previewPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  csv: string,
+  mapping: Record<string, string>,
+) => apiFetch<{
+  success: boolean;
+  rows: PortableImportRow[];
+  issues: Array<{ row: number; code: string; message: string }>;
+  summary: { total: number; create: number; update: number; review: number; invalid: number };
+}>(`api/churches/${churchId}/data-transfer/preview`, {
+  method: "POST",
+  body: JSON.stringify({ type, csv, mapping }),
+});
+
+export const commitPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string> }>,
+) => apiFetch<{
+  success: boolean;
+  results: Array<{ row: number; status: "created" | "updated" | "failed"; id?: string; code?: string; message?: string }>;
+  summary: { created: number; updated: number; failed: number };
+}>(`api/churches/${churchId}/data-transfer/commit`, {
+  method: "POST",
+  body: JSON.stringify({ type, approvedRows }),
+});
+
+export const downloadPortableData = async (
+  churchId: string,
+  type: PortableDataType | "all",
+  template = false,
+) => {
+  const url = `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}${template ? "?template=true" : ""}`;
+  const response = await fetch(url, {
+    credentials: "include",
+    headers: {
+      ...(isPackagedElectronRenderer() && getHumanApiToken()
+        ? { Authorization: `Bearer ${getHumanApiToken()}` }
+        : {}),
+      ...(getWorkstationToken() ? { "x-workstation-token": getWorkstationToken() } : {}),
+    },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { errorMessage?: string } | null;
+    throw new Error(payload?.errorMessage || "Could not download this file. Check the connection and try again.");
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `${type}${type === "all" ? ".zip" : ".csv"}`;
+  return { blob: await response.blob(), filename };
+};

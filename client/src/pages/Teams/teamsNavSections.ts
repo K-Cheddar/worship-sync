@@ -118,8 +118,8 @@ export const servicesNavSections: TeamsNavSection[] = [
   {
     path: "/teams-and-services/microphones",
     routePath: "microphones",
-    label: "Audio Equipment",
-    description: "Manage microphones and in-ear monitors for service assignments.",
+    label: "Equipment",
+    description: "Manage microphones, IEMs, and other service equipment.",
     icon: Mic2,
     domain: "services",
   },

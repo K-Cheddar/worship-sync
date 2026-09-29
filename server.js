@@ -1603,6 +1603,22 @@ app.post(
   authHandlers.deleteTeamQualificationLevel,
 );
 app.post("/api/churches/:churchId/teams", authHandlers.createTeam);
+app.get(
+  "/api/churches/:churchId/data-transfer/export/:type",
+  authHandlers.exportPortableData,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/inspect",
+  authHandlers.inspectPortableImport,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/preview",
+  authHandlers.previewPortableImport,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/commit",
+  authHandlers.commitPortableImport,
+);
 app.post("/api/churches/:churchId/teams/:teamId", authHandlers.updateTeam);
 app.post(
   "/api/churches/:churchId/teams/:teamId/archive",

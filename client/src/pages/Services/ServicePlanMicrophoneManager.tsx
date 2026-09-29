@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Eye, Mic2, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Eye, Mic2, Pencil, Save, Trash2, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import ColorField from "../../components/ColorField/ColorField";
@@ -49,6 +49,19 @@ type PositionTeamGroup = {
 };
 
 type MicrophoneSaveTarget = "microphones" | "visibility";
+
+export type MicrophoneEditorActions = {
+  disabled: boolean;
+  editing: boolean;
+  saving: boolean;
+  canAdd: boolean;
+  canSave: boolean;
+  hasIncompleteMicrophone: boolean;
+  onStartEditing: () => void;
+  onAdd: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+};
 
 const MICROPHONE_NOTES_TEAM_FILTER_KEY = "worshipsyncMicrophoneNotesTeamFilter";
 
@@ -160,6 +173,7 @@ type ServicePlanMicrophoneManagerProps = {
   onStartEditing?: () => void;
   onCancelEditing?: () => void;
   positionNoteOptions?: MicrophonePositionOption[];
+  renderHeader?: (actions: MicrophoneEditorActions) => ReactNode;
 };
 
 const microphoneTitle = (microphone: ServicePlanMicrophone, index: number) =>
@@ -177,6 +191,7 @@ const ServicePlanMicrophoneManager = ({
   onStartEditing,
   onCancelEditing,
   positionNoteOptions = [],
+  renderHeader,
 }: ServicePlanMicrophoneManagerProps) => {
   const [draft, setDraft] = useState<ServicePlanMicrophone[]>(microphones);
   const [audienceDraft, setAudienceDraft] = useState<ServicePlanMicrophoneAudience[]>(
@@ -303,6 +318,22 @@ const ServicePlanMicrophoneManager = ({
 
   const saveMicrophones = async () => {
     await onSave(draft, microphoneAudiences, "microphones");
+  };
+
+  const addMicrophone = () =>
+    setDraft((current) => [...current, createMicrophone()]);
+
+  const microphoneEditorActions: MicrophoneEditorActions = {
+    disabled,
+    editing: isEditing,
+    saving,
+    canAdd: !isLocked && draft.length < MAX_SERVICE_PLAN_MICROPHONES,
+    canSave: !isLocked && !hasIncompleteMicrophone,
+    hasIncompleteMicrophone,
+    onStartEditing: () => onStartEditing?.(),
+    onAdd: addMicrophone,
+    onCancel: cancelEditing,
+    onSave: () => void saveMicrophones(),
   };
 
   const teamFilterControls = positionTeams.length > 1 ? (
@@ -576,85 +607,32 @@ const ServicePlanMicrophoneManager = ({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto pt-2 pr-1">
-        {microphonesContent}
-      </div>
+    <div className="space-y-3">
+      {renderHeader ? renderHeader(microphoneEditorActions) : null}
+      {isEditing && hasIncompleteMicrophone ? (
+        <p className="text-xs text-amber-200" role="status">
+          Complete each microphone&apos;s name and type before saving.
+        </p>
+      ) : null}
+      {microphonesContent}
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-gray-800 pt-3">
-        {isEditing && hasIncompleteMicrophone ? (
-          <p className="text-xs text-amber-200" role="status">
-            Complete each microphone&apos;s name and type before saving.
-          </p>
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Eye}
+        className="self-start"
+        aria-label={
+          hasUnsavedVisibilityChanges
+            ? "Mic note visibility (unsaved changes)"
+            : "Mic note visibility"
+        }
+        onClick={() => setVisibilityOpen(true)}
+      >
+        Mic note visibility
+        {hasUnsavedVisibilityChanges ? (
+          <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
         ) : null}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={Eye}
-            className="self-start"
-            aria-label={
-              hasUnsavedVisibilityChanges
-                ? "Mic note visibility (unsaved changes)"
-                : "Mic note visibility"
-            }
-            onClick={() => setVisibilityOpen(true)}
-          >
-            Mic note visibility
-            {hasUnsavedVisibilityChanges ? (
-              <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
-            ) : null}
-          </Button>
-          {!isEditing && !disabled ? (
-            <Button
-              type="button"
-              svg={Pencil}
-              className="self-end sm:self-auto"
-              aria-label="Edit microphones"
-              onClick={onStartEditing}
-            >
-              Edit
-            </Button>
-          ) : null}
-          {isEditing ? (
-            <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                svg={Plus}
-                disabled={isLocked || draft.length >= MAX_SERVICE_PLAN_MICROPHONES}
-                aria-label="Add microphone"
-                onClick={() => setDraft((current) => [...current, createMicrophone()])}
-              >
-                Add
-              </Button>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={X}
-                  disabled={saving}
-                  onClick={cancelEditing}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="cta"
-                  svg={Save}
-                  disabled={isLocked || hasIncompleteMicrophone}
-                  aria-label={
-                    saving && isEditing ? "Saving microphones" : "Save microphones"
-                  }
-                  onClick={() => void saveMicrophones()}
-                >
-                  {saving && isEditing ? "Saving…" : "Save"}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
+      </Button>
 
       <Sheet open={visibilityOpen} onOpenChange={setVisibilityOpen}>
         <SheetContent

@@ -5,6 +5,7 @@ import {
   Plug,
   ShieldCheck,
   Users,
+  ArrowLeftRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -14,7 +15,8 @@ export type AccountTabId =
   | "controllers"
   | "branding"
   | "integrations"
-  | "workspace";
+  | "workspace"
+  | "data-transfer";
 
 export type AccountSection = {
   id: AccountTabId;
@@ -77,6 +79,14 @@ export const ACCOUNT_SECTIONS: AccountSection[] = [
     description:
       "Choose which optional tools appear in the Current Service Workspace.",
     icon: PanelsTopLeft,
+  },
+  {
+    id: "data-transfer",
+    routePath: "data-transfer",
+    path: "/account/data-transfer",
+    label: "Data transfer",
+    description: "Import data from another platform or export WorshipSync data as standard CSV files.",
+    icon: ArrowLeftRight,
   },
 ];
 

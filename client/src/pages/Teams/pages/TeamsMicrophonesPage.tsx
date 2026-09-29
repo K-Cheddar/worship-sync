@@ -31,7 +31,6 @@ import {
   panelScrollPaddingClassName,
   panelShellClassName,
   teamsManagerPageRootClassName,
-  teamsPanelMaxHeightClassName,
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
   equipmentCatalogGridClassName,
@@ -223,25 +222,18 @@ const TeamsMicrophonesPage = () => {
 
   return (
     <div className={teamsManagerPageRootClassName}>
-      <h2 className="sr-only">Audio Equipment</h2>
+          <h2 className="text-base font-semibold text-white">Equipment</h2>
       <section
         className={cn(
           panelShellClassName,
-          "flex flex-col",
-          teamsPanelMaxHeightClassName,
+          "min-h-0 flex-1 max-lg:flex-none lg:overflow-y-auto scrollbar-variable",
         )}
       >
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            panelScrollPaddingClassName,
-          )}
-        >
+        <div className={cn("space-y-4", panelScrollPaddingClassName, "pt-4")}>
           {loading ? (
             <TeamsMicrophonesListSkeleton />
           ) : (
-            <section aria-labelledby="microphone-catalog-heading" className="flex min-h-0 flex-1 flex-col">
-              <h3 id="microphone-catalog-heading" className="mb-2 text-sm font-semibold text-white">Microphones</h3>
+            <section aria-labelledby="microphone-catalog-heading">
               <ServicePlanMicrophoneManager
                 microphones={microphones}
                 microphoneAudiences={microphoneAudiences}
@@ -253,18 +245,42 @@ const TeamsMicrophonesPage = () => {
                 onStartEditing={() => setIsEditing(true)}
                 onCancelEditing={() => setIsEditing(false)}
                 positionNoteOptions={positionNoteOptions}
+                renderHeader={(actions) => (
+                  <header className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 id="microphone-catalog-heading" className="text-sm font-semibold text-white">Microphones</h3>
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                      {!actions.editing && !actions.disabled ? (
+                        <Button type="button" svg={Pencil} aria-label="Edit microphones" onClick={actions.onStartEditing}>Edit</Button>
+                      ) : null}
+                      {actions.editing ? (
+                        <>
+                          <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
+                          <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>Cancel</Button>
+                          <Button type="button" variant="cta" svg={Save} disabled={!actions.canSave} aria-label={actions.saving ? "Saving microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : "Save"}</Button>
+                        </>
+                      ) : null}
+                    </div>
+                  </header>
+                )}
               />
             </section>
           )}
           {!loading ? (
-            <section aria-labelledby="iem-catalog-heading" className="mt-5 border-t border-gray-700/70 pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
+            <section aria-labelledby="iem-catalog-heading" className="border-t border-gray-700/70 pt-4">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
                   <h3 id="iem-catalog-heading" className="text-sm font-semibold text-white">In-Ear Monitors (IEMs)</h3>
                   <p className="mt-1 text-xs text-gray-400">Manage the physical IEMs/beltpacks available for assignments.</p>
                 </div>
-                {canEdit && !isEditingIems && !loadingIems && !iemLoadError ? (
-                  <Button type="button" svg={Pencil} aria-label="Edit IEMs" onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(true); }}>Edit</Button>
+                {!isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
+                  <Button type="button" svg={Pencil} className="self-start sm:self-auto" aria-label="Edit IEMs" onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(true); }}>Edit</Button>
+                ) : null}
+                {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
+                    <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(false); }}>Cancel</Button>
+                    <Button type="button" variant="cta" svg={Save} disabled={savingIems || hasIncompleteIem} aria-label={savingIems ? "Saving IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : "Save"}</Button>
+                  </div>
                 ) : null}
               </div>
               <div className="mt-3">
@@ -306,22 +322,10 @@ const TeamsMicrophonesPage = () => {
                     <Headphones className="mx-auto size-6 text-gray-500" aria-hidden />
                     <p className="mt-2 text-sm font-medium text-gray-200">No IEMs yet</p>
                     <p className="mt-1 text-xs text-gray-400">Add the IEMs or beltpacks your teams use, then assign them to people and schedule positions.</p>
-                    {canEdit ? <Button type="button" variant="secondary" svg={Plus} className="mt-3" disabled={savingIems} aria-label="Add IEM" onClick={() => { setIemDraft([]); setIsEditingIems(true); addIem(); }}>Add</Button> : null}
                   </div>
                 )}
               </div>
-              {canEdit && isEditingIems && !loadingIems && !iemLoadError ? (
-                <div className="mt-3 flex flex-col gap-2 border-t border-gray-800 pt-3">
-                  {hasIncompleteIem ? <p className="text-xs text-amber-200" role="status">Add a name to each IEM before saving.</p> : null}
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
-                    <div className="flex items-center justify-end gap-2">
-                      <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(false); }}>Cancel</Button>
-                      <Button type="button" variant="cta" svg={Save} disabled={savingIems || hasIncompleteIem} aria-label={savingIems ? "Saving IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : "Save"}</Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+              {canEdit && isEditingIems && !loadingIems && !iemLoadError && hasIncompleteIem ? <p className="mt-2 text-xs text-amber-200" role="status">Add a name to each IEM before saving.</p> : null}
             </section>
           ) : null}
         </div>

@@ -94,6 +94,10 @@ const createRes = () => {
       this.payload = payload;
       return this;
     },
+    send(payload) {
+      this.body = payload;
+      return this;
+    },
     set() {
       return this;
     },
@@ -9145,4 +9149,124 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
   const final = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
   assert.deepEqual(final.payload.schedule.microphoneAssignments[occurrenceId][slotKey], ["iem-1"]);
   assert.deepEqual(final.payload.schedule.iemAssignments[occurrenceId][slotKey], ["iem-1"]);
+});
+
+test("portable CSV preview is read-only and commit never links imported members to accounts", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_import");
+  const csv = "first_name,last_name,email\nJane,Volunteer,shared@example.com\nJohn,Volunteer,shared@example.com\n";
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "members", csv } });
+  assert.equal(inspected.statusCode, 200);
+  assert.equal(inspected.payload.rowCount, 2);
+  assert.equal(inspected.payload.mapping.firstName, "first_name");
+  assert.equal(inspected.payload.mapping.lastName, "last_name");
+  const aliased = await callHandler(authHandlers.inspectPortableImport, {
+    context,
+    body: { type: "members", csv: "Volunteer,Ministry,Role,Mobile\nJane Doe,Praise Team,Vocalist,555-0100\n" },
+  });
+  assert.equal(aliased.payload.mapping.name, "Volunteer");
+  assert.equal(aliased.payload.mapping.teams, "Ministry");
+  assert.equal(aliased.payload.mapping.positions, "Role");
+  assert.equal(aliased.payload.mapping.phone, "Mobile");
+  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "members", csv, mapping: inspected.payload.mapping } });
+  assert.equal(preview.statusCode, 200);
+  assert.equal(preview.payload.summary.create, 2);
+  assert.equal(preview.payload.summary.update, 0);
+  const before = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(before.payload.members.some((member) => member.email === "shared@example.com"), false);
+  const committed = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) },
+  });
+  assert.equal(committed.statusCode, 200);
+  assert.equal(committed.payload.summary.created, 2);
+  const after = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const imported = after.payload.members.filter((member) => member.email === "shared@example.com");
+  assert.equal(imported.length, 2);
+  assert.equal(imported.every((member) => !member.userId), true);
+});
+
+test("portable member IDs only match records in the current church", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const sourceChurch = await createAdminContext("data_transfer_foreign_id_source");
+  const targetChurch = await createAdminContext("data_transfer_foreign_id_target");
+  const foreignMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context: sourceChurch,
+    body: { firstName: "Alex", lastName: "Source", teamIds: [], positionIds: [] },
+  });
+  const localMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context: targetChurch,
+    body: { firstName: "Alex", lastName: "Target", teamIds: [], positionIds: [] },
+  });
+  const csv = `First Name,Last Name,WorshipSync Member ID\nUpdated,Local,${localMember.payload.member.memberId}\nAlex,Source,${foreignMember.payload.member.memberId}\n`;
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: targetChurch, body: { type: "members", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context: targetChurch, body: { type: "members", csv, mapping: inspected.payload.mapping } });
+  assert.deepEqual(preview.payload.rows.map((row) => row.action), ["update", "create"]);
+  assert.equal(preview.payload.rows[0].matchedId, localMember.payload.member.memberId);
+  assert.equal(preview.payload.rows[1].matchedId, null);
+});
+
+test("portable CSV transfer requires an admin and export reads complete schedule records", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const nonAdmin = await createHumanContext("data_transfer_member", { role: "member" });
+  const denied = await callHandler(authHandlers.exportPortableData, { context: nonAdmin, params: { type: "members" } });
+  assert.equal(denied.statusCode, 403);
+
+  const context = await createAdminContext("data_transfer_export");
+  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "=1+1", memberIds: [] } });
+  const teamId = team.payload.team.teamId;
+  const scheduleId = "data-transfer-full-schedule";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    name: "Older schedule",
+    teamId,
+    startDate: "2020-01-05",
+    endDate: "2020-01-05",
+    serviceIds: ["service-old"],
+    occurrences: [{ occurrenceId: "service-old@2020-01-05T15:00:00.000Z", serviceId: "service-old", name: "Sunday", startsAt: "2020-01-05T15:00:00.000Z", positionRequirements: [] }],
+    assignments: { "service-old@2020-01-05T15:00:00.000Z": { "position-old::0": { primaryMemberId: "member-old" } } },
+  });
+  const schedules = await callHandler(authHandlers.exportPortableData, { context, params: { type: "schedules" } });
+  assert.equal(schedules.statusCode, 200);
+  assert.match(String(schedules.body), /Older schedule/);
+  assert.match(String(schedules.body), /member-old/);
+  const teams = await callHandler(authHandlers.exportPortableData, { context, params: { type: "teams" } });
+  assert.equal(teams.statusCode, 200);
+  assert.match(String(teams.body), /'=1\+1/);
+  const archive = await callHandler(authHandlers.exportPortableData, { context, params: { type: "all" } });
+  assert.equal(archive.statusCode, 200);
+  assert.equal(archive.body.readUInt32LE(0), 0x04034b50);
+});
+
+test("portable schedule import validates and preserves the schedule assignment model", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_schedule_import");
+  const { teamId, positionIds } = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Keys" }] });
+  const positionId = positionIds.Keys;
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Sam", lastName: "Singer", teamIds: [teamId], positionIds: [positionId] },
+  });
+  const memberId = member.payload.member.memberId;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "service-sunday", serviceId: "service-sunday", name: "Sunday", timerType: "countdown", reccurence: "weekly", time: "10:00", dayOfWeek: 0, positionRequirements: [{ positionId, count: 1 }] }],
+  });
+  const csv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Sam Singer,,primary,false\n";
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  assert.equal(preview.statusCode, 200);
+  assert.equal(preview.payload.summary.create, 1);
+  const imported = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "schedules", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) },
+  });
+  assert.equal(imported.statusCode, 200);
+  assert.equal(imported.payload.summary.created, 1);
+  const detail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: imported.payload.results[0].id } });
+  const occurrence = detail.payload.schedule.occurrences[0];
+  assert.equal(detail.payload.schedule.teamId, teamId);
+  assert.equal(detail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, memberId);
+  assert.equal(detail.payload.schedule.assignmentsOmitted, undefined);
 });

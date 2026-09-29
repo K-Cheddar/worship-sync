@@ -590,6 +590,35 @@ const readChurchServiceTimes = async (churchId) => {
   }
 };
 
+const readChurchServiceTimesForTransfer = async (churchId) => {
+  const normalizedChurchId = String(churchId || "").trim();
+  if (!normalizedChurchId) return [];
+  if (!firebaseRuntime?.rtdb) {
+    return memoryState.churchServiceTimes.get(normalizedChurchId) || [];
+  }
+  const snapshot = await firebaseRuntime.rtdb
+    .ref(`churches/${normalizedChurchId}/data/services`)
+    .once("value");
+  return normalizeChurchServiceTimes(snapshot.val());
+};
+
+const updateChurchServiceTimes = async (churchId, update) => {
+  const normalizedChurchId = String(churchId || "").trim();
+  if (!normalizedChurchId || typeof update !== "function") {
+    throw new Error("Church and service update are required.");
+  }
+  if (!firebaseRuntime?.rtdb) {
+    const current = memoryState.churchServiceTimes.get(normalizedChurchId) || [];
+    const next = update(JSON.parse(JSON.stringify(current)));
+    memoryState.churchServiceTimes.set(normalizedChurchId, JSON.parse(JSON.stringify(next)));
+    return next;
+  }
+  const reference = firebaseRuntime.rtdb.ref(`churches/${normalizedChurchId}/data/services`);
+  const result = await reference.transaction((current) => update(normalizeChurchServiceTimes(current)));
+  if (!result.committed) throw new Error("Service settings changed before the import could be saved.");
+  return normalizeChurchServiceTimes(result.snapshot.val());
+};
+
 const collectionMap = {
   [COLLECTIONS.churches]: memoryState.churches,
   [COLLECTIONS.users]: memoryState.users,
@@ -1356,7 +1385,7 @@ export const queryDocs = async (
         return false;
       }),
     )
-    .slice(0, limit);
+    .slice(0, limit || undefined);
 };
 
 const encryptPendingInviteToken = (token) => {
@@ -6276,6 +6305,8 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   queryDocs,
   randomSecret,
   readChurchServiceTimes,
+  readChurchServiceTimesForTransfer,
+  updateChurchServiceTimes,
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,

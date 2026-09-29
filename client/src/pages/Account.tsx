@@ -42,6 +42,9 @@ const AccountIntegrationsPage = lazy(
 const AccountWorkspacePage = lazy(
   () => import("./Account/pages/AccountWorkspacePage"),
 );
+const AccountDataTransferPage = lazy(
+  () => import("./Account/pages/AccountDataTransferPage"),
+);
 
 const AccountSectionErrorFallback = () => (
   <div
@@ -213,6 +216,14 @@ const AccountRoutes = () => (
           element={
             <AccountSectionRoute>
               <AccountWorkspacePage />
+            </AccountSectionRoute>
+          }
+        />
+        <Route
+          path={ACCOUNT_SECTIONS[6].routePath}
+          element={
+            <AccountSectionRoute>
+              <AccountDataTransferPage />
             </AccountSectionRoute>
           }
         />
