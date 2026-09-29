@@ -137,7 +137,7 @@ import {
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
 import {
   panelClassName,
   panelHeaderPaddingClassName,
@@ -5397,7 +5397,6 @@ const ScheduleTab = ({
                               </thead>
                               <tbody>
                                 {scheduleColumns.map((column, columnIndex) => {
-                                  const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                   const rowTone = scheduleRowTone(columnIndex);
                                   const stickyTone = scheduleStickyRowTone(columnIndex);
                                   return (
@@ -5420,8 +5419,8 @@ const ScheduleTab = ({
                                         )}
                                       >
                                         <span className="inline-flex min-w-0 max-w-full items-center gap-2">
-                                          {PositionIcon ? (
-                                            <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
+                                          {column.position.icon ? (
+                                            <WorshipSyncIcon icon={column.position.icon} className="h-4 w-4 shrink-0 text-cyan-200" />
                                           ) : null}
                                           <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
                                             {column.label}
@@ -5472,11 +5471,10 @@ const ScheduleTab = ({
                                     Date &amp; time
                                   </th>
                                   {scheduleColumns.map((column) => {
-                                    const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                     return (
                                       <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
                                         <span className="inline-flex items-center gap-2">
-                                          {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
+                                          {column.position.icon ? <WorshipSyncIcon icon={column.position.icon} className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
                                           <span>{column.label}</span>
                                           {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
                                         </span>
@@ -5861,18 +5859,13 @@ const ScheduleTab = ({
               <div className="rounded-md border border-gray-700 bg-gray-950/60 p-3">
                 <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2">
                   {detailSummaryGroups.flatMap((group) => group.positions).map((position) => {
-                    const PositionIcon = resolvePositionLucideIcon(
-                      positionIconById.get(position.positionId),
-                    );
+                    const positionIcon = positionIconById.get(position.positionId);
                     const empty = position.members.length === 0;
                     return (
                       <Fragment key={position.positionId}>
                         <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-white">
-                          {PositionIcon ? (
-                            <PositionIcon
-                              className="h-4 w-4 shrink-0 text-cyan-200"
-                              aria-hidden
-                            />
+                          {positionIcon ? (
+                            <WorshipSyncIcon icon={positionIcon} className="h-4 w-4 shrink-0 text-cyan-200" />
                           ) : null}
                           {position.name}:
                         </span>

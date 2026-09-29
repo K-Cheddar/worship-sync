@@ -19,7 +19,8 @@ import {
   scheduleMemberName,
 } from "../teamsUtils";
 import { isMemberAvailableOnDate } from "../memberPreferences";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import ScheduleMicrophoneSelect, {
@@ -37,7 +38,7 @@ type ScheduleBoardCellProps = {
   columnKey: string;
   positionId: string;
   positionLabel: string;
-  positionIcon?: string;
+  positionIcon?: PositionIcon;
   positionArchived?: boolean;
   assignmentCell?: TeamScheduleCellAssignment;
   /** This slot's accept/decline record, if the holder has answered. */
@@ -109,10 +110,6 @@ const ScheduleBoardCell = memo(({
   const shadowAssignments = getCellShadowAssignments(assignmentCell);
   const assignedMember = allMembers.find(
     (item) => item.memberId === assignedMemberId,
-  );
-  const PositionIcon = useMemo(
-    () => resolvePositionLucideIcon(positionIcon),
-    [positionIcon],
   );
 
   const assigneeLabel = assignedMember
@@ -190,7 +187,7 @@ const ScheduleBoardCell = memo(({
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gray-900 text-cyan-200"
           aria-hidden
         >
-          {PositionIcon ? <PositionIcon className="h-4 w-4" /> : <User className="h-4 w-4" />}
+          {positionIcon ? <WorshipSyncIcon icon={positionIcon} className="h-4 w-4" /> : <User className="h-4 w-4" />}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5 truncate text-xs font-medium text-gray-400">

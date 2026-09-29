@@ -1134,7 +1134,7 @@ export type TeamRosterMemberPayload = {
 export type TeamPositionPayload = {
   name: string;
   description?: string;
-  icon?: string;
+  icon?: import("../components/icons/iconTypes").PositionIcon;
   groupId?: string;
   qualificationAreaId?: string;
   defaultMicrophoneId?: string;

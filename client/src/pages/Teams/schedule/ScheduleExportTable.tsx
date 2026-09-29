@@ -17,7 +17,8 @@ import {
   type ScheduleFocusedCell,
   type ScheduleGridLayout,
 } from "./scheduleUtils";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 
 /**
  * Read-only on-screen rendering of a schedule export model, in any of the three
@@ -420,12 +421,10 @@ const ByDatePosition = ({
   p,
 }: {
   label: string;
-  icon?: string;
+  icon?: PositionIcon;
   cell: ScheduleExportCell;
   p: Palette;
 }) => {
-  const PositionIcon = resolvePositionLucideIcon(icon);
-
   return (
     <div
       className={cn(
@@ -440,7 +439,7 @@ const ByDatePosition = ({
         )}
         aria-hidden
       >
-        {PositionIcon ? <PositionIcon className="size-4" /> : <User className="size-4" />}
+        {icon ? <WorshipSyncIcon icon={icon} className="size-4" /> : <User className="size-4" />}
       </span>
       <div className="min-w-0 flex-1">
         <dt className={cn("text-xs font-medium", p.byDatePositionLabel)}>

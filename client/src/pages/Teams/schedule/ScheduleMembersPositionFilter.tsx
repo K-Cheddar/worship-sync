@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import type { TeamPosition } from "../../../api/authTypes";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
 
 type ScheduleMembersPositionFilterProps = {
   positions: TeamPosition[];
@@ -100,7 +100,6 @@ const ScheduleMembersPositionFilter = ({
               ) : (
                 positions.map((position) => {
                   const checked = value.includes(position.positionId);
-                  const PositionIcon = resolvePositionLucideIcon(position.icon);
                   return (
                     <button
                       key={position.positionId}
@@ -125,8 +124,8 @@ const ScheduleMembersPositionFilter = ({
                       >
                         {checked ? <Check className="h-3 w-3 stroke-3" /> : null}
                       </span>
-                      {PositionIcon ? (
-                        <PositionIcon className="h-3.5 w-3.5 shrink-0 text-orange-300" aria-hidden />
+                      {position.icon ? (
+                        <WorshipSyncIcon icon={position.icon} className="h-3.5 w-3.5 shrink-0 text-orange-300" />
                       ) : null}
                       <span className="min-w-0 truncate">
                         {position.name}

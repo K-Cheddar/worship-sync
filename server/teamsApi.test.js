@@ -700,6 +700,53 @@ test("team position validation and archive keep archived rows readable", async (
   assert.ok(position?.archivedAt);
 });
 
+test("team position icon refs persist while legacy values and older omitted saves stay compatible", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("position_icon_refs");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  const legacy = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Vocal", teamId, icon: "MicVocal" },
+  });
+  assert.equal(legacy.statusCode, 200);
+  assert.equal(legacy.payload.position.icon, "MicVocal");
+
+  const ref = { source: "tabler", name: "camera", color: "#22D3EE" };
+  const updated = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId: legacy.payload.position.positionId },
+    body: { name: "Vocal", teamId, icon: ref },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.deepEqual(updated.payload.position.icon, {
+    source: "tabler", name: "camera", color: "#22d3ee",
+  });
+
+  const legacyClientSave = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId: legacy.payload.position.positionId },
+    body: { name: "Vocal Updated", teamId },
+  });
+  assert.equal(legacyClientSave.statusCode, 200);
+  assert.deepEqual(legacyClientSave.payload.position.icon, updated.payload.position.icon);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const loadedPosition = bootstrap.payload.positions.find(
+    (position) => position.positionId === legacy.payload.position.positionId,
+  );
+  assert.deepEqual(loadedPosition.icon, updated.payload.position.icon);
+
+  const invalid = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId: legacy.payload.position.positionId },
+    body: { name: "Vocal", teamId, icon: { source: "tabler", name: "camera", color: "red" } },
+  });
+  assert.equal(invalid.statusCode, 400);
+});
+
 test("new schedules seed microphone defaults from their positions", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("position_microphone_defaults");
@@ -9149,6 +9196,219 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
   const final = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
   assert.deepEqual(final.payload.schedule.microphoneAssignments[occurrenceId][slotKey], ["iem-1"]);
   assert.deepEqual(final.payload.schedule.iemAssignments[occurrenceId][slotKey], ["iem-1"]);
+});
+
+test("schedule assignment paths share requirement and implicit slot validation", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("shared_schedule_slot_validation");
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [{ id: "mic-1", name: "Mic 1", type: "Handheld" }],
+      audiences: [],
+    },
+  });
+  await callHandler(authHandlers.saveServiceEquipment, {
+    context,
+    body: {
+      equipment: [
+        { id: "iem-1", category: "iem", name: "IEM 1" },
+      ],
+    },
+  });
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Lead" }, { name: "Keys" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Lead"] },
+      { firstName: "Jordan", lastName: "Reed", positions: ["Keys"] },
+      { firstName: "Sam", lastName: "Cole", positions: ["Lead"] },
+      { firstName: "Taylor", lastName: "Gray", positions: ["Lead"] },
+    ],
+  });
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: {
+      name: "Worship",
+      memberIds: Object.values(memberIds),
+      usesMicrophoneAssignments: true,
+      usesIemAssignments: true,
+    },
+  });
+  const otherTeam = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Media", memberIds: [] },
+  });
+  const otherPosition = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera", teamId: otherTeam.payload.team.teamId },
+  });
+  const occurrenceIds = {
+    implicit: "service-sunday@2026-09-06T10:00:00.000Z",
+    one: "service-sunday@2026-09-13T10:00:00.000Z",
+    two: "service-sunday@2026-09-20T10:00:00.000Z",
+  };
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "September",
+      teamId,
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId: occurrenceIds.implicit,
+          serviceId: "service-sunday",
+          name: "Implicit slots",
+          startsAt: "2026-09-06T10:00:00.000Z",
+        },
+        {
+          occurrenceId: occurrenceIds.one,
+          serviceId: "service-sunday",
+          name: "One slot",
+          startsAt: "2026-09-13T10:00:00.000Z",
+          positionRequirements: [{ positionId: positionIds.Lead, count: 1 }],
+        },
+        {
+          occurrenceId: occurrenceIds.two,
+          serviceId: "service-sunday",
+          name: "Two slots",
+          startsAt: "2026-09-20T10:00:00.000Z",
+          positionRequirements: [{ positionId: positionIds.Lead, count: 2 }],
+        },
+      ],
+    },
+  });
+  assert.equal(schedule.statusCode, 200);
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  const saveForPath = (kind, occurrenceId, slotKey, value) => {
+    const body = { serviceId: occurrenceId, positionSlotKey: slotKey };
+    if (kind === "member") {
+      body.memberId = value;
+      body.serviceDate =
+        occurrenceId === occurrenceIds.two
+          ? "2026-09-20"
+          : occurrenceId === occurrenceIds.one
+            ? "2026-09-13"
+            : "2026-09-06";
+      return callHandler(authHandlers.updateTeamScheduleAssignment, {
+        context,
+        params: { scheduleId },
+        body,
+      });
+    }
+    body[kind === "microphone" ? "microphoneIds" : "iemIds"] = value;
+    return callHandler(
+      kind === "microphone"
+        ? authHandlers.updateTeamScheduleAssignmentMicrophones
+        : authHandlers.updateTeamScheduleAssignmentIems,
+      { context, params: { scheduleId }, body },
+    );
+  };
+  const paths = [
+    ["member", memberIds.Avery],
+    ["microphone", ["mic-1"]],
+    ["iem", ["iem-1"]],
+  ];
+  const assertAllPaths = async (occurrenceId, positionId, slotIndex, expected) => {
+    const slotKey = `${positionId}::${slotIndex}`;
+    const results = await Promise.all(
+      paths.map(([kind, value]) =>
+        saveForPath(
+          kind,
+          occurrenceId,
+          slotKey,
+          kind === "member"
+            ? positionId === positionIds.Keys
+              ? memberIds.Jordan
+              : [memberIds.Avery, memberIds.Sam, memberIds.Taylor][slotIndex]
+            : value,
+        ),
+      ),
+    );
+    for (const result of results) assert.equal(result.statusCode === 200, expected);
+    return results;
+  };
+
+  // With no explicit requirements, every team position has its implicit slot 0.
+  await assertAllPaths(occurrenceIds.implicit, positionIds.Lead, 0, true);
+  await assertAllPaths(occurrenceIds.implicit, positionIds.Keys, 0, true);
+  await assertAllPaths(occurrenceIds.implicit, positionIds.Lead, 1, false);
+
+  // Explicit count 1 permits slot 0, rejects slot 1, then permits it when added.
+  await assertAllPaths(occurrenceIds.one, positionIds.Lead, 0, true);
+  await assertAllPaths(occurrenceIds.one, positionIds.Lead, 1, false);
+  const addOneExtra = await callHandler(authHandlers.addTeamSchedulePositionSlot, {
+    context,
+    params: { scheduleId },
+    body: { serviceId: occurrenceIds.one, positionSlotKey: `${positionIds.Lead}::1` },
+  });
+  assert.equal(addOneExtra.statusCode, 200);
+  await assertAllPaths(occurrenceIds.one, positionIds.Lead, 1, true);
+
+  // Explicit count 2 permits slots 0 and 1, rejects slot 2, then permits it when added.
+  await assertAllPaths(occurrenceIds.two, positionIds.Lead, 0, true);
+  await assertAllPaths(occurrenceIds.two, positionIds.Lead, 1, true);
+  await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, false);
+  const addTwoExtra = await callHandler(authHandlers.addTeamSchedulePositionSlot, {
+    context,
+    params: { scheduleId },
+    body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Lead}::2` },
+  });
+  assert.equal(addTwoExtra.statusCode, 200);
+  await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, true);
+
+  // The fallback does not bypass team ownership or position existence checks.
+  for (const [kind, value] of paths) {
+    const wrongTeam = await saveForPath(
+      kind,
+      occurrenceIds.implicit,
+      `${otherPosition.payload.position.positionId}::0`,
+      value,
+    );
+    assert.notEqual(wrongTeam.statusCode, 200);
+    const missingPosition = await saveForPath(
+      kind,
+      occurrenceIds.implicit,
+      "missing-position::0",
+      value,
+    );
+    assert.notEqual(missingPosition.statusCode, 200);
+  }
+
+  // Empty equipment arrays still clear assignments for a valid slot.
+  for (const kind of ["microphone", "iem"]) {
+    const cleared = await saveForPath(
+      kind,
+      occurrenceIds.implicit,
+      `${positionIds.Lead}::0`,
+      [],
+    );
+    assert.equal(cleared.statusCode, 200);
+  }
+  const reloaded = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(
+    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][`${positionIds.Lead}::0`],
+    undefined,
+  );
+  assert.equal(
+    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][`${positionIds.Lead}::0`],
+    undefined,
+  );
+  assert.deepEqual(
+    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][`${positionIds.Keys}::0`],
+    ["mic-1"],
+  );
+  assert.deepEqual(
+    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][`${positionIds.Keys}::0`],
+    ["iem-1"],
+  );
 });
 
 test("portable CSV preview is read-only and commit never links imported members to accounts", async (t) => {

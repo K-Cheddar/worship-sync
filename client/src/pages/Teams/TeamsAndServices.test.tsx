@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ContextType } from "react";
+import type { ContextType, SVGProps } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import TeamsAndServices from "./TeamsAndServices";
@@ -41,6 +41,10 @@ import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
 let mockState: unknown;
 const mockDispatch = jest.fn();
 let originalMatchMedia: typeof window.matchMedia;
+
+jest.mock("@tabler/icons-react", () => ({
+  IconVideo: (props: SVGProps<SVGSVGElement>) => <svg {...props} />,
+}));
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -1158,7 +1162,7 @@ describe("Teams", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("creates a position from the positions tab with a picked icon", async () => {
+  it("creates a position with a Tabler icon and its selected color", async () => {
     const user = userEvent.setup();
     mockCreateTeamPosition.mockResolvedValue({
       success: true,
@@ -1186,14 +1190,16 @@ describe("Teams", () => {
 
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
     await user.click(screen.getByRole("button", { name: /Icon picker/i }));
-    await user.click(screen.getByRole("button", { name: /^Mic$/i }));
+    await user.click(await screen.findByRole("button", { name: /^tabler: video$/i }));
+    await user.click(screen.getByRole("button", { name: /Icon picker/i }));
+    await user.click(screen.getByRole("button", { name: "Icon color #22d3ee" }));
     await user.click(screen.getByRole("button", { name: /Save position/i }));
 
     await waitFor(() => {
       expect(mockCreateTeamPosition).toHaveBeenCalledWith("church-1", {
         name: "Vocal",
         description: "",
-        icon: "Mic",
+        icon: { source: "tabler", name: "video", color: "#22d3ee" },
         teamId: "team-main",
       });
     });

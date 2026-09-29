@@ -3,7 +3,6 @@ import { Eye, Mic2, Pencil, Save, Trash2, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import ColorField from "../../components/ColorField/ColorField";
-import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import {
@@ -20,7 +19,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import generateRandomId from "../../utils/generateRandomId";
-import { resolvePositionLucideIcon } from "../Teams/lucidePositionIcons";
+import WorshipSyncIcon from "../../components/icons/WorshipSyncIcon";
+import type { PositionIcon } from "../../components/icons/iconTypes";
 import {
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
@@ -37,8 +37,7 @@ export type MicrophonePositionOption = {
   positionId: string;
   roleName?: string;
   label: string;
-  /** Lucide position icon key from the church positions catalog. */
-  icon?: string;
+  icon?: PositionIcon;
   teamId?: string;
   teamName?: string;
 };
@@ -514,19 +513,13 @@ const ServicePlanMicrophoneManager = ({
                 </p>
                 <ul className={microphoneCatalogGridClassName}>
                   {group.positions.map((position) => {
-                    const PositionIcon = resolvePositionLucideIcon(position.icon);
                     return (
                       <li
                         key={position.positionId}
                         className="flex min-h-8 items-center gap-2 rounded-md border border-gray-800 bg-gray-900/60 px-2 py-1.5 text-sm text-gray-300"
                       >
-                        {PositionIcon ? (
-                          <Icon
-                            svg={PositionIcon}
-                            size="sm"
-                            className="shrink-0 text-orange-300"
-                            alt=""
-                          />
+                        {position.icon ? (
+                          <WorshipSyncIcon icon={position.icon} className="size-4 shrink-0 text-orange-300" />
                         ) : (
                           <span className="size-4 shrink-0" aria-hidden />
                         )}
@@ -560,7 +553,6 @@ const ServicePlanMicrophoneManager = ({
                   )}
                 >
                   {group.positions.map((position) => {
-                    const PositionIcon = resolvePositionLucideIcon(position.icon);
                     const checked = audienceDraft.some(
                       (audience) => audience.positionId === position.positionId,
                     );
@@ -574,13 +566,8 @@ const ServicePlanMicrophoneManager = ({
                         }
                         label={
                           <>
-                            {PositionIcon ? (
-                              <Icon
-                                svg={PositionIcon}
-                                size="sm"
-                                className="shrink-0 text-orange-300"
-                                alt=""
-                              />
+                            {position.icon ? (
+                              <WorshipSyncIcon icon={position.icon} className="size-4 shrink-0 text-orange-300" />
                             ) : null}
                             <span className="truncate">
                               {positionOptionLabel(position)}

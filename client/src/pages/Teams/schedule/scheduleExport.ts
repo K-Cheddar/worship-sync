@@ -2,6 +2,7 @@ import type {
   TeamRosterMember,
   TeamScheduleCellAssignment,
 } from "../../../api/authTypes";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import {
   getCellPrimaryMemberId,
   getCellShadowAssignments,
@@ -23,8 +24,7 @@ export type ScheduleExportColumn = {
   /** 0-based slot index within the position. */
   slot: number;
   label: string;
-  /** Optional saved Lucide icon name for the position. */
-  icon?: string;
+  icon?: PositionIcon;
 };
 
 export type ScheduleExportOccurrence = {
@@ -125,7 +125,7 @@ export type ScheduleExportModel = {
   /** Parallel to columnLabels — used for row/column focus in grid layouts. */
   columnKeys: string[];
   /** Parallel to columnLabels — the saved position icon, when set. */
-  columnIcons?: (string | undefined)[];
+  columnIcons?: (PositionIcon | undefined)[];
   groups: ScheduleExportGroup[];
 };
 

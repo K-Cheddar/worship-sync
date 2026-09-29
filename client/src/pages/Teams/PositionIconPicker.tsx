@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { cn } from "@/utils/cnHelper";
 import {
@@ -8,70 +8,136 @@ import {
 } from "@/components/ui/Popover";
 import Input from "../../components/Input/Input";
 import Button from "../../components/Button/Button";
+import WorshipSyncIcon from "../../components/icons/WorshipSyncIcon";
+import type { IconCatalogEntry, IconRef, PositionIcon } from "../../components/icons/iconTypes";
 import {
-  CURATED_ROLE_ICONS,
-  getAllLucideIcons,
-  resolvePositionLucideIcon,
-} from "./lucidePositionIcons";
+  getLucidePositionIconCatalog,
+  loadPositionIconCatalog,
+  normalizePositionIcon,
+  searchPositionIconCatalog,
+} from "../../components/icons/iconRegistry";
 
 const SEARCH_RESULT_LIMIT = 60;
+const QUICK_COLORS = ["#22d3ee", "#60a5fa", "#a78bfa", "#f472b6", "#fbbf24", "#4ade80"];
+const LEGACY_TEAM_ICONS = [
+  "Mic", "Mic2", "MicVocal", "Music", "Music2", "Music4", "Guitar", "Piano", "Drum",
+  "Speaker", "Headphones", "Volume2", "AudioLines", "AudioWaveform", "Radio", "SlidersHorizontal",
+  "Video", "Camera", "Clapperboard", "Projector", "MonitorPlay", "Tv", "Lightbulb", "Sparkles",
+  "Presentation", "Captions", "Users", "User", "UserCog", "Hand", "Church", "BookOpen", "Cross", "Heart", "Star", "Wrench",
+].map((name) => ({ source: "lucide", name }) as IconRef);
+const RECOMMENDED_GROUPS: Array<{ label: string; icons: IconRef[] }> = [
+  { label: "Audio", icons: [
+    { source: "tabler", name: "microphone" }, { source: "lucide", name: "MicVocal" },
+    { source: "tabler", name: "headphones" }, { source: "tabler", name: "speakerphone" },
+    { source: "tabler", name: "wave-sine" }, { source: "tabler", name: "adjustments-horizontal" },
+    { source: "tabler", name: "radio" },
+  ] },
+  { label: "Video", icons: [
+    { source: "tabler", name: "video" }, { source: "tabler", name: "camera" },
+    { source: "tabler", name: "broadcast" }, { source: "tabler", name: "device-tv" },
+    { source: "tabler", name: "presentation" },
+  ] },
+  { label: "Lighting", icons: [
+    { source: "tabler", name: "bulb" }, { source: "tabler", name: "adjustments-horizontal" },
+  ] },
+  { label: "Music", icons: [
+    { source: "tabler", name: "guitar-pick" }, { source: "tabler", name: "piano" },
+    { source: "tabler", name: "music" },
+  ] },
+  { label: "Ministry", icons: [
+    { source: "tabler", name: "user" }, { source: "tabler", name: "users" },
+    { source: "tabler", name: "book-2" }, { source: "tabler", name: "building-church" },
+    { source: "tabler", name: "hand" }, { source: "tabler", name: "heart" },
+    { source: "tabler", name: "cross" },
+  ] },
+];
 
 type PositionIconPickerProps = {
   label?: string;
-  value: string;
-  onChange: (iconName: string) => void;
+  legacyOnly?: boolean;
+  value: PositionIcon | "";
+  onChange: (icon: PositionIcon | "") => void;
 };
 
-const IconButton = ({
-  name,
-  selected,
-  onSelect,
-}: {
-  name: string;
+type IconButtonProps = {
+  icon: PositionIcon;
+  label: string;
   selected: boolean;
   onSelect: () => void;
-}) => {
-  const IconComponent = resolvePositionLucideIcon(name);
-  if (!IconComponent) return null;
-  return (
-    <button
-      type="button"
-      title={name}
-      aria-label={name}
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={cn(
-        "flex h-10 w-10 items-center justify-center rounded-md border text-gray-100",
-        "hover:bg-gray-800",
-        selected
-          ? "border-cyan-400 bg-cyan-400/15 text-cyan-100"
-          : "border-gray-700",
-      )}
-    >
-      <IconComponent className="h-5 w-5" />
-    </button>
-  );
 };
 
-const PositionIconPicker = ({ label = "Icon", value, onChange }: PositionIconPickerProps) => {
+const IconButton = ({ icon, label, selected, onSelect }: IconButtonProps) => (
+  <button
+    type="button"
+    title={label}
+    aria-label={label}
+    aria-pressed={selected}
+    onClick={onSelect}
+    className={cn(
+      "flex h-9 w-9 items-center justify-center rounded-md border text-gray-100",
+      "hover:bg-gray-800",
+      selected ? "border-cyan-400 bg-cyan-400/15 text-cyan-100" : "border-gray-700",
+    )}
+  >
+    <WorshipSyncIcon icon={icon} className="h-5 w-5" />
+  </button>
+);
+
+const iconKey = (icon: PositionIcon | "") => {
+  const ref = normalizePositionIcon(icon);
+  return ref ? ("name" in ref ? `${ref.source}:${ref.name}` : `${ref.source}:${ref.id}`) : "";
+};
+
+const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChange }: PositionIconPickerProps) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const SelectedIcon = resolvePositionLucideIcon(value);
+  const [source, setSource] = useState<"recommended" | "lucide" | "tabler">("recommended");
+  const [catalog, setCatalog] = useState<IconCatalogEntry[] | null>(null);
+  const [catalogError, setCatalogError] = useState(false);
+  const current = normalizePositionIcon(value);
+
+  useEffect(() => {
+    if (!open || catalog) return;
+    if (legacyOnly) {
+      setCatalog(getLucidePositionIconCatalog());
+      return;
+    }
+    let active = true;
+    loadPositionIconCatalog().then(
+      (entries) => { if (active) setCatalog(entries); },
+      () => { if (active) setCatalogError(true); },
+    );
+    return () => { active = false; };
+  }, [catalog, legacyOnly, open]);
 
   const searchResults = useMemo(() => {
-    const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return [];
-    return getAllLucideIcons()
-      .filter(([name]) => name.toLowerCase().includes(trimmed))
-      .slice(0, SEARCH_RESULT_LIMIT)
-      .map(([name]) => name);
-  }, [query]);
+    if (!catalog || !query.trim()) return [];
+    const searchableCatalog = source === "recommended"
+      ? catalog
+      : catalog.filter((entry) => entry.ref.source === source);
+    return searchPositionIconCatalog(searchableCatalog, query, SEARCH_RESULT_LIMIT + 1);
+  }, [catalog, query, source]);
 
-  const handleSelect = (name: string) => {
-    onChange(name);
+  const selectIcon = (next: IconRef) => {
+    if (legacyOnly) {
+      onChange(next.source === "lucide" ? next.name : "");
+      setOpen(false);
+      setQuery("");
+      return;
+    }
+    onChange({ ...next, ...(current?.color ? { color: current.color } : {}) });
     setOpen(false);
     setQuery("");
   };
+
+  const setColor = (color?: string) => {
+    if (!current) return;
+    const { color: _previousColor, ...withoutColor } = current;
+    onChange(color ? { ...withoutColor, color } : withoutColor);
+  };
+
+  const resultLabel = (entry: IconCatalogEntry) => `${entry.ref.source}: ${entry.label}`;
+  const selectedKey = iconKey(value);
 
   return (
     <div>
@@ -87,33 +153,31 @@ const PositionIconPicker = ({ label = "Icon", value, onChange }: PositionIconPic
             )}
           >
             <span className="flex h-7 w-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-400/10 text-cyan-100">
-              {SelectedIcon ? <SelectedIcon className="h-4 w-4" /> : null}
+              <WorshipSyncIcon icon={value} className="h-4 w-4" />
             </span>
             <span className={cn(!value && "text-gray-400")}>
-              {value || "Choose an icon"}
+            {current ? ("name" in current ? current.name : current.id) : "Choose an icon"}
             </span>
           </button>
         </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-80 rounded-md border border-gray-700 bg-gray-900 p-3 shadow-xl"
-        >
+        <PopoverContent align="start" className="w-80 rounded-md border border-gray-700 bg-gray-900 p-3 shadow-xl">
           <div className="space-y-3">
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                Suggested
-              </p>
-              <div className="grid grid-cols-6 gap-1.5">
-                {CURATED_ROLE_ICONS.map((name) => (
-                  <IconButton
-                    key={name}
-                    name={name}
-                    selected={value === name}
-                    onSelect={() => handleSelect(name)}
-                  />
-                ))}
-              </div>
-            </div>
+            {!legacyOnly ? <div className="flex gap-1" role="tablist" aria-label="Icon source">
+              {(["recommended", "lucide", "tabler"] as const).map((item) => (
+                <Button
+                  key={item}
+                  type="button"
+                  variant={source === item ? "secondary" : "tertiary"}
+                  padding="px-2 py-1"
+                  className="h-7 min-h-0 text-xs capitalize"
+                  role="tab"
+                  aria-selected={source === item}
+                  onClick={() => setSource(item)}
+                >
+                  {item === "recommended" ? "Recommended" : item}
+                </Button>
+              ))}
+            </div> : null}
             <div>
               <Input
                 label="Search all icons"
@@ -123,37 +187,88 @@ const PositionIconPicker = ({ label = "Icon", value, onChange }: PositionIconPic
                 onChange={(next) => setQuery(String(next))}
               />
               {query.trim() ? (
-                searchResults.length ? (
+                catalog ? searchResults.length ? (
                   <>
-                    <div className="mt-2 grid max-h-44 grid-cols-6 gap-1.5 overflow-y-auto">
-                      {searchResults.map((name) => (
+                    <div className="mt-2 grid max-h-44 grid-cols-7 gap-1 overflow-y-auto" aria-label="Icon search results">
+                      {searchResults.slice(0, SEARCH_RESULT_LIMIT).map((entry) => (
                         <IconButton
-                          key={name}
-                          name={name}
-                          selected={value === name}
-                          onSelect={() => handleSelect(name)}
+                          key={iconKey(entry.ref)}
+                          icon={entry.ref}
+                          label={resultLabel(entry)}
+                          selected={selectedKey === iconKey(entry.ref)}
+                          onSelect={() => selectIcon(entry.ref)}
                         />
                       ))}
                     </div>
-                    {searchResults.length === SEARCH_RESULT_LIMIT ? (
-                      <p className="mt-2 text-xs text-gray-500">
-                        Showing first {SEARCH_RESULT_LIMIT}. Refine your search.
-                      </p>
+                    {searchResults.length > SEARCH_RESULT_LIMIT ? (
+                      <p className="mt-2 text-xs text-gray-500">Showing first {SEARCH_RESULT_LIMIT}. Refine your search.</p>
                     ) : null}
                   </>
-                ) : (
-                  <p className="mt-2 text-sm text-gray-400">No matching icons.</p>
-                )
-              ) : null}
+                ) : <p className="mt-2 text-sm text-gray-400">No matching icons.</p>
+                  : catalogError ? <p className="mt-2 text-sm text-amber-300">Icon catalog is unavailable.</p>
+                    : <p className="mt-2 text-sm text-gray-400">Loading icons…</p>
+              ) : source === "recommended" ? legacyOnly ? (
+                <div className="mt-2 grid max-h-56 grid-cols-7 gap-1 overflow-y-auto">
+                  {LEGACY_TEAM_ICONS.map((icon) => (
+                    <IconButton key={iconKey(icon)} icon={icon} label={"name" in icon ? icon.name : icon.id} selected={selectedKey === iconKey(icon)} onSelect={() => selectIcon(icon)} />
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 max-h-56 space-y-2 overflow-y-auto">
+                  {RECOMMENDED_GROUPS.map((group) => (
+                    <section key={group.label}>
+                      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{group.label}</h3>
+                      <div className="grid grid-cols-7 gap-1">
+                        {group.icons.map((icon) => (
+                          <IconButton
+                            key={iconKey(icon)}
+                            icon={icon}
+                            label={iconKey(icon).replace(":", ": ")}
+                            selected={selectedKey === iconKey(icon)}
+                            onSelect={() => selectIcon(icon)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-gray-400">Search the full {source === "lucide" ? "Lucide" : "Tabler"} catalog above.</p>}
             </div>
+            {current && !legacyOnly ? (
+              <div className="space-y-2 border-t border-gray-800 pt-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-gray-300">Icon color</span>
+                  <Button type="button" variant="textLink" padding="p-0" className="text-xs text-gray-400" onClick={() => setColor()}>
+                    Default
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {QUICK_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      aria-label={`Icon color ${color}`}
+                      aria-pressed={current.color?.toLowerCase() === color}
+                      onClick={() => setColor(color)}
+                      className="size-6 rounded-full border border-white/25 focus-visible:outline-2 focus-visible:outline-cyan-300"
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                  <label className="relative flex size-7 cursor-pointer items-center justify-center rounded border border-gray-600 text-xs text-gray-300 hover:bg-gray-800">
+                    Custom
+                    <input
+                      type="color"
+                      aria-label="Custom icon color"
+                      value={current.color || "#22d3ee"}
+                      onChange={(event) => setColor(event.target.value)}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
             {value ? (
-              <Button
-                type="button"
-                variant="textLink"
-                padding="p-0"
-                className="text-xs text-gray-400 hover:text-gray-200"
-                onClick={() => handleSelect("")}
-              >
+              <Button type="button" variant="textLink" padding="p-0" className="text-xs text-gray-400 hover:text-gray-200" onClick={() => onChange("")}>
                 Clear icon
               </Button>
             ) : null}

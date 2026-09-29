@@ -1,4 +1,5 @@
 import type { TeamScheduleAssignments } from "../../../api/authTypes";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import type { ScheduleExportColumn } from "./scheduleExport";
 import { makeSlotKey, parseSlotKey } from "./scheduleRequirements";
 
@@ -15,7 +16,7 @@ export type PublicSchedulePosition = {
   name: string;
   groupId?: string;
   archivedAt?: string | null;
-  icon?: string;
+  icon?: PositionIcon;
 };
 
 const cellHasAssignee = (cell: {

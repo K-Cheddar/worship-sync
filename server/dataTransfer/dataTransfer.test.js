@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { encodeCsv, parseCsv, protectSpreadsheetFormula } from "./csv.js";
-import { PORTABLE_SCHEMAS, buildPortableDatasets } from "./schemas.js";
+import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortablePositionIcon, serializePortablePositionIcon } from "./schemas.js";
 import { portableServiceMatches } from "./matching.js";
 import { createZip } from "./zip.js";
 
@@ -43,6 +43,24 @@ test("portable exports use readable fields and flatten schedules by slot", () =>
   assert.equal(exported.members[0][12], "p1");
   assert.equal(exported.schedules.length, 2);
   assert.deepEqual(Object.keys(PORTABLE_SCHEMAS), ["members", "teams", "positions", "services", "schedules"]);
+});
+
+test("position CSV preserves legacy names and structured icon references", () => {
+  const icon = { source: "tabler", name: "camera", color: "#22d3ee" };
+  const exported = buildPortableDatasets({
+    teams: [{ teamId: "t1", name: "Production" }],
+    positions: [
+      { positionId: "p1", teamId: "t1", name: "Vocal", icon: "MicVocal" },
+      { positionId: "p2", teamId: "t1", name: "Camera", icon },
+    ],
+  }).positions;
+  assert.equal(PORTABLE_SCHEMAS.positions.at(-1), "Icon");
+  assert.equal(exported[0].at(-1), "MicVocal");
+  assert.equal(exported[1].at(-1), JSON.stringify(icon));
+  assert.equal(parsePortablePositionIcon(exported[0].at(-1)), "MicVocal");
+  assert.deepEqual(parsePortablePositionIcon(exported[1].at(-1)), icon);
+  assert.equal(serializePortablePositionIcon(undefined), "");
+  assert.throws(() => parsePortablePositionIcon("{invalid"), { statusCode: 400 });
 });
 
 test("combined service exports retain recurrence details and match on re-import", () => {

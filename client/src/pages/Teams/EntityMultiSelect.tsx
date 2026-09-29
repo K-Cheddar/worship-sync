@@ -5,7 +5,8 @@ import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import SelectAllButton from "../../components/SelectAllButton";
-import { resolvePositionLucideIcon } from "./lucidePositionIcons";
+import WorshipSyncIcon from "../../components/icons/WorshipSyncIcon";
+import type { PositionIcon } from "../../components/icons/iconTypes";
 import {
   boardFieldsetDescriptionClassName,
   boardFieldsetLegendClassName,
@@ -16,8 +17,7 @@ export type EntityMultiSelectOption = {
   id: string;
   label: string;
   sublabel?: string;
-  /** Lucide icon name for team positions. */
-  icon?: string;
+  icon?: PositionIcon;
   archived?: boolean;
   /** Matches an entry in `groups` so the option can be filtered by it (e.g. its team). */
   groupId?: string;
@@ -303,7 +303,6 @@ const EntityMultiSelect = ({
           filtered.map((option) => {
             const checked = value.includes(option.id);
             const disabled = Boolean(option.archived) && !checked;
-            const OptionIcon = resolvePositionLucideIcon(option.icon);
             const optionAction = renderOptionAction?.(option);
             return (
               <div
@@ -349,7 +348,7 @@ const EntityMultiSelect = ({
                   >
                     {checked ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : null}
                   </span>
-                  {OptionIcon ? (
+                  {option.icon ? (
                     <span
                       className={cn(
                         "flex h-7 w-7 shrink-0 items-center justify-center rounded",
@@ -358,7 +357,7 @@ const EntityMultiSelect = ({
                           : "border border-cyan-300/30 bg-cyan-400/10 text-cyan-100",
                       )}
                     >
-                      <OptionIcon className="h-4 w-4" aria-hidden />
+                      <WorshipSyncIcon icon={option.icon} className="h-4 w-4" />
                     </span>
                   ) : null}
                   <span className="min-w-0 flex-1">

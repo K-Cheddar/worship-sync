@@ -54,7 +54,7 @@ import {
 } from "./teamIntakeRecipientToken.js";
 import { hasPersonalizedIntakeResponseFields } from "./teamIntakeFields.js";
 import { encodeCsv, parseCsv } from "./dataTransfer/csv.js";
-import { PORTABLE_SCHEMAS, buildPortableDatasets, LIST_DELIMITER } from "./dataTransfer/schemas.js";
+import { PORTABLE_SCHEMAS, buildPortableDatasets, LIST_DELIMITER, parsePortablePositionIcon } from "./dataTransfer/schemas.js";
 import { findPortableMatch, normalizePortableMatchValue, portableServiceMatches } from "./dataTransfer/matching.js";
 import { createZip } from "./dataTransfer/zip.js";
 
@@ -3690,6 +3690,36 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
+  const validatePositionIcon = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === "") return "";
+    if (typeof value === "string") {
+      return normalizeShortText(value, { max: 40 });
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Position icon is invalid.");
+    }
+    const source = normalizeShortText(value.source, { max: 20 });
+    const color = value.color === undefined
+      ? undefined
+      : normalizeShortText(value.color, { max: 7 });
+    if (color && !/^#[0-9a-f]{6}$/i.test(color)) {
+      throw httpError(400, "Position icon color must be a six-digit hex color.");
+    }
+    const colorField = color ? { color: color.toLowerCase() } : {};
+    if (source === "custom") {
+      const id = normalizeShortText(value.id, { max: 160 });
+      if (!id) throw httpError(400, "Custom position icon ID is required.");
+      return { source, id, ...colorField };
+    }
+    if (source !== "lucide" && source !== "tabler" && source !== "worshipsync") {
+      throw httpError(400, "Position icon source is invalid.");
+    }
+    const name = normalizeShortText(value.name, { max: 120 });
+    if (!name) throw httpError(400, "Position icon name is required.");
+    return { source, name, ...colorField };
+  };
+
   const validateTeamPositionPayload = async (body, churchId) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
@@ -3754,10 +3784,11 @@ export const createTeamsAuthHandlers = ({
       const knownIemIds = new Set(normalizeServiceEquipmentCatalog(church?.serviceEquipment).map((item) => item.id));
       if (!knownIemIds.has(defaultIemId)) throw httpError(400, "Default IEM is not in this church's equipment list.");
     }
+    const icon = validatePositionIcon(body?.icon);
     return {
       name,
       description: normalizeLongText(body?.description),
-      icon: normalizeShortText(body?.icon, { max: 40 }),
+      ...(icon !== undefined ? { icon } : {}),
       groupId: normalizeShortText(body?.groupId, { max: 160 }) || null,
       qualificationAreaId: qualificationAreaId || null,
       defaultMicrophoneId: defaultMicrophoneId || null,
@@ -6234,50 +6265,16 @@ export const createTeamsAuthHandlers = ({
     allowOccurrenceConflict = false,
     guestAssignment = false,
   }) => {
-    const rowIds = (schedule.occurrences || []).map(
-      (occurrence) => occurrence.occurrenceId,
-    );
-    const allowedRowIds =
-      rowIds.length > 0 ? rowIds : schedule.serviceIds || [];
-    if (!allowedRowIds.includes(serviceId)) {
-      throw httpError(400, "That service occurrence is not in this schedule.");
-    }
-    const targetSlot = parseScheduleSlotKey(positionSlotKey);
-    if (!targetSlot) {
-      throw httpError(400, "Position slot key is invalid.");
-    }
+    const validatedSlot = await assertSchedulePositionSlotExists({
+      churchId,
+      schedule,
+      occurrenceId: serviceId,
+      positionSlotKey,
+    });
+    const targetSlot = validatedSlot.slot;
     const basePositionId = targetSlot.positionId;
     const cellKey = makeScheduleSlotKey(basePositionId, targetSlot.slot);
-    const occurrence = (schedule.occurrences || []).find(
-      (item) => item.occurrenceId === serviceId,
-    );
-    const requirements = await resolveScheduleOccurrenceRequirements({
-      churchId,
-      occurrence,
-    });
-    // Services with no explicit requirements use one slot for each team
-    // position in the scheduling UI. Preserve that fallback after checking the
-    // saved snapshot and, for legacy occurrences, the live service definition.
-    const requirement = requirements.find(
-      (item) => item?.positionId === basePositionId,
-    );
-    {
-      let requiredCount = Math.max(
-        0,
-        Math.floor(Number(requirement?.count) || 0),
-      );
-      if (!requirement && requirements.length === 0) {
-        requiredCount = 1;
-      }
-      const additionalSlots = new Set(
-        normalizeTeamScheduleAdditionalPositionSlots(
-          schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
-        )[serviceId] || [],
-      );
-      if (targetSlot.slot >= requiredCount && !additionalSlots.has(cellKey)) {
-        throw httpError(400, "Add this position before assigning it.");
-      }
-    }
+    const occurrence = validatedSlot.occurrence;
     if (!position || position.churchId !== churchId || position.archivedAt) {
       throw httpError(400, "Position is archived.");
     }
@@ -6507,6 +6504,60 @@ export const createTeamsAuthHandlers = ({
     if (!allowedRowIds.includes(serviceId)) {
       throw httpError(400, "That service occurrence is not in this schedule.");
     }
+  };
+
+  const assertSchedulePositionSlotExists = async ({
+    churchId,
+    schedule,
+    occurrenceId,
+    positionSlotKey,
+    errorMessage = "Add this position before assigning it.",
+  }) => {
+    const slot = parseScheduleSlotKey(positionSlotKey);
+    if (!slot) throw httpError(400, "Position slot key is invalid.");
+    assertScheduleRowContains(schedule, occurrenceId);
+    const occurrence = (schedule.occurrences || []).find(
+      (item) => item.occurrenceId === occurrenceId,
+    );
+    const requirements = await resolveScheduleOccurrenceRequirements({
+      churchId,
+      occurrence,
+    });
+    const requirement = requirements.find(
+      (item) => item?.positionId === slot.positionId,
+    );
+    let requiredCount = Math.max(
+      0,
+      Math.floor(Number(requirement?.count) || 0),
+    );
+    if (!requirement && requirements.length === 0) {
+      requiredCount = 1;
+    }
+    const normalizedSlotKey = makeScheduleSlotKey(
+      slot.positionId,
+      slot.slot,
+    );
+    const additionalSlots = new Set(
+      normalizeTeamScheduleAdditionalPositionSlots(
+        schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+      )[occurrenceId] || [],
+    );
+    if (
+      slot.slot >= requiredCount &&
+      !additionalSlots.has(normalizedSlotKey)
+    ) {
+      throw httpError(400, errorMessage);
+    }
+    return {
+      slot,
+      positionId: slot.positionId,
+      slotIndex: slot.slot,
+      normalizedSlotKey,
+      occurrence,
+      requirements,
+      requirement,
+      requiredCount,
+    };
   };
 
   const assertSchedulePositionForTeam = ({
@@ -7580,7 +7631,7 @@ export const createTeamsAuthHandlers = ({
   const PORTABLE_FIELDS = {
     members: ["firstName", "lastName", "name", "title", "email", "phone", "teams", "positions", "notes", "servingFrequency", "archived", "memberId", "teamIds", "positionIds"],
     teams: ["name", "description", "usesMicrophones", "usesIems", "archived", "teamId"],
-    positions: ["name", "team", "description", "group", "order", "archived", "positionId", "teamId"],
+    positions: ["name", "team", "description", "group", "order", "archived", "positionId", "teamId", "icon"],
     services: ["name", "recurrence", "time", "date", "daysOfWeek", "startDate", "endDate", "weekOrdinal", "weekday", "combinedGroup", "position", "requiredSlots", "archived", "serviceId", "positionId"],
     schedules: ["name", "startDate", "endDate", "service", "date", "startTime", "team", "position", "slot", "person", "email", "assignmentType", "guest", "scheduleId", "occurrenceId", "serviceId", "teamId", "positionId", "memberId"],
   };
@@ -7596,6 +7647,7 @@ export const createTeamsAuthHandlers = ({
     teamIds: ["worshipsync team ids", "team ids"], positionIds: ["worshipsync position ids", "position ids"],
     serviceId: ["worshipsync service id", "service id"], scheduleId: ["worshipsync schedule id", "schedule id"], occurrenceId: ["worshipsync occurrence id", "occurrence id"],
     description: ["description", "notes"],
+    icon: ["icon", "position icon"],
     combinedGroup: ["combined group", "combined services", "service group"],
   };
   const normalizeHeader = (value) => normalizePortableMatchValue(value).replace(/[^a-z0-9]/g, "");
@@ -8112,7 +8164,7 @@ export const createTeamsAuthHandlers = ({
               const existing = id ? data.positions.find((item) => item.positionId === id && item.teamId === team.teamId) : null;
               if (id && (!existing || existing.archivedAt)) throw httpError(400, "Position ID is missing from this team or archived.");
               if ((requestedAction === "update") !== Boolean(existing)) throw httpError(409, "This row no longer matches the preview. Preview it again.");
-              const payload = await validateTeamPositionPayload({ ...(existing || {}), name: record.name, teamId: team.teamId, description: record.description ?? existing?.description, groupId: record.group ?? existing?.groupId, ...(record.order !== "" && record.order != null ? { order: Number(record.order) } : {}) }, churchId);
+              const payload = await validateTeamPositionPayload({ ...(existing || {}), name: record.name, teamId: team.teamId, description: record.description ?? existing?.description, groupId: record.group ?? existing?.groupId, ...(record.order !== "" && record.order != null ? { order: Number(record.order) } : {}), ...(record.icon !== undefined ? { icon: parsePortablePositionIcon(record.icon) } : {}) }, churchId);
               const saved = await upsertTeamEntity({ kind: "position", churchId, id: existing?.positionId, payload, adminUserId: admin.user.uid });
               results.push({ row, status: existing ? "updated" : "created", id: saved.positionId });
               continue;
@@ -12581,44 +12633,14 @@ export const createTeamsAuthHandlers = ({
         const slotKey = normalizeShortText(req.body?.positionSlotKey, {
           max: 260,
         });
-        const slot = parseScheduleSlotKey(slotKey);
-        if (!slot) throw httpError(400, "Position slot key is invalid.");
-        assertScheduleRowContains(schedule, occurrenceId);
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item.occurrenceId === occurrenceId,
-        );
-        const requirements = await resolveScheduleOccurrenceRequirements({
+        const validatedSlot = await assertSchedulePositionSlotExists({
           churchId,
-          occurrence,
+          schedule,
+          occurrenceId,
+          positionSlotKey: slotKey,
+          errorMessage: "Add this position before assigning microphones.",
         });
-        const requirement = requirements.find(
-          (item) => item?.positionId === slot.positionId,
-        );
-        {
-          const requiredCount = Math.max(
-            0,
-            Math.floor(Number(requirement?.count) || 0),
-          );
-          const additionalSlots = new Set(
-            normalizeTeamScheduleAdditionalPositionSlots(
-              schedule.additionalPositionSlots ??
-                schedule.optionalPositionSlots,
-            )[occurrenceId] || [],
-          );
-          const normalizedSlotKey = makeScheduleSlotKey(
-            slot.positionId,
-            slot.slot,
-          );
-          if (
-            slot.slot >= requiredCount &&
-            !additionalSlots.has(normalizedSlotKey)
-          ) {
-            throw httpError(
-              400,
-              "Add this position before assigning microphones.",
-            );
-          }
-        }
+        const { slot, occurrence } = validatedSlot;
         const position = await assertTeamEntityInChurch(
           "position",
           slot.positionId,
@@ -12754,44 +12776,14 @@ export const createTeamsAuthHandlers = ({
         const slotKey = normalizeShortText(req.body?.positionSlotKey, {
           max: 260,
         });
-        const slot = parseScheduleSlotKey(slotKey);
-        if (!slot) throw httpError(400, "Position slot key is invalid.");
-        assertScheduleRowContains(schedule, occurrenceId);
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item.occurrenceId === occurrenceId,
-        );
-        const requirements = await resolveScheduleOccurrenceRequirements({
+        const validatedSlot = await assertSchedulePositionSlotExists({
           churchId,
-          occurrence,
+          schedule,
+          occurrenceId,
+          positionSlotKey: slotKey,
+          errorMessage: "Add this position before assigning IEMs.",
         });
-        const requirement = requirements.find(
-          (item) => item?.positionId === slot.positionId,
-        );
-        {
-          const requiredCount = Math.max(
-            0,
-            Math.floor(Number(requirement?.count) || 0),
-          );
-          const additionalSlots = new Set(
-            normalizeTeamScheduleAdditionalPositionSlots(
-              schedule.additionalPositionSlots ??
-                schedule.optionalPositionSlots,
-            )[occurrenceId] || [],
-          );
-          const normalizedSlotKey = makeScheduleSlotKey(
-            slot.positionId,
-            slot.slot,
-          );
-          if (
-            slot.slot >= requiredCount &&
-            !additionalSlots.has(normalizedSlotKey)
-          ) {
-            throw httpError(
-              400,
-              "Add this position before assigning IEMs.",
-            );
-          }
-        }
+        const { slot, occurrence } = validatedSlot;
         const position = await assertTeamEntityInChurch(
           "position",
           slot.positionId,

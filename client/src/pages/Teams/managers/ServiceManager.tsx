@@ -28,8 +28,7 @@ import type {
 } from "../../../types";
 import type { TeamRecord, TeamPosition, TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
-import Icon from "../../../components/Icon/Icon";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
 import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
 import CreatePanel from "../CreatePanel";
 import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
@@ -639,7 +638,6 @@ const ServiceManager = ({
                   <span className="text-center">People needed</span>
                 </div>
                 {teamPositions.map((position) => {
-                  const PositionIcon = resolvePositionLucideIcon(position.icon);
                   const needed = requirements.some((req) => req.positionId === position.positionId);
                   const count = requirementCount(position.positionId);
                   return (
@@ -654,9 +652,7 @@ const ServiceManager = ({
                         }
                         label={
                           <>
-                            {PositionIcon ? (
-                              <Icon svg={PositionIcon} size="sm" className="text-orange-300" alt="" />
-                            ) : null}
+                            {position.icon ? <WorshipSyncIcon icon={position.icon} className="size-4 shrink-0 text-orange-300" /> : null}
                             {position.name}
                           </>
                         }

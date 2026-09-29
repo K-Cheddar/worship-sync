@@ -30,6 +30,9 @@ export default defineConfig(({ mode }) => {
       filename: "service-worker.ts",
       injectManifest: {
         maximumFileSizeToCacheInBytes: 7 * 1024 * 1024, // 7 MiB (main bundle is over 5 MiB)
+        // The full Tabler runtime is loaded only when a Tabler icon is used;
+        // cache it on first request instead of adding it to every app install.
+        globIgnores: ["**/tabler-icons-react-*.js"],
       },
     }),
   );

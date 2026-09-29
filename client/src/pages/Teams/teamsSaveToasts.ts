@@ -87,8 +87,8 @@ const describeIdListChanges = (
 };
 
 const describeNamedEntityChanges = (
-  previous: { name: string; description?: string; icon?: string },
-  next: { name: string; description?: string; icon?: string },
+  previous: { name: string; description?: string; icon?: import("../../components/icons/iconTypes").PositionIcon },
+  next: { name: string; description?: string; icon?: import("../../components/icons/iconTypes").PositionIcon },
   options?: { includeIcon?: boolean },
 ): string[] => {
   const changes: string[] = [];
@@ -98,7 +98,7 @@ const describeNamedEntityChanges = (
   if (normalizeText(previous.description) !== normalizeText(next.description)) {
     changes.push("Description");
   }
-  if (options?.includeIcon && (previous.icon || "") !== (next.icon || "")) {
+  if (options?.includeIcon && JSON.stringify(previous.icon || "") !== JSON.stringify(next.icon || "")) {
     changes.push("Icon");
   }
   return changes;

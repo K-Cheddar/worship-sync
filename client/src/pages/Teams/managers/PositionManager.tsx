@@ -45,6 +45,7 @@ import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import PositionIconPicker from "../PositionIconPicker";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import { useSensors } from "../../../utils/dndUtils";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
@@ -76,7 +77,7 @@ import {
 type PositionDraft = {
   name: string;
   description: string;
-  icon: string;
+  icon: PositionIcon | "";
   qualificationAreaId: string;
   defaultMicrophoneId: string;
   defaultIemId: string;

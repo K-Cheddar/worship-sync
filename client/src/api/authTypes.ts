@@ -336,7 +336,8 @@ export type TeamPosition = {
   teamId: string;
   name: string;
   description?: string;
-  icon?: string;
+  /** Structured icon ref, with legacy Lucide export-name strings still supported. */
+  icon?: import("../components/icons/iconTypes").PositionIcon;
   // optional umbrella grouping (e.g. "Camera" for Roving/Stationary Camera)
   groupId?: string;
   // explicit display order within the team; also drives schedule column order
@@ -493,7 +494,7 @@ export type TeamSchedulePublicSnapshot = {
   positions: {
     positionId: string;
     name: string;
-    icon: string;
+    icon: import("../components/icons/iconTypes").PositionIcon;
     groupId: string;
     archivedAt: string | null;
   }[];

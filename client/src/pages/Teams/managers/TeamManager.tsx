@@ -388,7 +388,7 @@ const TeamManager = ({
         }
       >
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
+        <PositionIconPicker legacyOnly value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon: typeof icon === "string" ? icon : "" }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-20" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         <EntityMultiSelect
           label="Members"

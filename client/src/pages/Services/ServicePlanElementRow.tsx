@@ -172,8 +172,7 @@ export type ServicePlanRoleNoteOption = {
   /** The concise role name shown under its team heading. */
   roleName?: string;
   label: string;
-  /** Lucide position icon key from the church positions catalog. */
-  icon?: string;
+  icon?: import("../../components/icons/iconTypes").PositionIcon;
   teamId?: string;
   teamName?: string;
 };
