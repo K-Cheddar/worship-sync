@@ -36,7 +36,7 @@ The canonical repository skills are in `.agents/skills/`. Skills own detailed pr
 - `/overlay`: overlay state-machine, timing, and Firebase synchronization work.
 - `$persisted-mutation-safety` and `$schedule-mutation-safety`: overlapping persisted writes and schedule mutations.
 - `$reliable-state-mutations`: async ownership boundaries, durable retry points, and interrupted stateful workflows.
-- `/brand-voice`: user-visible copy.
+- `$brand-voice`: user-visible copy.
 
 ### Assumptions and decisions
 
@@ -158,4 +158,4 @@ A change is ready only when it is correct, low-regression, understandable, respo
 
 ## Brand voice
 
-For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `/brand-voice`.
+For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `$brand-voice`.

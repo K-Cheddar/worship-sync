@@ -36,6 +36,8 @@
 !.agents/skills/react-quality/**
 !.agents/skills/reliable-state-mutations/
 !.agents/skills/reliable-state-mutations/**
+!.agents/skills/brand-voice/
+!.agents/skills/brand-voice/**
 !.agents/patterns/
 !.agents/patterns/**
 .claude/settings.local.json
