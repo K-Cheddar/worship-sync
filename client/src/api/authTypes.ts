@@ -604,13 +604,23 @@ export type TeamsBootstrap = {
 
 export type PortableDataType = "members" | "teams" | "positions" | "services" | "schedules";
 export type PortableImportAction = "create" | "update" | "review" | "invalid";
+export type PortableImportCandidate = { id: string; name: string };
+export type PortableImportIssue = {
+  field: string;
+  code: string;
+  message: string;
+  candidates?: PortableImportCandidate[];
+  referenceIndex?: number;
+  referenceValue?: string;
+};
+export type PortableImportResolution = { field: string; referenceIndex: number; selectedId: string };
 export type PortableImportRow = {
   row: number;
   record: Record<string, string>;
   action: PortableImportAction;
   matchedId: string | null;
-  candidates: Array<{ id: string; name: string }>;
-  issues: Array<{ field: string; code: string; message: string; candidates?: Array<{ id: string; name: string }> }>;
+  candidates: PortableImportCandidate[];
+  issues: PortableImportIssue[];
 };
 
 export type TeamIntakeAvailabilityService = {
@@ -788,6 +798,8 @@ export type NotificationBatch = {
   status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
+  /** Persisted form recipients for the selected batch members, without token secrets. */
+  intakeRecipients?: TeamIntakeRecipient[];
   intentIds: string[];
   approvalVersion: string;
   summary: {

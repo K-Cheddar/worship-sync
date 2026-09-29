@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -39,6 +39,7 @@ import type {
   TeamService,
   SmsDeliveryAttempt,
   NotificationIntent,
+  NotificationBatch,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -543,6 +544,11 @@ const IntakeManager = ({
     );
   }, [forms, selectedForm]);
   const activeSelectedFormId = activeSelectedForm?.formId || "";
+  const activeSelectedFormIdRef = useRef(activeSelectedFormId);
+  const churchIdRef = useRef(churchId);
+  const messageStateRefreshSequenceRef = useRef(0);
+  activeSelectedFormIdRef.current = activeSelectedFormId;
+  churchIdRef.current = churchId;
   const upcomingAvailabilitySuggestion = useMemo(
     () => getUpcomingAvailabilitySuggestion({ services, forms }),
     [forms, services],
@@ -560,37 +566,38 @@ const IntakeManager = ({
     setDraft(upcomingAvailabilitySuggestion.draft);
   };
 
+  const refreshFormMessageState = useCallback((formId: string) => {
+    if (!churchId || !formId) return;
+    const requestedChurchId = churchId;
+    const refreshSequence = ++messageStateRefreshSequenceRef.current;
+    const isCurrentForm = () => churchIdRef.current === requestedChurchId && activeSelectedFormIdRef.current === formId && messageStateRefreshSequenceRef.current === refreshSequence;
+    void getTeamIntakeSmsAttempts(requestedChurchId, formId)
+      .then((response) => {
+        if (isCurrentForm()) setSmsDeliveryAttempts(response.attempts || []);
+      })
+      .catch((error) => {
+        if (isCurrentForm()) showApiErrorToast(showToast, error, "Could not load SMS delivery history.");
+      });
+    void getNotificationIntents(requestedChurchId, { formId })
+      .then((response) => {
+        if (isCurrentForm()) setFormNotificationIntents(response.intents || []);
+      })
+      .catch((error) => {
+        if (isCurrentForm()) showApiErrorToast(showToast, error, "Could not load intake message status.");
+      });
+  }, [churchId, showToast]);
+
   useEffect(() => {
-    if (!churchId || !activeSelectedFormId) return;
-    let cancelled = false;
     setSmsDeliveryAttempts([]);
     setFormNotificationIntents([]);
-    void getTeamIntakeSmsAttempts(churchId, activeSelectedFormId)
-      .then((response) => {
-        if (!cancelled) setSmsDeliveryAttempts(response.attempts || []);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(
-            showToast,
-            error,
-            "Could not load SMS delivery history.",
-          );
-        }
-      });
-    void getNotificationIntents(churchId, { formId: activeSelectedFormId })
-      .then((response) => {
-        if (!cancelled) setFormNotificationIntents(response.intents || []);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(showToast, error, "Could not load intake message status.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSelectedFormId, churchId, showToast]);
+    refreshFormMessageState(activeSelectedFormId);
+  }, [activeSelectedFormId, refreshFormMessageState]);
+
+  const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
+    if (batch.churchId !== churchIdRef.current) return;
+    batch.intakeRecipients?.forEach(onRecipientSaved);
+    refreshFormMessageState(batch.formId);
+  };
 
   const selectedFormSubmissions = useMemo(
     () =>
@@ -1813,6 +1820,7 @@ const IntakeManager = ({
           teams={teams}
           recipients={intakeRecipients}
           eligibilityByMemberId={smsEligibilityByMemberId}
+          onBatchUpdated={handleAvailabilityBatchUpdated}
           onClose={() => setShowSendForm(false)}
         />
       ) : null}

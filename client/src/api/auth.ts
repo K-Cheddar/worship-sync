@@ -74,6 +74,7 @@ import type {
   TeamsBootstrap,
   PortableDataType,
   PortableImportRow,
+  PortableImportResolution,
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
@@ -2781,7 +2782,7 @@ export const previewPortableImport = async (
 export const commitPortableImport = async (
   churchId: string,
   type: PortableDataType,
-  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string>; resolutions?: Record<string, string> }>,
+  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string>; resolutions?: PortableImportResolution[] }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => apiFetch<{
   success: boolean;
@@ -2796,8 +2797,10 @@ export const downloadPortableData = async (
   churchId: string,
   type: PortableDataType | "all",
   template = false,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => {
-  const url = `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}${template ? "?template=true" : ""}`;
+  const query = new URLSearchParams({ timeZone, ...(template ? { template: "true" } : {}) });
+  const url = `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}?${query.toString()}`;
   const response = await fetch(url, {
     credentials: "include",
     headers: {

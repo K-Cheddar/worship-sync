@@ -216,6 +216,13 @@ test("availability preview is church-scoped and does not call the provider", asy
 
 test("a prepared batch is scoped to its selected form and recipients, and hides tokens from history", async () => {
   const h = createHarness();
+  h.storeFor("teamIntakeRecipients").set(h.recipient.recipientId, {
+    ...h.recipient,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    recipientTokenHash: "private-hash",
+    recipientTokenCiphertext: "private-ciphertext",
+    createdByUid: "admin-1",
+  });
   const { batch, intent } = await h.preview({ memberIds: [h.member.memberId, "other_member"] });
   assert.equal(batch.summary.requested, 2);
   assert.equal(batch.summary.eligible, 1);
@@ -224,6 +231,17 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.match(batch.recipients[0].message, /October availability/);
   assert.match(batch.recipients[0].message, /Reply STOP to opt out/);
   assert.match(batch.recipients[0].message, /\/a\/secure-token/);
+  assert.deepEqual(batch.intakeRecipients, [{
+    recipientId: h.recipient.recipientId,
+    churchId: h.churchId,
+    formId: h.form.formId,
+    memberId: h.member.memberId,
+    respondedAt: null,
+    revokedAt: null,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    createdBy: "admin-1",
+  }]);
+  assert.doesNotMatch(JSON.stringify(batch.intakeRecipients), /private-(hash|ciphertext)/);
   assert.equal(h.providerCalls, 0);
 
   const history = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };

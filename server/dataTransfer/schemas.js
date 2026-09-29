@@ -1,3 +1,5 @@
+import { formatPortableDate, formatPortableTime } from "./time.js";
+
 export const LIST_DELIMITER = " | ";
 
 export const PORTABLE_SCHEMAS = {
@@ -7,13 +9,8 @@ export const PORTABLE_SCHEMAS = {
   services: ["Service", "Recurrence", "Time", "Date", "Days of Week", "Start Date", "End Date", "Week Ordinal", "Weekday", "Combined Group", "Position", "Required Slots", "Archived", "WorshipSync Service ID", "WorshipSync Position ID"],
   schedules: ["Schedule", "Start Date", "End Date", "Service", "Date", "Start Time", "Team", "Position", "Slot", "Person", "Email", "Assignment Type", "Guest", "WorshipSync Schedule ID", "WorshipSync Occurrence ID", "WorshipSync Service ID", "WorshipSync Team ID", "WorshipSync Position ID", "WorshipSync Member ID"],
 };
-
 const listNames = (ids, byId) => (ids || []).map((id) => byId.get(id)?.name).filter(Boolean).join(LIST_DELIMITER);
 const archived = (record) => record?.archivedAt ? "true" : "false";
-const formatTime = (iso) => {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(11, 16);
-};
 const datePart = (iso) => String(iso || "").slice(0, 10);
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -34,7 +31,7 @@ export const portableServiceGroupLabel = (service, services) => {
   return descriptions.sort((a, b) => a.localeCompare(b)).join(LIST_DELIMITER);
 };
 
-export const buildPortableDatasets = ({ members = [], teams = [], positions = [], services = [], schedules = [] }) => {
+export const buildPortableDatasets = ({ members = [], teams = [], positions = [], services = [], schedules = [] }, { timeZone = "UTC" } = {}) => {
   const teamsById = new Map(teams.map((team) => [team.teamId, team]));
   const positionsById = new Map(positions.map((position) => [position.positionId, position]));
   const membersById = new Map(members.map((member) => [member.memberId, member]));
@@ -107,10 +104,10 @@ export const buildPortableDatasets = ({ members = [], teams = [], positions = []
             const guest = (schedule.guests || []).find((item) => item.guestId === id);
             const relatedServiceIds = occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
             const service = serviceById.get(occurrence.serviceId) || serviceById.get(relatedServiceIds[0]);
-            const startTime = service?.time || formatTime(occurrence.startsAt);
+            const startTime = service?.time || formatPortableTime(occurrence.startsAt, timeZone);
             slotRows.push([
               schedule.name, schedule.startDate, schedule.endDate, relatedServiceIds.map((serviceId) => serviceById.get(serviceId)?.name).filter(Boolean).join(LIST_DELIMITER),
-              datePart(occurrence.startsAt), startTime, team?.name, positionsById.get(positionId)?.name,
+              formatPortableDate(occurrence.startsAt, timeZone), startTime, team?.name, positionsById.get(positionId)?.name,
               slot + 1, guest?.name || [member?.firstName, member?.lastName].filter(Boolean).join(" "), guest?.email || member?.email,
               kind, guest ? "true" : "false", schedule.scheduleId, occurrence.occurrenceId, service?.serviceId || service?.id,
               schedule.teamId, positionId, guest ? "" : (member?.memberId || id),
@@ -121,7 +118,7 @@ export const buildPortableDatasets = ({ members = [], teams = [], positions = []
       if (!slotRows.length) {
         const relatedServiceIds = occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
         const service = serviceById.get(occurrence.serviceId) || serviceById.get(relatedServiceIds[0]);
-        scheduleRows.push([schedule.name, schedule.startDate, schedule.endDate, relatedServiceIds.map((id) => serviceById.get(id)?.name).filter(Boolean).join(LIST_DELIMITER), datePart(occurrence.startsAt), service?.time || formatTime(occurrence.startsAt), team?.name, "", "", "", "", "", "false", schedule.scheduleId, occurrence.occurrenceId, occurrence.serviceId, schedule.teamId, "", ""]);
+        scheduleRows.push([schedule.name, schedule.startDate, schedule.endDate, relatedServiceIds.map((id) => serviceById.get(id)?.name).filter(Boolean).join(LIST_DELIMITER), formatPortableDate(occurrence.startsAt, timeZone), service?.time || formatPortableTime(occurrence.startsAt, timeZone), team?.name, "", "", "", "", "", "false", schedule.scheduleId, occurrence.occurrenceId, occurrence.serviceId, schedule.teamId, "", ""]);
       } else scheduleRows.push(...slotRows);
     });
   });

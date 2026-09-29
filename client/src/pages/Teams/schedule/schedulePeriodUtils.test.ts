@@ -40,6 +40,73 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
+  it("prefers a generated period over an equivalent legacy schedule", () => {
+    const generated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+    });
+    const legacy = schedule({ scheduleId: "legacy" });
+    expect(findReusablePeriodSchedule({ schedules: [legacy, generated], ...target })).toEqual({
+      schedule: generated,
+      ambiguous: false,
+    });
+  });
+
+  it("reuses an old-key generated period ahead of an equivalent legacy schedule", () => {
+    const oldGenerated = schedule({
+      scheduleId: "generated_old-key",
+      source: "generated-period",
+      generatedPeriodKey: "old-key",
+    });
+    const legacy = schedule({ scheduleId: "legacy" });
+    expect(findReusablePeriodSchedule({ schedules: [legacy, oldGenerated], ...target })).toEqual({
+      schedule: oldGenerated,
+      ambiguous: false,
+    });
+  });
+
+  it("ignores custom exact-range schedules when generated is also present", () => {
+    const generated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+    });
+    const custom = schedule({ scheduleId: "custom", source: "custom" });
+    expect(findReusablePeriodSchedule({ schedules: [custom, generated], ...target })).toEqual({
+      schedule: generated,
+      ambiguous: false,
+    });
+  });
+
+  it("ignores generated records whose key and schedule id disagree", () => {
+    const invalidGenerated = schedule({
+      scheduleId: "generated_another-key",
+      source: "generated-period",
+      generatedPeriodKey: "period-key",
+    });
+    const legacy = schedule({ scheduleId: "legacy" });
+    expect(findReusablePeriodSchedule({ schedules: [invalidGenerated, legacy], ...target })).toEqual({
+      schedule: legacy,
+      ambiguous: false,
+    });
+  });
+
+  it("does not reuse a generated record whose stored period differs from the target", () => {
+    const otherPeriod = schedule({
+      scheduleId: "generated_other-period-key",
+      source: "generated-period",
+      generatedPeriodKey: "other-period-key",
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+    });
+    const legacy = schedule({ scheduleId: "legacy" });
+    expect(findReusablePeriodSchedule({ schedules: [otherPeriod, legacy], ...target })).toEqual({
+      schedule: legacy,
+      ambiguous: false,
+    });
+  });
+
   it("does not adopt a custom schedule for normal period navigation", () => {
     expect(findReusablePeriodSchedule({
       schedules: [schedule({ source: "custom" })],

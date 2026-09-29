@@ -39,6 +39,15 @@ const getFormOccurrenceIds = (form: TeamIntakeForm, services: TeamService[]) => 
   return new Set(occurrences.map(({ occurrenceId }) => occurrenceId));
 };
 
+const scopeCovers = (existingTeamIds: string[], proposedTeamIds: string[]) => {
+  // Empty means all teams. An all-teams form only fully covers another all-teams suggestion;
+  // a scoped suggestion is covered by either all teams or an existing superset scope.
+  if (proposedTeamIds.length === 0) return existingTeamIds.length === 0;
+  if (existingTeamIds.length === 0) return true;
+  const existingScope = new Set(existingTeamIds);
+  return proposedTeamIds.every((teamId) => existingScope.has(teamId));
+};
+
 export const getUpcomingAvailabilitySuggestion = ({
   services,
   forms,
@@ -52,12 +61,15 @@ export const getUpcomingAvailabilitySuggestion = ({
   const activeServices = services.filter((service) => !service.archivedAt);
   if (!activeServices.length) return null;
 
+  const template = safeTemplate(forms);
+  const proposedTeamIds = template?.teamIds || [];
+  const coveringForms = forms.filter((form) =>
+    form.active && !form.archivedAt && scopeCovers(form.teamIds || [], proposedTeamIds),
+  );
   const coveredOccurrenceIds = new Set<string>();
-  forms
-    .filter((form) => form.active && !form.archivedAt)
-    .forEach((form) => {
-      getFormOccurrenceIds(form, services).forEach((id) => coveredOccurrenceIds.add(id));
-    });
+  coveringForms.forEach((form) => {
+    getFormOccurrenceIds(form, services).forEach((id) => coveredOccurrenceIds.add(id));
+  });
 
   // Look ahead only far enough to find the next useful month; no records are created.
   for (let offset = 0; offset < 12; offset += 1) {
@@ -74,7 +86,6 @@ export const getUpcomingAvailabilitySuggestion = ({
     if (!uncovered.length) continue;
 
     const serviceIds = [...new Set(uncovered.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId]))];
-    const template = safeTemplate(forms);
     const serviceById = new Map(activeServices.map((service) => [service.serviceId, service]));
     const label = monthLabel(month);
     const draft: TeamIntakeFormPayload = {

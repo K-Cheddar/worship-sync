@@ -185,6 +185,8 @@ const ScheduleEditForm = ({
   // assignments. Surface what carries over so the date change isn't a surprise.
   const isCopy =
     !selectedSchedule && Object.keys(draft.assignments || {}).length > 0;
+  const isGeneratedPeriodSchedule =
+    selectedSchedule?.source === "generated-period";
   const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
   useTeamsUnsavedChanges(hasPendingChanges);
   const currentEditorKey = selectedSchedule?.scheduleId || draftKey;
@@ -310,12 +312,14 @@ const ScheduleEditForm = ({
     }
     onDraftFlush(draftKey, draftForSave);
     try {
-      const occurrences = generateScheduleOccurrences({
-        services,
-        serviceIds: draftForSave.serviceIds,
-        startDate: draftForSave.startDate || "",
-        endDate: draftForSave.endDate || "",
-      });
+      const occurrences = isGeneratedPeriodSchedule && selectedSchedule
+        ? selectedSchedule.occurrences || []
+        : generateScheduleOccurrences({
+          services,
+          serviceIds: draftForSave.serviceIds,
+          startDate: draftForSave.startDate || "",
+          endDate: draftForSave.endDate || "",
+        });
       // Creating a schedule (including a copy): remap the draft's assignments
       // onto the freshly generated occurrences by service + chronological index,
       // so a copied schedule keeps its people even when the date range shifts.
@@ -335,7 +339,15 @@ const ScheduleEditForm = ({
         });
       const payload = {
         ...draftForSave,
-        occurrences,
+        ...(isGeneratedPeriodSchedule && selectedSchedule
+          ? {
+            teamId: selectedSchedule.teamId,
+            startDate: selectedSchedule.startDate || "",
+            endDate: selectedSchedule.endDate || "",
+            serviceIds: selectedSchedule.serviceIds || [],
+            occurrences: selectedSchedule.occurrences,
+          }
+          : { occurrences }),
         assignments,
         ...(selectedSchedule?.microphoneAssignments
           ? {
@@ -398,6 +410,10 @@ const ScheduleEditForm = ({
         iemAssignments: payload.iemAssignments,
         additionalPositionSlots: payload.additionalPositionSlots,
         archivedAt: selectedSchedule?.archivedAt || null,
+        ...(selectedSchedule?.source ? { source: selectedSchedule.source } : {}),
+        ...(selectedSchedule?.generatedPeriodKey
+          ? { generatedPeriodKey: selectedSchedule.generatedPeriodKey }
+          : {}),
       };
       onScheduleSaved(optimisticSchedule);
       const response = selectedSchedule
@@ -512,7 +528,7 @@ const ScheduleEditForm = ({
                   : undefined
               }
             />
-            <div className={inputStackClassName}>
+            {!isGeneratedPeriodSchedule ? <div className={inputStackClassName}>
               <Select
                 label="Team"
                 value={draft.teamId}
@@ -542,7 +558,7 @@ const ScheduleEditForm = ({
                   to start scheduling.
                 </p>
               ) : null}
-            </div>
+            </div> : null}
             <TextArea
               className="lg:col-span-2"
               label="Description"
@@ -550,7 +566,7 @@ const ScheduleEditForm = ({
               textareaClassName="min-h-20"
               onChange={(description) => setDraft((current) => ({ ...current, description }))}
             />
-            <div className="grid gap-3 sm:grid-cols-2 lg:col-span-2">
+            {!isGeneratedPeriodSchedule ? <div className="grid gap-3 sm:grid-cols-2 lg:col-span-2">
               <DatePicker
                 label="Start date"
                 value={draft.startDate || ""}
@@ -571,8 +587,8 @@ const ScheduleEditForm = ({
                 min={draft.startDate || undefined}
                 onChange={(endDate) => setDraft((current) => ({ ...current, endDate }))}
               />
-            </div>
-            <div className="lg:col-span-2">
+            </div> : null}
+            {!isGeneratedPeriodSchedule ? <div className="lg:col-span-2">
               <MultiCheckboxGroup
                 label="Services"
                 options={serviceOptions}
@@ -588,7 +604,12 @@ const ScheduleEditForm = ({
                   move to replacement services when needed.
                 </p>
               ) : null}
-            </div>
+            </div> : null}
+            {isGeneratedPeriodSchedule ? (
+              <p className="text-sm text-gray-400 lg:col-span-2">
+                This schedule stays tied to its service period. Copy it to change the team, dates, or services.
+              </p>
+            ) : null}
           </div>
         </div>
         <FormActionButtons

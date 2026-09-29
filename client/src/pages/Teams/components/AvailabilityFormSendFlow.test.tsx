@@ -32,6 +32,13 @@ const member: TeamRosterMember = {
   teamMemberships: { worship: { teamId: "worship" } },
 };
 
+const secondMember: TeamRosterMember = {
+  ...member,
+  memberId: "member-2",
+  firstName: "Sam",
+  lastName: "Lee",
+};
+
 const batch: NotificationBatch = {
   batchId: "batch-1",
   churchId: "church-1",
@@ -75,4 +82,81 @@ it("prepares and reviews personalized messages without sending until explicit co
   await user.click(reviewSendButtons[0]);
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
+});
+
+it("invalidates a prepared review when a recipient is unchecked and prepares only the new selection", async () => {
+  const user = userEvent.setup();
+  const twoRecipientBatch: NotificationBatch = {
+    ...batch,
+    selectedMemberIds: [member.memberId, secondMember.memberId],
+    recipients: [batch.recipients[0], { ...batch.recipients[0], memberId: secondMember.memberId, memberName: "Sam Lee", intentId: "intent-2" }],
+    intentIds: ["intent-1", "intent-2"],
+    summary: { ...batch.summary, requested: 2, selected: 2, eligible: 2, awaitingDispatch: 2, totalSegments: 2, waiting: 2 },
+  };
+  jest.mocked(prepareAvailabilityNotificationBatch)
+    .mockResolvedValueOnce({ success: true, batch: twoRecipientBatch })
+    .mockResolvedValueOnce({ success: true, batch });
+  render(<AvailabilityFormSendFlow churchId="church-1" form={form} members={[member, secondMember]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{
+    [member.memberId]: { status: "enabled", eligible: true },
+    [secondMember.memberId]: { status: "enabled", eligible: true },
+  }} onClose={jest.fn()} />);
+
+  await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
+  await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
+  await user.click(screen.getByRole("button", { name: "Review 2 messages" }));
+  expect(await screen.findByRole("button", { name: "Send 2 messages" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
+  expect(screen.queryByRole("button", { name: "Send 2 messages" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+
+  await waitFor(() => expect(prepareAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church-1", expect.objectContaining({ memberIds: [member.memberId] })));
+});
+
+it("invalidates review after Select visible and Clear", async () => {
+  const user = userEvent.setup();
+  const twoRecipientBatch: NotificationBatch = {
+    ...batch,
+    selectedMemberIds: [member.memberId, secondMember.memberId],
+    recipients: [batch.recipients[0], { ...batch.recipients[0], memberId: secondMember.memberId, memberName: "Sam Lee", intentId: "intent-2" }],
+    intentIds: ["intent-1", "intent-2"],
+    summary: { ...batch.summary, requested: 2, selected: 2, eligible: 2, awaitingDispatch: 2, totalSegments: 2, waiting: 2 },
+  };
+  jest.mocked(prepareAvailabilityNotificationBatch)
+    .mockResolvedValueOnce({ success: true, batch: twoRecipientBatch })
+    .mockResolvedValueOnce({ success: true, batch });
+  render(<AvailabilityFormSendFlow churchId="church-1" form={form} members={[member, secondMember]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{
+    [member.memberId]: { status: "enabled", eligible: true },
+    [secondMember.memberId]: { status: "enabled", eligible: true },
+  }} onClose={jest.fn()} />);
+
+  await user.click(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ }));
+  await user.click(screen.getByRole("button", { name: "Review 2 messages" }));
+  expect(await screen.findByRole("button", { name: "Send 2 messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ }));
+  expect(screen.queryByRole("button", { name: "Send 2 messages" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Clear" }));
+  expect(screen.queryByRole("button", { name: "Send 2 messages" })).not.toBeInTheDocument();
+});
+
+it("clears a reviewed batch when the form context changes while mounted", async () => {
+  const user = userEvent.setup();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  const props = {
+    churchId: "church-1", members: [member], positions: [], teams: [], recipients: [],
+    eligibilityByMemberId: { [member.memberId]: { status: "enabled" as const, eligible: true } }, onClose: jest.fn(),
+  };
+  const view = render(<AvailabilityFormSendFlow {...props} form={form} />);
+  await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+
+  view.rerender(<AvailabilityFormSendFlow {...props} form={{ ...form, formId: "form-2", name: "November availability" }} />);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument());
+  expect(screen.getByRole("status")).toHaveTextContent("Form changed");
 });

@@ -21,16 +21,18 @@ export const findPortableMatch = ({ records, id, idField, label, includeArchived
 };
 
 export const classifyPortablePreviewAction = ({ issues = [], match = null, candidates = [] }) => {
-  if (issues.some((issue) => {
-    if (issue.code === "ambiguous_reference") return !issue.candidates?.length;
-    if (issue.code === "foreign_or_unknown_id") return false;
-    return true;
-  })) {
-    return "invalid";
-  }
-  if (candidates.length > 1 || issues.some((issue) => ["ambiguous_reference", "foreign_or_unknown_id"].includes(issue.code))) {
-    return "review";
-  }
+  const blockingCodes = new Set([
+    "required", "column_count_mismatch", "unclosed_quote", "missing_header",
+    "characters_after_quote", "quote_in_unquoted_value", "blank_header", "duplicate_header",
+    "missing_reference", "invalid_value", "archived_match", "unresolved_reference",
+    "archive_import_unsupported",
+  ]);
+  if (issues.some((issue) => blockingCodes.has(issue.code)
+    || (issue.code === "ambiguous_reference" && !issue.candidates?.length)
+    || (issue.code === "foreign_or_unknown_reference_id" && !issue.candidates?.length))) return "invalid";
+  if (candidates.length > 1 || issues.some((issue) => [
+    "ambiguous_reference", "foreign_or_unknown_record_id", "foreign_or_unknown_reference_id",
+  ].includes(issue.code))) return "review";
   return match ? "update" : "create";
 };
 

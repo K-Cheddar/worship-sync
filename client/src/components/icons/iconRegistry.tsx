@@ -42,6 +42,7 @@ const tablerExportName = (name: string) =>
   `Icon${name.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join("")}`;
 
 let tablerPromise: Promise<Record<string, unknown>> | null = null;
+const resolvedTablerIcons = new Map<string, PositionGlyph | null>();
 const loadTablerIcons = () => {
   if (!tablerPromise) {
     const request = import("@tabler/icons-react").then(
@@ -57,14 +58,22 @@ const loadTablerIcons = () => {
 };
 
 export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: string }) => {
-  const [Icon, setIcon] = useState<PositionGlyph | null>(null);
+  const [resolved, setResolved] = useState<{ name: string; icon: PositionGlyph | null } | null>(null);
   useEffect(() => {
     let active = true;
     const load = () => {
+      if (resolvedTablerIcons.has(name)) {
+        if (active) setResolved({ name, icon: resolvedTablerIcons.get(name) ?? null });
+        return;
+      }
       loadTablerIcons().then((icons) => {
         const candidate = icons[tablerExportName(name)];
-        if (active) setIcon(isIconComponent(candidate) ? () => candidate : null);
-      }).catch(() => { if (active) setIcon(null); });
+        const icon = isIconComponent(candidate) ? candidate : null;
+        resolvedTablerIcons.set(name, icon);
+        if (active) setResolved({ name, icon });
+      }).catch(() => {
+        // Leave module-load failures uncached so online or a later mount can retry.
+      });
     };
     load();
     window.addEventListener("online", load);
@@ -73,18 +82,22 @@ export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: str
       window.removeEventListener("online", load);
     };
   }, [name]);
+  let Icon: PositionGlyph | null = null;
+  if (resolvedTablerIcons.has(name)) {
+    Icon = resolvedTablerIcons.get(name) ?? null;
+  } else if (resolved?.name === name) {
+    Icon = resolved.icon;
+  }
   return Icon ? <Icon {...props} /> : null;
 };
 
-/** Resolve old Lucide strings and structured built-in refs through one renderer. */
+/** Resolve only icon sources available synchronously; Tabler uses TablerGlyph. */
 export const resolveWorshipSyncIcon = (
   value?: PositionIcon | null,
 ): PositionGlyph | null => {
   const ref = normalizePositionIcon(value);
   if (!ref || ref.source === "custom") return null;
-  if (ref.source === "tabler") {
-    return (props) => <TablerGlyph {...props} name={ref.name} />;
-  }
+  if (ref.source === "tabler") return null;
   if (ref.source === "worshipsync") return worshipSyncProductionIcons[ref.name] || null;
   const exportName = ref.name;
   const icon = lucideExports[exportName];

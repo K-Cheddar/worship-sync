@@ -43,6 +43,7 @@ describe("ScheduleEditForm", () => {
       scheduleId: "schedule-july",
       churchId: "church-1",
       name: "July",
+      source: "custom",
       teamId: "team-main",
       startDate: "2026-07-01",
       endDate: "2026-07-31",
@@ -122,6 +123,11 @@ describe("ScheduleEditForm", () => {
       </MemoryRouter>,
     );
 
+    expect(screen.getByLabelText(/Team/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Start date/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/End date/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Services" })).toBeInTheDocument();
+
     const nameInput = screen.getByRole("textbox", { name: /^Name:?$/i });
     await user.clear(nameInput);
     await user.type(nameInput, "July updated");
@@ -140,6 +146,96 @@ describe("ScheduleEditForm", () => {
     await waitFor(() => expect(onScheduleSaved).toHaveBeenCalledTimes(2));
     expect(onScheduleSaved).toHaveBeenNthCalledWith(2, authoritativeSchedule);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("limits generated-period editing to metadata and submits its stored identity", async () => {
+    const user = userEvent.setup();
+    const occurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
+    const schedule: TeamSchedule = {
+      scheduleId: "generated_period-key",
+      churchId: "church-1",
+      name: "July",
+      description: "Before",
+      teamId: "team-main",
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["service-sunday"],
+      source: "generated-period",
+      generatedPeriodKey: "period-key",
+      occurrences: [{
+        occurrenceId,
+        serviceId: "service-sunday",
+        name: "Sunday",
+        startsAt: "2026-07-05T10:00:00.000Z",
+      }],
+      assignments: {
+        [occurrenceId]: {
+          "position-keys::0": { primaryMemberId: "member-1" },
+        },
+      },
+    };
+    mockUpdateTeamSchedule.mockResolvedValue({ success: true, schedule: { ...schedule, description: "Updated" } });
+    const team: TeamRecord = {
+      teamId: "team-main",
+      churchId: "church-1",
+      name: "Main Team",
+      memberIds: [],
+    };
+    const service: TeamService = {
+      id: "service-sunday",
+      serviceId: "service-sunday",
+      churchId: "church-1",
+      name: "Sunday",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
+    };
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              draftKey={schedule.scheduleId}
+              selectedSchedule={schedule}
+              defaultTeamId={team.teamId}
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: schedule.startDate!, endDate: schedule.endDate! }}
+              services={[service]}
+              activeTeams={[team]}
+              schedules={[schedule]}
+              seedSchedules={[schedule]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={jest.fn()}
+              onScheduleRemoved={jest.fn()}
+              setSelectedScheduleId={jest.fn()}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByLabelText(/Team/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Start date/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/End date/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Services" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Copy it to change the team, dates, or services/i)).toBeInTheDocument();
+    await user.clear(screen.getByRole("textbox", { name: /^Description:?$/i }));
+    await user.type(screen.getByRole("textbox", { name: /^Description:?$/i }), "Updated");
+    await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+
+    await waitFor(() => expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamSchedule.mock.calls[0][2]).toEqual(expect.objectContaining({
+      teamId: schedule.teamId,
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+      serviceIds: schedule.serviceIds,
+      occurrences: schedule.occurrences,
+    }));
   });
 
   it("fills the name from dates on create and clears the new draft", async () => {

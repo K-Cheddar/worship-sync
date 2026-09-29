@@ -1055,6 +1055,24 @@ export const createNotificationIntentHandlers = ({
       if (!attemptByIntentId.has(attempt.notificationIntentId)) attemptByIntentId.set(attempt.notificationIntentId, attempt);
     }
     const recipientById = new Map(recipients.map((recipient) => [recipient.recipientId || recipient.id, recipient]));
+    const selectedMemberIds = new Set(batch.selectedMemberIds || []);
+    const intakeRecipients = recipients
+      .filter((recipient) => selectedMemberIds.has(recipient.memberId))
+      .map((recipient) => {
+        const {
+          recipientTokenNonce,
+          recipientTokenHash,
+          recipientTokenCiphertext,
+          createdByUid,
+          linkCopiedByUid,
+          ...clientRecipient
+        } = recipient;
+        return {
+          ...clientRecipient,
+          ...(createdByUid ? { createdBy: createdByUid } : {}),
+          ...(linkCopiedByUid ? { linkCopiedBy: linkCopiedByUid } : {}),
+        };
+      });
     const formatted = rows.map((row) => {
       const intent = intentById.get(row.intentId);
       const attempt = intent ? attemptByIntentId.get(intent.intentId || intent.id) : null;
@@ -1105,6 +1123,7 @@ export const createNotificationIntentHandlers = ({
       selectedMemberIds: batch.selectedMemberIds || [],
       intentIds: batch.intentIds || [],
       recipients: formatted,
+      intakeRecipients,
       approvalVersion: reviewVersion,
       createdAt: batch.createdAt,
       updatedAt: batch.updatedAt,

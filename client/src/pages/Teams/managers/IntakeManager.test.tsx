@@ -1,5 +1,6 @@
 import { type ContextType } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import IntakeManager from "./IntakeManager";
@@ -12,7 +13,14 @@ import type {
   TeamRosterMember,
   TeamService,
 } from "../../../api/authTypes";
-import { createTeamIntakeForm, updateTeamIntakeForm } from "../../../api/auth";
+import {
+  createTeamIntakeForm,
+  dispatchAvailabilityNotificationBatch,
+  getNotificationIntents,
+  getTeamIntakeSmsAttempts,
+  prepareAvailabilityNotificationBatch,
+  updateTeamIntakeForm,
+} from "../../../api/auth";
 
 const mockGetRecipientLink = jest.fn();
 const mockPrepareSms = jest.fn();
@@ -28,6 +36,8 @@ jest.mock("../../../api/auth", () => ({
     attempts: [],
   }),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [] }),
+  prepareAvailabilityNotificationBatch: jest.fn(),
+  dispatchAvailabilityNotificationBatch: jest.fn(),
   prepareTeamIntakeRecipientSms: (...args: unknown[]) => mockPrepareSms(...args),
   sendNotificationIntent: (...args: unknown[]) => mockSendIntent(...args),
   getTeamIntakeRecipientLink: (...args: unknown[]) => mockGetRecipientLink(...args),
@@ -236,6 +246,80 @@ test("an existing form view exposes Send form", async () => {
   expect(screen.getByRole("heading", { name: "Send form" })).toBeInTheDocument();
   expect(updateTeamIntakeForm).not.toHaveBeenCalled();
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("a sent batch updates recipients and delivery counts in Forms without reloading", async () => {
+  const user = userEvent.setup();
+  const deliveredAttempt = {
+    attemptId: "attempt-batch-1", churchId: "church-1", recipientType: "notification_intent" as const,
+    recipientId: recipient.recipientId, memberId: member.memberId, formId: form.formId,
+    provider: "twilio", purpose: "availability_request" as const, status: "delivered" as const,
+    createdAt: "2026-09-29T12:00:00.000Z", updatedAt: "2026-09-29T12:00:00.000Z",
+  };
+  const invitedRecipient = { ...recipient };
+  const batch = {
+    batchId: "batch-1", churchId: "church-1", formId: form.formId, intentType: "availability_request" as const,
+    reminderRound: 0, status: "prepared" as const, selectedMemberIds: [member.memberId],
+    recipients: [{ memberId: member.memberId, memberName: "Rae Kim", recipientId: invitedRecipient.recipientId, eligible: true, status: "ready" as const, segmentCount: 1 }],
+    intakeRecipients: [invitedRecipient], intentIds: ["intent-batch-1"], approvalVersion: "approval-v1",
+    summary: { requested: 1, selected: 1, eligible: 1, awaitingDispatch: 1, alreadySent: 0, excluded: 0, totalSegments: 1, sent: 0, delivered: 0, failed: 0, uncertain: 0, responded: 0, waiting: 1, optedOut: 0 },
+  };
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1, delivered: 1 } } });
+  let resolveStaleAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  let resolveStaleIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  jest.mocked(getTeamIntakeSmsAttempts)
+    .mockResolvedValueOnce({ success: true, attempts: [] })
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleAttempts = resolve; }))
+    .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
+  const notificationIntent = {
+    intentId: "intent-batch-1", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
+    sourceId: invitedRecipient.recipientId, sourceVersion: "", memberId: member.memberId, formId: form.formId,
+    recipientId: invitedRecipient.recipientId, occurrenceId: "", channel: "sms", status: "sent", attemptStatus: "delivered",
+    createdAt: "2026-09-29T12:00:00.000Z", updatedAt: "2026-09-29T12:00:00.000Z",
+  } as const;
+  jest.mocked(getNotificationIntents)
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleIntents = resolve; }))
+    .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });
+
+  const StatefulManager = () => {
+    const [recipients, setRecipients] = useState([recipient]);
+    return <MemoryRouter>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", role: "admin" } as ContextType<typeof GlobalInfoContext>}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <IntakeManager
+            forms={[form]} submissions={[]} intakeRecipients={recipients} services={[]} members={[member]} positions={[]}
+            teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [member.memberId] }]}
+            canEdit onFormSaved={jest.fn()} onSubmissionSaved={jest.fn()} onMemberSaved={jest.fn()} onTeamSaved={jest.fn()}
+            onRecipientSaved={(nextRecipient) => setRecipients((current) => [...current.filter((item) => item.recipientId !== nextRecipient.recipientId), nextRecipient])}
+            smsEligibilityByMemberId={{ [member.memberId]: { status: "enabled", eligible: true } }}
+          />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>;
+  };
+  render(<StatefulManager />);
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  await user.click(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  await screen.findByRole("button", { name: "Send 1 message" });
+  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
+  const counts = screen.getByLabelText("Intake message and response counts");
+  await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
+  resolveStaleAttempts({ success: true, attempts: [] });
+  resolveStaleIntents({ success: true, intents: [{ ...notificationIntent, status: "ready", attemptStatus: undefined }], nextCursor: "", limit: 50 });
+  await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
+  await user.click(screen.getByRole("button", { name: "Close" }));
+
+  expect(within(counts).getAllByText("1")).toHaveLength(3);
+  expect(screen.getAllByText("Waiting").length).toBeGreaterThan(1);
+  expect(screen.queryByText("Not requested")).not.toBeInTheDocument();
+  expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId });
+  expect(getTeamIntakeSmsAttempts).toHaveBeenCalledWith("church-1", form.formId);
 });
 
 test("successful form edits return to the form view with Send form available", async () => {

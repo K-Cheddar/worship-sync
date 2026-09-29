@@ -84,27 +84,39 @@ export const findReusablePeriodSchedule = ({
     const sortedRight = [...right].sort();
     return sortedLeft.every((value, index) => value === sortedRight[index]);
   };
-  const candidates = schedules.filter((schedule) => {
+  const samePeriod = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || schedule.startDate !== startDate ||
       schedule.endDate !== endDate
     ) return false;
-    if (schedule.source === "custom") return false;
-    if (schedule.source === "generated-period") {
-      return Boolean(
-        schedule.generatedPeriodKey &&
-        schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
-      );
-    }
-    if (schedule.source != null) return false;
-    return sameSet(schedule.serviceIds, serviceIds) && sameSet(
+    return true;
+  });
+  // Generated records outrank legacy records. The client cannot synchronously
+  // hash the current identity, so validate the stored key/ID pair and the
+  // church/team/date identity; this also admits records written with the old
+  // key that omitted churchId. Multiple generated matches are corrupt/ambiguous.
+  const generated = samePeriod.filter((schedule) =>
+    schedule.source === "generated-period" &&
+    Boolean(schedule.generatedPeriodKey) &&
+    schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
+  );
+  if (generated.length > 0) {
+    return {
+      schedule: generated.length === 1 ? generated[0] : null,
+      ambiguous: generated.length > 1,
+    };
+  }
+  const legacy = samePeriod.filter((schedule) =>
+    schedule.source == null &&
+    sameSet(schedule.serviceIds, serviceIds) &&
+    sameSet(
       schedule.occurrences?.map((occurrence) => occurrence.occurrenceId),
       occurrences.map((occurrence) => occurrence.occurrenceId),
-    );
-  });
+    ),
+  );
   return {
-    schedule: candidates.length === 1 ? candidates[0] : null,
-    ambiguous: candidates.length > 1,
+    schedule: legacy.length === 1 ? legacy[0] : null,
+    ambiguous: legacy.length > 1,
   };
 };

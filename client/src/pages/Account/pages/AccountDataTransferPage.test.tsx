@@ -54,24 +54,53 @@ describe("AccountDataTransferPage import flow", () => {
     expect(commitPortableImport).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Import 1 row" }));
-    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "create", resolutions: {} })]));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "create", resolutions: [] })]));
     expect(await screen.findByRole("status")).toHaveTextContent("Imported 1 · Updated 0 · Failed 0 · Skipped 0.");
   });
 
   it("lets an admin resolve an ambiguous relationship before import", async () => {
     const user = userEvent.setup();
     jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Positions"], rowCount: 1, columnCount: 3, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", positions: "Positions" }, sampleRows: [] });
-    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", positions: "Keys" }, action: "review", matchedId: null, candidates: [], issues: [{ field: "positions", code: "ambiguous_reference", message: "Choose which position to use.", candidates: [{ id: "position-a", name: "Keys" }, { id: "position-b", name: "Keys" }] }] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", positions: "Keys" }, action: "review", matchedId: null, candidates: [], issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Keys", code: "ambiguous_reference", message: "Choose which position to use.", candidates: [{ id: "position-a", name: "Keys" }, { id: "position-b", name: "Keys" }] }] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
     jest.mocked(commitPortableImport).mockResolvedValue({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0 } });
     const file = new File(["First Name,Last Name,Positions\nJane,Doe,Keys"], "people.csv", { type: "text/csv" });
     Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Positions\nJane,Doe,Keys" });
     render(<AccountDataTransferPage />);
     fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review import" }));
-    await user.selectOptions(await screen.findByLabelText("Resolve Positions for row 2"), "position-b");
+    await user.selectOptions(await screen.findByLabelText("Resolve Position: Keys for row 2"), "position-b");
     await user.selectOptions(screen.getByLabelText("Action for row 2"), "create");
     await user.click(screen.getByRole("button", { name: "Import 1 row" }));
-    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: { positions: "position-b" } })]));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: [{ field: "positions", referenceIndex: 0, selectedId: "position-b" }] })]));
+  });
+
+  it("keeps same-field relationship choices independent and sends both", async () => {
+    const user = userEvent.setup();
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Teams", "Positions"], rowCount: 1, columnCount: 4, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, sampleRows: [] });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "Praise | Media", positions: "Vocalist | Keys" }, action: "review", matchedId: null, candidates: [], issues: [
+      { field: "teams", referenceIndex: 0, referenceValue: "Praise", code: "ambiguous_reference", message: "Choose a team.", candidates: [{ id: "praise-a", name: "Praise" }, { id: "praise-b", name: "Praise" }] },
+      { field: "teams", referenceIndex: 1, referenceValue: "Media", code: "ambiguous_reference", message: "Choose a team.", candidates: [{ id: "media-a", name: "Media" }, { id: "media-b", name: "Media" }] },
+      { field: "positions", referenceIndex: 0, referenceValue: "Vocalist", code: "ambiguous_reference", message: "Choose a position.", candidates: [{ id: "vocal-a", name: "Vocalist" }, { id: "vocal-b", name: "Vocalist" }] },
+      { field: "positions", referenceIndex: 1, referenceValue: "Keys", code: "ambiguous_reference", message: "Choose a position.", candidates: [{ id: "keys-a", name: "Keys" }, { id: "keys-b", name: "Keys" }] },
+    ] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
+    jest.mocked(commitPortableImport).mockResolvedValue({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0 } });
+    const file = new File(["First Name,Last Name,Teams,Positions\nJane,Doe,Praise | Media,Vocalist | Keys"], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Teams,Positions\nJane,Doe,Praise | Media,Vocalist | Keys" });
+    render(<AccountDataTransferPage />);
+    fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review import" }));
+    await user.selectOptions(await screen.findByLabelText("Resolve Team: Praise for row 2"), "praise-a");
+    await user.selectOptions(await screen.findByLabelText("Resolve Team: Media for row 2"), "media-b");
+    await user.selectOptions(await screen.findByLabelText("Resolve Position: Vocalist for row 2"), "vocal-b");
+    await user.selectOptions(await screen.findByLabelText("Resolve Position: Keys for row 2"), "keys-a");
+    await user.selectOptions(screen.getByLabelText("Action for row 2"), "create");
+    await user.click(screen.getByRole("button", { name: "Import 1 row" }));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: [
+      { field: "teams", referenceIndex: 0, selectedId: "praise-a" },
+      { field: "teams", referenceIndex: 1, selectedId: "media-b" },
+      { field: "positions", referenceIndex: 0, selectedId: "vocal-b" },
+      { field: "positions", referenceIndex: 1, selectedId: "keys-a" },
+    ] })]));
   });
 
   it("keeps failed rows and their messages after a partial import", async () => {

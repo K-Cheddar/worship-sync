@@ -409,6 +409,8 @@ describe("buildScheduleCopyDraft", () => {
     startDate: "2026-01-01",
     endDate: "2026-01-31",
     serviceIds: ["s1"],
+    source: "generated-period",
+    generatedPeriodKey: "church-team-january-key",
     occurrences: [occurrence("s1", "2026-01-04T10:00:00.000Z")],
     assignments: {
       "s1@2026-01-04T10:00:00.000Z": { keys: cell("m1") },
@@ -429,5 +431,7 @@ describe("buildScheduleCopyDraft", () => {
     expect(draft.endDate).toBe("2026-01-31");
     expect(draft.assignments).toEqual(source.assignments);
     expect(draft.guests).toEqual(source.guests);
+    expect(draft).not.toHaveProperty("source");
+    expect(draft).not.toHaveProperty("generatedPeriodKey");
   });
 });

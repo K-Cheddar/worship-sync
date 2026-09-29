@@ -132,6 +132,68 @@ test("team and name filters compose, and selection survives filter changes", asy
   expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
 });
 
+test("changing recipients closes confirmation and invalidates the reviewed batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
+  expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
+});
+
+test("changing the intake form invalidates the active batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  mockUseTeamsPage.mockReturnValue({
+    churchId: "church_1", canEditTeams: true,
+    pageData: {
+      intakeForms: [
+        { formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true },
+        { formId: "form_2", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", active: true },
+      ],
+      schedules: [], teams: [], positions: [], intakeRecipients: [],
+      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
+      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
+    },
+  } as unknown as ReturnType<typeof useTeamsPage>);
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /November availability/ }));
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Form changed");
+});
+
+test("changing the message type invalidates the active batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("combobox", { name: /Message/ }));
+  await user.click(screen.getByRole("option", { name: "Remind nonresponders" }));
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Message type changed");
+});
+
 test("select all is indeterminate for some visible selections and prepares only eligible selected volunteers", async () => {
   const user = userEvent.setup();
   mockUseTeamsPage.mockReturnValue({

@@ -54,6 +54,71 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(result).toBeNull();
   });
 
+  it("does not let a scoped form suppress an all-teams suggestion", () => {
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [{ ...service, endDateISO: "2026-10-31" }],
+      forms: [
+        makeForm({ formId: "future-template", startDate: "2026-11-01", endDate: "2026-11-30", teamIds: [] }),
+        makeForm({ formId: "worship-only", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: ["worship"] }),
+      ],
+      now: new Date(2026, 8, 29, 12),
+    });
+
+    expect(result?.draft.teamIds).toEqual([]);
+    expect(result?.occurrenceCount).toBeGreaterThan(0);
+  });
+
+  it("allows an all-teams form to cover a scoped suggestion", () => {
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [{ ...service, endDateISO: "2026-10-31" }],
+      forms: [
+        makeForm({ formId: "template", startDate: "2026-11-01", endDate: "2026-11-30", teamIds: ["worship"] }),
+        makeForm({ formId: "covering", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: [] }),
+      ],
+      now: new Date(2026, 8, 29, 12),
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("does not treat partial scoped coverage as full coverage", () => {
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [{ ...service, endDateISO: "2026-10-31" }],
+      forms: [
+        makeForm({ formId: "template", startDate: "2026-11-01", endDate: "2026-11-30", teamIds: ["worship", "media"] }),
+        makeForm({ formId: "covering", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: ["worship"] }),
+      ],
+      now: new Date(2026, 8, 29, 12),
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship", "media"]);
+    expect(result?.occurrenceCount).toBeGreaterThan(0);
+  });
+
+  it("suppresses duplicates only for active equivalent-scope forms", () => {
+    const services = [{ ...service, endDateISO: "2026-10-31" }];
+    const template = makeForm({ formId: "template", startDate: "2026-08-01", endDate: "2026-08-31", teamIds: ["worship"] });
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [template, makeForm({ formId: "covering", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: ["worship"] })],
+      now: new Date(2026, 8, 29, 12),
+    });
+    const inactiveResult = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [template, makeForm({ formId: "inactive", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: ["worship"], active: false })],
+      now: new Date(2026, 8, 29, 12),
+    });
+    const archivedResult = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [template, makeForm({ formId: "archived", startDate: "2026-09-29", endDate: "2026-10-31", teamIds: ["worship"], archivedAt: "2026-09-01" })],
+      now: new Date(2026, 8, 29, 12),
+    });
+
+    expect(result).toBeNull();
+    expect(inactiveResult?.occurrenceCount).toBeGreaterThan(0);
+    expect(archivedResult?.occurrenceCount).toBeGreaterThan(0);
+  });
+
   it("reuses safe prior wording and field settings without copying form state", () => {
     const prior = makeForm({
       name: "Old form",

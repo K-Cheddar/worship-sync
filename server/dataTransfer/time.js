@@ -1,5 +1,35 @@
 const formatterCache = new Map();
 
+export const isValidPortableTimeZone = (timeZone) => {
+  if (typeof timeZone !== "string" || !timeZone.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const calendarPartsAt = (instant, timeZone) => Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+  timeZone,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+}).formatToParts(instant).map(({ type, value }) => [type, value]));
+
+export const formatPortableDate = (instant, timeZone = "UTC") => {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime()) || !isValidPortableTimeZone(timeZone)) return "";
+  const parts = calendarPartsAt(date, timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+export const formatPortableTime = (instant, timeZone = "UTC") => {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime()) || !isValidPortableTimeZone(timeZone)) return "";
+  const parts = calendarPartsAt(date, timeZone);
+  return `${parts.hour}:${parts.minute}`;
+};
+
 const partsAt = (instant, timeZone) => {
   if (!formatterCache.has(timeZone)) formatterCache.set(timeZone, new Intl.DateTimeFormat("en-US", {
     timeZone,

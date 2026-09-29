@@ -54,6 +54,7 @@ describe("WorshipSync position icons", () => {
   it("resolves legacy Lucide strings and structured Lucide refs", () => {
     expect(resolveWorshipSyncIcon("MicVocal")).not.toBeNull();
     expect(resolveWorshipSyncIcon({ source: "lucide", name: "Camera" })).not.toBeNull();
+    expect(resolveWorshipSyncIcon({ source: "tabler", name: "camera" })).toBeNull();
   });
 
   it("renders a legacy Lucide string icon", () => {
@@ -61,19 +62,26 @@ describe("WorshipSync position icons", () => {
     expect(screen.getByTestId("legacy-icon")).toBeInTheDocument();
   });
 
-  it("renders Tabler references and safely ignores unknown references", async () => {
-    expect(resolveWorshipSyncIcon({ source: "tabler", name: "camera" })).not.toBeNull();
+  it("renders Tabler through the canonical renderer, keeps it stable, and ignores unknown names", async () => {
     const icon = { source: "tabler", name: "camera" } as const;
     const { rerender } = render(<WorshipSyncIcon icon={icon} />);
     expect(await screen.findByTestId("tabler-camera")).toBeInTheDocument();
     rerender(<WorshipSyncIcon icon={icon} />);
     expect(screen.getByTestId("tabler-camera")).toBeInTheDocument();
 
+    rerender(<WorshipSyncIcon icon={{ source: "tabler", name: "microphone" }} />);
+    expect(screen.queryByTestId("tabler-camera")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("tabler-microphone")).toBeInTheDocument();
+
+    rerender(<WorshipSyncIcon icon={icon} />);
+    expect(screen.getByTestId("tabler-camera")).toBeInTheDocument();
+    expect(screen.queryByTestId("tabler-microphone")).not.toBeInTheDocument();
+
     rerender(<WorshipSyncIcon icon={{ source: "custom", id: "church-icon" }} />);
     expect(screen.queryByTestId("tabler-camera")).not.toBeInTheDocument();
-    expect(resolveWorshipSyncIcon({ source: "tabler", name: "not-a-real-icon" })).not.toBeNull();
     rerender(<WorshipSyncIcon icon={{ source: "tabler", name: "not-a-real-icon" }} />);
     expect(screen.queryByTestId("tabler-camera")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tabler-microphone")).not.toBeInTheDocument();
     expect(resolveWorshipSyncIcon({ source: "lucide", name: "NotARealIcon" })).toBeNull();
     expect(resolveWorshipSyncIcon({ source: "invalid" } as never)).toBeNull();
   });

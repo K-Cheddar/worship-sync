@@ -55,6 +55,7 @@ const TeamsMessagesPage = () => {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const didRestoreInitialBatchRef = useRef(false);
 
   const forms = useMemo(() => pageData.intakeForms.filter((form) => !form.archivedAt), [pageData.intakeForms]);
   const members = useMemo(
@@ -87,6 +88,7 @@ const TeamsMessagesPage = () => {
   const allVisibleSelected = visibleEligibleIds.length > 0 && selectedVisibleCount === visibleEligibleIds.length;
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
   const selectedEligibleIds = allRecipientRows.filter(({ member, eligible }) => eligible && selectedMemberIds.includes(member.memberId)).map(({ member }) => member.memberId);
+  const reviewedBatch = activeBatch?.churchId === churchId && activeBatch.formId === formId && activeBatch.intentType === intentType ? activeBatch : null;
 
   useEffect(() => {
     let active = true;
@@ -99,14 +101,22 @@ const TeamsMessagesPage = () => {
       .then((response) => { if (active) { setIntents(response.intents); setNextCursor(response.nextCursor || ""); } })
       .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : "Could not load message history."); })
       .finally(() => { if (active) setLoading(false); });
-    const savedBatchId = window.localStorage.getItem(`worshipsync:last-notification-batch:${churchId}:${formId}`);
+    const savedBatchId = !didRestoreInitialBatchRef.current
+      ? window.localStorage.getItem(`worshipsync:last-notification-batch:${churchId}:${formId}`)
+      : null;
     if (savedBatchId) {
       getAvailabilityNotificationBatch(churchId, savedBatchId)
-        .then((response) => { if (active) setActiveBatch(response.batch); })
+        .then((response) => {
+          if (active && response.batch.formId === formId && response.batch.intentType === intentType) {
+            setSelectedMemberIds(response.batch.selectedMemberIds);
+            setActiveBatch(response.batch);
+          }
+        })
         .catch(() => { if (active) window.localStorage.removeItem(`worshipsync:last-notification-batch:${churchId}:${formId}`); });
     }
+    didRestoreInitialBatchRef.current = true;
     return () => { active = false; };
-  }, [churchId, canEditTeams, formId]);
+  }, [churchId, canEditTeams, formId, intentType]);
 
   const refreshIntents = async () => {
     const requestedChurch = churchId;
@@ -132,14 +142,28 @@ const TeamsMessagesPage = () => {
     }
   };
 
+  const invalidateReview = (message = "Review details changed. Review the messages again before sending.") => {
+    const hadReview = Boolean(activeBatch || confirmOpen);
+    setActiveBatch(null);
+    setConfirmOpen(false);
+    setNotice(hadReview ? message : "");
+  };
+
+  const updateSelectedMemberIds = (nextIds: string[]) => {
+    const next = [...new Set(nextIds)];
+    if (next.length === selectedMemberIds.length && next.every((id) => selectedMemberIds.includes(id))) return;
+    setSelectedMemberIds(next);
+    invalidateReview("Recipients changed. Review the messages again before sending.");
+  };
+
   const toggleMember = (memberId: string, checked: boolean) => {
-    setSelectedMemberIds((current) => checked ? [...new Set([...current, memberId])] : current.filter((id) => id !== memberId));
+    updateSelectedMemberIds(checked ? [...selectedMemberIds, memberId] : selectedMemberIds.filter((id) => id !== memberId));
   };
 
   const toggleVisibleMembers = (checked: boolean) => {
-    setSelectedMemberIds((current) => checked
-      ? [...new Set([...current, ...visibleEligibleIds])]
-      : current.filter((id) => !visibleEligibleIds.includes(id)));
+    updateSelectedMemberIds(checked
+      ? [...selectedMemberIds, ...visibleEligibleIds]
+      : selectedMemberIds.filter((id) => !visibleEligibleIds.includes(id)));
   };
 
   const makePreview = async () => {
@@ -149,13 +173,16 @@ const TeamsMessagesPage = () => {
     setNotice("");
     setLoading(true);
     try {
+      const reviewedFormId = formId;
+      const reviewedIntentType = intentType;
+      const reviewedMemberIds = [...selectedEligibleIds];
       const batch = await prepareAvailabilityBatchForMembers({
         churchId: ownerChurch,
-        formId,
-        intentType,
-        memberIds: selectedEligibleIds,
+        formId: reviewedFormId,
+        intentType: reviewedIntentType,
+        memberIds: reviewedMemberIds,
       });
-      if (churchIdRef.current !== ownerChurch) return;
+      if (churchIdRef.current !== ownerChurch || formId !== reviewedFormId || intentType !== reviewedIntentType || JSON.stringify(selectedEligibleIds) !== JSON.stringify(reviewedMemberIds)) return;
       setActiveBatch(batch);
       await refreshIntents();
       setNotice("Batch prepared. Review recipients and message details; nothing has been sent.");
@@ -167,7 +194,7 @@ const TeamsMessagesPage = () => {
   };
 
   const confirmBatch = async () => {
-    if (!activeBatch || sending || loading) return;
+    if (!activeBatch || activeBatch.churchId !== churchId || activeBatch.formId !== formId || activeBatch.intentType !== intentType || sending || loading) return;
     const ownerChurch = churchId;
     setConfirmOpen(false);
     setSending(true);
@@ -175,7 +202,7 @@ const TeamsMessagesPage = () => {
     setNotice("Sending the selected batch…");
     try {
       const response = await dispatchReviewedAvailabilityBatch(ownerChurch, activeBatch);
-      if (churchIdRef.current !== ownerChurch) return;
+      if (churchIdRef.current !== ownerChurch || formId !== activeBatch.formId || intentType !== activeBatch.intentType) return;
       setActiveBatch(response.batch);
       await refreshIntents();
       setNotice(`Batch updated: ${response.batch.summary.sent} accepted by provider, ${response.batch.summary.failed} failed, ${response.batch.summary.uncertain} uncertain.`);
@@ -234,11 +261,21 @@ const TeamsMessagesPage = () => {
           <p className="mt-1 text-sm text-gray-400">Requests use the selected intake form and each volunteer’s existing secure response link.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Select label="Message" value={intentType} onChange={(value) => setIntentType(value as typeof intentType)} options={[
+          <Select label="Message" value={intentType} disabled={loading || sending} onChange={(value) => {
+            const nextType = value as typeof intentType;
+            if (nextType === intentType) return;
+            setIntentType(nextType);
+            invalidateReview("Message type changed. Review the messages again before sending.");
+          }} options={[
             { value: "availability_request", label: "Request form responses" },
             { value: "availability_reminder", label: "Remind nonresponders" },
           ]} />
-          <Select label="Intake form" value={formId} onChange={(value) => { setFormId(value); setSelectedMemberIds([]); setActiveBatch(null); }} options={forms.map((form) => ({
+          <Select label="Intake form" value={formId} disabled={loading || sending} onChange={(value) => {
+            if (value === formId) return;
+            setFormId(value);
+            setSelectedMemberIds([]);
+            invalidateReview("Form changed. Choose recipients and review the messages again.");
+          }} options={forms.map((form) => ({
             value: form.formId,
             label: `${form.name} · ${form.startDate}–${form.endDate}${form.active ? "" : " · closed"}`,
           }))} />
@@ -249,25 +286,25 @@ const TeamsMessagesPage = () => {
             <p className="mt-1 text-sm text-gray-400">Choose who should receive this message. Selections stay selected when you change filters.</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Select label="Team" value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
-            <Input label="Search volunteers" value={memberSearch} onChange={(value) => setMemberSearch(String(value))} placeholder="Search by name" />
+            <Select label="Team" value={teamFilter} disabled={loading || sending} onChange={setTeamFilter} options={teamOptions} />
+            <Input label="Search volunteers" value={memberSearch} onChange={(value) => setMemberSearch(String(value))} placeholder="Search by name" disabled={loading || sending} />
           </div>
           <div className="max-h-80 touch-pan-y overflow-y-auto overscroll-contain rounded-lg border border-gray-700 bg-gray-950/50">
             <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-gray-700 bg-gray-900 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <UICheckbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={!visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
+                <UICheckbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
                 <span className="text-sm text-gray-200">Select all {visibleEligibleIds.length} eligible shown</span>
                 <span className="text-xs text-gray-400">{recipientRows.length} shown</span>
               </div>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
                 <span className="text-sm text-gray-300" aria-live="polite">{selectedMemberIds.length} selected</span>
-                <Button variant="textLink" disabled={!selectedMemberIds.length} onClick={() => setSelectedMemberIds([])}>Clear</Button>
+                <Button variant="textLink" disabled={loading || sending || !selectedMemberIds.length} onClick={() => updateSelectedMemberIds([])}>Clear</Button>
               </div>
             </div>
             <div className="divide-y divide-gray-800" role="list" aria-label="Volunteer recipients">
               {recipientRows.length ? recipientRows.map(({ member, eligible, reason }) => (
                 <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem">
-                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={!eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
+                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
                   {!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason || "Choose a form first"}</span> : null}
                 </div>
               )) : <p className="p-4 text-sm text-gray-400">No volunteers match these filters.</p>}
@@ -282,7 +319,7 @@ const TeamsMessagesPage = () => {
         {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
       </section>
 
-      {activeBatch ? <AvailabilityBatchReview batch={activeBatch} formName={forms.find(({ formId: id }) => id === formId)?.name || "Intake form"} busy={sending || loading} onConfirm={() => setConfirmOpen(true)} /> : null}
+      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={forms.find(({ formId: id }) => id === formId)?.name || "Intake form"} busy={sending || loading} onConfirm={() => setConfirmOpen(true)} /> : null}
 
       <section className="space-y-3" aria-labelledby="preview-list-heading">
         <div className="flex items-center justify-between gap-3">
@@ -308,17 +345,17 @@ const TeamsMessagesPage = () => {
         {nextCursor ? <Button variant="secondary" disabled={loading || sending} isLoading={loading} onClick={() => void loadOlderIntents()}>Load older history</Button> : null}
       </section>
 
-      {confirmOpen && activeBatch ? (
+      {confirmOpen && reviewedBatch ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation">
           <section role="dialog" aria-modal="true" aria-labelledby="confirm-batch-heading" className="w-full max-w-lg space-y-4 rounded-lg border border-gray-600 bg-gray-900 p-5 shadow-xl">
             <h2 id="confirm-batch-heading" className="text-lg font-semibold text-white">Send this form?</h2>
-            <p className="text-sm text-gray-200">Send exactly {activeBatch.summary.eligible} selected message{activeBatch.summary.eligible === 1 ? "" : "s"} for this intake form? This batch totals {activeBatch.summary.totalSegments} SMS segments. Volunteers excluded from the reviewed list will not be contacted.</p>
+            <p className="text-sm text-gray-200">Send exactly {reviewedBatch.summary.eligible} selected message{reviewedBatch.summary.eligible === 1 ? "" : "s"} for this intake form? This batch totals {reviewedBatch.summary.totalSegments} SMS segments. Volunteers excluded from the reviewed list will not be contacted.</p>
             <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-gray-300">
-              {activeBatch.recipients.filter((recipient) => recipient.eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}
+              {reviewedBatch.recipients.filter((recipient) => recipient.eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}
             </ul>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" disabled={sending} onClick={() => setConfirmOpen(false)}>Cancel</Button>
-              <Button disabled={sending} isLoading={sending} onClick={() => void confirmBatch()}>Send {activeBatch.summary.eligible} message{activeBatch.summary.eligible === 1 ? "" : "s"}</Button>
+              <Button disabled={sending} isLoading={sending} onClick={() => void confirmBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button>
             </div>
           </section>
         </div>

@@ -5,6 +5,7 @@ import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortablePositionIcon, ser
 import { portableServiceMatches } from "./matching.js";
 import { classifyPortablePreviewAction } from "./matching.js";
 import { portableWallClockToIso } from "./time.js";
+import { formatPortableDate, formatPortableTime } from "./time.js";
 import { createZip } from "./zip.js";
 
 test("CSV parser handles BOM, quoted commas, quotes, multiline values and blanks", () => {
@@ -33,9 +34,44 @@ test("CSV serializer quotes values and protects formula injection", () => {
 
 test("preview action classification keeps resolvable ambiguity in review", () => {
   assert.equal(classifyPortablePreviewAction({ issues: [{ code: "ambiguous_reference", candidates: [{ id: "a" }, { id: "b" }] }] }), "review");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "foreign_or_unknown_record_id", candidates: [] }] }), "review");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "foreign_or_unknown_reference_id", candidates: [{ id: "a", name: "Media" }] }] }), "review");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "foreign_or_unknown_reference_id", candidates: [] }] }), "invalid");
   assert.equal(classifyPortablePreviewAction({ issues: [{ code: "missing_reference" }] }), "invalid");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "quote_in_unquoted_value" }] }), "invalid");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "duplicate_header" }] }), "invalid");
   assert.equal(classifyPortablePreviewAction({ match: { id: "safe" } }), "update");
   assert.equal(classifyPortablePreviewAction({}), "create");
+});
+
+test("schedule export and import preserve local wall-clock dates across time zones", () => {
+  const priorTz = process.env.TZ;
+  try {
+    for (const serverTz of ["UTC", "Pacific/Honolulu"]) {
+      process.env.TZ = serverTz;
+      for (const [timeZone, date, time, expectedInstant] of [
+        ["UTC", "2026-10-03", "20:00", "2026-10-03T20:00:00.000Z"],
+        ["America/New_York", "2026-10-03", "20:00", "2026-10-04T00:00:00.000Z"],
+        ["America/New_York", "2026-03-08", "20:00", "2026-03-09T00:00:00.000Z"],
+      ]) {
+        const [row] = buildPortableDatasets({
+          services: [{ serviceId: "service-1", name: "Evening", time }],
+          schedules: [{ scheduleId: "schedule-1", name: "Sunday", teamId: "team-1", occurrences: [{ occurrenceId: "occurrence-1", serviceId: "service-1", startsAt: expectedInstant }] }],
+          teams: [{ teamId: "team-1", name: "Media" }],
+        }, { timeZone }).schedules;
+        assert.equal(row[4], date);
+        assert.equal(row[5], time);
+        const parsed = parseCsv(encodeCsv(PORTABLE_SCHEMAS.schedules, [row]));
+        const values = parsed.rows[0].values;
+        assert.equal(portableWallClockToIso(values.Date, values["Start Time"], timeZone), expectedInstant);
+      }
+    }
+  } finally {
+    if (priorTz === undefined) delete process.env.TZ;
+    else process.env.TZ = priorTz;
+  }
+  assert.equal(formatPortableDate("2026-10-04T00:00:00.000Z", "America/New_York"), "2026-10-03");
+  assert.equal(formatPortableTime("2026-10-04T00:00:00.000Z", "America/New_York"), "20:00");
 });
 
 test("portable wall-clock conversion is timezone-explicit and DST-aware", () => {

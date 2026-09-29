@@ -56,6 +56,12 @@ describe("PositionIconPicker", () => {
     expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Icon color #60a5fa" }));
+    expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "tabler: microphone" }));
+    expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Default" }));
+    expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "false");
+    await user.click(screen.getByRole("button", { name: "Icon color #60a5fa" }));
     expect(screen.getByRole("button", { name: "Clear icon" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear icon" }));
     expect(screen.getByRole("button", { name: "Icon picker" })).toBeInTheDocument();

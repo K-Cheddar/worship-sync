@@ -8,6 +8,7 @@ import {
   inspectPortableImport,
   previewPortableImport,
 } from "../../../api/auth";
+import type { PortableImportResolution } from "../../../api/authTypes";
 import type { PortableDataType, PortableImportRow } from "../../../api/authTypes";
 
 const DATA_TYPES: Array<{ id: PortableDataType; label: string; required: string[] }> = [
@@ -54,6 +55,7 @@ const download = (blob: Blob, filename: string) => {
 };
 
 const buttonClass = "min-h-10 justify-start";
+const relationshipChoiceKey = (row: number, field: string, referenceIndex = 0) => `${row}:${field}:${referenceIndex}`;
 
 const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -73,9 +75,9 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
   const selectedRows = useMemo(() => (preview?.rows || []).filter((row) => {
     const choice = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : "skip");
     const unresolvedChoice = row.issues.some((issue) => {
-      if (!issue.candidates?.length || relationshipChoices[`${row.row}:${issue.field}`]) return false;
+      if (!issue.candidates?.length || relationshipChoices[relationshipChoiceKey(row.row, issue.field, issue.referenceIndex)]) return false;
       if (issue.code === "ambiguous_reference") return true;
-      if (issue.code !== "foreign_or_unknown_id") return false;
+      if (issue.code !== "foreign_or_unknown_reference_id") return false;
       return (type === "members" && ["teams", "positions"].includes(issue.field))
         || (type === "positions" && ["team", "teamId"].includes(issue.field))
         || (type === "services" && issue.field === "position")
@@ -153,10 +155,11 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
       const rows = selectedRows.map((row) => {
         const choice = rowChoices[row.row] || (row.action === "create" ? "create" : `update:${row.matchedId}`);
         const recordId = choice.startsWith("update:") ? choice.slice("update:".length) : "";
-        const resolutions = Object.fromEntries(row.issues.flatMap((issue) => {
-          const selected = relationshipChoices[`${row.row}:${issue.field}`];
-          return selected ? [[issue.field, selected]] : [];
-        }));
+        const resolutions: PortableImportResolution[] = row.issues.flatMap((issue) => {
+          const referenceIndex = issue.referenceIndex ?? 0;
+          const selectedId = relationshipChoices[relationshipChoiceKey(row.row, issue.field, referenceIndex)];
+          return selectedId ? [{ field: issue.field, referenceIndex, selectedId }] : [];
+        });
         return { row: row.row, action: (recordId ? "update" : "create") as "create" | "update", ...(recordId ? { recordId } : {}), record: row.record, resolutions };
       });
       const result = await commitPortableImport(churchId, type, rows);
@@ -194,7 +197,7 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
     setBusy(key);
     setMessage("");
     try {
-      const result = await downloadPortableData(churchId, dataType, template);
+      const result = await downloadPortableData(churchId, dataType, template, Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
       download(result.blob, result.filename);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not download this file. Check the connection and try again.");
@@ -265,7 +268,7 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
                       <p className="text-sm font-medium">Row {row.row}: {row.record.name || [row.record.firstName, row.record.lastName].filter(Boolean).join(" ") || row.record.person || "Untitled row"}</p>
                       {commitResults.filter((result) => result.row === row.row).map((result) => <p key={`result-${row.row}`} className={`mt-1 text-xs ${result.status === "failed" ? "text-red-200" : "text-green-200"}`}>{result.status === "failed" ? `Import failed: ${result.message || "Preview this file again."}` : result.status === "created" ? "Imported." : "Updated."}</p>)}
                       {row.issues.map((issue, index) => <p key={`${issue.code}-${index}`} className={`mt-1 text-xs ${issue.code === "required" || issue.code === "missing_reference" || issue.code === "unresolved_reference" || issue.code === "not_found" || issue.code === "archived_match" ? "text-red-200" : "text-amber-200"}`}>{issue.message}</p>)}
-                      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_id"].includes(issue.code) && !({ members: "memberId", teams: "teamId", positions: "positionId", services: "serviceId", schedules: "scheduleId" }[type] === issue.field)).map((issue) => { const fieldLabel = /^service\d+$/.test(issue.field) ? `Service ${Number(issue.field.slice(7)) + 1}` : LABELS[issue.field] || issue.field; return <label key={`resolve-${issue.field}`} className="mt-2 grid max-w-lg gap-1 text-xs text-gray-200"><span>{fieldLabel}</span><select aria-label={`Resolve ${fieldLabel} for row ${row.row}`} className="min-h-9 rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[`${row.row}:${issue.field}`] || ""} onChange={(event) => setRelationshipChoices((current) => ({ ...current, [`${row.row}:${issue.field}`]: event.target.value }))}><option value="">Choose a local match…</option>{(issue.candidates || []).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>; })}
+                      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).map((issue) => { const fieldLabel = /^service\d+$/.test(issue.field) ? `Service ${Number(issue.field.slice(7)) + 1}` : LABELS[issue.field] || issue.field; const referenceIndex = issue.referenceIndex ?? 0; const choiceKey = relationshipChoiceKey(row.row, issue.field, referenceIndex); const description = issue.referenceValue ? `${fieldLabel.replace(/s$/, "")}: ${issue.referenceValue}` : fieldLabel; return <label key={`resolve-${issue.field}-${referenceIndex}-${issue.code}`} className="mt-2 grid max-w-lg gap-1 text-xs text-gray-200"><span>{description}</span><select aria-label={`Resolve ${description} for row ${row.row}`} className="min-h-9 rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[choiceKey] || ""} onChange={(event) => setRelationshipChoices((current) => ({ ...current, [choiceKey]: event.target.value }))}><option value="">Choose a local match…</option>{(issue.candidates || []).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>; })}
                       {row.candidates.length > 0 && <p className="mt-1 text-xs text-gray-400">Several possible matches. Choose one or create a new record.</p>}
                     </div>
                     <select aria-label={`Action for row ${row.row}`} className="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={selected} disabled={row.action === "invalid" || Boolean(busy)} onChange={(event) => setRowChoices((current) => ({ ...current, [row.row]: event.target.value }))}>
