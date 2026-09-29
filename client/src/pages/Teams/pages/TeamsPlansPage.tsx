@@ -86,6 +86,7 @@ import type {
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
+import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
 type RangePreset = SchedulePeriodPreset;
 
@@ -351,6 +352,7 @@ const TeamsPlansPage = () => {
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
   const [bulkApplyOpen, setBulkApplyOpen] = useState(false);
   const [bulkTemplates, setBulkTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [bulkTemplatesLoaded, setBulkTemplatesLoaded] = useState(false);
   const [bulkTemplateId, setBulkTemplateId] = useState("");
   const [bulkServiceIds, setBulkServiceIds] = useState<string[]>([]);
   const [bulkUseDefaults, setBulkUseDefaults] = useState(false);
@@ -666,24 +668,43 @@ const TeamsPlansPage = () => {
     ),
     [bulkServiceIds, groups],
   );
-  const bulkApplyExistingCount = bulkApplyEntries.filter((entry) =>
-    planKeysWithPlans.has(getServicePlanKey(entry.occurrence)),
-  ).length;
-  const bulkApplyEligibleCount = bulkApplyEntries.length - bulkApplyExistingCount;
   const bulkTemplate = bulkTemplates.find((template) => template.templateId === bulkTemplateId);
+  const bulkPreview = calculateBulkTemplatePreview({
+    entries: bulkApplyEntries.map(({ occurrence }) => ({
+      planKey: getServicePlanKey(occurrence),
+      serviceId: occurrence.serviceId,
+    })),
+    existingPlanKeys: planKeysWithPlans,
+    services: activeServices,
+    useServiceDefaults: bulkUseDefaults,
+    availableTemplateIds: new Set(bulkTemplates.map((template) => template.templateId)),
+    templatesLoaded: bulkTemplatesLoaded,
+  });
+  const bulkApplyEligibleCount = bulkPreview.willCreate;
+  const bulkApplyButtonLabel = (() => {
+    if (bulkApplying) return "Applying…";
+    if (planStatusLoading || (bulkUseDefaults && !bulkTemplatesLoaded)) return "Checking…";
+    return `Apply to ${bulkApplyEligibleCount} dates`;
+  })();
 
   useEffect(() => {
     if (!bulkApplyOpen || !churchId) return undefined;
     let cancelled = false;
+    setBulkTemplatesLoaded(false);
     listServicePlanTemplates(churchId)
       .then((response) => {
         if (!cancelled) {
           setBulkTemplates(response.templates || []);
+          setBulkTemplatesLoaded(true);
           setBulkTemplateId((current) => current || response.templates?.[0]?.templateId || "");
         }
       })
       .catch((error) => {
-        if (!cancelled) showApiErrorToast(showToast, error, "Could not load service plan templates.");
+        if (!cancelled) {
+          setBulkTemplates([]);
+          setBulkTemplatesLoaded(true);
+          showApiErrorToast(showToast, error, "Could not load service plan templates.");
+        }
       });
     return () => { cancelled = true; };
   }, [bulkApplyOpen, churchId, showToast]);
@@ -691,11 +712,12 @@ const TeamsPlansPage = () => {
   const openBulkApply = () => {
     setBulkServiceIds(selectedServiceIds.length ? selectedServiceIds : activeServices.map((service) => service.serviceId));
     setBulkUseDefaults(false);
+    setBulkTemplatesLoaded(false);
     setBulkApplyOpen(true);
   };
 
   const applyBulkTemplate = async () => {
-    if (!churchId || !canEditServices || bulkApplying || bulkApplyEligibleCount === 0) return;
+    if (!churchId || !canEditServices || bulkApplying || planStatusLoading || bulkApplyEligibleCount === 0 || (bulkUseDefaults && !bulkTemplatesLoaded)) return;
     setBulkApplying(true);
     try {
       const activeServiceIds = new Set(activeServices.map((service) => service.serviceId));
@@ -1566,20 +1588,30 @@ const TeamsPlansPage = () => {
               {" · "}{formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
             </p>
             <p className="mt-2 text-sm text-gray-200">
-              {bulkApplyEntries.length} service {bulkApplyEntries.length === 1 ? "date" : "dates"}; {bulkApplyExistingCount} already have plans and will be skipped.
+              {planStatusLoading
+                ? "Checking saved plans…"
+                : `${bulkPreview.total} service ${bulkPreview.total === 1 ? "date" : "dates"}; ${bulkPreview.existing} already have plans.`}
             </p>
-            <p className="mt-1 text-sm text-gray-400">
-              Apply to {bulkApplyEligibleCount} empty {bulkApplyEligibleCount === 1 ? "plan" : "plans"}.
-            </p>
+            {bulkUseDefaults ? (
+              <p className="mt-1 text-sm text-gray-400">
+                {bulkTemplatesLoaded
+                  ? `${bulkPreview.noDefault + bulkPreview.unavailableDefault} have no available default template; ${bulkApplyEligibleCount} will be created.`
+                  : "Checking service defaults…"}
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-gray-400">
+                {bulkApplyEligibleCount} empty {bulkApplyEligibleCount === 1 ? "plan" : "plans"} will be created.
+              </p>
+            )}
           </section>
           <div className="flex justify-end gap-2">
             <Button variant="tertiary" disabled={bulkApplying} onClick={() => setBulkApplyOpen(false)}>Cancel</Button>
             <Button
               variant="cta"
-              disabled={bulkApplying || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplateId) || bulkApplyEligibleCount === 0}
+              disabled={bulkApplying || planStatusLoading || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplateId) || (bulkUseDefaults && !bulkTemplatesLoaded) || bulkApplyEligibleCount === 0}
               onClick={() => void applyBulkTemplate()}
             >
-              {bulkApplying ? "Applying…" : `Apply to ${bulkApplyEligibleCount} dates`}
+              {bulkApplyButtonLabel}
             </Button>
           </div>
         </div>

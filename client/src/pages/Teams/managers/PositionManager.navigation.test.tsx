@@ -100,19 +100,21 @@ describe("PositionManager return navigation", () => {
 
   it("uses the persisted identity after create so another Save updates", async () => {
     const user = userEvent.setup();
-    const created = { ...position, positionId: "position-created", name: "New Position" };
+    const created = { ...position, positionId: "position-created", name: "New Position", description: "" };
     jest.mocked(createTeamPosition).mockResolvedValue({ success: true, position: created } as never);
     jest.mocked(updateTeamPosition).mockResolvedValue({ success: true, position: { ...created, name: "Renamed" } } as never);
     renderManager();
 
-    await user.click(screen.getByRole("button", { name: "Create position" }));
+    await user.click(screen.getAllByRole("button", { name: "Create position" })[0]);
     await user.type(screen.getByLabelText(/^Name:?$/), "New Position");
-    await user.click(screen.getByRole("button", { name: "Save position" }));
+    await user.click(screen.getAllByRole("button", { name: "Create position" })[1]);
     await waitFor(() => expect(createTeamPosition).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("heading", { name: "Edit position" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Created" })).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText(/^Name:?$/));
     await user.type(screen.getByLabelText(/^Name:?$/), "Renamed");
+    expect(screen.getByRole("button", { name: "Save position" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save position" }));
     await waitFor(() => expect(updateTeamPosition).toHaveBeenCalledWith("church-1", created.positionId, expect.anything()));
     expect(createTeamPosition).toHaveBeenCalledTimes(1);

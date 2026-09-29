@@ -1,4 +1,5 @@
 import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 
 export type SchedulePeriodPreset =
   | "thisMonth"
@@ -58,4 +59,52 @@ export const formatSchedulePeriodName = (startDate: string, endDate: string) => 
     month: "short", day: "numeric", year: "numeric",
   });
   return `${format(start)} – ${format(end)}`;
+};
+
+export const findReusablePeriodSchedule = ({
+  schedules,
+  churchId,
+  teamId,
+  startDate,
+  endDate,
+  serviceIds,
+  occurrences,
+}: {
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  startDate: string;
+  endDate: string;
+  serviceIds: string[];
+  occurrences: TeamScheduleOccurrence[];
+}) => {
+  const sameSet = (left: string[] | undefined, right: string[]) => {
+    if (!left || left.length !== right.length) return false;
+    const sortedLeft = [...left].sort();
+    const sortedRight = [...right].sort();
+    return sortedLeft.every((value, index) => value === sortedRight[index]);
+  };
+  const candidates = schedules.filter((schedule) => {
+    if (
+      schedule.archivedAt || schedule.churchId !== churchId ||
+      schedule.teamId !== teamId || schedule.startDate !== startDate ||
+      schedule.endDate !== endDate
+    ) return false;
+    if (schedule.source === "custom") return false;
+    if (schedule.source === "generated-period") {
+      return Boolean(
+        schedule.generatedPeriodKey &&
+        schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
+      );
+    }
+    if (schedule.source != null) return false;
+    return sameSet(schedule.serviceIds, serviceIds) && sameSet(
+      schedule.occurrences?.map((occurrence) => occurrence.occurrenceId),
+      occurrences.map((occurrence) => occurrence.occurrenceId),
+    );
+  });
+  return {
+    schedule: candidates.length === 1 ? candidates[0] : null,
+    ambiguous: candidates.length > 1,
+  };
 };

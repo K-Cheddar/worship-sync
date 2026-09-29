@@ -49,13 +49,13 @@ export const formatEntitySaveToast = (
   isCreate: boolean,
   changes: string[],
   fallbackLabel = "Item",
-): string => {
+): string | null => {
   const label = displayName.trim() || fallbackLabel;
   if (isCreate) {
     return `Added ${label}.`;
   }
   if (changes.length === 0) {
-    return `Saved ${label}.`;
+    return null;
   }
   return `Updated ${label}: ${changes.join("; ")}.`;
 };
@@ -281,7 +281,7 @@ export const formatMemberSaveToast = (
   previous: TeamRosterMember | null,
   next: TeamRosterMemberPayload,
   context: MemberSaveChangeContext,
-): string => {
+): string | null => {
   const saved = normalizeMemberSavePayload(next);
   const name = `${saved.firstName} ${saved.lastName}`.trim() || "Member";
   return formatEntitySaveToast(
@@ -311,7 +311,7 @@ export const formatTeamSaveToast = (
   previous: TeamRecord | null,
   next: TeamPayload,
   context: Pick<EntityNameContext, "memberNameById">,
-): string => {
+): string | null => {
   const saved = normalizeTeamPayload(next);
   const name = saved.name || "Team";
   const changes: string[] = [];
@@ -358,7 +358,7 @@ const positionToSavePayload = (
 export const formatPositionSaveToast = (
   previous: TeamPosition | null,
   next: Pick<TeamPositionPayload, "name" | "description" | "icon">,
-): string => {
+): string | null => {
   const saved = normalizePositionPayload(next);
   const changes = previous
     ? describeNamedEntityChanges(positionToSavePayload(previous), saved, {
@@ -385,7 +385,7 @@ const roleToSavePayload = (role: TeamRole): TeamRolePayload =>
 export const formatTeamRoleSaveToast = (
   previous: TeamRole | null,
   next: TeamRolePayload,
-): string => {
+): string | null => {
   const saved = normalizeRolePayload(next);
   const changes = previous
     ? describeNamedEntityChanges(roleToSavePayload(previous), saved)
@@ -414,7 +414,7 @@ const qualificationAreaToSavePayload = (
 export const formatQualificationAreaSaveToast = (
   previous: TeamQualificationArea | null,
   next: TeamQualificationAreaPayload,
-): string => {
+): string | null => {
   const saved = normalizeQualificationAreaPayload(next);
   const changes = previous
     ? describeNamedEntityChanges(
@@ -453,7 +453,7 @@ const qualificationLevelToSavePayload = (
 export const formatQualificationLevelSaveToast = (
   previous: TeamQualificationLevel | null,
   next: TeamQualificationLevelPayload,
-): string => {
+): string | null => {
   const saved = normalizeQualificationLevelPayload(next);
   const changes: string[] = [];
   if (previous) {
@@ -575,7 +575,7 @@ export const formatIntakeFormSaveToast = (
   previous: TeamIntakeForm | null,
   next: TeamIntakeFormPayload,
   context: EntityNameContext,
-): string => {
+): string | null => {
   const saved = normalizeIntakeFormPayload(next);
   return formatEntitySaveToast(
     saved.name,
@@ -611,7 +611,7 @@ export const formatScheduleSaveToast = (
   previous: TeamSchedule | null,
   next: TeamSchedulePayload,
   context: EntityNameContext,
-): string => {
+): string | null => {
   const saved = normalizeSchedulePayload(next);
   const changes: string[] = [];
 
@@ -659,7 +659,7 @@ export const formatServiceSaveToast = (
   next: ServiceTime,
   combinedServiceIds: string[],
   services: TeamService[],
-): string => {
+): string | null => {
   const name = normalizeText(next.name) || "Service";
   const changes: string[] = [];
 

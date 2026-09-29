@@ -1,8 +1,17 @@
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PositionIconPicker from "./PositionIconPicker";
+import type { PositionIcon } from "../../components/icons/iconTypes";
 
-jest.mock("@tabler/icons-react", () => ({
+const mockTablerImportState = { failuresRemaining: 0 };
+
+jest.mock("@tabler/icons-react", () => {
+  if (mockTablerImportState.failuresRemaining > 0) {
+    mockTablerImportState.failuresRemaining -= 1;
+    throw new Error("Temporary Tabler import failure");
+  }
+  return {
   IconCamera: () => <svg />,
   IconVideo: () => <svg />,
   IconMicrophone: () => <svg />,
@@ -26,25 +35,30 @@ jest.mock("@tabler/icons-react", () => ({
   IconHand: () => <svg />,
   IconHeart: () => <svg />,
   IconCross: () => <svg />,
-}));
+  };
+});
 
 describe("PositionIconPicker", () => {
-  it("selects an icon, applies a color immediately, and can clear it", async () => {
+  it("stays open after selecting an icon so color can be chosen and clearing still works", async () => {
     const user = userEvent.setup();
-    const onChange = jest.fn();
-    const { rerender } = render(<PositionIconPicker value="" onChange={onChange} />);
+    mockTablerImportState.failuresRemaining = 1;
+    const PickerHarness = () => {
+      const [value, setValue] = useState<PositionIcon | "">("");
+      return <PositionIconPicker value={value} onChange={setValue} />;
+    };
+    render(<PickerHarness />);
     await user.click(screen.getByRole("button", { name: "Icon picker" }));
     await user.type(screen.getByPlaceholderText("Search all icons…"), "camera");
+    expect(await screen.findByText("Icon catalog is unavailable.")).toBeInTheDocument();
+    window.dispatchEvent(new Event("online"));
     await user.click(await screen.findByRole("button", { name: "tabler: camera" }));
-    expect(onChange).toHaveBeenCalledWith({ source: "tabler", name: "camera" });
+    expect(screen.getByRole("tab", { name: "Recommended" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toBeInTheDocument();
 
-    rerender(<PositionIconPicker value={{ source: "tabler", name: "camera" }} onChange={onChange} />);
-    await user.click(screen.getByRole("button", { name: "Icon picker" }));
     await user.click(screen.getByRole("button", { name: "Icon color #60a5fa" }));
-    expect(onChange).toHaveBeenLastCalledWith({ source: "tabler", name: "camera", color: "#60a5fa" });
-
-    rerender(<PositionIconPicker value={{ source: "tabler", name: "camera", color: "#60a5fa" }} onChange={onChange} />);
+    expect(screen.getByRole("button", { name: "Clear icon" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear icon" }));
-    expect(onChange).toHaveBeenLastCalledWith("");
+    expect(screen.getByRole("button", { name: "Icon picker" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search all icons…")).toBeInTheDocument();
   });
 });

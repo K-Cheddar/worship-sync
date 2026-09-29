@@ -17,6 +17,7 @@ import {
 } from "../../../utils/phoneNumber";
 import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
+import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -771,7 +772,8 @@ const MemberManager = ({
       // and schedule reflect the join or removal right away, rather than
       // waiting for the next stale-focus bootstrap.
       response.teams?.forEach((team) => onTeamSaved(team));
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(finalMember.memberId, wasEditing ? "update" : "create");
       if (profileImageUploadFailed) {
         showToast("You can choose the image again and save to retry.", "error");
       }
@@ -814,6 +816,7 @@ const MemberManager = ({
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
       JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
     Boolean(pendingProfileImage || pendingProfileImagePreviewUrl);
+  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
@@ -1196,7 +1199,10 @@ const MemberManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save member"
+            entityLabel="member"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
+            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
@@ -1210,7 +1216,6 @@ const MemberManager = ({
               isSavingCurrent ||
               profileImageUploading
             }
-            isLoading={isSavingCurrent}
           />
         }
       >

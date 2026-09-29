@@ -12,9 +12,11 @@ import {
   createTeamPosition,
   createTeamRosterMember,
   createTeamSchedule,
+  addTeamSchedulePositionSlot,
   deleteTeamPosition,
   getServicePlanMicrophones,
   getTeamScheduleDetail,
+  ensureTeamScheduleForPeriod,
   getNotificationIntents,
   getTeamsBootstrap,
   listServicePlans,
@@ -89,6 +91,7 @@ jest.mock("../../api/auth", () => ({
   },
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
+  ensureTeamScheduleForPeriod: jest.fn(),
   sendTeamSchedule: jest.fn(),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
   listServicePlans: jest.fn(),
@@ -110,6 +113,7 @@ jest.mock("../../api/auth", () => ({
   archiveTeam: jest.fn(),
   deleteTeam: jest.fn(),
   createTeamSchedule: jest.fn(),
+  addTeamSchedulePositionSlot: jest.fn(),
   updateTeamSchedule: jest.fn(),
   archiveTeamSchedule: jest.fn(),
   deleteTeamSchedule: jest.fn(),
@@ -117,6 +121,7 @@ jest.mock("../../api/auth", () => ({
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
+const mockEnsureTeamScheduleForPeriod = jest.mocked(ensureTeamScheduleForPeriod);
 const mockGetNotificationIntents = jest.mocked(getNotificationIntents);
 const mockSendTeamSchedule = jest.mocked(sendTeamSchedule);
 const mockListServicePlans = jest.mocked(listServicePlans);
@@ -136,6 +141,7 @@ const mockUpdateTeamScheduleAssignmentSwap = jest.mocked(
 );
 const mockCreateTeamRosterMember = jest.mocked(createTeamRosterMember);
 const mockCreateTeamSchedule = jest.mocked(createTeamSchedule);
+const mockAddTeamSchedulePositionSlot = jest.mocked(addTeamSchedulePositionSlot);
 const mockUpdateTeam = jest.mocked(updateTeam);
 const sundayOccurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
 
@@ -582,6 +588,118 @@ describe("Teams", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("keeps a future period virtual until the first assignment and then uses the persisted id", async () => {
+    const user = userEvent.setup();
+    const serviceId = "service-next-period";
+    const positionId = "position-vocal";
+    mockState = {
+      undoable: {
+        present: {
+          serviceTimes: {
+            list: [{
+              ...mockSharedServices[0],
+              id: serviceId,
+              serviceId,
+              name: "Saturday service",
+              reccurence: "weekly",
+              dayOfWeek: 6,
+              time: "10:00",
+              positionRequirements: [{ positionId, count: 1 }],
+            }],
+          },
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal", icon: "mic" }],
+      members: [{
+        memberId: "member-morgan", churchId: "church-1", firstName: "Morgan", lastName: "Lee",
+        positionIds: [positionId], blockoutDates: [], notes: "",
+      }],
+      teams: [{ ...baseBootstrap.teams[0], memberIds: ["member-morgan"] }],
+      schedules: [],
+    }));
+    let ensuredSchedule: TeamSchedule | null = null;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      ensuredSchedule = {
+        scheduleId: `generated-period-${body.startDate}`,
+        churchId: "church-1",
+        name: body.name,
+        teamId: body.teamId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        serviceIds: body.serviceIds,
+        occurrences: body.occurrences,
+        source: "generated-period",
+        generatedPeriodKey: "period-key",
+        assignments: {},
+      };
+      return { success: true, created: true, schedule: ensuredSchedule };
+    });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => ({
+      success: true,
+      schedule: {
+        scheduleId,
+        churchId: "church-1",
+        name: "October 2026",
+        teamId: "team-main",
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: [serviceId],
+        occurrences: [{
+          occurrenceId: body.serviceId,
+          serviceId,
+          name: "Saturday service",
+          startsAt: "2026-10-03T10:00:00.000Z",
+          positionRequirements: [{ positionId, count: 1 }],
+        }],
+        assignments: { [body.serviceId]: { [body.positionSlotKey]: body.memberId ? { primaryMemberId: body.memberId } : {} } },
+      },
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: "Next period" }));
+    expect(await screen.findByRole("group", { name: "Team schedule identity" })).toBeInTheDocument();
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    const cell = (await screen.findAllByRole("button", { name: /Vocal, Empty/i }))[0];
+    expect(cell).toBeDefined();
+    await user.click(cell);
+    await screen.findByRole("combobox", { name: /Vocal/i });
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
+    });
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpdateTeamScheduleAssignment.mock.invocationCallOrder[0],
+    );
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe("generated-period-2026-10-01");
+
+    mockAddTeamSchedulePositionSlot.mockImplementation(async (_churchId, _scheduleId, body) => ({
+      success: true,
+      schedule: {
+        ...ensuredSchedule!,
+        additionalPositionSlots: {
+          ...(ensuredSchedule?.additionalPositionSlots || {}),
+          [body.serviceId]: [body.positionSlotKey],
+        },
+      },
+    }));
+    await user.click(screen.getByRole("button", { name: "Next period" }));
+    const addPositionButtons = await screen.findAllByRole("button", { name: "Add position" });
+    await user.click(addPositionButtons[0]);
+    await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
+    await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(2);
+    expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[1]).toBeLessThan(
+      mockAddTeamSchedulePositionSlot.mock.invocationCallOrder[0],
+    );
+    expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe("generated-period-2026-11-01");
   });
 
   it("assigns a microphone from the selected team's schedule", async () => {
@@ -1112,7 +1230,7 @@ describe("Teams", () => {
       expect(membersLink).toHaveAttribute("aria-current", "page");
     }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create member/i }, { timeout: 8_000 }),
+      (await screen.findAllByRole("button", { name: /Create member/i }, { timeout: 8_000 }))[0],
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
@@ -1122,7 +1240,7 @@ describe("Teams", () => {
       expect(positionsLink).toHaveAttribute("aria-current", "page");
     }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create position/i }, { timeout: 8_000 }),
+      (await screen.findAllByRole("button", { name: /Create position/i }, { timeout: 8_000 }))[0],
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
@@ -1132,7 +1250,7 @@ describe("Teams", () => {
       expect(teamsLink).toHaveAttribute("aria-current", "page");
     }, { timeout: 8_000 });
     expect(
-      await screen.findByRole("button", { name: /Create team/i }, { timeout: 8_000 }),
+      (await screen.findAllByRole("button", { name: /Create team/i }, { timeout: 8_000 }))[0],
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
@@ -1177,7 +1295,7 @@ describe("Teams", () => {
     } satisfies CreateTeamPositionResponse);
 
     renderTeams("/teams-and-services/positions");
-    await screen.findByRole("button", { name: /Create position/i });
+    await screen.findAllByRole("button", { name: /Create position/i });
 
     // Create form is gated: it is rendered but inert until "Create position" is clicked.
     const createRolePanel = screen.getByRole("region", {
@@ -1185,15 +1303,14 @@ describe("Teams", () => {
       hidden: true,
     });
     expect(createRolePanel).toHaveAttribute("inert");
-    await user.click(screen.getByRole("button", { name: /Create position/i }));
+    await user.click(screen.getAllByRole("button", { name: /Create position/i })[0]);
     expect(createRolePanel).not.toHaveAttribute("inert");
 
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
     await user.click(screen.getByRole("button", { name: /Icon picker/i }));
     await user.click(await screen.findByRole("button", { name: /^tabler: video$/i }));
-    await user.click(screen.getByRole("button", { name: /Icon picker/i }));
     await user.click(screen.getByRole("button", { name: "Icon color #22d3ee" }));
-    await user.click(screen.getByRole("button", { name: /Save position/i }));
+    await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
 
     await waitFor(() => {
       expect(mockCreateTeamPosition).toHaveBeenCalledWith("church-1", {
@@ -1235,11 +1352,11 @@ describe("Teams", () => {
     } satisfies CreateTeamPositionResponse);
 
     renderTeams("/teams-and-services/positions");
-    await user.click(await screen.findByRole("button", { name: /Create position/i }));
+    await user.click(screen.getAllByRole("button", { name: /Create position/i })[0]);
     await user.type(screen.getByLabelText(/^Name/i), "Lead");
     await user.click(await screen.findByLabelText(/^Default microphone/i));
     await user.click(await screen.findByRole("option", { name: "Lead vocal" }));
-    await user.click(screen.getByRole("button", { name: /Save position/i }));
+    await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
 
     await waitFor(() => {
       expect(mockCreateTeamPosition).toHaveBeenCalledWith(
@@ -1401,11 +1518,11 @@ describe("Teams", () => {
     );
 
     renderTeams("/teams-and-services/positions");
-    await screen.findByRole("button", { name: /Create position/i });
-    await user.click(screen.getByRole("button", { name: /Create position/i }));
+    await screen.findAllByRole("button", { name: /Create position/i });
+    await user.click(screen.getAllByRole("button", { name: /Create position/i })[0]);
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
 
-    const saveButton = screen.getByRole("button", { name: /Save position/i });
+    const saveButton = screen.getAllByRole("button", { name: /Create position/i })[1];
     await user.click(saveButton);
     // A second Save while the create is still in flight must be ignored so the
     // panel staying open can't spawn duplicate positions.
@@ -1984,7 +2101,7 @@ describe("Teams", () => {
       await screen.findByRole("textbox", { name: /^Name:?$/i }),
     ).toHaveValue("Copy of July");
 
-    await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    await user.click(screen.getByRole("button", { name: /Create schedule/i }));
     const conflictDialogPromise = screen.findByRole(
       "dialog",
       { name: /Schedule conflict/i },

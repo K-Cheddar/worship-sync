@@ -211,7 +211,7 @@ describe("ScheduleEditForm", () => {
     expect(
       screen.getByText(/Saved as “October 2026” unless you enter a name/i),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    await user.click(screen.getByRole("button", { name: /Create schedule/i }));
 
     await waitFor(() => expect(createTeamSchedule).toHaveBeenCalledTimes(1));
     expect(jest.mocked(createTeamSchedule).mock.calls[0]?.[1]).toEqual(

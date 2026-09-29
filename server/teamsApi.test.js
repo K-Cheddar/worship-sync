@@ -15,6 +15,7 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
@@ -264,7 +265,7 @@ test("teams bootstrap allows view permission but mutations require edit", async 
   assert.equal(create.payload.success, false);
 });
 
-test("generated schedule ensure is idempotent and reuses an exact legacy period", async (t) => {
+test("generated schedule ensure is idempotent and does not adopt an exact custom period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_ensure");
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
@@ -274,7 +275,7 @@ test("generated schedule ensure is idempotent and reuses an exact legacy period"
   });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: positionIds.Camera, count: 3, minLevelId: "lead" }] }],
   });
   const body = {
     name: "October 2026",
@@ -288,7 +289,7 @@ test("generated schedule ensure is idempotent and reuses an exact legacy period"
       serviceId: "service-sabbath",
       name: "Sabbath Service",
       startsAt: "2026-10-03T10:00:00.000Z",
-      positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+      positionRequirements: [{ positionId: positionIds.Camera, count: 2 }],
     }],
   };
   const [first, second] = await Promise.all([
@@ -299,6 +300,9 @@ test("generated schedule ensure is idempotent and reuses an exact legacy period"
   assert.equal(second.statusCode, 200);
   assert.equal(first.payload.schedule.scheduleId, second.payload.schedule.scheduleId);
   assert.equal(first.payload.schedule.source, "generated-period");
+  assert.deepEqual(first.payload.schedule.occurrences[0].positionRequirements, [
+    { positionId: positionIds.Camera, count: 3, minLevelId: "lead" },
+  ]);
   const schedules = await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }]);
   assert.equal(schedules.filter((schedule) => schedule.generatedPeriodKey).length, 1);
   const assignment = await callHandler(authHandlers.updateTeamScheduleAssignment, {
@@ -332,8 +336,163 @@ test("generated schedule ensure is idempotent and reuses an exact legacy period"
     body: { ...body, teamId: legacyTeam.teamId },
   });
   assert.equal(reused.statusCode, 200);
-  assert.equal(reused.payload.created, false);
-  assert.equal(reused.payload.schedule.scheduleId, legacy.payload.schedule.scheduleId);
+  assert.equal(reused.payload.created, true);
+  assert.notEqual(reused.payload.schedule.scheduleId, legacy.payload.schedule.scheduleId);
+  assert.equal(reused.payload.schedule.source, "generated-period");
+});
+
+test("generated schedule ensure merges combined-service requirements from current services", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_combined_requirements");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }, { name: "Audio" }],
+  });
+  const cameraId = positionIds.Camera;
+  const audioId = positionIds.Audio;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: "combined-a", name: "First", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: cameraId, count: 1, minLevelId: "basic" }] },
+      { id: "combined-b", name: "Second", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: cameraId, count: 3, minLevelId: "lead" }, { positionId: audioId, count: 1 }] },
+    ],
+  });
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+      timeZone: "UTC", serviceIds: ["combined-a", "combined-b"],
+      occurrences: [{
+        occurrenceId: "group:combined@2026-10-03", serviceId: "combined-a", serviceIds: ["combined-a", "combined-b"],
+        groupId: "combined", name: "First & Second", startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      }],
+    },
+  });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.schedule.occurrences[0].positionRequirements, [
+    { positionId: cameraId, count: 3, minLevelId: "lead" },
+    { positionId: audioId, count: 1 },
+  ]);
+});
+
+test("generated schedule ensure reuses only an equivalent source-less legacy period", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_equivalent_legacy");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const occurrence = {
+    occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Sabbath Service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    positionRequirements: [],
+  };
+  const legacyId = "source-less-equivalent-october";
+  await setDoc("teamSchedules", legacyId, {
+    scheduleId: legacyId,
+    churchId: context.churchId,
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"],
+    occurrences: [occurrence],
+    assignments: {},
+  });
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+      timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+    },
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, legacyId);
+});
+
+test("generated schedule ensure finds existing documents with the old period key", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_old_period_key");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const legacyKey = createHash("sha256")
+    .update(`${teamId}\u00002026-10-01\u00002026-10-31`).digest("hex");
+  const legacyId = `generated_${legacyKey}`;
+  const occurrence = {
+    occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath", name: "Sabbath Service", startsAt: "2026-10-03T10:00:00.000Z",
+    positionRequirements: [],
+  };
+  await setDoc("teamSchedules", legacyId, {
+    scheduleId: legacyId, churchId: context.churchId, teamId,
+    name: "October 2026", startDate: "2026-10-01", endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"], source: "generated-period", generatedPeriodKey: legacyKey,
+    occurrences: [occurrence], assignments: {},
+  });
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+      timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+    },
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, legacyId);
+});
+
+test("generated schedule ensure does not adopt a non-equivalent or ambiguous source-less period", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_non_equivalent_legacy");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const occurrence = {
+    occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath", name: "Sabbath Service", startsAt: "2026-10-03T10:00:00.000Z",
+    positionRequirements: [],
+  };
+  const body = {
+    name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+    timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+  };
+  await setDoc("teamSchedules", "source-less-custom-occurrence", {
+    scheduleId: "source-less-custom-occurrence", churchId: context.churchId, teamId,
+    startDate: body.startDate, endDate: body.endDate, serviceIds: body.serviceIds,
+    occurrences: [{ ...occurrence, occurrenceId: "special-event@2026-10-03T10:00:00.000Z" }], assignments: {},
+  });
+  const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(created.statusCode, 200);
+  assert.equal(created.payload.created, true);
+
+  const ambiguousContext = await createAdminContext("generated_schedule_ambiguous_legacy");
+  const ambiguousTeam = await seedTeam(ambiguousContext, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: ambiguousContext.churchId,
+    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+  });
+  const equivalentBase = {
+    churchId: ambiguousContext.churchId, teamId: ambiguousTeam.teamId,
+    startDate: body.startDate, endDate: body.endDate, serviceIds: body.serviceIds,
+    occurrences: [occurrence], assignments: {},
+  };
+  await setDoc("teamSchedules", "legacy-copy-a", { ...equivalentBase, scheduleId: "legacy-copy-a" });
+  await setDoc("teamSchedules", "legacy-copy-b", { ...equivalentBase, scheduleId: "legacy-copy-b" });
+  const ambiguous = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: ambiguousContext,
+    body: { ...body, teamId: ambiguousTeam.teamId },
+  });
+  assert.equal(ambiguous.statusCode, 409);
 });
 
 test("generated schedule ensure rejects inactive services and mismatched groups", async (t) => {
@@ -5896,6 +6055,8 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   const sections = planDocs.map((plan) => plan.sections[0]);
   const elements = sections.map((section) => section.elements[0]);
   assert.equal(plans.payload.servicePlans.length, 2);
+  assert.equal(planDocs[0].name, "Sabbath Service");
+  assert.equal(planDocs[0].clonedFromPlanKey, templateId);
   assert.notEqual(sections[0].id, sections[1].id);
   assert.notEqual(elements[0].id, elements[1].id);
   assert.deepEqual(elements[0].scheduledPositionIds, ["worship-lead"]);
@@ -9456,14 +9617,84 @@ test("portable member IDs only match records in the current church", async (t) =
   });
   const localMember = await callHandler(authHandlers.createTeamRosterMember, {
     context: targetChurch,
-    body: { firstName: "Alex", lastName: "Target", teamIds: [], positionIds: [] },
+    body: { firstName: "Alex", lastName: "Source", teamIds: [], positionIds: [] },
   });
   const csv = `First Name,Last Name,WorshipSync Member ID\nUpdated,Local,${localMember.payload.member.memberId}\nAlex,Source,${foreignMember.payload.member.memberId}\n`;
   const inspected = await callHandler(authHandlers.inspectPortableImport, { context: targetChurch, body: { type: "members", csv } });
   const preview = await callHandler(authHandlers.previewPortableImport, { context: targetChurch, body: { type: "members", csv, mapping: inspected.payload.mapping } });
-  assert.deepEqual(preview.payload.rows.map((row) => row.action), ["update", "create"]);
+  assert.deepEqual(preview.payload.rows.map((row) => row.action), ["update", "review"]);
   assert.equal(preview.payload.rows[0].matchedId, localMember.payload.member.memberId);
   assert.equal(preview.payload.rows[1].matchedId, null);
+  assert.equal(preview.payload.rows[1].issues.some((issue) => issue.code === "foreign_or_unknown_id"), true);
+  assert.equal(preview.payload.rows[1].candidates[0].id, localMember.payload.member.memberId);
+});
+
+test("portable team ID from another church does not auto-match a same-named local team", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const source = await createAdminContext("data_transfer_team_id_source");
+  const target = await createAdminContext("data_transfer_team_id_target");
+  const foreign = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Media", memberIds: [] } });
+  const local = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
+  const csv = `Team,WorshipSync Team ID\nMedia,${foreign.payload.team.teamId}\n`;
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "teams", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "teams", csv, mapping: inspected.payload.mapping } });
+  assert.equal(preview.payload.rows[0].action, "review");
+  assert.equal(preview.payload.rows[0].matchedId, null);
+  assert.equal(preview.payload.rows[0].candidates[0].id, local.payload.team.teamId);
+  assert.equal(preview.payload.rows[0].issues[0].code, "foreign_or_unknown_id");
+  const forgedReference = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Keys", team: "Media" }, resolutions: { team: foreign.payload.team.teamId } }] } });
+  assert.equal(forgedReference.payload.results[0].code, "stale_preview");
+  const forgedRecord = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "teams", approvedRows: [{ row: 2, action: "update", recordId: foreign.payload.team.teamId, record: { name: "Media" } }] } });
+  assert.equal(forgedRecord.payload.results[0].code, "stale_preview");
+
+  const secondLocal = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
+  const positionCsv = "Position,Team\nKeys,Media\n";
+  const positionInspection = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "positions", csv: positionCsv } });
+  const positionPreview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "positions", csv: positionCsv, mapping: positionInspection.payload.mapping } });
+  const relationshipIssue = positionPreview.payload.rows[0].issues.find((issue) => issue.field === "team");
+  assert.equal(positionPreview.payload.rows[0].action, "review");
+  assert.equal(relationshipIssue.code, "ambiguous_reference");
+  assert.equal(relationshipIssue.candidates.length, 2);
+  const selectedTeamId = relationshipIssue.candidates[0].id;
+  const resolvedCommit = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Keys", team: "Media" }, resolutions: { team: selectedTeamId } }] } });
+  assert.equal(resolvedCommit.payload.summary.created, 1);
+  const selectedTeam = [local.payload.team, secondLocal.payload.team].find((team) => team.teamId === selectedTeamId);
+  await setDoc("teams", selectedTeamId, { ...selectedTeam, archivedAt: "2026-09-29T12:00:00.000Z" });
+  const staleResolution = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Vocal", team: "Media" }, resolutions: { team: selectedTeamId } }] } });
+  assert.equal(staleResolution.payload.results[0].code, "stale_preview");
+
+  const archivedCsv = "Team,Archived\nOld Media,true\n";
+  const archivedInspection = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "teams", csv: archivedCsv } });
+  const archivedPreview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "teams", csv: archivedCsv, mapping: archivedInspection.payload.mapping } });
+  assert.equal(archivedPreview.payload.rows[0].action, "invalid");
+  assert.equal(archivedPreview.payload.rows[0].issues.some((issue) => issue.code === "archive_import_unsupported"), true);
+});
+
+test("portable service import offers and applies an explicit local position match", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const source = await createAdminContext("data_transfer_service_position_source");
+  const target = await createAdminContext("data_transfer_service_position_target");
+  const sourceTeam = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Media", memberIds: [] } });
+  const targetTeam = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
+  const foreignPosition = await callHandler(authHandlers.createTeamPosition, { context: source, body: { name: "Keys", teamId: sourceTeam.payload.team.teamId } });
+  const localPosition = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Keys", teamId: targetTeam.payload.team.teamId } });
+  const csv = `Service,Recurrence,Time,Weekday,Position,Required Slots,WorshipSync Position ID\nSunday,weekly,10:00,Sunday,Keys,1,${foreignPosition.payload.position.positionId}\n`;
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "services", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "services", csv, mapping: inspected.payload.mapping } });
+  const relationship = preview.payload.rows[0].issues.find((issue) => issue.field === "position");
+  assert.equal(preview.payload.rows[0].action, "review");
+  assert.equal(relationship.code, "foreign_or_unknown_id");
+  assert.equal(relationship.candidates.length, 1);
+  assert.equal(relationship.candidates[0].id, localPosition.payload.position.positionId);
+
+  const committed = await callHandler(authHandlers.commitPortableImport, {
+    context: target,
+    body: { type: "services", approvedRows: [{ row: preview.payload.rows[0].row, action: "create", record: preview.payload.rows[0].record, resolutions: { position: localPosition.payload.position.positionId } }] },
+  });
+  assert.equal(committed.payload.summary.created, 1);
+  const exported = await callHandler(authHandlers.exportPortableData, { context: target, params: { type: "services" } });
+  assert.match(String(exported.body), new RegExp(localPosition.payload.position.positionId));
+  assert.doesNotMatch(String(exported.body), new RegExp(foreignPosition.payload.position.positionId));
 });
 
 test("portable CSV transfer requires an admin and export reads complete schedule records", async (t) => {
@@ -9509,24 +9740,79 @@ test("portable schedule import validates and preserves the schedule assignment m
     body: { firstName: "Sam", lastName: "Singer", teamIds: [teamId], positionIds: [positionId] },
   });
   const memberId = member.payload.member.memberId;
+  const shadowMember = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Taylor", lastName: "Shadow", teamIds: [teamId], positionIds: [positionId] } });
+  const reverseMember = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Morgan", lastName: "Reverse", teamIds: [teamId], positionIds: [positionId] } });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [{ id: "service-sunday", serviceId: "service-sunday", name: "Sunday", timerType: "countdown", reccurence: "weekly", time: "10:00", dayOfWeek: 0, positionRequirements: [{ positionId, count: 1 }] }],
   });
-  const csv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Sam Singer,,primary,false\n";
+  const csv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Sam Singer,,primary,false\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Taylor Shadow,,shadow,false\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Morgan Reverse,,reverse_shadow,false\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,2,Guest Singer,guest@example.com,primary,true\n";
   const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv } });
   const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
   assert.equal(preview.statusCode, 200);
-  assert.equal(preview.payload.summary.create, 1);
+  assert.equal(preview.payload.summary.create, 4);
   const imported = await callHandler(authHandlers.commitPortableImport, {
     context,
     body: { type: "schedules", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) },
   });
   assert.equal(imported.statusCode, 200);
-  assert.equal(imported.payload.summary.created, 1);
+  assert.equal(imported.payload.summary.created, 4);
   const detail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: imported.payload.results[0].id } });
   const occurrence = detail.payload.schedule.occurrences[0];
   assert.equal(detail.payload.schedule.teamId, teamId);
   assert.equal(detail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, memberId);
+  assert.deepEqual(detail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].shadows.map(({ memberId: id, kind }) => [id, kind]), [[shadowMember.payload.member.memberId, "shadow"], [reverseMember.payload.member.memberId, "reverse_shadow"]]);
+  assert.equal(detail.payload.schedule.guests.length, 1);
   assert.equal(detail.payload.schedule.assignmentsOmitted, undefined);
+
+  const repeatedPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  const repeatedImport = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: repeatedPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  assert.equal(repeatedImport.payload.summary.failed, 0);
+  const replacement = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Jordan", lastName: "Replacement", teamIds: [teamId], positionIds: [positionId] } });
+  const replacementCsv = csv.replace("Sam Singer", "Jordan Replacement");
+  const replacementInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: replacementCsv } });
+  const replacementPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: replacementCsv, mapping: replacementInspection.payload.mapping } });
+  const replaced = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: replacementPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  assert.equal(replaced.payload.summary.failed, 0);
+  const afterReplacement = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
+  assert.equal(afterReplacement.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, replacement.payload.member.memberId);
+  const emptySlotCsv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,,,,false\n";
+  const emptyInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: emptySlotCsv } });
+  const emptyPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: emptySlotCsv, mapping: emptyInspection.payload.mapping } });
+  const emptyCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: emptyPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  assert.equal(emptyCommit.payload.summary.failed, 0);
+  const afterEmpty = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
+  assert.equal(afterEmpty.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, replacement.payload.member.memberId);
+
+  const exportResponse = await callHandler(authHandlers.exportPortableData, { context, params: { type: "schedules" } });
+  const exportedScheduleCsv = String(exportResponse.body);
+  const roundTripInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: exportedScheduleCsv } });
+  const roundTripPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: exportedScheduleCsv, mapping: roundTripInspection.payload.mapping } });
+  assert.equal(roundTripPreview.payload.summary.update, 4);
+  const roundTripRows = roundTripPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record }));
+  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: roundTripRows } })).payload.summary.failed, 0);
+  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: roundTripRows } })).payload.summary.failed, 0);
+  const roundTripDetail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
+  assert.equal(roundTripDetail.payload.schedule.guests.length, 1);
+  assert.equal(roundTripDetail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].shadows.length, 2);
+});
+
+test("foreign schedule ID does not auto-match a local schedule with the same name and date", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const source = await createAdminContext("data_transfer_schedule_id_source");
+  const target = await createAdminContext("data_transfer_schedule_id_target");
+  const sourceTeam = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Worship", memberIds: [] } });
+  const targetTeam = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Worship", memberIds: [] } });
+  const foreignId = "foreign-schedule-id";
+  const localId = "local-schedule-id";
+  await setDoc("teamSchedules", foreignId, { scheduleId: foreignId, churchId: source.churchId, name: "May", teamId: sourceTeam.payload.team.teamId, startDate: "2026-05-03", endDate: "2026-05-03", occurrences: [], assignments: {} });
+  await setDoc("teamSchedules", localId, { scheduleId: localId, churchId: target.churchId, name: "May", teamId: targetTeam.payload.team.teamId, startDate: "2026-05-03", endDate: "2026-05-03", occurrences: [], assignments: {} });
+  seedChurchServiceTimesForServerTests({ churchId: target.churchId, services: [{ serviceId: "target-sunday", id: "target-sunday", name: "Sunday", reccurence: "weekly", time: "10:00", dayOfWeek: 0 }] });
+  const csv = `Schedule,Start Date,End Date,Service,Date,Start Time,Team,WorshipSync Schedule ID,Service ID,Team ID\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,${foreignId},target-sunday,${targetTeam.payload.team.teamId}\n`;
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "schedules", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  assert.equal(preview.payload.rows[0].action, "review");
+  assert.equal(preview.payload.rows[0].matchedId, null);
+  assert.equal(preview.payload.rows[0].candidates.some((item) => item.id === localId), true, JSON.stringify(preview.payload.rows[0]));
+  assert.equal(preview.payload.rows[0].issues.some((issue) => issue.code === "foreign_or_unknown_id"), true);
 });

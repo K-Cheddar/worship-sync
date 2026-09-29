@@ -19,6 +19,7 @@ import CreatePanel from "../CreatePanel";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
+import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import {
   EntityListFilterPanel,
@@ -231,7 +232,8 @@ const TeamManager = ({
       if (!wasEditing) {
         onSaved(response.team, localTeamId);
       }
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(wasEditing?.teamId || response.team.teamId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         // The operator may have switched to a different team while this save was
@@ -282,6 +284,7 @@ const TeamManager = ({
         usesMicrophoneAssignments: false,
         usesIemAssignments: false,
       });
+  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const formatNameList = (names: string[]) =>
@@ -378,12 +381,14 @@ const TeamManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save team"
+            entityLabel="team"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
+            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >

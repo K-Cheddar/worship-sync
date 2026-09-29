@@ -82,14 +82,15 @@ test("only sends after confirmation and dispatches the explicitly prepared batch
     intentType: "availability_request", formId: "form_1", memberIds: ["member_1"],
   })));
   expect(await screen.findByText(/secure response/)).toBeInTheDocument();
+  await user.click(await screen.findByText("View message"));
   expect(await screen.findByText(/Church: please respond at/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("button", { name: "Review and send this batch" }));
-  expect(await screen.findByRole("dialog", { name: "Confirm this batch" })).toBeInTheDocument();
-  expect(screen.getByText(/Send exactly 1 selected messages/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  expect(screen.getByText(/Send exactly 1 selected message/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Confirm and send selected batch" }));
+  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
 });
 

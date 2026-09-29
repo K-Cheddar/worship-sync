@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { encodeCsv, parseCsv, protectSpreadsheetFormula } from "./csv.js";
 import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortablePositionIcon, serializePortablePositionIcon } from "./schemas.js";
 import { portableServiceMatches } from "./matching.js";
+import { classifyPortablePreviewAction } from "./matching.js";
+import { portableWallClockToIso } from "./time.js";
 import { createZip } from "./zip.js";
 
 test("CSV parser handles BOM, quoted commas, quotes, multiline values and blanks", () => {
@@ -27,6 +29,28 @@ test("CSV serializer quotes values and protects formula injection", () => {
   const csv = encodeCsv(["Name", "Notes"], [["Jane", "=HYPERLINK(\"https://bad\")"]]);
   assert.match(csv, /'=HYPERLINK\(""https:\/\/bad""\)/);
   assert.equal(protectSpreadsheetFormula("normal text"), "normal text");
+});
+
+test("preview action classification keeps resolvable ambiguity in review", () => {
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "ambiguous_reference", candidates: [{ id: "a" }, { id: "b" }] }] }), "review");
+  assert.equal(classifyPortablePreviewAction({ issues: [{ code: "missing_reference" }] }), "invalid");
+  assert.equal(classifyPortablePreviewAction({ match: { id: "safe" } }), "update");
+  assert.equal(classifyPortablePreviewAction({}), "create");
+});
+
+test("portable wall-clock conversion is timezone-explicit and DST-aware", () => {
+  const priorTz = process.env.TZ;
+  try {
+    for (const serverTz of ["UTC", "Pacific/Honolulu"]) {
+      process.env.TZ = serverTz;
+      assert.equal(portableWallClockToIso("2026-10-03", "10:00", "America/New_York"), "2026-10-03T14:00:00.000Z");
+    }
+  } finally {
+    if (priorTz === undefined) delete process.env.TZ;
+    else process.env.TZ = priorTz;
+  }
+  assert.equal(portableWallClockToIso("2026-03-08", "02:30", "America/New_York"), "2026-03-08T07:30:00.000Z");
+  assert.equal(portableWallClockToIso("2026-02-30", "10:00", "America/New_York"), null);
 });
 
 test("portable exports use readable fields and flatten schedules by slot", () => {

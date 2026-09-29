@@ -7,6 +7,9 @@ export const findPortableMatch = ({ records, id, idField, label, includeArchived
   if (id) {
     const match = records.find((record) => record[idField] === id);
     if (match) return { record: match, method: "id", archived: Boolean(match.archivedAt) };
+    // An explicit portable identity is authoritative. Falling through to a
+    // label match can silently update an unrelated record in another church.
+    return { record: null, candidates: [], foreignOrUnknownId: true };
   }
   const normalizedLabel = normalizePortableMatchValue(label);
   if (!normalizedLabel) return { record: null, candidates: [] };
@@ -15,6 +18,20 @@ export const findPortableMatch = ({ records, id, idField, label, includeArchived
   );
   if (candidates.length === 1) return { record: candidates[0], method: "name", archived: Boolean(candidates[0].archivedAt) };
   return { record: null, candidates };
+};
+
+export const classifyPortablePreviewAction = ({ issues = [], match = null, candidates = [] }) => {
+  if (issues.some((issue) => {
+    if (issue.code === "ambiguous_reference") return !issue.candidates?.length;
+    if (issue.code === "foreign_or_unknown_id") return false;
+    return true;
+  })) {
+    return "invalid";
+  }
+  if (candidates.length > 1 || issues.some((issue) => ["ambiguous_reference", "foreign_or_unknown_id"].includes(issue.code))) {
+    return "review";
+  }
+  return match ? "update" : "create";
 };
 
 const weekdayNumber = (value) => {

@@ -65,6 +65,7 @@ import {
   ensureTeamScheduleForPeriod,
 } from "../../../api/auth";
 import {
+  findReusablePeriodSchedule,
   formatSchedulePeriodName,
   rangeFromPreset,
   SCHEDULE_PERIOD_OPTIONS,
@@ -429,27 +430,17 @@ const ScheduleTab = ({
     }),
     [activeServices, periodRange.end, periodRange.start, periodServiceIds],
   );
-  const exactPeriodSchedules = useMemo(
-    () => schedules.filter((schedule) =>
-      !schedule.archivedAt &&
-      schedule.teamId === workspaceTeamId &&
-      schedule.startDate === periodRange.start &&
-      schedule.endDate === periodRange.end,
-    ),
-    [periodRange.end, periodRange.start, schedules, workspaceTeamId],
-  );
-  const generatedPeriodMatches = exactPeriodSchedules.filter(
-    (schedule) => schedule.source === "generated-period",
-  );
-  const matchedPeriodSchedule = generatedPeriodMatches.length === 1
-    ? generatedPeriodMatches[0]
-    : generatedPeriodMatches.length > 1
-      ? null
-      : exactPeriodSchedules.length === 1 ? exactPeriodSchedules[0] : null;
-  const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && (
-    generatedPeriodMatches.length > 1 ||
-    (generatedPeriodMatches.length === 0 && exactPeriodSchedules.length > 1)
-  );
+  const periodScheduleMatch = findReusablePeriodSchedule({
+    schedules,
+    churchId,
+    teamId: workspaceTeamId,
+    startDate: periodRange.start,
+    endDate: periodRange.end,
+    serviceIds: periodServiceIds,
+    occurrences: generatedPeriodOccurrences,
+  });
+  const matchedPeriodSchedule = periodScheduleMatch.schedule;
+  const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
   const virtualPeriodSchedule = useMemo(() => {
     if (
       hasAmbiguousPeriodSchedules ||

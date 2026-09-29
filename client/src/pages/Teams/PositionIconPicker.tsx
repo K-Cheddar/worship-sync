@@ -103,11 +103,19 @@ const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChang
       return;
     }
     let active = true;
-    loadPositionIconCatalog().then(
-      (entries) => { if (active) setCatalog(entries); },
-      () => { if (active) setCatalogError(true); },
-    );
-    return () => { active = false; };
+    const loadCatalog = () => {
+      setCatalogError(false);
+      loadPositionIconCatalog().then(
+        (entries) => { if (active) setCatalog(entries); },
+        () => { if (active) setCatalogError(true); },
+      );
+    };
+    loadCatalog();
+    window.addEventListener("online", loadCatalog);
+    return () => {
+      active = false;
+      window.removeEventListener("online", loadCatalog);
+    };
   }, [catalog, legacyOnly, open]);
 
   const searchResults = useMemo(() => {
@@ -126,7 +134,6 @@ const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChang
       return;
     }
     onChange({ ...next, ...(current?.color ? { color: current.color } : {}) });
-    setOpen(false);
     setQuery("");
   };
 

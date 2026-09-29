@@ -43,6 +43,7 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
+import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import PositionIconPicker from "../PositionIconPicker";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
@@ -328,7 +329,8 @@ const PositionManager = ({
       if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(wasEditing?.positionId || response.position.positionId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         // The operator may have switched to a different position while this save
@@ -381,6 +383,7 @@ const PositionManager = ({
       defaultMicrophoneId: "",
       defaultIemId: "",
     });
+  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   // A save already in flight for this editor is not an unsaved change: the
   // operator committed it, and `editing` only catches up when the response
   // lands. Without this, switching positions mid-save falsely prompts to
@@ -566,12 +569,14 @@ const PositionManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save position"
+            entityLabel="position"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
+            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >

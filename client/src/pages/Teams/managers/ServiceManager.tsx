@@ -52,7 +52,6 @@ import {
   planServiceGroupCleanupOnDelete,
   planServiceGroupUpdates,
 } from "../teamsUtils";
-import { formatServiceSaveToast } from "../teamsSaveToasts";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 
@@ -148,12 +147,6 @@ const ServiceManager = ({
       },
       editing,
     );
-    const saveToastMessage = formatServiceSaveToast(
-      editing,
-      saved,
-      combineWith,
-      services,
-    );
     if (editing) {
       dispatch(updateService({ id: editing.id, changes: saved }));
     } else {
@@ -163,7 +156,9 @@ const ServiceManager = ({
     partnerUpdates.forEach(({ id, serviceGroupId }) => {
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
-    showToast(saveToastMessage, "success");
+    // Redux dispatch is optimistic; the store listener commits to Firebase and
+    // can roll this change back. Without a per-action acknowledgment, a success
+    // toast here would claim persistence before it is confirmed.
     // Saving commits data; keep the same service open on every screen size.
     // A new service uses its generated id immediately so later saves update it.
     const nextEditing: TeamService = {
@@ -438,7 +433,8 @@ const ServiceManager = ({
       formFooter={
         <FormActionButtons
           pinFooter
-          saveLabel="Save service"
+          entityLabel="service"
+          isCreate={!editing}
           onSave={submit}
           onCancel={() => requestDiscardAction(reset)}
           hasPendingChanges={hasPendingChanges}

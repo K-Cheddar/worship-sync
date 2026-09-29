@@ -81,6 +81,9 @@ const renderManager = (
     </MemoryRouter>,
   );
 
+const serviceFormSaveButton = () =>
+  screen.getAllByRole("button", { name: /^(Create|Save) service$/ }).at(-1)!;
+
 const findActions = (calls: unknown[][], type: string) =>
   calls
     .map((call) => call[0] as { type: string; payload: unknown })
@@ -128,7 +131,7 @@ describe("ServiceManager combined services", () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);
 
-    await user.click(screen.getByRole("button", { name: "Create service" }));
+    await user.click(screen.getAllByRole("button", { name: "Create service" })[0]);
 
     // A new service defaults to weekly Sunday, so only the Sunday services qualify.
     expect(
@@ -154,7 +157,7 @@ describe("ServiceManager combined services", () => {
     const nameInput = screen.getByLabelText(/^Name:?$/);
     await user.clear(nameInput);
     await user.type(nameInput, "Early Service");
-    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await user.click(serviceFormSaveButton());
 
     const updates = findActions(mockDispatch.mock.calls, "serviceTimes/updateService");
     expect(updates.length).toBeGreaterThan(0);
@@ -176,7 +179,7 @@ describe("ServiceManager combined services", () => {
       screen.getByRole("heading", { name: "Edit service" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await user.click(serviceFormSaveButton());
 
     expect(
       screen.getByRole("heading", { name: "Edit service" }),
@@ -198,10 +201,10 @@ describe("ServiceManager combined services", () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);
 
-    await user.click(screen.getByRole("button", { name: "Create service" }));
+    await user.click(screen.getAllByRole("button", { name: "Create service" })[0]);
     await user.type(screen.getByLabelText(/^Name:?$/), "Combined Sunday");
     await user.click(screen.getByRole("checkbox", { name: /First Service/ }));
-    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await user.click(serviceFormSaveButton());
 
     const created = findActions(mockDispatch.mock.calls, "serviceTimes/addService");
     expect(created).toHaveLength(1);
@@ -224,7 +227,7 @@ describe("ServiceManager combined services", () => {
     fireEvent.change(nameInput, {
       target: { value: "Combined Sunday Updated" },
     });
-    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await user.click(serviceFormSaveButton());
     expect(findActions(mockDispatch.mock.calls, "serviceTimes/addService")).toHaveLength(1);
     expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toContainEqual(
       expect.objectContaining({ payload: expect.objectContaining({ id: (created[0].payload as TeamService).id }) }),
@@ -249,7 +252,7 @@ describe("ServiceManager position requirements", () => {
     };
     renderManager([sundayMorning], [position], [team]);
 
-    await user.click(screen.getByRole("button", { name: "Create service" }));
+    await user.click(screen.getAllByRole("button", { name: "Create service" })[0]);
 
     expect(screen.getByText("People needed")).toBeInTheDocument();
     expect(screen.queryByText("People needed:")).not.toBeInTheDocument();
@@ -282,7 +285,7 @@ describe("ServiceManager default plan template", () => {
       screen.getByRole("combobox", { name: /Default plan template/i }),
     );
     await user.click(screen.getByRole("option", { name: "Standard service" }));
-    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await user.click(serviceFormSaveButton());
 
     const updates = findActions(mockDispatch.mock.calls, "serviceTimes/updateService");
     expect(updates).toContainEqual(

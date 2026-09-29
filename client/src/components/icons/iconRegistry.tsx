@@ -43,21 +43,35 @@ const tablerExportName = (name: string) =>
 
 let tablerPromise: Promise<Record<string, unknown>> | null = null;
 const loadTablerIcons = () => {
-  tablerPromise ??= import("@tabler/icons-react").then(
-    (module) => module as Record<string, unknown>,
-  );
+  if (!tablerPromise) {
+    const request = import("@tabler/icons-react").then(
+      (module) => module as Record<string, unknown>,
+    );
+    const retryableRequest = request.catch((error: unknown) => {
+      if (tablerPromise === retryableRequest) tablerPromise = null;
+      throw error;
+    });
+    tablerPromise = retryableRequest;
+  }
   return tablerPromise;
 };
 
-const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: string }) => {
+export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: string }) => {
   const [Icon, setIcon] = useState<PositionGlyph | null>(null);
   useEffect(() => {
     let active = true;
-    loadTablerIcons().then((icons) => {
-      const candidate = icons[tablerExportName(name)];
-      if (active) setIcon(isIconComponent(candidate) ? () => candidate : null);
-    }).catch(() => { if (active) setIcon(null); });
-    return () => { active = false; };
+    const load = () => {
+      loadTablerIcons().then((icons) => {
+        const candidate = icons[tablerExportName(name)];
+        if (active) setIcon(isIconComponent(candidate) ? () => candidate : null);
+      }).catch(() => { if (active) setIcon(null); });
+    };
+    load();
+    window.addEventListener("online", load);
+    return () => {
+      active = false;
+      window.removeEventListener("online", load);
+    };
   }, [name]);
   return Icon ? <Icon {...props} /> : null;
 };
@@ -98,15 +112,22 @@ export const getLucidePositionIconCatalog = (): IconCatalogEntry[] => {
 
 let catalogPromise: Promise<IconCatalogEntry[]> | null = null;
 export const loadPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
-  catalogPromise ??= loadTablerIcons().then((tablerIcons) => {
-    const tablerEntries = Object.keys(tablerIcons)
-      .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
-      .map((exportName) => {
-        const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-        return { ref: { source: "tabler", name } as const, label: name, searchTerms: [name] };
-      });
-    return [...getLucidePositionIconCatalog(), ...tablerEntries];
-  });
+  if (!catalogPromise) {
+    const request = loadTablerIcons().then((tablerIcons) => {
+      const tablerEntries = Object.keys(tablerIcons)
+        .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
+        .map((exportName) => {
+          const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+          return { ref: { source: "tabler", name } as const, label: name, searchTerms: [name] };
+        });
+      return [...getLucidePositionIconCatalog(), ...tablerEntries];
+    });
+    const retryableRequest = request.catch((error: unknown) => {
+      if (catalogPromise === retryableRequest) catalogPromise = null;
+      throw error;
+    });
+    catalogPromise = retryableRequest;
+  }
   return catalogPromise;
 };
 

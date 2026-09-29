@@ -1,5 +1,5 @@
 import { type ContextType } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import MemberManager from "./MemberManager";
@@ -22,6 +22,7 @@ const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
 }));
 
 jest.mock("../../../api/auth", () => ({
+  AuthApiError: class MockAuthApiError extends Error {},
   archiveTeamRosterMember: jest.fn(),
   createTeamRosterMember: (...args: unknown[]) =>
     mockCreateTeamRosterMember(...args),
@@ -146,7 +147,7 @@ const renderManager = ({
 };
 
 const openCreateForm = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(screen.getByRole("button", { name: "Create member" }));
+  await user.click(screen.getAllByRole("button", { name: "Create member" })[0]);
 };
 
 const openMember = async (
@@ -158,6 +159,8 @@ const openMember = async (
 
 // The filter aside stays mounted alongside the editor and has its own Teams and
 // Positions groups, so form queries are scoped to the editor region.
+const saveButton = () => screen.getAllByRole("button", { name: /^(Create|Save) member$/ }).at(-1)!;
+
 const form = () =>
   within(screen.getByRole("region", { name: /^(Create|Edit) member$/ }));
 
@@ -225,6 +228,48 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("shows create, pending, and created states, then clears success when the draft changes", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockCreateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+    renderManager();
+    await openCreateForm(user);
+    await fillName(user);
+    expect(saveButton()).toHaveAccessibleName("Create member");
+
+    await user.click(saveButton());
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeInTheDocument();
+    resolveCreate({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    });
+    expect(await screen.findByRole("button", { name: "Created" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Edit member" })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^First name/i), "lar");
+    expect(saveButton()).toHaveAccessibleName("Save member");
+  });
+
+  it("returns to an actionable create button and keeps error feedback when the API rejects", async () => {
+    const user = userEvent.setup();
+    let rejectCreate: (error: Error) => void = () => undefined;
+    mockCreateTeamRosterMember.mockImplementation(
+      () => new Promise((_, reject) => { rejectCreate = reject; }),
+    );
+    renderManager();
+    await openCreateForm(user);
+    await fillName(user);
+
+    await user.click(saveButton());
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeInTheDocument();
+    await act(async () => rejectCreate(new Error("Network unavailable")));
+    await waitFor(() => expect(saveButton()).toHaveAccessibleName("Create member"));
+    expect(await screen.findByText("Network unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^First name/i)).toHaveValue("Sky");
+  });
+
   it("formats a U.S. phone number while it is entered", async () => {
     const user = userEvent.setup();
     renderManager();
@@ -353,7 +398,7 @@ describe("MemberManager member preferences", () => {
     await user.click(minorCheckbox);
     await user.click(screen.getByRole("combobox", { name: /Serving frequency/ }));
     await user.click(screen.getByRole("option", { name: "Twice a month" }));
-    await user.click(screen.getByRole("button", { name: "Save member" }));
+    await user.click(saveButton());
 
     await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalled());
     const [, body] = mockCreateTeamRosterMember.mock.calls[0];
@@ -413,7 +458,7 @@ describe("MemberManager return navigation", () => {
     await user.click(screen.getByRole("button", { name: /Rae Kim/ }));
     await user.clear(screen.getByLabelText(/^First name:?$/));
     await user.type(screen.getByLabelText(/^First name:?$/), "Rachel");
-    await user.click(screen.getByRole("button", { name: /Save member/i }));
+    await user.click(saveButton());
 
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("region", { name: "Edit member" })).toBeInTheDocument();
@@ -570,7 +615,7 @@ describe("MemberManager team membership", () => {
       success: true,
       member: { ...worshipMember, positionIds: [] },
     });
-    await user.click(screen.getByRole("button", { name: "Save member" }));
+    await user.click(saveButton());
 
     await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalled());
     const [, body] = mockCreateTeamRosterMember.mock.calls[0];
@@ -669,7 +714,7 @@ describe("MemberManager team membership", () => {
     const { onTeamSaved } = renderManager({ data: joinedData() });
     await openMember(user, /Rae Kim/);
     await toggleWorshipTeam(user);
-    await user.click(screen.getByRole("button", { name: "Save member" }));
+    await user.click(saveButton());
 
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalled());
     const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
@@ -699,7 +744,7 @@ describe("MemberManager team membership", () => {
     await openCreateForm(user);
     await fillName(user);
     await toggleVocalPosition(user);
-    await user.click(screen.getByRole("button", { name: "Save member" }));
+    await user.click(saveButton());
 
     // Without this the Teams tab and schedule roster stay stale until the next
     // stale-focus bootstrap, which is what pushed admins to re-add the member by hand.
@@ -723,7 +768,7 @@ describe("MemberManager team membership", () => {
     const { onSaved, onTeamSaved } = renderManager();
     await openCreateForm(user);
     await fillName(user);
-    await user.click(screen.getByRole("button", { name: "Save member" }));
+    await user.click(saveButton());
 
     await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalled());
     expect(onSaved).toHaveBeenCalled();
@@ -991,7 +1036,7 @@ describe("MemberManager email validation", () => {
       screen.getByText("Enter a valid email address."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Save member/i }),
+      saveButton(),
     ).toBeDisabled();
   });
 
@@ -1006,7 +1051,7 @@ describe("MemberManager email validation", () => {
       screen.queryByText("Enter a valid email address."),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Save member/i }),
+      saveButton(),
     ).not.toBeDisabled();
   });
 

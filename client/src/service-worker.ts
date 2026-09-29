@@ -16,7 +16,6 @@ import {
 } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
 import {
-  CacheFirst,
   NetworkFirst,
   NetworkOnly,
   StaleWhileRevalidate,
@@ -70,16 +69,6 @@ precacheAndRoute(self.__WB_MANIFEST);
 registerRoute(
   ({ url }) => url.hostname === "db.worshipsync.net",
   new NetworkOnly()
-);
-
-// The complete Tabler catalog is too large for the install precache. Cache its
-// lazy runtime chunk after first use so later offline views can render it.
-registerRoute(
-  ({ url }) => url.origin === self.location.origin && /\/tabler-icons-react-[^/]+\.js$/.test(url.pathname),
-  new CacheFirst({
-    cacheName: "tabler-icons",
-    plugins: [new ExpirationPlugin({ maxEntries: 2, maxAgeSeconds: 60 * 60 * 24 * 365 })],
-  }),
 );
 
 // An example runtime caching route for requests that aren't handled by the

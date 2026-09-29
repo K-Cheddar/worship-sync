@@ -8,6 +8,7 @@ import Modal from "../../../components/Modal/Modal";
 import DatePicker from "@/components/ui/DatePicker";
 import { clampPlainDateToMin } from "@/utils/plainDate";
 import FormActionButtons from "../components/FormActionButtons";
+import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import {
   filterServicesWithOccurrencesInRange,
@@ -186,6 +187,8 @@ const ScheduleEditForm = ({
     !selectedSchedule && Object.keys(draft.assignments || {}).length > 0;
   const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
   useTeamsUnsavedChanges(hasPendingChanges);
+  const currentEditorKey = selectedSchedule?.scheduleId || draftKey;
+  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
 
   const suggestedName = useMemo(
     () =>
@@ -411,7 +414,8 @@ const ScheduleEditForm = ({
         onScheduleSaved(response.schedule);
       }
       setSelectedScheduleId(response.schedule.scheduleId);
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(response.schedule.scheduleId, selectedSchedule ? "update" : "create");
       setScheduleConflictWarning("");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this schedule.");
@@ -589,18 +593,21 @@ const ScheduleEditForm = ({
         </div>
         <FormActionButtons
           pinFooter
-          saveLabel="Save schedule"
+          entityLabel="schedule"
+          isCreate={!selectedSchedule}
+          isSaving={saving}
+          successMode={saveFeedback.successMode}
           onSave={() => void saveSchedule()}
           onCancel={onCancel}
           hasPendingChanges={hasPendingChanges}
           disabled={
             !canEdit ||
+            saving ||
             (!draft.name.trim() && !suggestedName) ||
             !draft.teamId ||
             draft.serviceIds.length === 0 ||
             draftOccurrences.length === 0
           }
-          isLoading={saving}
         />
       </section>
       <DeleteModal

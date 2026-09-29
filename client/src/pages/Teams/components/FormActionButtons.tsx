@@ -1,27 +1,32 @@
-import { Save, X } from "lucide-react";
+import { Check, Save, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
 import { teamsFormPanelFooterClassName } from "../teamsStyles";
+import type { FormSaveMode } from "./useFormSaveFeedback";
 
 type FormActionButtonsProps = {
-  saveLabel: string;
+  entityLabel: string;
+  isCreate: boolean;
+  isSaving?: boolean;
+  successMode?: FormSaveMode | null;
   onSave: () => void;
   onCancel: () => void;
   /** Whether closing would discard edits. */
   hasPendingChanges?: boolean;
   disabled?: boolean;
-  isLoading?: boolean;
   /** Pin Close/Cancel and Save to the bottom of a scrollable form panel. */
   pinFooter?: boolean;
 };
 
 const FormActionButtons = ({
-  saveLabel,
+  entityLabel,
+  isCreate,
+  isSaving = false,
+  successMode = null,
   onSave,
   onCancel,
   hasPendingChanges = true,
   disabled = false,
-  isLoading = false,
   pinFooter = false,
 }: FormActionButtonsProps) => (
   <div className={cn(pinFooter && teamsFormPanelFooterClassName)}>
@@ -38,13 +43,24 @@ const FormActionButtons = ({
       <Button
         variant="cta"
         className="flex-1 justify-center"
-        svg={Save}
+        svg={successMode || isSaving ? undefined : Save}
         iconSize="sm"
+        aria-busy={isSaving || undefined}
         disabled={disabled}
-        isLoading={isLoading}
         onClick={onSave}
       >
-        {saveLabel}
+        {isSaving ? (
+          isCreate ? "Creating…" : "Saving…"
+        ) : successMode ? (
+          <>
+            <Check aria-hidden="true" data-testid="form-save-success-icon" className="size-4 shrink-0" />
+            {successMode === "create" ? "Created" : "Saved"}
+          </>
+        ) : isCreate ? (
+          `Create ${entityLabel}`
+        ) : (
+          `Save ${entityLabel}`
+        )}
       </Button>
     </div>
   </div>

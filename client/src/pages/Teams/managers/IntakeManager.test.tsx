@@ -10,7 +10,9 @@ import type {
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamRosterMember,
+  TeamService,
 } from "../../../api/authTypes";
+import { createTeamIntakeForm, updateTeamIntakeForm } from "../../../api/auth";
 
 const mockGetRecipientLink = jest.fn();
 const mockPrepareSms = jest.fn();
@@ -67,8 +69,12 @@ const recipient: TeamIntakeRecipient = {
 
 const renderManager = ({
   eligibilityStatus = "consent_needed",
+  forms = [form],
+  services = [],
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
+  forms?: TeamIntakeForm[];
+  services?: TeamService[];
 } = {}) => {
   const onSmsDeliveryAttemptSaved = jest.fn();
   render(
@@ -81,10 +87,10 @@ const renderManager = ({
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <IntakeManager
-              forms={[form]}
+              forms={forms}
               submissions={[]}
               intakeRecipients={[recipient]}
-              services={[]}
+              services={services}
               members={[member]}
               positions={[]}
               teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }]}
@@ -125,9 +131,10 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   renderManager();
   await openForm(user);
 
-  expect(screen.getByText("SMS consent needed")).toBeInTheDocument();
+  expect(screen.getByText(/SMS consent needed/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send SMS" })).toBeDisabled();
-  const copyButtons = screen.getAllByRole("button", { name: "Copy link" });
+  await user.click(screen.getByText("More"));
+  const copyButtons = screen.getAllByRole("button", { name: "Copy private link" });
   expect(copyButtons.at(-1)).toBeEnabled();
   mockGetRecipientLink.mockResolvedValue({
     success: true,
@@ -191,4 +198,69 @@ test("prevents duplicate SMS activation while the send is pending and updates th
     },
   });
   await waitFor(() => expect(onSmsDeliveryAttemptSaved).toHaveBeenCalledTimes(1));
+});
+
+test("a newly created form offers Send form without sending anything during save", async () => {
+  const user = userEvent.setup();
+  const service: TeamService = {
+    id: "sunday",
+    serviceId: "sunday",
+    churchId: "church-1",
+    name: "Sunday service",
+    timerType: "countdown",
+    reccurence: "weekly",
+    dayOfWeek: 0,
+    time: "10:00",
+  };
+  const createdForm = { ...form, formId: "new-form", name: "October Availability", startDate: "2026-10-01", endDate: "2026-10-31" };
+  jest.mocked(createTeamIntakeForm).mockResolvedValue({ success: true, form: createdForm, publicToken: "new-public-token", publicUrl: "https://example.test/new-form" });
+  renderManager({ forms: [], services: [service], eligibilityStatus: "enabled" });
+
+  await user.click(screen.getByRole("button", { name: "Review form" }));
+  await user.click(screen.getByRole("button", { name: "Create form" }));
+  await screen.findByRole("button", { name: "Send form" });
+
+  expect(createTeamIntakeForm).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(createTeamIntakeForm).mock.calls[0][1].availabilityServices).toEqual([{ serviceId: "sunday", name: "Sunday service" }]);
+  expect(jest.mocked(createTeamIntakeForm).mock.calls[0][1].availabilityOccurrences.length).toBeGreaterThan(0);
+  expect(mockPrepareSms).not.toHaveBeenCalled();
+  expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("an existing form view exposes Send form", async () => {
+  const user = userEvent.setup();
+  renderManager({ eligibilityStatus: "enabled" });
+  await openForm(user);
+
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  expect(screen.getByRole("heading", { name: "Send form" })).toBeInTheDocument();
+  expect(updateTeamIntakeForm).not.toHaveBeenCalled();
+  expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("successful form edits return to the form view with Send form available", async () => {
+  const user = userEvent.setup();
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form });
+  renderManager();
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await screen.findByRole("button", { name: "Send form" });
+  expect(updateTeamIntakeForm).toHaveBeenCalledTimes(1);
+  expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("saving a form with existing recipients preserves its covered occurrence snapshot", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = { occurrenceId: "saved-occurrence", serviceId: "old-service", name: "Saved service", startsAt: "2026-10-11T14:00:00.000Z" };
+  const issuedForm = { ...form, availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: issuedForm });
+  renderManager({ forms: [issuedForm], services: [{ id: "old-service", serviceId: "old-service", churchId: "church-1", name: "Changed service", timerType: "countdown", reccurence: "weekly", dayOfWeek: 0, time: "10:00" }] });
+  await user.click(screen.getByRole("button", { name: `Edit ${issuedForm.name}` }));
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByText(/already has private links or responses/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({ availabilityOccurrences: [savedOccurrence] })));
 });

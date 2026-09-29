@@ -63,16 +63,26 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
   const [inspection, setInspection] = useState<ImportInspection | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [rowChoices, setRowChoices] = useState<Record<number, string>>({});
+  const [relationshipChoices, setRelationshipChoices] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [commitIssues, setCommitIssues] = useState<Array<{ row: number; message?: string; code?: string }>>([]);
+  const [commitResults, setCommitResults] = useState<Array<{ row: number; status: "created" | "updated" | "failed"; message?: string; code?: string }>>([]);
   const [previewPage, setPreviewPage] = useState(0);
   const currentType = DATA_TYPES.find((item) => item.id === type)!;
   const mappings = inspection?.mapping || {};
   const selectedRows = useMemo(() => (preview?.rows || []).filter((row) => {
     const choice = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : "skip");
-    return choice === "create" || choice.startsWith("update:");
-  }), [preview, rowChoices]);
+    const unresolvedChoice = row.issues.some((issue) => {
+      if (!issue.candidates?.length || relationshipChoices[`${row.row}:${issue.field}`]) return false;
+      if (issue.code === "ambiguous_reference") return true;
+      if (issue.code !== "foreign_or_unknown_id") return false;
+      return (type === "members" && ["teams", "positions"].includes(issue.field))
+        || (type === "positions" && ["team", "teamId"].includes(issue.field))
+        || (type === "services" && issue.field === "position")
+        || (type === "schedules" && ["team", "teamId", "service", "serviceId", "position", "positionId", "person", "memberId"].includes(issue.field));
+    });
+    return (choice === "create" || choice.startsWith("update:")) && !unresolvedChoice;
+  }), [preview, rowChoices, relationshipChoices, type]);
 
   const resetImport = (nextType = type) => {
     setType(nextType);
@@ -81,8 +91,9 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
     setInspection(null);
     setPreview(null);
     setRowChoices({});
+    setRelationshipChoices({});
     setMessage("");
-    setCommitIssues([]);
+    setCommitResults([]);
     setPreviewPage(0);
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -107,6 +118,8 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
       setInspection(result);
       setPreview(null);
       setRowChoices({});
+      setRelationshipChoices({});
+      setCommitResults([]);
       if (result.issues.length) setMessage(result.issues.map((issue) => `Row ${issue.row}: ${issue.message}`).join(" "));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not read this CSV. Check the file and try again.");
@@ -123,6 +136,7 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
       const result = await previewPortableImport(churchId, type, csv, mappings);
       setPreview(result);
       setPreviewPage(0);
+      setRelationshipChoices({});
       setRowChoices(Object.fromEntries(result.rows.map((row) => [row.row, row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : "skip"])));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not validate this CSV. Check the file and try again.");
@@ -139,17 +153,35 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
       const rows = selectedRows.map((row) => {
         const choice = rowChoices[row.row] || (row.action === "create" ? "create" : `update:${row.matchedId}`);
         const recordId = choice.startsWith("update:") ? choice.slice("update:".length) : "";
-        return { row: row.row, action: (recordId ? "update" : "create") as "create" | "update", ...(recordId ? { recordId } : {}), record: row.record };
+        const resolutions = Object.fromEntries(row.issues.flatMap((issue) => {
+          const selected = relationshipChoices[`${row.row}:${issue.field}`];
+          return selected ? [[issue.field, selected]] : [];
+        }));
+        return { row: row.row, action: (recordId ? "update" : "create") as "create" | "update", ...(recordId ? { recordId } : {}), record: row.record, resolutions };
       });
-      const skipped = Math.max(0, preview.summary.total - selectedRows.length);
       const result = await commitPortableImport(churchId, type, rows);
-      setMessage(`Imported ${result.summary.created} new and updated ${result.summary.updated}. Skipped ${skipped}. ${result.summary.failed} failed.`);
-      setCommitIssues(result.results.filter((item) => item.status === "failed"));
-      setPreview(null);
-      setInspection(null);
-      setCsv("");
-      setFileName("");
-      if (inputRef.current) inputRef.current.value = "";
+      const resultByRow = new Map(commitResults.map((item) => [item.row, item]));
+      result.results.forEach((item) => resultByRow.set(item.row, item));
+      const combinedResults = [...resultByRow.values()];
+      const counts = {
+        created: combinedResults.filter((item) => item.status === "created").length,
+        updated: combinedResults.filter((item) => item.status === "updated").length,
+        failed: combinedResults.filter((item) => item.status === "failed").length,
+      };
+      setMessage(`Imported ${counts.created} · Updated ${counts.updated} · Failed ${counts.failed} · Skipped ${Math.max(0, preview.summary.total - combinedResults.length)}.`);
+      setCommitResults(combinedResults);
+      setRowChoices((current) => {
+        const next = { ...current };
+        result.results.filter((item) => item.status !== "failed").forEach((item) => { next[item.row] = "skip"; });
+        return next;
+      });
+      if (result.summary.failed === 0) {
+        setPreview(null);
+        setInspection(null);
+        setCsv("");
+        setFileName("");
+        if (inputRef.current) inputRef.current.value = "";
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not import these rows. Check the connection and try again.");
     } finally {
@@ -175,7 +207,7 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
     <div className="mx-auto w-full max-w-5xl space-y-6 text-white">
       <header className="space-y-1">
         <h2 className="text-2xl font-semibold">Data transfer</h2>
-        <p className="max-w-3xl text-sm text-gray-300">Import data from another platform or export WorshipSync data as standard CSV files.</p>
+        <p className="max-w-3xl text-sm text-gray-300">Import data from another platform or export WorshipSync data as standard CSV files. Imports do not archive or restore records; skip rows marked Archived.</p>
       </header>
 
       <section className="space-y-4 border-t border-gray-700 pt-5" aria-labelledby="data-transfer-import-title">
@@ -231,7 +263,9 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
                   <div key={row.row} className="grid gap-2 rounded border border-gray-700 p-3 sm:grid-cols-[minmax(0,1fr)_14rem] sm:items-start">
                     <div className="min-w-0">
                       <p className="text-sm font-medium">Row {row.row}: {row.record.name || [row.record.firstName, row.record.lastName].filter(Boolean).join(" ") || row.record.person || "Untitled row"}</p>
+                      {commitResults.filter((result) => result.row === row.row).map((result) => <p key={`result-${row.row}`} className={`mt-1 text-xs ${result.status === "failed" ? "text-red-200" : "text-green-200"}`}>{result.status === "failed" ? `Import failed: ${result.message || "Preview this file again."}` : result.status === "created" ? "Imported." : "Updated."}</p>)}
                       {row.issues.map((issue, index) => <p key={`${issue.code}-${index}`} className={`mt-1 text-xs ${issue.code === "required" || issue.code === "missing_reference" || issue.code === "unresolved_reference" || issue.code === "not_found" || issue.code === "archived_match" ? "text-red-200" : "text-amber-200"}`}>{issue.message}</p>)}
+                      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_id"].includes(issue.code) && !({ members: "memberId", teams: "teamId", positions: "positionId", services: "serviceId", schedules: "scheduleId" }[type] === issue.field)).map((issue) => { const fieldLabel = /^service\d+$/.test(issue.field) ? `Service ${Number(issue.field.slice(7)) + 1}` : LABELS[issue.field] || issue.field; return <label key={`resolve-${issue.field}`} className="mt-2 grid max-w-lg gap-1 text-xs text-gray-200"><span>{fieldLabel}</span><select aria-label={`Resolve ${fieldLabel} for row ${row.row}`} className="min-h-9 rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[`${row.row}:${issue.field}`] || ""} onChange={(event) => setRelationshipChoices((current) => ({ ...current, [`${row.row}:${issue.field}`]: event.target.value }))}><option value="">Choose a local match…</option>{(issue.candidates || []).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>; })}
                       {row.candidates.length > 0 && <p className="mt-1 text-xs text-gray-400">Several possible matches. Choose one or create a new record.</p>}
                     </div>
                     <select aria-label={`Action for row ${row.row}`} className="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={selected} disabled={row.action === "invalid" || Boolean(busy)} onChange={(event) => setRowChoices((current) => ({ ...current, [row.row]: event.target.value }))}>
@@ -252,7 +286,6 @@ const AccountDataTransferWorkspace = ({ churchId }: { churchId: string }) => {
           </div>
         )}
         {message && <p role="status" className="text-sm text-amber-100">{message}</p>}
-        {commitIssues.map((issue) => <p key={`${issue.row}-${issue.code}`} className="text-sm text-red-200">Row {issue.row}: {issue.message || "Could not import this row."}</p>)}
       </section>
 
       <section className="space-y-4 border-t border-gray-700 pt-5" aria-labelledby="data-transfer-export-title">

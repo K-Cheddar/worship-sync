@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Check, Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -33,6 +33,7 @@ import EntityRow from "../components/EntityRow";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import FormActionButtons from "../components/FormActionButtons";
+import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
@@ -254,7 +255,8 @@ const QualificationManager = ({
       if (!wasEditing) {
         onAreaSaved(response.area, localAreaId);
       }
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(wasEditing?.areaId || response.area.areaId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         if (editingRef.current?.areaId === wasEditing.areaId) {
@@ -326,6 +328,7 @@ const QualificationManager = ({
   // represents work that the operator could discard.
   const hasPendingChanges =
     showCreate && (hasPendingAreaChanges || hasPendingLevelChanges);
+  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingAreaChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const saveLevel = async (levelId?: string) => {
@@ -377,7 +380,8 @@ const QualificationManager = ({
           rank: response.level.rank,
         },
       }));
-      showToast(saveToastMessage, "success");
+      if (saveToastMessage) showToast(saveToastMessage, "success");
+      saveFeedback.recordSuccess(response.level.levelId, levelId ? "update" : "create");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification level.");
       onArchived();
@@ -502,12 +506,14 @@ const QualificationManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save area"
+            entityLabel="qualification area"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
+            successMode={saveFeedback.successMode}
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >
@@ -556,36 +562,45 @@ const QualificationManager = ({
                       hideLabel
                       value={levelDraft.name}
                       placeholder="Level 2"
-                      onChange={(name) =>
+                      onChange={(name) => {
+                        saveFeedback.clearSuccess(`level:${level.levelId}`);
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: { ...levelDraft, name: String(name) },
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <Input
                       label="Rank"
                       hideLabel
                       type="number"
                       value={levelDraft.rank}
-                      onChange={(rank) =>
+                      onChange={(rank) => {
+                        saveFeedback.clearSuccess(`level:${level.levelId}`);
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: {
                             ...levelDraft,
                             rank: Number(rank),
                           },
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <Button
                       variant="tertiary"
-                      svg={Save}
-                      aria-label={`Save ${level.name}`}
-                      isLoading={levelSavingKey === `level:${level.levelId}`}
+                      aria-label={
+                        levelSavingKey === `level:${level.levelId}`
+                          ? `Saving ${level.name}`
+                          : saveFeedback.successModeFor(`level:${level.levelId}`)
+                            ? `Saved ${level.name}`
+                            : `Save ${level.name}`
+                      }
+                      aria-busy={levelSavingKey === `level:${level.levelId}` || undefined}
+                      disabled={levelSavingKey === `level:${level.levelId}`}
+                      svg={levelSavingKey === `level:${level.levelId}` || saveFeedback.successModeFor(`level:${level.levelId}`) ? undefined : Save}
                       onClick={() => void saveLevel(level.levelId)}
                     >
-                      Save
+                      {levelSavingKey === `level:${level.levelId}` ? "Saving…" : saveFeedback.successModeFor(`level:${level.levelId}`) ? <><Check aria-hidden="true" className="size-4 shrink-0" />Saved</> : "Save"}
                     </Button>
                   </div>
                 );
@@ -596,25 +611,29 @@ const QualificationManager = ({
                   hideLabel
                   value={newLevelName}
                   placeholder="New level"
-                  onChange={(name) => setNewLevelName(String(name))}
+                  onChange={(name) => {
+                    saveFeedback.clearSuccess("level:new");
+                    setNewLevelName(String(name));
+                  }}
                 />
                 <Input
                   label="Rank"
                   hideLabel
                   type="number"
                   value={newLevelRank}
-                  onChange={(rank) => setNewLevelRank(String(rank))}
+                  onChange={(rank) => {
+                    saveFeedback.clearSuccess("level:new");
+                    setNewLevelRank(String(rank));
+                  }}
                 />
                 <Button
                   variant="secondary"
                   svg={Plus}
-                  disabled={
-                    !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))
-                  }
-                  isLoading={levelSavingKey === "level:new"}
+                  aria-busy={levelSavingKey === "level:new" || undefined}
+                  disabled={levelSavingKey === "level:new" || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
                   onClick={() => void saveLevel()}
                 >
-                  Add level
+                  {levelSavingKey === "level:new" ? "Creating…" : "Add level"}
                 </Button>
               </div>
             </div>

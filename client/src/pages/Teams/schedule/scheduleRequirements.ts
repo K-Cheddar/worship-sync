@@ -78,14 +78,14 @@ export const resolveOccurrenceRequirements = ({
   const teamPositionIdSet = new Set(teamPositionIds);
   const scope = (reqs: PositionRequirement[]) =>
     reqs.filter((req) => teamPositionIdSet.has(req.positionId));
-  const fromOccurrence = scope(
-    sanitizePositionRequirements(occurrence?.positionRequirements),
+  const occurrenceRequirements = sanitizePositionRequirements(
+    occurrence?.positionRequirements,
   );
-  if (fromOccurrence.length) return fromOccurrence;
-  const fromService = scope(
-    sanitizePositionRequirements(service?.positionRequirements),
+  if (occurrenceRequirements.length) return scope(occurrenceRequirements);
+  const serviceRequirements = sanitizePositionRequirements(
+    service?.positionRequirements,
   );
-  if (fromService.length) return fromService;
+  if (serviceRequirements.length) return scope(serviceRequirements);
   return teamPositionIds.map((positionId) => ({ positionId, count: 1 }));
 };
 

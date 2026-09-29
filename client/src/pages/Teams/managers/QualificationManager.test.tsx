@@ -129,7 +129,7 @@ describe("QualificationManager navigation guard", () => {
 
     await user.click(screen.getByRole("button", { name: "Create area" }));
     await user.type(screen.getByLabelText(/^Area name:?$/), "Audio");
-    await user.click(screen.getByRole("button", { name: "Save area" }));
+    await user.click(screen.getByRole("button", { name: "Create qualification area" }));
 
     await waitFor(() => expect(createTeamQualificationArea).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("heading", { name: "Edit qualification area" })).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe("QualificationManager navigation guard", () => {
     const nameInput = screen.getByLabelText(/^Area name:?$/);
     await user.clear(nameInput);
     await user.type(nameInput, "Audio Production");
-    await user.click(screen.getByRole("button", { name: "Save area" }));
+    await user.click(screen.getByRole("button", { name: "Save qualification area" }));
     await waitFor(() => expect(updateTeamQualificationArea).toHaveBeenCalledTimes(1));
     expect(createTeamQualificationArea).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "Edit qualification area" })).toBeInTheDocument();

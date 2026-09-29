@@ -2767,6 +2767,7 @@ export const previewPortableImport = async (
   type: PortableDataType,
   csv: string,
   mapping: Record<string, string>,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => apiFetch<{
   success: boolean;
   rows: PortableImportRow[];
@@ -2774,20 +2775,21 @@ export const previewPortableImport = async (
   summary: { total: number; create: number; update: number; review: number; invalid: number };
 }>(`api/churches/${churchId}/data-transfer/preview`, {
   method: "POST",
-  body: JSON.stringify({ type, csv, mapping }),
+  body: JSON.stringify({ type, csv, mapping, timeZone }),
 });
 
 export const commitPortableImport = async (
   churchId: string,
   type: PortableDataType,
-  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string> }>,
+  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string>; resolutions?: Record<string, string> }>,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => apiFetch<{
   success: boolean;
   results: Array<{ row: number; status: "created" | "updated" | "failed"; id?: string; code?: string; message?: string }>;
   summary: { created: number; updated: number; failed: number };
 }>(`api/churches/${churchId}/data-transfer/commit`, {
   method: "POST",
-  body: JSON.stringify({ type, approvedRows }),
+  body: JSON.stringify({ type, approvedRows, timeZone }),
 });
 
 export const downloadPortableData = async (

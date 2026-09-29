@@ -55,8 +55,9 @@ import {
 import { hasPersonalizedIntakeResponseFields } from "./teamIntakeFields.js";
 import { encodeCsv, parseCsv } from "./dataTransfer/csv.js";
 import { PORTABLE_SCHEMAS, buildPortableDatasets, LIST_DELIMITER, parsePortablePositionIcon } from "./dataTransfer/schemas.js";
-import { findPortableMatch, normalizePortableMatchValue, portableServiceMatches } from "./dataTransfer/matching.js";
+import { classifyPortablePreviewAction, findPortableMatch, normalizePortableMatchValue, portableServiceMatches } from "./dataTransfer/matching.js";
 import { createZip } from "./dataTransfer/zip.js";
+import { portableWallClockToIso } from "./dataTransfer/time.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -811,7 +812,15 @@ export const createTeamsAuthHandlers = ({
 
   // The document id is deterministic so concurrent admins ensuring the same
   // team/range contend on one Firestore document instead of creating siblings.
-  const generatedPeriodKeyFor = ({ teamId, startDate, endDate }) =>
+  const generatedPeriodKeyFor = ({ churchId, teamId, startDate, endDate }) =>
+    crypto
+      .createHash("sha256")
+      .update(`${churchId}\u0000${teamId}\u0000${startDate}\u0000${endDate}`)
+      .digest("hex");
+  // Keep discovering generated-period documents written before churchId was
+  // included in the deterministic key. They are reused in place, without a
+  // collection-wide migration.
+  const legacyGeneratedPeriodKeyFor = ({ teamId, startDate, endDate }) =>
     crypto
       .createHash("sha256")
       .update(`${teamId}\u0000${startDate}\u0000${endDate}`)
@@ -7747,8 +7756,11 @@ export const createTeamsAuthHandlers = ({
             const importedId = String(record.memberId || "").trim();
             if (importedId) {
               match = records.members.find((item) => item.memberId === importedId) || null;
-            }
-            if (!match && record.firstName && record.lastName) {
+              if (!match) {
+                candidates = records.members.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.firstName) === normalizePortableMatchValue(record.firstName) && normalizePortableMatchValue(item.lastName) === normalizePortableMatchValue(record.lastName));
+                issues.push({ field: "memberId", code: "foreign_or_unknown_id", message: "This WorshipSync Member ID does not belong to this church. Choose a local match explicitly or create a new member.", candidates: candidates.map((item) => ({ id: item.memberId, name: [item.firstName, item.lastName].filter(Boolean).join(" ") })) });
+              }
+            } else if (record.firstName && record.lastName) {
               candidates = records.members.filter((item) => normalizePortableMatchValue(item.firstName) === normalizePortableMatchValue(record.firstName) && normalizePortableMatchValue(item.lastName) === normalizePortableMatchValue(record.lastName) && !item.archivedAt);
               if (candidates.length === 1) match = candidates[0];
             }
@@ -7760,7 +7772,10 @@ export const createTeamsAuthHandlers = ({
                 const found = idParts[index]
                   ? collection.filter((item) => item[key] === idParts[index] && !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(part))
                   : collection.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(part) && !item.archivedAt);
-                if (found.length !== 1) issues.push({ field, code: "unresolved_reference", message: found.length ? `Add the WorshipSync ID for ${label} "${part}" to identify it.` : idParts[index] ? `The WorshipSync ID does not identify ${label} "${part}" in this church.` : `Import or map ${label} "${part}" before importing this member.`, candidates: found.map((item) => ({ id: item[key], name: item.name })) });
+                const candidatesForChoice = idParts[index] && !found.length
+                  ? collection.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(part) && !item.archivedAt)
+                  : found;
+                if (found.length !== 1) issues.push({ field, code: found.length ? "ambiguous_reference" : idParts[index] ? "foreign_or_unknown_id" : candidatesForChoice.length ? "ambiguous_reference" : "missing_reference", message: found.length || candidatesForChoice.length > 1 ? `Choose which ${label} "${part}" to use.` : idParts[index] ? `This WorshipSync ${label} ID does not belong to this church.` : `Import or map ${label} "${part}" before importing this member.`, candidates: candidatesForChoice.map((item) => ({ id: item[key], name: item.name })) });
               }
             };
             const importedTeamNames = String(record.teams || "").split(LIST_DELIMITER).map((value) => normalizePortableMatchValue(value)).filter(Boolean);
@@ -7774,15 +7789,24 @@ export const createTeamsAuthHandlers = ({
             if (!record.name) issues.push({ field: "name", code: "required", message: "Team name is required." });
             const found = findPortableMatch({ records: records.teams, id: record.teamId, idField: "teamId", label: record.name, includeArchived: true });
             match = found.record;
-            candidates = found.candidates || [];
+            candidates = found.foreignOrUnknownId ? records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name)) : (found.candidates || []);
+            if (found.foreignOrUnknownId) issues.push({ field: "teamId", code: "foreign_or_unknown_id", message: "This WorshipSync Team ID does not belong to this church. Choose a local match explicitly or create a new team.", candidates: candidates.map((item) => ({ id: item.teamId, name: item.name })) });
           } else if (type === "positions") {
             if (!record.name || !record.team) issues.push({ field: "team", code: "required", message: "Position and team are required." });
-            const localTeamIdMatch = record.teamId && records.teams.find((item) => item.teamId === record.teamId);
-            const teamMatches = localTeamIdMatch ? [localTeamIdMatch] : records.teams.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team));
-            if (teamMatches.length !== 1) issues.push({ field: "team", code: "unresolved_reference", message: teamMatches.length ? "Add the WorshipSync Team ID to identify which team owns this position." : `Import or map team "${record.team || ""}" before importing this position.`, candidates: teamMatches.map((item) => ({ id: item.teamId, name: item.name })) });
+            const localTeamIdMatch = record.teamId && records.teams.find((item) => !item.archivedAt && item.teamId === record.teamId);
+            const teamMatches = localTeamIdMatch ? [localTeamIdMatch] : record.teamId ? [] : records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team));
+            if (record.teamId && !localTeamIdMatch) issues.push({ field: "teamId", code: "foreign_or_unknown_id", message: "This WorshipSync Team ID does not belong to this church." });
+            if (teamMatches.length !== 1) {
+              const choiceCandidates = record.teamId && !teamMatches.length ? records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team)) : teamMatches;
+              issues.push({ field: "team", code: choiceCandidates.length ? "ambiguous_reference" : "missing_reference", message: choiceCandidates.length ? "Choose which team owns this position." : `Import or map team "${record.team || ""}" before importing this position.`, candidates: choiceCandidates.map((item) => ({ id: item.teamId, name: item.name })) });
+            }
             else {
               const localPositionIdMatch = record.positionId && records.positions.find((item) => item.teamId === teamMatches[0].teamId && item.positionId === record.positionId);
-              const matches = localPositionIdMatch ? [localPositionIdMatch] : records.positions.filter((item) => item.teamId === teamMatches[0].teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name));
+              const matches = localPositionIdMatch ? [localPositionIdMatch] : record.positionId ? [] : records.positions.filter((item) => item.teamId === teamMatches[0].teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name));
+              if (record.positionId && !localPositionIdMatch) {
+                candidates = records.positions.filter((item) => !item.archivedAt && item.teamId === teamMatches[0].teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name));
+                issues.push({ field: "positionId", code: "foreign_or_unknown_id", message: "This WorshipSync Position ID does not identify an active position in the selected team. Choose a local match explicitly or create a new position.", candidates: candidates.map((item) => ({ id: item.positionId, name: item.name })) });
+              }
               if (matches.length === 1) match = matches[0];
               else candidates = matches;
             }
@@ -7790,35 +7814,64 @@ export const createTeamsAuthHandlers = ({
             if (!record.name || !record.recurrence) issues.push({ field: "name", code: "required", message: "Service name and recurrence are required." });
             const positionName = String(record.position || "").trim();
             if (positionName) {
-              const positionMatches = record.positionId
+              let positionMatches = record.positionId
                 ? records.positions.filter((item) => !item.archivedAt && item.positionId === record.positionId)
                 : records.positions.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(positionName));
-              if (positionMatches.length !== 1) issues.push({ field: "position", code: "unresolved_reference", message: positionMatches.length ? `Add the WorshipSync Position ID to identify which position "${positionName}" uses.` : `Import or map position "${positionName}" before importing this service.` });
+              const unknownId = Boolean(record.positionId && !positionMatches.length);
+              if (unknownId) positionMatches = records.positions.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(positionName));
+              if (positionMatches.length !== 1 || unknownId) issues.push({ field: "position", code: unknownId ? "foreign_or_unknown_id" : positionMatches.length ? "ambiguous_reference" : "missing_reference", message: unknownId ? "This WorshipSync Position ID does not belong to this church. Choose a local position explicitly." : positionMatches.length ? `Choose which position "${positionName}" this service uses.` : `Import or map position "${positionName}" before importing this service.`, candidates: positionMatches.map((item) => ({ id: item.positionId, name: item.name })) });
             }
             const importedId = String(record.serviceId || "").trim();
             const localIdMatch = importedId && records.services.find((item) => (item.serviceId || item.id) === importedId);
-            const serviceMatches = localIdMatch ? [localIdMatch] : records.services.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name) && portableServiceMatches(item, record, records.services));
+            const serviceMatches = localIdMatch ? [localIdMatch] : importedId ? [] : records.services.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name) && portableServiceMatches(item, record, records.services));
+            if (importedId && !localIdMatch) {
+              candidates = records.services.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name) && portableServiceMatches(item, record, records.services));
+              issues.push({ field: "serviceId", code: "foreign_or_unknown_id", message: "This WorshipSync Service ID does not belong to this church. Choose a local match explicitly or create a new service.", candidates: candidates.map((item) => ({ id: item.serviceId || item.id, name: item.name })) });
+            }
             if (serviceMatches.length === 1) match = serviceMatches[0];
-            else candidates = serviceMatches;
+            else if (!importedId) candidates = serviceMatches;
           } else if (type === "schedules") {
             if (!record.name || !record.team || !record.date || !record.service) issues.push({ field: "date", code: "required", message: "Schedule, team, service, and date are required." });
             const localTeamIdMatch = record.teamId && records.teams.find((item) => !item.archivedAt && item.teamId === record.teamId);
-            const teamMatches = localTeamIdMatch ? [localTeamIdMatch] : records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team));
+            const teamMatches = localTeamIdMatch ? [localTeamIdMatch] : record.teamId ? [] : records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team));
+            if (record.teamId && !localTeamIdMatch) issues.push({ field: "teamId", code: "foreign_or_unknown_id", message: "This WorshipSync Team ID does not belong to this church." });
             const team = teamMatches.length === 1 ? teamMatches[0] : null;
-            if (!team) issues.push({ field: "team", code: "unresolved_reference", message: teamMatches.length ? `Team "${record.team}" is ambiguous. Add its WorshipSync Team ID.` : `Import or map team "${record.team || ""}" first.` });
+            const candidateTeamIds = team ? [team.teamId] : (record.teamId
+              ? records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team)).map((item) => item.teamId)
+              : teamMatches.map((item) => item.teamId));
+            if (!team) {
+              const choiceCandidates = record.teamId && !teamMatches.length ? records.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team)) : teamMatches;
+              issues.push({ field: "team", code: choiceCandidates.length ? "ambiguous_reference" : "missing_reference", message: choiceCandidates.length ? `Choose which ${record.team} team to use.` : `Import or map team "${record.team || ""}" first.`, candidates: choiceCandidates.map((item) => ({ id: item.teamId, name: item.name })) });
+            }
             const serviceNames = String(record.service || "").split(LIST_DELIMITER).map((name) => name.trim()).filter(Boolean);
-            const serviceMatches = serviceNames.map((name) => records.services.filter((item) => !item.archivedAt && ((record.serviceId && serviceNames.length === 1 && (item.serviceId || item.id) === record.serviceId) || normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name))));
-            if (serviceMatches.some((matches) => matches.length !== 1)) issues.push({ field: "service", code: "unresolved_reference", message: serviceMatches.some((matches) => matches.length > 1) ? "A service name is ambiguous. Add its WorshipSync Service ID or use a distinct name." : `Import or map service "${record.service || ""}" first.` });
-            if (team && record.position) {
-              const localPositionIdMatch = record.positionId && records.positions.find((item) => !item.archivedAt && item.teamId === team.teamId && item.positionId === record.positionId);
-              const positions = localPositionIdMatch ? [localPositionIdMatch] : records.positions.filter((item) => !item.archivedAt && item.teamId === team.teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.position));
-              if (positions.length !== 1) issues.push({ field: "position", code: "unresolved_reference", message: positions.length ? `Position "${record.position}" is ambiguous within ${team.name}. Add its WorshipSync Position ID.` : `Import or map position "${record.position}" within ${team.name} first.` });
+            const serviceMatches = serviceNames.map((name) => records.services.filter((item) => !item.archivedAt && (record.serviceId && serviceNames.length === 1 ? (item.serviceId || item.id) === record.serviceId : normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name))));
+            if (record.serviceId && serviceMatches.every((matches) => !matches.length)) {
+              const localByName = records.services.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(serviceNames[0]));
+              issues.push({ field: "serviceId", code: "foreign_or_unknown_id", message: "This WorshipSync Service ID does not belong to this church. Choose a local service explicitly.", candidates: localByName.map((item) => ({ id: item.serviceId || item.id, name: item.name })) });
+              if (serviceNames.length === 1 && localByName.length) serviceMatches[0].push(...localByName);
+            }
+            serviceMatches.forEach((matches, index) => { if (matches.length !== 1 && !(record.serviceId && serviceNames.length === 1 && matches.length > 0)) issues.push({ field: serviceNames.length === 1 ? "service" : `service${index}`, code: matches.length ? "ambiguous_reference" : "missing_reference", message: matches.length ? `Choose which ${serviceNames[index]} service to use.` : `Import or map service "${serviceNames[index]}" first.`, candidates: matches.map((item) => ({ id: item.serviceId || item.id, name: item.name })) }); });
+            if (record.position) {
+              const localPositionIdMatch = record.positionId && records.positions.find((item) => !item.archivedAt && candidateTeamIds.includes(item.teamId) && item.positionId === record.positionId);
+              const positions = localPositionIdMatch ? [localPositionIdMatch] : record.positionId ? [] : records.positions.filter((item) => !item.archivedAt && candidateTeamIds.includes(item.teamId) && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.position));
+              if (record.positionId && !localPositionIdMatch) {
+                const localByName = records.positions.filter((item) => !item.archivedAt && candidateTeamIds.includes(item.teamId) && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.position));
+                issues.push({ field: "positionId", code: "foreign_or_unknown_id", message: "This WorshipSync Position ID is not active within the selected team. Choose a local position explicitly.", candidates: localByName.map((item) => ({ id: item.positionId, name: item.name })) });
+                if (localByName.length) positions.push(...localByName);
+              }
+              if (positions.length !== 1) issues.push({ field: "position", code: positions.length ? "ambiguous_reference" : "missing_reference", message: positions.length ? `Choose which ${record.position} position to use.` : `Import or map position "${record.position}" first.`, candidates: positions.map((item) => ({ id: item.positionId, name: item.name })) });
             }
             const guest = String(record.guest || "").toLowerCase() === "true";
-            if (record.person && !guest && team) {
-              const localMemberIdMatch = record.memberId && records.members.find((item) => !item.archivedAt && (team.memberIds || []).includes(item.memberId) && item.memberId === record.memberId);
-              const people = localMemberIdMatch ? [localMemberIdMatch] : records.members.filter((item) => !item.archivedAt && (team.memberIds || []).includes(item.memberId) && normalizePortableMatchValue([item.firstName, item.lastName].filter(Boolean).join(" ")) === normalizePortableMatchValue(record.person));
-              if (people.length !== 1) issues.push({ field: "person", code: "unresolved_reference", message: people.length ? `Person "${record.person}" is ambiguous on ${team.name}. Add the WorshipSync Member ID.` : `Person "${record.person}" is not on ${team.name}. Import the member or mark this assignment as a guest.` });
+            if (record.person && !guest && candidateTeamIds.length) {
+              const candidateMemberIds = new Set(records.teams.filter((item) => candidateTeamIds.includes(item.teamId)).flatMap((item) => item.memberIds || []));
+              const localMemberIdMatch = record.memberId && records.members.find((item) => !item.archivedAt && candidateMemberIds.has(item.memberId) && item.memberId === record.memberId);
+              const people = localMemberIdMatch ? [localMemberIdMatch] : record.memberId ? [] : records.members.filter((item) => !item.archivedAt && candidateMemberIds.has(item.memberId) && normalizePortableMatchValue([item.firstName, item.lastName].filter(Boolean).join(" ")) === normalizePortableMatchValue(record.person));
+              if (record.memberId && !localMemberIdMatch) {
+                const localByName = records.members.filter((item) => !item.archivedAt && candidateMemberIds.has(item.memberId) && normalizePortableMatchValue([item.firstName, item.lastName].filter(Boolean).join(" ")) === normalizePortableMatchValue(record.person));
+                issues.push({ field: "memberId", code: "foreign_or_unknown_id", message: "This WorshipSync Member ID is not active on the selected team. Choose a local member explicitly.", candidates: localByName.map((item) => ({ id: item.memberId, name: [item.firstName, item.lastName].filter(Boolean).join(" ") })) });
+                if (localByName.length) people.push(...localByName);
+              }
+              if (people.length !== 1) issues.push({ field: "person", code: people.length ? "ambiguous_reference" : "missing_reference", message: people.length ? `Choose which ${record.person} member to use.` : `Person "${record.person}" is not on this team. Import the member or mark this assignment as a guest.`, candidates: people.map((item) => ({ id: item.memberId, name: [item.firstName, item.lastName].filter(Boolean).join(" ") })) });
             }
             const assignmentType = String(record.assignmentType || "primary").toLowerCase().replace(/[ -]/g, "_");
             if (record.person && !["primary", "shadow", "reverse_shadow"].includes(assignmentType)) issues.push({ field: "assignmentType", code: "invalid_value", message: "Assignment type must be primary, shadow, or reverse_shadow." });
@@ -7826,14 +7879,15 @@ export const createTeamsAuthHandlers = ({
             const importedScheduleId = String(record.scheduleId || "").trim();
             const idMatch = importedScheduleId && records.schedules.find((item) => item.scheduleId === importedScheduleId);
             const scheduleMatches = idMatch ? [idMatch] : records.schedules.filter((item) => !item.archivedAt && item.teamId === team?.teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name) && String(item.startDate || "") === String(record.startDate || record.date || ""));
-            if (scheduleMatches.length === 1) match = scheduleMatches[0];
-            else if (scheduleMatches.length > 1) candidates = scheduleMatches;
+            if (importedScheduleId && !idMatch) issues.push({ field: "scheduleId", code: "foreign_or_unknown_id", message: "This WorshipSync Schedule ID does not belong to this church. Choose a local schedule explicitly or create a new schedule.", candidates: scheduleMatches.map((item) => ({ id: item.scheduleId, name: item.name })) });
+            if (scheduleMatches.length === 1 && (!importedScheduleId || idMatch)) match = scheduleMatches[0];
+            else if (scheduleMatches.length > 1 || (importedScheduleId && !idMatch)) candidates = scheduleMatches;
           }
           if (String(record.archived || "").toLowerCase() === "true") issues.push({ field: "archived", code: "archive_import_unsupported", message: "Archived rows are included in exports, but importing does not archive or restore records. Skip this row or clear the Archived value." });
           if (match?.archivedAt) issues.push({ field: "id", code: "archived_match", message: "This ID matches an archived record. Choose another row or skip it; imports do not restore archived records." });
-          const blocking = issues.some((issue) => issue.code !== "ambiguous_match" || !issue.candidates?.length);
-          const ambiguous = candidates.length > 1 || issues.some((issue) => issue.code === "ambiguous_match");
-          return { row, record, action: blocking ? "invalid" : match ? "update" : ambiguous ? "review" : "create", matchedId: match ? (match.memberId || match.teamId || match.positionId || match.serviceId || match.scheduleId || match.id) : null, candidates: candidates.map((item) => ({ id: item.memberId || item.teamId || item.positionId || item.serviceId || item.scheduleId || item.id, name: item.name || [item.firstName, item.lastName].filter(Boolean).join(" ") })), issues };
+          const rowCandidates = candidates.map((item) => ({ id: item.memberId || item.scheduleId || item.teamId || item.positionId || item.serviceId || item.id, name: item.name || [item.firstName, item.lastName].filter(Boolean).join(" ") }));
+          const action = classifyPortablePreviewAction({ issues, match, candidates: rowCandidates });
+          return { row, record, action, matchedId: match ? (match.scheduleId || match.memberId || match.teamId || match.positionId || match.serviceId || match.id) : null, candidates: rowCandidates, issues };
         });
         const representedRows = new Set(rows.map((row) => row.row));
         parsed.issues.forEach((issue) => {
@@ -7879,7 +7933,13 @@ export const createTeamsAuthHandlers = ({
           for (const groupRows of groups.values()) {
             const rowNumbers = groupRows.map((item) => Number(item.row));
             try {
-              const first = groupRows[0].record || {};
+              const records = groupRows.map((item) => {
+                const record = { ...(item.record || {}) };
+                const resolutions = item.resolutions && typeof item.resolutions === "object" ? item.resolutions : {};
+                if (resolutions.position || resolutions.positionId) record.positionId = String(resolutions.position || resolutions.positionId);
+                return record;
+              });
+              const first = records[0];
               const importedId = String(groupRows[0].recordId || "").trim();
               const existing = importedId ? data.services.find((item) => (item.serviceId || item.id) === importedId && !item.archivedAt) : null;
               if (importedId && !existing) throw httpError(400, "Service ID is missing from this church or archived.");
@@ -7887,8 +7947,7 @@ export const createTeamsAuthHandlers = ({
               const recurrence = String(first.recurrence || "").trim();
               if (!["one_time", "weekly", "monthly", "multi_weekly"].includes(recurrence)) throw httpError(400, "Choose a supported service recurrence.");
               const requirements = [];
-              for (const item of groupRows) {
-                const record = item.record || {};
+              for (const record of records) {
                 const positionName = String(record.position || "").trim();
                 if (!positionName) continue;
                 const matches = data.positions.filter((position) => !position.archivedAt && (record.positionId ? position.positionId === record.positionId : normalizePortableMatchValue(position.name) === normalizePortableMatchValue(positionName)));
@@ -7940,7 +7999,7 @@ export const createTeamsAuthHandlers = ({
               });
               rowNumbers.forEach((row) => results.push({ row, status: existing ? "updated" : "created", id }));
             } catch (error) {
-              rowNumbers.forEach((row) => results.push({ row, status: "failed", code: error?.statusCode === 409 ? "stale_preview" : "row_invalid", message: error?.message || "Could not import this service." }));
+              rowNumbers.forEach((row) => results.push({ row, status: "failed", code: error?.statusCode === 409 || groupRows.some((item) => Object.keys(item.resolutions || {}).length) ? "stale_preview" : "row_invalid", message: error?.message || "Could not import this service." }));
             }
           }
           return res.json({ success: true, results, summary: { created: results.filter((item) => item.status === "created").length, updated: results.filter((item) => item.status === "updated").length, failed: results.filter((item) => item.status === "failed").length } });
@@ -7959,15 +8018,26 @@ export const createTeamsAuthHandlers = ({
           for (const groupRows of groups.values()) {
             const rowNumbers = groupRows.map((item) => Number(item.row));
             try {
-              const records = groupRows.map((item) => item.record || {});
+            const records = groupRows.map((item) => {
+              const record = { ...(item.record || {}) };
+              const resolved = item.resolutions && typeof item.resolutions === "object" ? item.resolutions : {};
+              if (resolved.team || resolved.teamId) record.teamId = String(resolved.team || resolved.teamId);
+              if (resolved.position || resolved.positionId) record.positionId = String(resolved.position || resolved.positionId);
+              if (resolved.service || resolved.serviceId) record.serviceId = String(resolved.service || resolved.serviceId);
+              if (resolved.person || resolved.memberId) record.memberId = String(resolved.person || resolved.memberId);
+              const serviceNames = String(record.service || "").split(LIST_DELIMITER).map((name) => name.trim()).filter(Boolean);
+              if (serviceNames.length > 1) record.resolvedServiceIds = serviceNames.map((_, index) => String(resolved[`service${index}`] || "")).join(LIST_DELIMITER);
+              return record;
+            });
               const first = records[0];
               const localTeam = first.teamId && data.teams.find((item) => !item.archivedAt && item.teamId === first.teamId);
+              if (first.teamId && !localTeam) throw httpError(409, "The selected team is no longer active in this church. Preview the file again.");
               const teamMatches = localTeam ? [localTeam] : data.teams.filter((item) => !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(first.team));
               if (teamMatches.length !== 1) throw httpError(400, `Team "${first.team || ""}" is missing or ambiguous. Import and resolve teams first.`);
               const team = teamMatches[0];
               const importedScheduleId = String(groupRows[0].recordId || "").trim();
               const existing = importedScheduleId ? data.schedules.find((item) => item.scheduleId === importedScheduleId && !item.archivedAt) : null;
-              if (importedScheduleId && !existing) throw httpError(400, "Schedule ID was not found in this church or is archived.");
+              if (importedScheduleId && !existing) throw httpError(409, "The selected schedule is no longer active in this church. Preview the file again.");
               const existingByName = data.schedules.filter((item) => !item.archivedAt && item.teamId === team.teamId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(first.name) && String(item.startDate || "") === String(first.startDate || first.date || ""));
               if (!existing && existingByName.length) throw httpError(409, "A schedule with this name and date range already exists. Add its WorshipSync Schedule ID or skip these rows.");
               const occurrencesByKey = new Map();
@@ -7978,9 +8048,11 @@ export const createTeamsAuthHandlers = ({
                 const date = String(record.date || "").slice(0, 10);
                 const serviceNames = String(record.service || "").split(LIST_DELIMITER).map((name) => name.trim()).filter(Boolean);
                 if (!date || !serviceNames.length) throw httpError(400, "Schedule rows need a service name and date.");
-                const services = serviceNames.map((name) => {
-                  const serviceId = serviceNames.length === 1 ? String(record.serviceId || "").trim() : "";
+                const resolvedServiceIds = String(record.resolvedServiceIds || "").split(LIST_DELIMITER).map((value) => value.trim());
+                const services = serviceNames.map((name, index) => {
+                  const serviceId = resolvedServiceIds[index] || (serviceNames.length === 1 ? String(record.serviceId || "").trim() : "");
                   const idMatch = serviceId && data.services.find((service) => !service.archivedAt && (service.serviceId || service.id) === serviceId);
+                  if (serviceId && !idMatch) throw httpError(409, "The selected service is no longer active in this church. Preview the file again.");
                   const matches = idMatch ? [idMatch] : data.services.filter((service) => !service.archivedAt && normalizePortableMatchValue(service.name) === normalizePortableMatchValue(name));
                   if (matches.length !== 1) throw httpError(400, `Service "${name}" is missing or ambiguous.`);
                   return matches[0];
@@ -7989,12 +8061,11 @@ export const createTeamsAuthHandlers = ({
                 if (serviceIds.length > 1 && (!services[0].serviceGroupId || services.some((service) => service.serviceGroupId !== services[0].serviceGroupId))) throw httpError(400, "Combined services must share one service group before they can share an occurrence.");
                 const startTime = String(record.startTime || services[0].time || "10:00");
                 if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) throw httpError(400, "Use a valid 24-hour start time, such as 10:30.");
-                const [year, month, day] = date.split("-").map(Number);
-                const [hour, minute] = startTime.split(":").map(Number);
-                const localDate = new Date(year, month - 1, day, hour, minute, 0, 0);
-                if (Number.isNaN(localDate.getTime()) || localDate.getFullYear() !== year || localDate.getMonth() !== month - 1 || localDate.getDate() !== day) throw httpError(400, "Use a valid service date.");
-                const startsAt = localDate.toISOString();
-                const occurrenceId = String(record.occurrenceId || (serviceIds.length > 1 ? `group:${services[0].serviceGroupId}@${startsAt}` : `${serviceIds[0]}@${startsAt}`));
+                const timeZone = String(req.body?.timeZone || "UTC").trim();
+                const startsAt = portableWallClockToIso(date, startTime, timeZone);
+                if (!startsAt) throw httpError(400, "Use a valid service date, time, and time zone.");
+                const priorOccurrence = existing?.occurrences?.find((item) => item.occurrenceId === record.occurrenceId && String(item.startsAt || "").slice(0, 10) === date);
+                const occurrenceId = String(priorOccurrence?.occurrenceId || (serviceIds.length > 1 ? `group:${services[0].serviceGroupId}@${date}` : `${serviceIds[0]}@${startsAt}`));
                 const occurrenceKey = `${date}\u0000${startTime}\u0000${serviceIds.join(",")}`;
                 if (!occurrencesByKey.has(occurrenceKey)) {
                   const requirementMap = new Map();
@@ -8012,6 +8083,7 @@ export const createTeamsAuthHandlers = ({
                 const occurrence = occurrencesByKey.get(occurrenceKey);
                 const positionName = String(record.position || "").trim();
                 const localPosition = record.positionId && data.positions.find((position) => !position.archivedAt && position.teamId === team.teamId && position.positionId === record.positionId);
+                if (record.positionId && !localPosition) throw httpError(409, "The selected position is no longer active on this team. Preview the file again.");
                 const positionMatches = positionName ? (localPosition ? [localPosition] : data.positions.filter((position) => !position.archivedAt && position.teamId === team.teamId && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(positionName))) : [];
                 if (positionName && positionMatches.length !== 1) throw httpError(400, `Position "${positionName}" is missing or ambiguous within ${team.name}.`);
                 const slot = Math.max(1, Number(record.slot) || 1) - 1;
@@ -8027,6 +8099,7 @@ export const createTeamsAuthHandlers = ({
                     let member = null;
                     let memberId = String(record.memberId || "").trim();
                     if (memberId) member = data.members.find((item) => item.memberId === memberId && !item.archivedAt) || null;
+                    if (memberId && !member && !guest) throw httpError(409, "The selected member is no longer active in this church. Preview the file again.");
                     if ((!memberId || (!member && !guest)) && !guest) {
                       const parts = personName.split(/\s+/);
                       const matches = data.members.filter((item) => !item.archivedAt && (team.memberIds || []).includes(item.memberId) && normalizePortableMatchValue([item.firstName, item.lastName].filter(Boolean).join(" ")) === normalizePortableMatchValue(personName));
@@ -8035,13 +8108,24 @@ export const createTeamsAuthHandlers = ({
                       memberId = member.memberId;
                     }
                     if (guest) {
-                      const guestId = createId("guest");
-                      importedGuests.push({ guestId, name: personName, ...(record.email ? { email: String(record.email) } : {}) });
+                      const guestEmail = String(record.email || "").trim().toLowerCase();
+                      const priorGuests = [...(existing?.guests || []), ...importedGuests];
+                      const prior = priorGuests.find((item) => (guestEmail && String(item.email || "").trim().toLowerCase() === guestEmail) || normalizePortableMatchValue(item.name) === normalizePortableMatchValue(personName));
+                      const guestId = prior?.guestId || createId("guest");
+                      if (!prior) importedGuests.push({ guestId, name: personName, ...(record.email ? { email: String(record.email) } : {}) });
                       memberId = guestId;
                     } else if (!member) throw httpError(400, `Member "${personName}" was not found in this church.`);
                     const scheduleDraft = { ...(existing || {}), churchId, teamId: team.teamId, serviceIds: [...new Set([...(existing?.serviceIds || []), ...Array.from(occurrencesByKey.values()).flatMap((item) => [item.serviceId, ...(item.serviceIds || [])])])], occurrences: [...(existing?.occurrences || []), ...Array.from(occurrencesByKey.values())], assignments: assignmentsByOccurrence, additionalPositionSlots: additionalByOccurrence, guests: [...(existing?.guests || []), ...importedGuests] };
                     const existingCell = normalizeScheduleAssignmentCell(assignmentsByOccurrence[occurrence.occurrenceId]?.[key]);
-                    if (existingCell.primaryMemberId && assignmentType === "primary") throw httpError(409, "This slot is already assigned. Choose another slot or remove the existing schedule row first.");
+                    if (assignmentType === "primary" && existingCell.primaryMemberId === memberId) continue;
+                    if ((assignmentType === "shadow" || assignmentType === "reverse_shadow") && existingCell.shadows.some((shadow) => shadow.memberId === memberId && shadow.kind === assignmentType)) continue;
+                    if (assignmentType === "primary" && existingCell.primaryMemberId && existingCell.primaryMemberId !== memberId) {
+                      const clearedAssignments = JSON.parse(JSON.stringify(assignmentsByOccurrence));
+                      const clearedCell = serializeScheduleAssignmentCell({ primaryMemberId: "", shadows: existingCell.shadows });
+                      if (clearedCell) clearedAssignments[occurrence.occurrenceId][key] = clearedCell;
+                      else delete clearedAssignments[occurrence.occurrenceId][key];
+                      assignmentsByOccurrence = clearedAssignments;
+                    }
                     let validated;
                     if (assignmentType === "shadow" || assignmentType === "reverse_shadow") {
                       if (!member) throw httpError(400, "Guests can only be imported as primary assignments.");
@@ -8134,21 +8218,28 @@ export const createTeamsAuthHandlers = ({
               emitTeamsEvent(churchId, "schedule-updated", { schedule: saved });
               rowNumbers.forEach((row) => results.push({ row, status: existing ? "updated" : "created", id: saved.scheduleId }));
             } catch (error) {
-              rowNumbers.forEach((row) => results.push({ row, status: "failed", code: error?.statusCode === 409 ? "ambiguous_match" : "row_invalid", message: error?.message || "Could not import this schedule." }));
+              rowNumbers.forEach((row) => results.push({ row, status: "failed", code: error?.statusCode === 409 || groupRows.some((item) => Object.keys(item.resolutions || {}).length) ? "stale_preview" : "row_invalid", message: error?.message || "Could not import this schedule." }));
             }
           }
           return res.json({ success: true, results, summary: { created: results.filter((item) => item.status === "created").length, updated: results.filter((item) => item.status === "updated").length, failed: results.filter((item) => item.status === "failed").length } });
         }
         for (const approved of approvedRows) {
           const row = Number(approved.row);
-          const record = approved.record && typeof approved.record === "object" ? approved.record : {};
+          const record = approved.record && typeof approved.record === "object" ? { ...approved.record } : {};
+          const resolutions = approved.resolutions && typeof approved.resolutions === "object" ? approved.resolutions : {};
+          if (resolutions.team || resolutions.teamId) record.teamId = String(resolutions.team || resolutions.teamId);
+          if (resolutions.position || resolutions.positionId) record.positionId = String(resolutions.position || resolutions.positionId);
+          if (resolutions.service || resolutions.serviceId) record.serviceId = String(resolutions.service || resolutions.serviceId);
+          if (resolutions.person || resolutions.memberId) record.memberId = String(resolutions.person || resolutions.memberId);
+          if (resolutions.teams) record.teamIds = String(resolutions.teams);
+          if (resolutions.positions) record.positionIds = String(resolutions.positions);
           const requestedAction = approved.action;
           try {
             if (requestedAction !== "create" && requestedAction !== "update") throw httpError(400, "Choose create or update for this row.");
             if (type === "teams") {
               const id = String(approved.recordId || "").trim();
               const existing = id ? data.teams.find((item) => item.teamId === id) : null;
-              if (id && (!existing || existing.archivedAt)) throw httpError(400, "Team ID is missing from this church or archived.");
+              if (id && (!existing || existing.archivedAt)) throw httpError(409, "The selected team is no longer active in this church. Preview the file again.");
               if ((requestedAction === "update") !== Boolean(existing)) throw httpError(409, "This row no longer matches the preview. Preview it again.");
               const payload = await validateTeamPayload({ ...(existing || {}), name: record.name, description: record.description ?? existing?.description, usesMicrophoneAssignments: record.usesMicrophones !== undefined ? (record.usesMicrophones === true || String(record.usesMicrophones).toLowerCase() === "true") : existing?.usesMicrophoneAssignments, usesIemAssignments: record.usesIems !== undefined ? (record.usesIems === true || String(record.usesIems).toLowerCase() === "true") : existing?.usesIemAssignments }, churchId);
               const saved = await upsertTeamEntity({ kind: "team", churchId, id: existing?.teamId, payload, adminUserId: admin.user.uid });
@@ -8157,12 +8248,13 @@ export const createTeamsAuthHandlers = ({
             }
             if (type === "positions") {
               const localTeam = record.teamId && data.teams.find((item) => item.teamId === String(record.teamId).trim());
+              if (record.teamId && (!localTeam || localTeam.archivedAt)) throw httpError(409, "The selected team is no longer active in this church. Preview the file again.");
               const teamMatches = localTeam ? [localTeam] : data.teams.filter((item) => normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.team));
               const team = teamMatches.length === 1 ? teamMatches[0] : null;
-              if (!team || team.archivedAt) throw httpError(400, `Team "${record.team || ""}" must exist and be active before importing positions.`);
+              if (!team || team.archivedAt) throw httpError(409, `The selected team "${record.team || ""}" is no longer active. Preview the file again.`);
               const id = String(approved.recordId || "").trim();
               const existing = id ? data.positions.find((item) => item.positionId === id && item.teamId === team.teamId) : null;
-              if (id && (!existing || existing.archivedAt)) throw httpError(400, "Position ID is missing from this team or archived.");
+              if (id && (!existing || existing.archivedAt)) throw httpError(409, "The selected position is no longer active in this team. Preview the file again.");
               if ((requestedAction === "update") !== Boolean(existing)) throw httpError(409, "This row no longer matches the preview. Preview it again.");
               const payload = await validateTeamPositionPayload({ ...(existing || {}), name: record.name, teamId: team.teamId, description: record.description ?? existing?.description, groupId: record.group ?? existing?.groupId, ...(record.order !== "" && record.order != null ? { order: Number(record.order) } : {}), ...(record.icon !== undefined ? { icon: parsePortablePositionIcon(record.icon) } : {}) }, churchId);
               const saved = await upsertTeamEntity({ kind: "position", churchId, id: existing?.positionId, payload, adminUserId: admin.user.uid });
@@ -8172,7 +8264,7 @@ export const createTeamsAuthHandlers = ({
             if (type === "members") {
               const id = String(approved.recordId || "").trim();
               const existing = id ? data.members.find((item) => item.memberId === id) : null;
-              if (id && (!existing || existing.archivedAt)) throw httpError(400, "Member ID is missing from this church or archived.");
+              if (id && (!existing || existing.archivedAt)) throw httpError(409, "The selected member is no longer active in this church. Preview the file again.");
               if ((requestedAction === "update") !== Boolean(existing)) throw httpError(409, "This row no longer matches the preview. Preview it again.");
               const teamNames = String(record.teams || "").split(LIST_DELIMITER).map((name) => name.trim()).filter(Boolean);
               const teamIds = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim());
@@ -8207,7 +8299,7 @@ export const createTeamsAuthHandlers = ({
             }
             throw httpError(400, "This data type cannot be imported.");
           } catch (error) {
-            results.push({ row, status: "failed", code: error?.statusCode === 409 ? "stale_preview" : "row_invalid", message: error?.message || "Could not import this row." });
+            results.push({ row, status: "failed", code: error?.statusCode === 409 || Object.keys(resolutions).length ? "stale_preview" : "row_invalid", message: error?.message || "Could not import this row." });
           }
         }
         return res.json({ success: true, results, summary: { created: results.filter((item) => item.status === "created").length, updated: results.filter((item) => item.status === "updated").length, failed: results.filter((item) => item.status === "failed").length } });
@@ -10733,17 +10825,47 @@ export const createTeamsAuthHandlers = ({
             servicesById: activeServicesById,
           });
         }
-        const generatedPeriodKey = generatedPeriodKeyFor(payload);
+        const generatedPeriodKey = generatedPeriodKeyFor({ churchId, ...payload });
+        const legacyGeneratedPeriodKey = legacyGeneratedPeriodKeyFor(payload);
+        const canonicalOccurrences = payload.occurrences.map((occurrence) => {
+          const serviceIds = normalizeIdArray(
+            occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+          );
+          const requirements = occurrence.groupId
+            ? mergeServicePositionRequirements(serviceIds.map((id) => activeServicesById.get(id)))
+            : sanitizePositionRequirements(
+                activeServicesById.get(occurrence.serviceId)?.positionRequirements,
+              );
+          return {
+            ...occurrence,
+            ...(requirements.length ? { positionRequirements: requirements } : { positionRequirements: [] }),
+          };
+        });
         payload = {
           ...payload,
+          occurrences: canonicalOccurrences,
           source: "generated-period",
           generatedPeriodKey,
         };
 
         const createIfMissing = async () => {
-          // Reuse a legacy/custom record only when the exact period is
-          // unambiguous. Mere overlap is not enough to transfer assignment
-          // ownership from an intentionally custom schedule.
+          const sameIds = (left, right) => {
+            if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+            const leftIds = [...left].sort();
+            const rightIds = [...right].sort();
+            return leftIds.every((id, index) => id === rightIds[index]);
+          };
+          const equivalentLegacy = (schedule) =>
+            schedule.source == null &&
+            schedule.churchId === churchId &&
+            schedule.teamId === payload.teamId &&
+            schedule.startDate === payload.startDate &&
+            schedule.endDate === payload.endDate &&
+            sameIds(schedule.serviceIds, payload.serviceIds) &&
+            sameIds(
+              schedule.occurrences?.map((occurrence) => occurrence?.occurrenceId),
+              payload.occurrences.map((occurrence) => occurrence.occurrenceId),
+            );
           const samePeriod = (await listTeamCollectionForChurch(
             COLLECTIONS.teamSchedules,
             "scheduleId",
@@ -10754,13 +10876,21 @@ export const createTeamsAuthHandlers = ({
             schedule.startDate === payload.startDate &&
             schedule.endDate === payload.endDate,
           );
-          if (samePeriod.length === 1) {
-            return { schedule: samePeriod[0], created: false };
+          const reusable = samePeriod.filter((schedule) =>
+            (schedule.source === "generated-period" &&
+              ((schedule.generatedPeriodKey === generatedPeriodKey &&
+                schedule.scheduleId === generatedPeriodScheduleId(generatedPeriodKey)) ||
+                (schedule.generatedPeriodKey === legacyGeneratedPeriodKey &&
+                  schedule.scheduleId === generatedPeriodScheduleId(legacyGeneratedPeriodKey)))) ||
+            equivalentLegacy(schedule),
+          );
+          if (reusable.length === 1) {
+            return { schedule: reusable[0], created: false };
           }
-          if (samePeriod.length > 1) {
+          if (reusable.length > 1) {
             throw httpError(
               409,
-              "Several schedules use this exact period. Choose one from Schedule history before editing it.",
+              "Several schedules match this period. Choose one from Schedule history before editing it.",
             );
           }
 
@@ -11635,7 +11765,6 @@ export const createTeamsAuthHandlers = ({
           }));
           const payload = validateServicePlanPayload({
             ...target.payload,
-            name: template.name || target.payload.name,
             sections,
             clonedFromPlanKey: template.templateId,
           }, { churchId, planKey: target.planKey });
