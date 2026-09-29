@@ -176,6 +176,7 @@ import {
   useTeamsReturnNavigation,
 } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import TeamsReturnBackButton from "../components/TeamsReturnBackButton";
 import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
@@ -1338,6 +1339,7 @@ const ScheduleTab = ({
   // "Who's serving" panel — so they aren't stranded in the schedule.
   const { returnTo: scheduleReturnTo, finishEditing: returnFromSchedule } =
     useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
 
   useTeamsRestoreOnMount({
     onScheduleRestore: (restore) => {
@@ -4320,7 +4322,7 @@ const ScheduleTab = ({
       onScheduleSaved={onScheduleSaved}
       onScheduleRemoved={onScheduleRemoved}
       setSelectedScheduleId={setSelectedScheduleId}
-      onCancel={() => setShowForm(false)}
+      onCancel={() => requestDiscardAction(() => setShowForm(false))}
     />
   );
 

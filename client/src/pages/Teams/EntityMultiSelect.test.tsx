@@ -98,4 +98,272 @@ describe("EntityMultiSelect team filter", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
     expect(onChange).toHaveBeenCalledWith(["p3"]);
   });
+
+  it("defaults to the union of all selected groups", () => {
+    render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1", "t2"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Selected teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("resolves an empty default group set to All teams", () => {
+    render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={[]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toHaveLength(4);
+    expect(screen.queryByRole("button", { name: "Selected teams" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("updates the default union when selected groups change", () => {
+    const { rerender } = render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toEqual([
+      "Lead CoordinatorCoordinators",
+      "Assistant CoordinatorCoordinators",
+    ]);
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1", "t2"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(optionNames()).toHaveLength(4);
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={[]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(optionNames()).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("keeps an explicit All teams scope when defaults change", () => {
+    const { rerender } = render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "All teams" }));
+
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t2"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("keeps an explicit team scope when defaults change", () => {
+    const { rerender } = render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Media" }));
+
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1", "t2"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toEqual(["ProducerMedia", "DirectorMedia"]);
+    expect(screen.getByRole("button", { name: "Media" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("falls back to the default scope when an explicit group disappears", () => {
+    const { rerender } = render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Media" }));
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options.filter((option) => option.groupId === "t1")}
+        groups={[groups[0]]}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={[]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(optionNames()).toEqual([
+      "Lead CoordinatorCoordinators",
+      "Assistant CoordinatorCoordinators",
+    ]);
+    expect(screen.getByRole("button", { name: "Selected teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("selects and clears only the default group set", () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={["p3"]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(onChange).toHaveBeenLastCalledWith(["p3", "p1", "p2"]);
+    onChange.mockClear();
+    rerender(
+      <EntityMultiSelect
+        label="Positions"
+        options={options}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        value={["p1", "p2", "p3"]}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(onChange).toHaveBeenLastCalledWith(["p3"]);
+  });
+
+  it("searches inside the default scope and keeps selected archived options visible", () => {
+    render(
+      <EntityMultiSelect
+        label="Positions"
+        options={[
+          ...options,
+          { id: "p5", label: "Archived Vocal", groupId: "t1", archived: true },
+          { id: "p6", label: "Archived Media", groupId: "t2", archived: true },
+          { id: "p7", label: "Archived Backup Vocal", groupId: "t1", archived: true },
+        ]}
+        groups={groups}
+        defaultGroupIds={["t1"]}
+        defaultGroupsLabel="Selected teams"
+        allGroupsLabel="All teams"
+        searchThreshold={2}
+        value={["p5"]}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /Archived Vocal/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Archived Vocal/ })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /Archived Backup Vocal/ })).toBeDisabled();
+    expect(screen.queryByRole("checkbox", { name: /Archived Media/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Search positions…"), {
+      target: { value: "media" },
+    });
+    expect(screen.queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
+  });
 });

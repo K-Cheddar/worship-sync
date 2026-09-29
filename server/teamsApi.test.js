@@ -1728,6 +1728,160 @@ test("schedule assignments require confirmation for cross-team service conflicts
   assert.equal(copiedScheduleConfirmed.statusCode, 200);
 });
 
+test("joined and standalone member service occurrences require cross-team conflict confirmation", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("joined_service_cross_team_conflict");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [
+      { name: "Vocal", icon: "mic" },
+      { name: "Keys", icon: "piano" },
+    ],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+      { firstName: "Casey", lastName: "Jones", positions: ["Vocal", "Keys"] },
+    ],
+  });
+  const production = await seedTeam(context, {
+    teamName: "Production",
+    positions: [
+      { name: "Camera", icon: "camera" },
+      { name: "Lights", icon: "lightbulb" },
+    ],
+  });
+  const sharedMemberIds = Object.values(worship.memberIds);
+  for (const [memberName, memberId] of Object.entries(worship.memberIds)) {
+    await callHandler(authHandlers.updateTeamRosterMember, {
+      context,
+      params: { memberId },
+      body: {
+        firstName: memberName,
+        lastName: memberName === "Avery" ? "Stone" : "Jones",
+        positionIds: [
+          worship.positionIds.Vocal,
+          worship.positionIds.Keys,
+          production.positionIds.Camera,
+          production.positionIds.Lights,
+        ],
+        blockoutDates: [],
+      },
+    });
+  }
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: production.teamId },
+    body: { name: "Production", memberIds: sharedMemberIds },
+  });
+
+  // Service A is at 10:00 and service B is at 11:00. The joined row uses A's
+  // earlier time while the production schedule stores B on its own.
+  const joinedOccurrence = {
+    occurrenceId: "group:weekend@2026-10-03",
+    serviceId: "service-a",
+    serviceIds: ["service-a", "service-b"],
+    groupId: "weekend",
+    name: "Service A & Service B",
+    startsAt: "2026-10-03T10:00:00.000Z",
+  };
+  const standaloneOccurrence = {
+    occurrenceId: "service-b@2026-10-03T11:00:00.000Z",
+    serviceId: "service-b",
+    serviceIds: ["service-b"],
+    name: "Service B",
+    startsAt: "2026-10-03T11:00:00.000Z",
+  };
+  const worshipSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Worship October",
+      teamId: worship.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["service-a", "service-b"],
+      occurrences: [joinedOccurrence],
+    },
+  });
+  const productionSchedule = await callHandler(
+    authHandlers.createTeamSchedule,
+    {
+      context,
+      body: {
+        name: "Production October",
+        teamId: production.teamId,
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: ["service-b"],
+        occurrences: [standaloneOccurrence],
+      },
+    },
+  );
+  assert.equal(worshipSchedule.statusCode, 200);
+  assert.equal(productionSchedule.statusCode, 200);
+
+  const assign = async (scheduleId, occurrenceId, positionId, memberId, allow = false) =>
+    callHandler(authHandlers.updateTeamScheduleAssignment, {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionId}::0`,
+        memberId,
+        serviceDate: "2026-10-03",
+        ...(allow ? { allowCrossTeamConflict: true } : {}),
+      },
+    });
+
+  const averyId = worship.memberIds.Avery;
+  const firstAssignment = await assign(
+    worshipSchedule.payload.schedule.scheduleId,
+    joinedOccurrence.occurrenceId,
+    worship.positionIds.Vocal,
+    averyId,
+  );
+  assert.equal(firstAssignment.statusCode, 200);
+  const blockedStandalone = await assign(
+    productionSchedule.payload.schedule.scheduleId,
+    standaloneOccurrence.occurrenceId,
+    production.positionIds.Camera,
+    averyId,
+  );
+  assert.equal(blockedStandalone.statusCode, 409);
+  assert.match(blockedStandalone.payload.errorMessage, /already scheduled on another team/i);
+  const confirmedStandalone = await assign(
+    productionSchedule.payload.schedule.scheduleId,
+    standaloneOccurrence.occurrenceId,
+    production.positionIds.Camera,
+    averyId,
+    true,
+  );
+  assert.equal(confirmedStandalone.statusCode, 200);
+
+  // Exercise the opposite direction with a second shared roster member.
+  const caseyId = worship.memberIds.Casey;
+  const standaloneFirst = await assign(
+    productionSchedule.payload.schedule.scheduleId,
+    standaloneOccurrence.occurrenceId,
+    production.positionIds.Lights,
+    caseyId,
+  );
+  assert.equal(standaloneFirst.statusCode, 200);
+  const blockedJoined = await assign(
+    worshipSchedule.payload.schedule.scheduleId,
+    joinedOccurrence.occurrenceId,
+    worship.positionIds.Keys,
+    caseyId,
+  );
+  assert.equal(blockedJoined.statusCode, 409);
+  const confirmedJoined = await assign(
+    worshipSchedule.payload.schedule.scheduleId,
+    joinedOccurrence.occurrenceId,
+    worship.positionIds.Keys,
+    caseyId,
+    true,
+  );
+  assert.equal(confirmedJoined.statusCode, 200);
+});
+
 test("occurrence conflict checks include same-team roles, different dates, and archived schedules", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("cross_team_no_conflict");

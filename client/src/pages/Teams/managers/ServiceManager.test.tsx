@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServiceManager from "./ServiceManager";
@@ -166,7 +166,7 @@ describe("ServiceManager combined services", () => {
     expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Early Service");
   });
 
-  it("closes the editor after saving on narrow screens", async () => {
+  it("keeps the editor open after saving on narrow screens until Cancel", async () => {
     window.matchMedia = makeMatchMedia(true);
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);
@@ -179,11 +179,19 @@ describe("ServiceManager combined services", () => {
     await user.click(screen.getByRole("button", { name: "Save service" }));
 
     expect(
+      screen.getByRole("heading", { name: "Edit service" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("First Service");
+
+    await user.click(
+      within(screen.getByRole("region", { name: "Edit service" })).getByRole(
+        "button",
+        { name: "Close" },
+      ),
+    );
+    expect(
       screen.queryByRole("heading", { name: "Edit service" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Create service" }),
-    ).toBeInTheDocument();
   });
 
   it("stamps a shared group id on the new service and its partner when saved", async () => {
@@ -209,6 +217,17 @@ describe("ServiceManager combined services", () => {
       expect.objectContaining({
         payload: { id: "first", changes: { serviceGroupId: groupId } },
       }),
+    );
+
+    expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
+    const nameInput = screen.getByLabelText(/^Name:?$/);
+    fireEvent.change(nameInput, {
+      target: { value: "Combined Sunday Updated" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/addService")).toHaveLength(1);
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toContainEqual(
+      expect.objectContaining({ payload: expect.objectContaining({ id: (created[0].payload as TeamService).id }) }),
     );
   });
 });

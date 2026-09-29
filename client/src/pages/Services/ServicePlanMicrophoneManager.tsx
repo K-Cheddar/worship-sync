@@ -297,8 +297,7 @@ const ServicePlanMicrophoneManager = ({
   };
 
   const saveVisibility = async () => {
-    const saved = await onSave(microphones, audienceDraft, "visibility");
-    if (saved) setIsEditingVisibility(false);
+    await onSave(microphones, audienceDraft, "visibility");
   };
 
   const saveMicrophones = async () => {

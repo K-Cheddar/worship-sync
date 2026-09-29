@@ -60,6 +60,7 @@ describe("CreatePanel layout", () => {
     expect(layout).toHaveClass(
       "lg:transition-[grid-template-columns,column-gap]",
       "lg:grid-cols-2",
+      "lg:max-w-[85rem]",
       "lg:gap-0",
       "lg:duration-[220ms]",
       "motion-reduce:transition-none",
@@ -92,7 +93,7 @@ describe("CreatePanel layout", () => {
 
     expect(layout).toHaveStyle({
       gridTemplateColumns:
-        "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)",
+        "minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr)",
     });
     expect(layout).toHaveClass("lg:gap-4", "lg:duration-300");
     expect(aside).not.toHaveAttribute("inert");

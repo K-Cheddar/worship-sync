@@ -48,6 +48,20 @@ const vocalPosition = {
   name: "Vocal",
 };
 
+const mediaTeam: TeamRecord = {
+  teamId: "team-media",
+  churchId: "church-1",
+  name: "Media",
+  memberIds: [],
+};
+
+const producerPosition = {
+  positionId: "position-producer",
+  churchId: "church-1",
+  teamId: "team-media",
+  name: "Producer",
+};
+
 const leadRole = {
   roleId: "role-lead",
   churchId: "church-1",
@@ -167,6 +181,8 @@ const worshipTeamCheckbox = () =>
   within(teamsField()).getByRole("checkbox", { name: /Worship/ });
 const vocalPositionCheckbox = () =>
   within(positionsField()).getByRole("checkbox", { name: /Vocal/ });
+const producerPositionCheckbox = () =>
+  within(positionsField()).getByRole("checkbox", { name: /Producer/ });
 
 const fillName = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.type(screen.getByLabelText(/First name/), "Sky");
@@ -357,6 +373,106 @@ describe("MemberManager member preferences", () => {
 });
 
 describe("MemberManager team membership", () => {
+  it("defaults an existing one-team member to that team's positions", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: joinedData({
+        positions: [vocalPosition, producerPosition],
+        teams: [{ ...worshipTeam, memberIds: ["member-1"] }, mediaTeam],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
+    expect(vocalPositionCheckbox()).toBeChecked();
+    expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
+    expect(within(positionsField()).getByRole("button", { name: "Selected teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("defaults an existing member to the union of roster and team-membership teams", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: joinedData({
+        positions: [vocalPosition, producerPosition],
+        teams: [{ ...worshipTeam, memberIds: ["member-1"] }, mediaTeam],
+        members: [
+          {
+            ...worshipMember,
+            teamMemberships: { "team-media": { teamId: "team-media" } },
+          },
+        ],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
+    expect(vocalPositionCheckbox()).toBeChecked();
+    expect(producerPositionCheckbox()).toBeInTheDocument();
+    expect(within(positionsField()).getByRole("button", { name: "Selected teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("starts a new member with all teams, then reacts to selected team changes", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: buildData({
+        positions: [vocalPosition, producerPosition],
+        teams: [worshipTeam, mediaTeam],
+      }),
+    });
+    await openCreateForm(user);
+
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(positionsField()).getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await toggleWorshipTeam(user);
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
+    await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
+    await user.click(producerPositionCheckbox());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
+    expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("keeps explicit All teams and adds an out-of-team position's team", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: buildData({
+        positions: [vocalPosition, producerPosition],
+        teams: [worshipTeam, mediaTeam],
+      }),
+    });
+    await openCreateForm(user);
+    await toggleWorshipTeam(user);
+    await user.click(within(positionsField()).getByRole("button", { name: "All teams" }));
+
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
+    await user.click(producerPositionCheckbox());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(within(positionsField()).getByRole("button", { name: "All teams" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("checks a position's team, so eligibility and membership cannot disagree", async () => {
     const user = userEvent.setup();
     renderManager();

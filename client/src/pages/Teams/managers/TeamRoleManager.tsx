@@ -31,7 +31,6 @@ import { isActive, roleMatchesListQuery } from "../teamsUtils";
 import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -80,7 +79,6 @@ const TeamRoleManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
 
   const applyTeamId = useCallback((nextTeamId: string) => {
     setSelectedTeamId(nextTeamId);
@@ -108,7 +106,7 @@ const TeamRoleManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const openRoleEditor = (role: TeamRole) => {
@@ -189,11 +187,8 @@ const TeamRoleManager = ({
         onSaved(response.role, localRoleId);
       }
       showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different role while this save was
         // in flight. Only refresh the selected record if they're still on the
         // one we just saved, so the panel never rebinds to a stale role.

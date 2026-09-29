@@ -42,7 +42,6 @@ import {
 } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -101,7 +100,6 @@ const QualificationManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
   // Mirrors `editing` so an in-flight save can tell, on completion, whether the
   // operator has since switched areas — without rebinding the panel or clobbering
   // the other area's level drafts.
@@ -178,7 +176,7 @@ const QualificationManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const openAreaEditor = (area: TeamQualificationArea) => {
@@ -257,11 +255,8 @@ const QualificationManager = ({
         onAreaSaved(response.area, localAreaId);
       }
       showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         if (editingRef.current?.areaId === wasEditing.areaId) {
           setEditing(response.area);
         }

@@ -21,7 +21,7 @@ export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";
 
 /** Side-by-side list + edit form row inside Teams managers. */
 export const teamsCreatePanelRowClassName =
-  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 max-lg:relative max-lg:overflow-hidden lg:grid lg:grid-cols-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:transition-[grid-template-columns,column-gap] lg:ease-in-out motion-reduce:transition-none";
+  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 max-lg:relative max-lg:overflow-hidden lg:mx-auto lg:max-w-[85rem] lg:grid lg:grid-cols-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:transition-[grid-template-columns,column-gap] lg:ease-in-out motion-reduce:transition-none";
 
 /** Full-height mobile detail view shared by the list, aside, and form. */
 export const teamsCreatePanelMobileViewClassName =

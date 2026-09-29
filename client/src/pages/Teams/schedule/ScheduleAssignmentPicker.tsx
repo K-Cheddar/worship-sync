@@ -244,13 +244,14 @@ const ScheduleAssignmentPicker = memo(({
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
   const anchorProxyRef = useRef<HTMLSpanElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
   const [memberPickerAction, setMemberPickerAction] =
     useState<MemberAssignmentAction | null>(null);
-  // Capture the first collision-aware placement, then freeze it so shorter
-  // submenu views (recent guests, create forms) do not flip the popover.
-  const [lockedSide, setLockedSide] = useState<PickerPopoverSide | null>(null);
+  // Prefer the last placed side to keep view transitions stable, while still
+  // allowing collision handling to choose another side when the content grows.
+  const [preferredSide, setPreferredSide] = useState<PickerPopoverSide | null>(null);
   const [activeSubmenuMemberId, setActiveSubmenuMemberId] = useState<string | null>(null);
   const [activeSwapRecommendation, setActiveSwapRecommendation] =
     useState<ScheduleAssignmentSwapRecommendation | null>(null);
@@ -322,7 +323,7 @@ const ScheduleAssignmentPicker = memo(({
     if (!open) {
       setMenuView("members");
       setMemberPickerAction(null);
-      setLockedSide(null);
+      setPreferredSide(null);
       setActiveSubmenuMemberId(null);
       setActiveSwapRecommendation(null);
       setHighlightedIndex(0);
@@ -350,15 +351,19 @@ const ScheduleAssignmentPicker = memo(({
   }, [anchorEl, occupiedActionMenuAvailable, open]);
 
   useLayoutEffect(() => {
-    if (!open || !anchorRect || lockedSide) return undefined;
+    if (!open) return;
+    const side = readPopoverSide(contentRef.current);
+    if (side) setPreferredSide(side);
+  }, [menuView, open]);
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRect || preferredSide) return undefined;
     let frame = 0;
     let attempts = 0;
     const captureSide = () => {
-      const side = readPopoverSide(
-        document.querySelector("[data-schedule-assignment-menu]"),
-      );
+      const side = readPopoverSide(contentRef.current);
       if (side) {
-        setLockedSide(side);
+        setPreferredSide(side);
         return;
       }
       attempts += 1;
@@ -367,7 +372,7 @@ const ScheduleAssignmentPicker = memo(({
     };
     frame = window.requestAnimationFrame(captureSide);
     return () => window.cancelAnimationFrame(frame);
-  }, [open, anchorRect, lockedSide, menuView]);
+  }, [open, anchorRect, preferredSide]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -765,13 +770,15 @@ const ScheduleAssignmentPicker = memo(({
         />
       </PopoverAnchor>
       <PopoverContent
+        ref={contentRef}
         id={listboxId}
         data-schedule-assignment-menu
         role={menuView === "members" ? "listbox" : "menu"}
         align="start"
-        side={lockedSide ?? "bottom"}
+        side={preferredSide ?? "bottom"}
         sideOffset={4}
-        avoidCollisions={!lockedSide}
+        avoidCollisions
+        collisionPadding={8}
         className="relative z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {

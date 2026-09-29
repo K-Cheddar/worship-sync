@@ -5732,9 +5732,9 @@ export const createTeamsAuthHandlers = ({
     return aStart <= bEnd && aEnd >= bStart;
   };
 
-  // Prefer shared occurrence identity / start time. When either side lacks
-  // startsAt (legacy schedules), match on shared service ids only if the parent
-  // schedules' date ranges overlap — so unrelated months do not false-positive.
+  // Joined occurrences use their earliest member time, so shared service ids
+  // also match on the same stored calendar date when either side is combined.
+  // Legacy schedules without startsAt require overlapping parent date ranges.
   const scheduleOccurrencesConflict = (current, other, options = {}) => {
     if (!current || !other) return false;
     if (
@@ -5746,20 +5746,23 @@ export const createTeamsAuthHandlers = ({
     ) {
       return true;
     }
-    if (current.startsAt && other.startsAt) {
-      if (current.startsAt !== other.startsAt) return false;
-      const currentServiceIds = getScheduleOccurrenceServiceIds(current);
-      const otherServiceIds = getScheduleOccurrenceServiceIds(other);
-      return [...currentServiceIds].some((serviceId) =>
-        otherServiceIds.has(serviceId),
-      );
-    }
-    if (!options.schedulesOverlap) return false;
     const currentServiceIds = getScheduleOccurrenceServiceIds(current);
     const otherServiceIds = getScheduleOccurrenceServiceIds(other);
-    return [...currentServiceIds].some((serviceId) =>
+    const sharesServiceId = [...currentServiceIds].some((serviceId) =>
       otherServiceIds.has(serviceId),
     );
+    if (!sharesServiceId) return false;
+    if (current.startsAt && other.startsAt) {
+      if (current.startsAt === other.startsAt) return true;
+      const includesJoinedServices =
+        currentServiceIds.size > 1 || otherServiceIds.size > 1;
+      return (
+        includesJoinedServices &&
+        String(current.startsAt).slice(0, 10) ===
+          String(other.startsAt).slice(0, 10)
+      );
+    }
+    return Boolean(options.schedulesOverlap);
   };
 
   const findCrossTeamScheduleAssignmentConflicts = ({

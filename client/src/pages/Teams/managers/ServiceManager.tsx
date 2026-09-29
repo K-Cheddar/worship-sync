@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
@@ -11,6 +11,7 @@ import {
   weekdays,
 } from "../../../containers/ServiceTimes/utils";
 import { useToast } from "../../../context/toastContext";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useDispatch } from "../../../hooks";
 import {
   addService,
@@ -53,7 +54,6 @@ import {
   planServiceGroupUpdates,
 } from "../teamsUtils";
 import { formatServiceSaveToast } from "../teamsSaveToasts";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 
@@ -74,7 +74,7 @@ const ServiceManager = ({
 }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
-  const isNarrowViewport = useTeamsNarrowViewport();
+  const churchId = useContext(GlobalInfoContext)?.churchId || "";
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -165,15 +165,16 @@ const ServiceManager = ({
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
     showToast(saveToastMessage, "success");
-    // On mobile the form covers the list, so close after save. On desktop keep
-    // the panel open for back-to-back editing and re-seed from the saved snapshot.
-    if (editing && !isNarrowViewport) {
-      const nextEditing: TeamService = { ...editing, ...saved };
-      setEditing(nextEditing);
-      setDraft({ ...nextEditing });
-    } else {
-      reset();
-    }
+    // Saving commits data; keep the same service open on every screen size.
+    // A new service uses its generated id immediately so later saves update it.
+    const nextEditing: TeamService = {
+      ...(editing ?? {}),
+      ...saved,
+      serviceId: editing?.serviceId || saved.id,
+      churchId: editing?.churchId || churchId,
+    };
+    setEditing(nextEditing);
+    setDraft({ ...nextEditing });
   };
 
   // Services that can be combined with the one being edited: anything that could

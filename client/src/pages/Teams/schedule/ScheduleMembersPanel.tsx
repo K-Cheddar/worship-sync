@@ -400,6 +400,7 @@ const ScheduleMembersPanel = ({
                 label={isAssignMode ? "Members to assign" : "Members"}
                 value={searchValue}
                 onChange={onSearchChange}
+                clearable
               />
             </div>
           ) : null}

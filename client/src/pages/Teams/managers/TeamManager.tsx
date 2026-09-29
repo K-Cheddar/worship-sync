@@ -39,7 +39,6 @@ import {
   buildTeamsRolesPath,
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import type { TeamsData } from "../types";
@@ -97,7 +96,6 @@ const TeamManager = ({
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
 
   const editingTeamPositions = useMemo(() => {
     if (!editing) return [];
@@ -137,7 +135,7 @@ const TeamManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const startEditingTeam = useCallback((team: TeamRecord) => {
@@ -230,11 +228,8 @@ const TeamManager = ({
         onSaved(response.team, localTeamId);
       }
       showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different team while this save was
         // in flight. Only refresh the selected record if they're still on the
         // one we just saved, so the panel never rebinds to a stale team.

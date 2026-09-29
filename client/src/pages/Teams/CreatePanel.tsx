@@ -103,10 +103,12 @@ const CreatePanel = ({
   const panelOpenOnMobile = open || asideOpen;
   const useScrollableList = scrollableList;
   const listInactiveOnMobile = isNarrowViewport && panelOpenOnMobile;
+  const listColumnWidth = panelOpenOnMobile ? "4fr" : "1fr";
+  const sidePanelColumnWidth = panelOpenOnMobile ? "3fr" : "0fr";
   const panelGridTemplateColumns = [
-    "minmax(0, 1fr)",
-    asideOpen ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
-    open ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
+    `minmax(0, ${listColumnWidth})`,
+    asideOpen ? `minmax(0, ${sidePanelColumnWidth})` : "minmax(0, 0fr)",
+    open ? `minmax(0, ${sidePanelColumnWidth})` : "minmax(0, 0fr)",
   ].join(" ");
   const panelLayoutTransitionClassName = panelOpenOnMobile
     ? teamsCreatePanelRowOpenClassName

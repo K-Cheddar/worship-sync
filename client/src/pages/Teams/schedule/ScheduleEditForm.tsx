@@ -403,7 +403,6 @@ const ScheduleEditForm = ({
       setSelectedScheduleId(response.schedule.scheduleId);
       showToast(saveToastMessage, "success");
       setScheduleConflictWarning("");
-      onCancel();
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this schedule.");
     } finally {

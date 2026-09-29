@@ -75,7 +75,6 @@ import {
   buildTeamsPositionEditPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import {
@@ -232,7 +231,6 @@ const MemberManager = ({
   const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback(
@@ -397,7 +395,7 @@ const MemberManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const confirmDelete = async () => {
@@ -777,11 +775,8 @@ const MemberManager = ({
       if (profileImageUploadFailed) {
         showToast("You can choose the image again and save to retry.", "error");
       }
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different member while this save
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved, so the panel never rebinds to a stale member.
@@ -1557,11 +1552,14 @@ const MemberManager = ({
           emptyText="No teams yet."
         />
         <EntityMultiSelect
+          key={`${showCreate ? "open" : "closed"}-${editing?.memberId || "create-member"}`}
           label="Positions"
           description="Positions this member can be scheduled for."
           options={positionOptions}
           groups={positionTeamFilters}
           groupFilterLabel="Filter positions by team"
+          defaultGroupIds={draftTeamIds}
+          defaultGroupsLabel="Selected teams"
           allGroupsLabel="All teams"
           value={draft.positionIds}
           onChange={applyPositionSelection}

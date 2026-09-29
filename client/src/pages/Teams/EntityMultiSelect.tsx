@@ -54,7 +54,18 @@ type EntityMultiSelectProps = {
   groupFilterLabel?: string;
   /** Chip label that clears the group filter. */
   allGroupsLabel?: string;
+  /** Group IDs used by the initial, reactive filter scope. Empty means all groups. */
+  defaultGroupIds?: string[];
+  /** Optional chip label for the default set of groups. */
+  defaultGroupsLabel?: string;
 };
+
+type GroupScope =
+  | { type: "default" }
+  | { type: "all" }
+  | { type: "group"; groupId: string };
+
+const DEFAULT_GROUP_SCOPE: GroupScope = { type: "default" };
 
 /**
  * Vertical, large-hit-area multi-select list. Each option is a full-width
@@ -78,25 +89,51 @@ const EntityMultiSelect = ({
   groups,
   groupFilterLabel,
   allGroupsLabel = "All",
+  defaultGroupIds = [],
+  defaultGroupsLabel,
 }: EntityMultiSelectProps) => {
   const [query, setQuery] = useState("");
-  const [groupId, setGroupId] = useState<string | null>(null);
+  const [groupScope, setGroupScope] = useState<GroupScope>(DEFAULT_GROUP_SCOPE);
   const isBoard = variant === "board-attendee";
 
-  const groupChips = groups && groups.length > 1 ? groups : undefined;
+  const groupChips =
+    groups && (groups.length > 1 || defaultGroupsLabel) ? groups : undefined;
   // Ignore a stale selection if the group disappears (e.g. its team was removed)
-  // so the list can never filter down to nothing the operator can't undo.
-  const activeGroupId =
-    groupId && groupChips?.some((group) => group.id === groupId) ? groupId : null;
+  // and return to the reactive default scope.
+  const activeScope =
+    groupScope.type === "group" &&
+    !groupChips?.some((group) => group.id === groupScope.groupId)
+      ? DEFAULT_GROUP_SCOPE
+      : groupScope;
+  const hasDefaultGroups = defaultGroupIds.length > 0;
+  const scopeChips = groupChips
+    ? [
+        ...(defaultGroupsLabel && hasDefaultGroups
+          ? [{ key: "default", label: defaultGroupsLabel, scope: { type: "default" as const } }]
+          : []),
+        { key: "all", label: allGroupsLabel, scope: { type: "all" as const } },
+        ...groupChips.map((group) => ({
+          key: `group-${group.id}`,
+          label: group.label,
+          scope: { type: "group" as const, groupId: group.id },
+        })),
+      ]
+    : undefined;
 
   // Everything the group filter allows; search narrows this further for display,
   // while Select all / Clear all stays scoped to the visible group.
   const scopedOptions = useMemo(
-    () =>
-      activeGroupId
-        ? options.filter((option) => option.groupId === activeGroupId)
-        : options,
-    [activeGroupId, options],
+    () => {
+      if (activeScope.type === "all") return options;
+      if (activeScope.type === "group") {
+        return options.filter((option) => option.groupId === activeScope.groupId);
+      }
+      if (!hasDefaultGroups) return options;
+      return options.filter(
+        (option) => option.groupId && defaultGroupIds.includes(option.groupId),
+      );
+    },
+    [activeScope, defaultGroupIds, hasDefaultGroups, options],
   );
 
   const selectableIds = useMemo(
@@ -192,11 +229,18 @@ const EntityMultiSelect = ({
           role="group"
           aria-label={groupFilterLabel || `Filter ${label.toLowerCase()}`}
         >
-          {[{ id: null, label: allGroupsLabel }, ...groupChips].map((group) => {
-            const selected = activeGroupId === group.id;
+          {scopeChips?.map((chip) => {
+            const selected =
+              chip.scope.type === "default"
+                ? activeScope.type === "default" && hasDefaultGroups
+                : chip.scope.type === "all"
+                  ? activeScope.type === "all" ||
+                    (activeScope.type === "default" && !hasDefaultGroups)
+                  : activeScope.type === "group" &&
+                    activeScope.groupId === chip.scope.groupId;
             return (
               <Button
-                key={group.id ?? "__all"}
+                key={chip.key}
                 type="button"
                 variant="tertiary"
                 isSelected={selected}
@@ -210,9 +254,17 @@ const EntityMultiSelect = ({
                     ? "border border-amber-400/50 bg-amber-400/10 text-amber-100"
                     : "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100"),
                 )}
-                onClick={() => setGroupId(group.id)}
+                onClick={() => {
+                  if (chip.scope.type === "default") {
+                    setGroupScope({ type: "default" });
+                  } else if (chip.scope.type === "all") {
+                    setGroupScope({ type: "all" });
+                  } else {
+                    setGroupScope(chip.scope);
+                  }
+                }}
               >
-                {group.label}
+                {chip.label}
               </Button>
             );
           })}

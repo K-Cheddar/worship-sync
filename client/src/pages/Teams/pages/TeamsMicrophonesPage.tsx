@@ -110,7 +110,6 @@ const TeamsMicrophonesPage = () => {
       );
       setMicrophones(result.microphones);
       setMicrophoneAudiences(result.audiences || []);
-      if (saveTarget === "microphones") setIsEditing(false);
       showToast(
         saveTarget === "visibility"
           ? "Mic note visibility saved."

@@ -91,6 +91,7 @@ describe("ScheduleEditForm", () => {
         }),
     );
     const onScheduleSaved = jest.fn();
+    const onCancel = jest.fn();
 
     render(
       <MemoryRouter>
@@ -114,7 +115,7 @@ describe("ScheduleEditForm", () => {
               onScheduleSaved={onScheduleSaved}
               onScheduleRemoved={jest.fn()}
               setSelectedScheduleId={jest.fn()}
-              onCancel={jest.fn()}
+              onCancel={onCancel}
             />
           </ToastProvider>
         </TeamsNavigationGuardProvider>
@@ -138,6 +139,7 @@ describe("ScheduleEditForm", () => {
     });
     await waitFor(() => expect(onScheduleSaved).toHaveBeenCalledTimes(2));
     expect(onScheduleSaved).toHaveBeenNthCalledWith(2, authoritativeSchedule);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("fills the name from dates on create and clears the new draft", async () => {
@@ -175,6 +177,7 @@ describe("ScheduleEditForm", () => {
     });
     const onDraftClear = jest.fn();
     const onCancel = jest.fn();
+    const setSelectedScheduleId = jest.fn();
 
     render(
       <MemoryRouter>
@@ -197,7 +200,7 @@ describe("ScheduleEditForm", () => {
               onDraftClear={onDraftClear}
               onScheduleSaved={jest.fn()}
               onScheduleRemoved={jest.fn()}
-              setSelectedScheduleId={jest.fn()}
+              setSelectedScheduleId={setSelectedScheduleId}
               onCancel={onCancel}
             />
           </ToastProvider>
@@ -215,7 +218,8 @@ describe("ScheduleEditForm", () => {
       expect.objectContaining({ name: "October 2026" }),
     );
     expect(onDraftClear).toHaveBeenCalledWith("new");
-    expect(onCancel).toHaveBeenCalled();
+    expect(setSelectedScheduleId).toHaveBeenCalledWith(created.scheduleId);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("points operators to create a team when none exist", () => {
