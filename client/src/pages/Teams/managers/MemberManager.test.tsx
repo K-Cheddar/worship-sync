@@ -1,7 +1,7 @@
 import { type ContextType } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import MemberManager from "./MemberManager";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -12,6 +12,7 @@ import type {
   TeamSchedule,
 } from "../../../api/authTypes";
 import type { TeamsData } from "../types";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 const mockCreateTeamRosterMember = jest.fn();
 const mockUpdateTeamRosterMember = jest.fn();
@@ -187,6 +188,17 @@ const producerPositionCheckbox = () =>
 const fillName = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.type(screen.getByLabelText(/First name/), "Sky");
   await user.type(screen.getByLabelText(/Last name/), "Lane");
+};
+
+const LocationProbe = () => {
+  const location = useLocation();
+  return <output data-testid="location">{JSON.stringify({ pathname: location.pathname, state: location.state })}</output>;
+};
+
+const memberReturnTo = {
+  label: "Back to schedule",
+  pathname: TEAMS_SECTION_PATHS.schedules,
+  restore: { kind: "schedule" as const, scheduleId: "schedule-1" },
 };
 
 let originalMatchMedia: typeof window.matchMedia;
@@ -369,6 +381,51 @@ describe("MemberManager member preferences", () => {
     expect(minorCheckbox).toBeChecked();
     expect(minorCheckbox).toBeDisabled();
     expect(screen.getByText("Set automatically when the birth year is provided.")).toBeInTheDocument();
+  });
+});
+
+describe("MemberManager return navigation", () => {
+  it("keeps a cross-section edit open and only returns when contextual Back is selected", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, firstName: "Rachel", lastName: "Kim" },
+      teams: [],
+    });
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: TEAMS_SECTION_PATHS.members,
+        state: { teamsReturnTo: memberReturnTo },
+      }]}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1", userId: "", role: "member" } as never}>
+          <ToastProvider><TeamsNavigationGuardProvider>
+            <MemberManager
+              members={[worshipMember]} positions={[vocalPosition]}
+              data={joinedData()} canEdit onSaved={jest.fn()} onTeamSaved={jest.fn()}
+              onArchived={jest.fn()} onRemoved={jest.fn()}
+            />
+            <LocationProbe />
+          </TeamsNavigationGuardProvider></ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Rae Kim/ }));
+    await user.clear(screen.getByLabelText(/^First name:?$/));
+    await user.type(screen.getByLabelText(/^First name:?$/), "Rachel");
+    await user.click(screen.getByRole("button", { name: /Save member/i }));
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("region", { name: "Edit member" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to schedule" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.members);
+    await user.click(screen.getByRole("button", { name: "Back to schedule" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent(JSON.stringify({
+      pathname: TEAMS_SECTION_PATHS.schedules,
+      state: { teamsRestore: memberReturnTo.restore },
+    }));
   });
 });
 
