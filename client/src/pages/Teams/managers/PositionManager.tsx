@@ -23,10 +23,11 @@ import {
   createTeamPosition,
   deleteTeamPosition,
   getServicePlanMicrophones,
+  getServiceEquipment,
   updateTeamPosition,
 } from "../../../api/auth";
 import type { TeamRecord, TeamPosition } from "../../../api/authTypes";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import {
@@ -77,6 +78,7 @@ type PositionDraft = {
   icon: string;
   qualificationAreaId: string;
   defaultMicrophoneId: string;
+  defaultIemId: string;
 };
 
 // Key used to track an in-flight save for the create form, which has no
@@ -87,6 +89,7 @@ const CREATE_SAVING_KEY = "__create__";
 // its own sentinel distinct from the draft's real (empty-string) value.
 const NO_QUALIFICATION_AREA_VALUE = "__none__";
 const NO_DEFAULT_MICROPHONE_VALUE = "__none_microphone__";
+const NO_DEFAULT_IEM_VALUE = "__none_iem__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -126,8 +129,10 @@ const PositionManager = ({
     icon: "",
     qualificationAreaId: "",
     defaultMicrophoneId: "",
+    defaultIemId: "",
   });
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iems, setIems] = useState<ServiceEquipment[]>([]);
   // Positions with a save currently in flight, keyed by positionId (or
   // CREATE_SAVING_KEY for a new position). Tracking per-editor keeps the Save
   // spinner on the position actually saving and lets editing continue
@@ -161,9 +166,11 @@ const PositionManager = ({
     activeTeams.find((team) => team.teamId === positionTeamId)
       ?.usesMicrophoneAssignments,
   );
+  const positionTeamUsesIems = Boolean(activeTeams.find((team) => team.teamId === positionTeamId)?.usesIemAssignments);
   const selectedDefaultMicrophone = microphones.find(
     (microphone) => microphone.id === draft.defaultMicrophoneId,
   );
+  const selectedDefaultIem = iems.find((iem) => iem.id === draft.defaultIemId);
   const teamQualificationAreaOptions = useMemo(
     () =>
       data.qualificationAreas
@@ -214,6 +221,7 @@ const PositionManager = ({
       icon: "",
       qualificationAreaId: "",
       defaultMicrophoneId: "",
+      defaultIemId: "",
     });
   };
 
@@ -233,6 +241,14 @@ const PositionManager = ({
     return () => {
       cancelled = true;
     };
+  }, [churchId]);
+  useEffect(() => {
+    if (!churchId) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => getServiceEquipment(churchId)).then((result) => {
+      if (!cancelled) setIems(result.equipment.filter((item) => item.category === "iem"));
+    }).catch(() => { if (!cancelled) setIems([]); });
+    return () => { cancelled = true; };
   }, [churchId]);
 
   const cancelEditing = () => {
@@ -283,6 +299,7 @@ const PositionManager = ({
       ...(draft.defaultMicrophoneId
         ? { defaultMicrophoneId: draft.defaultMicrophoneId }
         : {}),
+      ...(draft.defaultIemId ? { defaultIemId: draft.defaultIemId } : {}),
       teamId: positionTeamId,
     };
     const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
@@ -295,6 +312,7 @@ const PositionManager = ({
       icon: payload.icon,
       qualificationAreaId: payload.qualificationAreaId,
       defaultMicrophoneId: payload.defaultMicrophoneId || null,
+      defaultIemId: payload.defaultIemId || null,
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -350,6 +368,7 @@ const PositionManager = ({
       icon: editing.icon || "",
       qualificationAreaId: editing.qualificationAreaId || "",
       defaultMicrophoneId: editing.defaultMicrophoneId || "",
+      defaultIemId: editing.defaultIemId || "",
     })
     : JSON.stringify(draft) !==
     JSON.stringify({
@@ -358,6 +377,7 @@ const PositionManager = ({
       icon: "",
       qualificationAreaId: "",
       defaultMicrophoneId: "",
+      defaultIemId: "",
     });
   // A save already in flight for this editor is not an unsaved change: the
   // operator committed it, and `editing` only catches up when the response
@@ -376,6 +396,7 @@ const PositionManager = ({
       icon: position.icon || "",
       qualificationAreaId: position.qualificationAreaId || "",
       defaultMicrophoneId: position.defaultMicrophoneId || "",
+      defaultIemId: position.defaultIemId || "",
     });
   }, []);
 
@@ -626,6 +647,24 @@ const PositionManager = ({
               Applied to this position&apos;s slots when a new schedule is created.
               You can change any date&apos;s microphone in the schedule.
             </p>
+          </div>
+        ) : null}
+        {positionTeamUsesIems ? (
+          <div>
+            <p className="p-1 text-sm font-semibold">Default IEM:</p>
+            <RadixSelect
+              value={draft.defaultIemId || NO_DEFAULT_IEM_VALUE}
+              onValueChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value === NO_DEFAULT_IEM_VALUE ? "" : value }))}
+            >
+              <SelectTrigger aria-label="Default IEM" className="w-full justify-between">
+                <SelectValue placeholder="No default IEM">{selectedDefaultIem?.name || "No default IEM"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_DEFAULT_IEM_VALUE}>No default IEM</SelectItem>
+                {iems.map((iem) => <SelectItem key={iem.id} value={iem.id} textValue={iem.name}>{iem.name}</SelectItem>)}
+              </SelectContent>
+            </RadixSelect>
+            <p className="mt-1 text-xs text-gray-400">Applied to this position&apos;s slots when a new schedule is created.</p>
           </div>
         ) : null}
         <div>

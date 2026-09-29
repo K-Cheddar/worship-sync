@@ -114,6 +114,7 @@ import type {
   ServicePlanAssignee,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
   ServicePlanContentResource,
   ServicePlanSongReference,
   ServicePlanTeamNote,
@@ -408,6 +409,7 @@ type ItemActionsMenuProps = {
   canEdit: boolean;
   structureOnly: boolean;
   microphones: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   assignees: ServicePlanAssignee[];
   canAddNote: boolean;
   canAddContent: boolean;
@@ -1095,6 +1097,7 @@ type ServicePlanElementRowProps = {
   scheduledPositionOptions?: ServicePlanRoleNoteOption[];
   /** Church-wide mic catalog. Assignments remain scoped to this plan item. */
   microphones?: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   /** Church-wide roles that see every assigned microphone. */
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
@@ -1177,6 +1180,7 @@ const ServicePlanElementRow = ({
   roleNoteOptions = [],
   scheduledPositionOptions = [],
   microphones = [],
+  iemEquipment = [],
   microphoneAudiences,
   scheduledMicrophoneHolders,
   scheduledAssignmentRows = [],
@@ -1443,6 +1447,7 @@ const ServicePlanElementRow = ({
       assignees={assignees}
       allowEdit={false}
       microphones={microphones}
+      iemEquipment={iemEquipment}
       assignedToHistoryValues={assignedToHistoryValues}
       onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
@@ -2516,6 +2521,7 @@ const ServicePlanElementRow = ({
       assignees={assignees}
       allowEdit={allowEdit}
       microphones={microphones}
+      iemEquipment={iemEquipment}
       assignedToHistoryValues={assignedToHistoryValues}
       onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
@@ -2532,6 +2538,7 @@ const ServicePlanElementRow = ({
       assignees={assignees}
       allowEdit={false}
       microphones={microphones}
+      iemEquipment={iemEquipment}
       assignedToHistoryValues={assignedToHistoryValues}
       onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}

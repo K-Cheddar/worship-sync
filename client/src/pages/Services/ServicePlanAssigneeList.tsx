@@ -23,6 +23,7 @@ import {
   isUnassignedServicePlanAssignee,
   type ServicePlanAssignee,
   type ServicePlanMicrophone,
+  type ServiceEquipment,
 } from "../../types/servicePlan";
 
 export const createServicePlanAssignee = (
@@ -84,7 +85,10 @@ const pruneEmptyAssignees = (
 ): ServicePlanAssignee[] =>
   assignees.filter(
     (assignee) =>
-      assignee.name?.trim() || assignee.memberId || assignee.microphoneIds?.length,
+      assignee.name?.trim()
+      || assignee.memberId
+      || assignee.microphoneIds?.length
+      || assignee.iemIds?.length,
   );
 
 /**
@@ -100,7 +104,7 @@ export const applyAssigneeChanges = (
   const next = assignees.map((assignee) =>
     assignee.id === assigneeId ? { ...assignee, ...changes } : assignee,
   );
-  if (!("microphoneIds" in changes)) return next;
+  if (!("microphoneIds" in changes) && !("iemIds" in changes)) return next;
   return pruneEmptyAssignees(next);
 };
 
@@ -123,6 +127,15 @@ export const hasUnclaimedMicrophoneSlot = (
       && (assignee.microphoneIds || []).length > 0,
   );
 
+export const hasUnclaimedIemSlot = (
+  assignees: ServicePlanAssignee[],
+): boolean =>
+  assignees.some(
+    (assignee) =>
+      isUnassignedServicePlanAssignee(assignee)
+      && (assignee.iemIds || []).length > 0,
+  );
+
 /**
  * Removing a person hands their microphones back to the item rather than
  * deleting them: the mic is still in the service, it just has nobody on it
@@ -137,11 +150,15 @@ export const releaseServicePlanAssignee = (
     if (assignee.id !== assigneeId) return [assignee];
     if (
       isUnassignedServicePlanAssignee(assignee)
-      || !(assignee.microphoneIds || []).length
+      || (!(assignee.microphoneIds || []).length && !(assignee.iemIds || []).length)
     ) {
       return [];
     }
-    return [{ id: assignee.id, microphoneIds: assignee.microphoneIds }];
+    return [{
+      id: assignee.id,
+      ...(assignee.microphoneIds?.length ? { microphoneIds: assignee.microphoneIds } : {}),
+      ...(assignee.iemIds?.length ? { iemIds: assignee.iemIds } : {}),
+    }];
   });
 
 /**
@@ -184,6 +201,7 @@ type ServicePlanAssigneeListProps = {
   /** True when the operator may edit (canEdit && isEditing on the row). */
   allowEdit: boolean;
   microphones: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   assignedToHistoryValues: string[];
   onRemoveAssignedToHistoryValue?: (value: string) => void;
   isAssignedToHistoryValueRemovable?: (value: string) => boolean;
@@ -264,6 +282,7 @@ const ServicePlanAssigneeList = ({
   assignees,
   allowEdit,
   microphones,
+  iemEquipment = [],
   assignedToHistoryValues,
   onRemoveAssignedToHistoryValue,
   isAssignedToHistoryValueRemovable,
@@ -282,6 +301,8 @@ const ServicePlanAssigneeList = ({
   const microphonesById = new Map(
     microphones.map((microphone) => [microphone.id, microphone]),
   );
+  const iems = iemEquipment.filter((item) => item.category === "iem");
+  const iemsById = new Map(iems.map((item) => [item.id, item]));
   const itemHasMicrophones = assignees.some(
     (assignee) => (assignee.microphoneIds || []).length > 0,
   );
@@ -335,6 +356,16 @@ const ServicePlanAssigneeList = ({
             (microphone) =>
               !taken.has(microphone.id)
               && !(assignee.microphoneIds || []).includes(microphone.id),
+          );
+          const takenIemIds = new Set(
+            assignees.filter((candidate) => candidate.id !== assignee.id)
+              .flatMap((candidate) => candidate.iemIds || []),
+          );
+          const assigneeIems = (assignee.iemIds || [])
+            .map((id) => iemsById.get(id))
+            .filter((item): item is ServiceEquipment => Boolean(item));
+          const availableIems = iems.filter(
+            (item) => !takenIemIds.has(item.id) && !(assignee.iemIds || []).includes(item.id),
           );
           // In a template an unnamed row is a position in the order the dated
           // plan hands microphones out in; a named one is a standing group.
@@ -537,6 +568,56 @@ const ServicePlanAssigneeList = ({
                   </span>
                 );
               })}
+
+              {assigneeIems.map((iem) => (
+                <span key={iem.id} className="inline-flex items-center gap-1 rounded-full border border-cyan-700/60 bg-cyan-950/50 px-2 py-1 text-xs text-cyan-100">
+                  <span>{iem.name}</span>
+                  {allowEdit ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      iconSize="sm"
+                      padding="p-0"
+                      className="h-6 w-6 justify-center"
+                      svg={X}
+                      aria-label={`Remove ${iem.name} from ${label}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        updateAssignee(assignee.id, {
+                          iemIds: (assignee.iemIds || []).filter((id) => id !== iem.id),
+                        });
+                      }}
+                    />
+                  ) : null}
+                </span>
+              ))}
+
+              {allowEdit && availableIems.length ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Plus}
+                      iconSize="xs"
+                      padding="px-1 py-0.5"
+                      className="h-7 max-md:min-h-[2rem] max-md:px-2 border border-dashed border-cyan-500/40 text-xs text-cyan-200"
+                      aria-label={`Add IEM for ${label}`}
+                    >IEM</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-40">
+                    {availableIems.map((iem) => (
+                      <DropdownMenuItem
+                        key={iem.id}
+                        onSelect={() => updateAssignee(assignee.id, {
+                          iemIds: [...(assignee.iemIds || []), iem.id],
+                        })}
+                      >{iem.name}</DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
 
               {allowEdit && availableMicrophones.length > 0 ? (
                 // Default modal menu + inner scroller: wheel works under Sheet

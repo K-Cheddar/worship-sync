@@ -1098,6 +1098,32 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  // Compatibility phase: microphone records remain writable only through
+  // servicePlanMicrophones. The generic catalog accepts IEMs today and keeps
+  // the category field ready for a later ID-preserving microphone migration.
+  const MAX_SERVICE_EQUIPMENT = 80;
+  const normalizeServiceEquipment = (raw) => {
+    if (!raw || typeof raw !== "object" || raw.category !== "iem") return null;
+    const name = normalizeShortText(raw.name, { max: 80 });
+    if (!name) return null;
+    const subtype = normalizeShortText(raw.subtype, { max: 80 });
+    const color = String(raw.color || "").trim();
+    return {
+      id: normalizeShortText(raw.id, { max: 160 }) || createId("serviceEquipment"),
+      category: "iem",
+      name,
+      ...(subtype ? { subtype } : {}),
+      ...( /^#[0-9a-f]{6}$/i.test(color) ? { color } : {}),
+    };
+  };
+
+  const normalizeServiceEquipmentCatalog = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+      .map(normalizeServiceEquipment)
+      .filter(Boolean)
+      .filter((item, index, values) => values.findIndex((candidate) => candidate.id === item.id) === index)
+      .slice(0, MAX_SERVICE_EQUIPMENT);
+
   const normalizeServicePlanMicrophoneAudience = (raw) => {
     if (!raw || typeof raw !== "object") return null;
     const positionId = normalizeShortText(raw.positionId, { max: 160 });
@@ -1126,12 +1152,13 @@ export const createTeamsAuthHandlers = ({
       .slice(0, MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES);
 
   /**
-   * Everyone doing an item, and the microphones each of them carries. An entry
+   * Everyone doing an item, and the microphones/IEMs each of them carries. An entry
    * with no name and no memberId is the unassigned slot: a stand or spare mic.
    * Entries holding nothing at all are dropped rather than stored as blanks.
    */
   const normalizeServicePlanAssignees = (raw) => {
     const usedMicrophoneIds = new Set();
+    const usedIemIds = new Set();
     return (Array.isArray(raw) ? raw : [])
       .map((assignee) => {
         if (!assignee || typeof assignee !== "object") return null;
@@ -1149,7 +1176,18 @@ export const createTeamsAuthHandlers = ({
             return true;
           })
           .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
-        if (!name && !memberId && !microphoneIds.length) return null;
+        // IEM IDs have a separate uniqueness domain; raw IDs may overlap mics.
+        const iemIds = (
+          Array.isArray(assignee.iemIds) ? assignee.iemIds : []
+        )
+          .map((iemId) => normalizeShortText(iemId, { max: 160 }))
+          .filter((iemId) => {
+            if (!iemId || usedIemIds.has(iemId)) return false;
+            usedIemIds.add(iemId);
+            return true;
+          })
+          .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
+        if (!name && !memberId && !microphoneIds.length && !iemIds.length) return null;
         return {
           id:
             normalizeShortText(assignee.id, { max: 160 }) ||
@@ -1157,6 +1195,7 @@ export const createTeamsAuthHandlers = ({
           ...(name ? { name } : {}),
           ...(memberId ? { memberId } : {}),
           ...(microphoneIds.length ? { microphoneIds } : {}),
+          ...(iemIds.length ? { iemIds } : {}),
         };
       })
       .filter(Boolean)
@@ -3514,6 +3553,7 @@ export const createTeamsAuthHandlers = ({
     const defaultMicrophoneId = normalizeShortText(body?.defaultMicrophoneId, {
       max: 160,
     });
+    const defaultIemId = normalizeShortText(body?.defaultIemId, { max: 160 });
     if (defaultMicrophoneId) {
       if (!team.usesMicrophoneAssignments) {
         throw httpError(
@@ -3535,6 +3575,14 @@ export const createTeamsAuthHandlers = ({
         );
       }
     }
+    if (defaultIemId) {
+      if (!team.usesIemAssignments) {
+        throw httpError(400, "Enable IEM assignments for this team before setting a default IEM.");
+      }
+      const church = await getDoc(COLLECTIONS.churches, churchId);
+      const knownIemIds = new Set(normalizeServiceEquipmentCatalog(church?.serviceEquipment).map((item) => item.id));
+      if (!knownIemIds.has(defaultIemId)) throw httpError(400, "Default IEM is not in this church's equipment list.");
+    }
     return {
       name,
       description: normalizeLongText(body?.description),
@@ -3542,6 +3590,7 @@ export const createTeamsAuthHandlers = ({
       groupId: normalizeShortText(body?.groupId, { max: 160 }) || null,
       qualificationAreaId: qualificationAreaId || null,
       defaultMicrophoneId: defaultMicrophoneId || null,
+      defaultIemId: defaultIemId || null,
       teamId: team.teamId,
     };
   };
@@ -3565,6 +3614,7 @@ export const createTeamsAuthHandlers = ({
       icon: normalizeShortText(body?.icon, { max: 40 }),
       memberIds,
       usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
+      usesIemAssignments: body?.usesIemAssignments === true,
     };
   };
 
@@ -3700,6 +3750,23 @@ export const createTeamsAuthHandlers = ({
     return assignments;
   };
 
+  const normalizeTeamScheduleIemAssignments = (value) => {
+    if (!value || typeof value !== "object") return {};
+    const assignments = {};
+    for (const [occurrenceId, rawRow] of Object.entries(value)) {
+      const normalizedOccurrenceId = normalizeShortText(occurrenceId, { max: 260 });
+      if (!normalizedOccurrenceId || !rawRow || typeof rawRow !== "object") continue;
+      const row = {};
+      for (const [slotKey, iemIds] of Object.entries(rawRow)) {
+        if (!parseScheduleSlotKey(slotKey)) continue;
+        const ids = normalizeIdArray(iemIds).slice(0, 12);
+        if (ids.length) row[slotKey] = ids;
+      }
+      if (Object.keys(row).length) assignments[normalizedOccurrenceId] = row;
+    }
+    return assignments;
+  };
+
   const normalizeTeamScheduleAdditionalPositionSlots = (value) => {
     if (!value || typeof value !== "object") return {};
     const slots = {};
@@ -3762,6 +3829,7 @@ export const createTeamsAuthHandlers = ({
     const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
       body?.microphoneAssignments,
     );
+    const iemAssignments = normalizeTeamScheduleIemAssignments(body?.iemAssignments);
     const additionalPositionSlots =
       normalizeTeamScheduleAdditionalPositionSlots(
         body?.additionalPositionSlots ?? body?.optionalPositionSlots,
@@ -3796,6 +3864,7 @@ export const createTeamsAuthHandlers = ({
       assignments,
       guests,
       microphoneAssignments,
+      iemAssignments,
       additionalPositionSlots,
     };
   };
@@ -4210,6 +4279,39 @@ export const createTeamsAuthHandlers = ({
         microphoneAssignments[occurrence.occurrenceId] = row;
     }
     return { ...payload, microphoneAssignments };
+  };
+
+  const applyPositionDefaultIems = async ({ churchId, payload }) => {
+    const team = await assertTeamEntityInChurch("team", payload.teamId, churchId, { label: "Team" });
+    if (!team.usesIemAssignments) return payload;
+    const [positions, church] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId),
+      getDoc(COLLECTIONS.churches, churchId),
+    ]);
+    const knownIemIds = new Set(normalizeServiceEquipmentCatalog(church?.serviceEquipment).map((item) => item.id));
+    const defaultsByPositionId = new Map(
+      positions
+        .filter((position) => position.teamId === payload.teamId)
+        .map((position) => [position.positionId, String(position.defaultIemId || "").trim()])
+        .filter(([, iemId]) => knownIemIds.has(iemId)),
+    );
+    if (!defaultsByPositionId.size) return payload;
+    const iemAssignments = normalizeTeamScheduleIemAssignments(payload.iemAssignments);
+    for (const occurrence of payload.occurrences) {
+      const requirements = await resolveScheduleOccurrenceRequirements({ churchId, occurrence });
+      const row = { ...(iemAssignments[occurrence.occurrenceId] || {}) };
+      requirements.forEach((requirement) => {
+        const iemId = defaultsByPositionId.get(requirement.positionId);
+        if (!iemId) return;
+        const count = Math.max(0, Math.floor(Number(requirement.count) || 0));
+        for (let slot = 0; slot < count; slot += 1) {
+          const slotKey = makeScheduleSlotKey(requirement.positionId, slot);
+          if (!row[slotKey]) row[slotKey] = [iemId];
+        }
+      });
+      if (Object.keys(row).length) iemAssignments[occurrence.occurrenceId] = row;
+    }
+    return { ...payload, iemAssignments };
   };
 
   const getServicePlanKeyForOccurrence = (occurrence) => {
@@ -9745,6 +9847,12 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, "iemAssignments")) {
+          payload = await applyPositionDefaultIems({
+            churchId: req.params.churchId,
+            payload,
+          });
+        }
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
@@ -10680,6 +10788,45 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async getServiceEquipment(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        return res.json({
+          success: true,
+          equipment: normalizeServiceEquipmentCatalog(church?.serviceEquipment),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load service equipment.");
+      }
+    },
+
+    async saveServiceEquipment(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireServicesEdit(req, churchId);
+        const rawEquipment = req.body?.equipment;
+        if (!Array.isArray(rawEquipment)) {
+          throw httpError(400, "Equipment must be a list.");
+        }
+        if (rawEquipment.some((item) => !item || item.category !== "iem" || !normalizeServiceEquipment(item))) {
+          throw httpError(400, "Equipment category or name is invalid.");
+        }
+        const equipment = normalizeServiceEquipmentCatalog(req.body?.equipment);
+        await setDoc(
+          COLLECTIONS.churches,
+          churchId,
+          { serviceEquipment: equipment, updatedAt: nowIso(), updatedByUid: sessionActorUid(admin) },
+          { merge: true },
+        );
+        return res.json({ success: true, equipment });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save service equipment.");
+      }
+    },
+
     async publishServicePlan(req, res) {
       try {
         await assertCsrf(req);
@@ -11443,6 +11590,174 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async updateTeamScheduleAssignmentIems(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const schedule = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireScheduleMicrophoneEdit(
+          req,
+          churchId,
+          schedule.teamId,
+        );
+        const actorUid = sessionActorUid(admin);
+        const team = await assertTeamEntityInChurch(
+          "team",
+          schedule.teamId,
+          churchId,
+          {
+            label: "Team",
+          },
+        );
+        if (!team.usesIemAssignments) {
+          throw httpError(
+            400,
+            "This team does not use IEM assignments.",
+          );
+        }
+        const occurrenceId = normalizeShortText(req.body?.serviceId, {
+          max: 260,
+        });
+        const slotKey = normalizeShortText(req.body?.positionSlotKey, {
+          max: 260,
+        });
+        const slot = parseScheduleSlotKey(slotKey);
+        if (!slot) throw httpError(400, "Position slot key is invalid.");
+        assertScheduleRowContains(schedule, occurrenceId);
+        const occurrence = (schedule.occurrences || []).find(
+          (item) => item.occurrenceId === occurrenceId,
+        );
+        const requirements = await resolveScheduleOccurrenceRequirements({
+          churchId,
+          occurrence,
+        });
+        const requirement = requirements.find(
+          (item) => item?.positionId === slot.positionId,
+        );
+        {
+          const requiredCount = Math.max(
+            0,
+            Math.floor(Number(requirement?.count) || 0),
+          );
+          const additionalSlots = new Set(
+            normalizeTeamScheduleAdditionalPositionSlots(
+              schedule.additionalPositionSlots ??
+                schedule.optionalPositionSlots,
+            )[occurrenceId] || [],
+          );
+          const normalizedSlotKey = makeScheduleSlotKey(
+            slot.positionId,
+            slot.slot,
+          );
+          if (
+            slot.slot >= requiredCount &&
+            !additionalSlots.has(normalizedSlotKey)
+          ) {
+            throw httpError(
+              400,
+              "Add this position before assigning IEMs.",
+            );
+          }
+        }
+        const position = await assertTeamEntityInChurch(
+          "position",
+          slot.positionId,
+          churchId,
+          { label: "Position" },
+        );
+        assertSchedulePositionForTeam({ churchId, team, position });
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const knownIemIds = new Set(normalizeServiceEquipmentCatalog(church?.serviceEquipment).map((item) => item.id));
+        const iemIds = normalizeIdArray(req.body?.iemIds)
+          .filter((iemId) => knownIemIds.has(iemId))
+          .slice(0, 12);
+        const applyIEMAssignment = (currentSchedule) => {
+          const iemAssignments =
+            normalizeTeamScheduleIemAssignments(
+              currentSchedule.iemAssignments,
+            );
+          const row = { ...(iemAssignments[occurrenceId] || {}) };
+          if (iemIds.length) row[slotKey] = iemIds;
+          else delete row[slotKey];
+          if (Object.keys(row).length)
+            iemAssignments[occurrenceId] = row;
+          else delete iemAssignments[occurrenceId];
+          return {
+            iemAssignments,
+            updatedAt: nowIso(),
+            updatedByUid: actorUid,
+          };
+        };
+        const db = requireFirestore();
+        let updatedSchedule;
+        if (db) {
+          // IEM controls can be used simultaneously from another
+          // browser or device. Re-read and replace the map inside a
+          // transaction so a late save cannot restore an older map snapshot.
+          updatedSchedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db
+              .collection(COLLECTIONS.teamSchedules)
+              .doc(schedule.scheduleId);
+            const snapshot = await transaction.get(scheduleRef);
+            const currentSchedule = readTransactionTeamEntity(
+              snapshot,
+              "scheduleId",
+              "Schedule",
+              { active: false },
+            );
+            if (currentSchedule.churchId !== churchId) {
+              throw httpError(404, "Schedule not found.");
+            }
+            const update = applyIEMAssignment(currentSchedule);
+            transaction.update(scheduleRef, update);
+            return { ...currentSchedule, ...update };
+          });
+        } else {
+          updatedSchedule = await enqueueInMemoryMicrophoneSave(
+            schedule.scheduleId,
+            async () => {
+              const currentSchedule = await assertTeamEntityInChurch(
+                "schedule",
+                schedule.scheduleId,
+                churchId,
+                { label: "Schedule", active: false },
+              );
+              const update = applyIEMAssignment(currentSchedule);
+              await setDoc(
+                COLLECTIONS.teamSchedules,
+                schedule.scheduleId,
+                update,
+                {
+                  merge: true,
+                },
+              );
+              return { ...currentSchedule, ...update };
+            },
+          );
+        }
+        emitTeamsEvent(churchId, "schedule-updated", {
+          schedule: updatedSchedule,
+        });
+        await emitPublicPlansForScheduleOccurrence({
+          churchId,
+          occurrence,
+          revision: updatedSchedule.updatedAt,
+        });
+        return res.json({ success: true, schedule: updatedSchedule });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update IEM assignments.",
+        );
+      }
+    },
+
     async addTeamSchedulePositionSlot(req, res) {
       try {
         await assertCsrf(req);
@@ -11609,10 +11924,16 @@ export const createTeamsAuthHandlers = ({
               delete microphoneAssignments[occurrenceId];
             }
           }
+          const iemAssignments = normalizeTeamScheduleIemAssignments(schedule.iemAssignments);
+          if (iemAssignments[occurrenceId]) {
+            delete iemAssignments[occurrenceId][normalizedSlotKey];
+            if (Object.keys(iemAssignments[occurrenceId]).length === 0) delete iemAssignments[occurrenceId];
+          }
           return {
             additionalPositionSlots,
             assignments,
             microphoneAssignments,
+            iemAssignments,
             updatedAt: nowIso(),
             updatedByUid: admin.user.uid,
           };

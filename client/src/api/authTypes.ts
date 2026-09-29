@@ -350,6 +350,7 @@ export type TeamPosition = {
   qualificationAreaId?: string;
   /** Default church microphone for new schedule slots in this position. */
   defaultMicrophoneId?: string | null;
+  defaultIemId?: string | null;
   archivedAt?: string | null;
 };
 
@@ -362,6 +363,7 @@ export type TeamRecord = {
   memberIds: string[];
   /** Whether scheduled role slots for this team can receive church microphones. */
   usesMicrophoneAssignments?: boolean;
+  usesIemAssignments?: boolean;
   // a team's positions are derived from positions where position.teamId === teamId
   archivedAt?: string | null;
 };
@@ -427,6 +429,7 @@ export type TeamScheduleMicrophoneAssignments = Record<
   string,
   Record<string, string[]>
 >;
+export type TeamScheduleIemAssignments = Record<string, Record<string, string[]>>;
 
 /** Additional role slots added to a specific schedule occurrence. */
 export type TeamScheduleAdditionalPositionSlots = Record<string, string[]>;
@@ -527,6 +530,7 @@ export type TeamSchedule = TeamScheduleSummary & {
   /** Accept/decline state, keyed occurrenceId -> cellKey. */
   responses?: TeamScheduleResponses;
   microphoneAssignments?: TeamScheduleMicrophoneAssignments;
+  iemAssignments?: TeamScheduleIemAssignments;
   additionalPositionSlots?: TeamScheduleAdditionalPositionSlots;
 };
 

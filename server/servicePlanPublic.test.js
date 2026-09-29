@@ -653,6 +653,11 @@ test("detailed snapshots expose microphones only to their selected roles", () =>
               ...plan.sections[0].elements[0],
               microphoneAssignments,
             },
+            {
+              ...plan.sections[0].elements[0],
+              id: "iem-only-element",
+              assignees: [{ id: "iem-slot", iemIds: ["iem-3"] }],
+            },
           ],
         },
       ],
@@ -675,6 +680,7 @@ test("detailed snapshots expose microphones only to their selected roles", () =>
       },
     ],
   );
+  assert.equal(JSON.stringify(detailed.service).includes("iem-3"), false);
 
   const general = buildPublicServicePlanSnapshot({
     plan: {

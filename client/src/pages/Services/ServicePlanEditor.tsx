@@ -75,6 +75,7 @@ import {
   getServicePlan,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
+  getServiceEquipment,
   listServicePlanTemplates,
   publishServicePlan,
   saveServicePlan,
@@ -203,6 +204,7 @@ import type {
   ServicePlanSourceImport,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
   ServicePlanTemplate,
 } from "../../types/servicePlan";
 import { getServicePlanElementAssigneeNames } from "../../types/servicePlan";
@@ -510,6 +512,7 @@ const ServicePlanEditor = ({
   );
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iemEquipment, setIemEquipment] = useState<ServiceEquipment[]>([]);
   const [microphoneAudiences, setMicrophoneAudiences] = useState<
     ServicePlanMicrophoneAudience[] | undefined
   >();
@@ -868,6 +871,13 @@ const ServicePlanEditor = ({
       })
       .catch(() => {
         // Microphones are optional operational metadata. The plan remains usable.
+      });
+    Promise.resolve().then(() => getServiceEquipment(churchId))
+      .then((res) => {
+        if (!cancelled) setIemEquipment(res.equipment.filter((item) => item.category === "iem"));
+      })
+      .catch(() => {
+        if (!cancelled) setIemEquipment([]);
       });
     return () => {
       cancelled = true;
@@ -2921,6 +2931,7 @@ const ServicePlanEditor = ({
               scheduledPositionOptions={scheduledPositionOptions}
               teamNoteOptions={teamNoteOptions}
               microphones={microphones}
+              iemEquipment={iemEquipment}
               microphoneAudiences={microphoneAudiences}
               scheduledMicrophoneHolders={scheduledMicrophoneHolders}
               scheduledAssignmentRows={scheduledAssignmentRows}

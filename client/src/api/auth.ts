@@ -23,6 +23,7 @@ import type {
   ServicePlanTemplatePayload,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
@@ -1135,6 +1136,7 @@ export type TeamPositionPayload = {
   groupId?: string;
   qualificationAreaId?: string;
   defaultMicrophoneId?: string;
+  defaultIemId?: string;
   teamId: string;
 };
 
@@ -1144,6 +1146,7 @@ export type TeamPayload = {
   icon?: string;
   memberIds: string[];
   usesMicrophoneAssignments?: boolean;
+  usesIemAssignments?: boolean;
 };
 
 export type TeamRolePayload = {
@@ -1176,6 +1179,7 @@ export type TeamSchedulePayload = {
   assignments?: TeamScheduleAssignments;
   guests?: TeamScheduleGuest[];
   microphoneAssignments?: TeamSchedule["microphoneAssignments"];
+  iemAssignments?: TeamSchedule["iemAssignments"];
   additionalPositionSlots?: TeamSchedule["additionalPositionSlots"];
   allowCrossTeamConflict?: boolean;
 };
@@ -2150,6 +2154,16 @@ export const updateTeamScheduleAssignmentMicrophones = async (
     { method: "POST", body: JSON.stringify(body) },
   );
 
+export const updateTeamScheduleAssignmentIems = async (
+  churchId: string,
+  scheduleId: string,
+  body: { serviceId: string; positionSlotKey: string; iemIds: string[] },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignment-iems`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
 export const addTeamSchedulePositionSlot = async (
   churchId: string,
   scheduleId: string,
@@ -2402,6 +2416,21 @@ export const saveServicePlanMicrophones = async (
     method: "POST",
     body: JSON.stringify({ microphones, audiences }),
   });
+
+/** New equipment catalog; existing microphones remain in their legacy API. */
+export const getServiceEquipment = async (churchId: string) =>
+  apiFetch<{ success: boolean; equipment: ServiceEquipment[] }>(
+    `api/churches/${churchId}/service-equipment`, { method: "GET" },
+  );
+
+export const saveServiceEquipment = async (
+  churchId: string,
+  equipment: ServiceEquipment[],
+) =>
+  apiFetch<{ success: boolean; equipment: ServiceEquipment[] }>(
+    `api/churches/${churchId}/service-equipment`,
+    { method: "POST", body: JSON.stringify({ equipment }) },
+  );
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>
   apiFetch<{ success: boolean; invite: ChurchInviteRow }>(

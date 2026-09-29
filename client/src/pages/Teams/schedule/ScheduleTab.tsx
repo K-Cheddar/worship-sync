@@ -63,10 +63,12 @@ import {
   sendTeamSchedule,
   getTeamSchedulePublicLink,
   getServicePlanMicrophones,
+  getServiceEquipment,
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
@@ -123,7 +125,7 @@ import {
   type TeamScheduleShadowKind,
   type NotificationIntent,
 } from "../../../api/authTypes";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
@@ -351,6 +353,8 @@ const ScheduleTab = ({
   const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
     ? selectedScheduleRecord
     : null;
+  const latestScheduleRef = useRef(selectedSchedule);
+  useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
   const scheduleDisplayMembers = useMemo(
     () => [
       ...data.members,
@@ -548,6 +552,9 @@ const ScheduleTab = ({
   const [microphoneCatalogStatus, setMicrophoneCatalogStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
+  const [iems, setIems] = useState<ServiceEquipment[]>([]);
+  const [iemCatalogStatus, setIemCatalogStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(
     null,
   );
@@ -574,6 +581,11 @@ const ScheduleTab = ({
       targetOccurrences: regeneratedOccurrences,
       rows: selectedSchedule.microphoneAssignments,
     });
+    const iemAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
+      sourceOccurrences,
+      targetOccurrences: regeneratedOccurrences,
+      rows: selectedSchedule.iemAssignments,
+    });
     const additionalPositionSlots = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
       targetOccurrences: regeneratedOccurrences,
@@ -588,6 +600,7 @@ const ScheduleTab = ({
       occurrences: regeneratedOccurrences,
       assignments,
       microphoneAssignments,
+      iemAssignments,
       additionalPositionSlots,
     });
     try {
@@ -604,6 +617,7 @@ const ScheduleTab = ({
           occurrences: regeneratedOccurrences,
           assignments,
           microphoneAssignments,
+          iemAssignments,
           additionalPositionSlots,
         },
       );
@@ -654,29 +668,32 @@ const ScheduleTab = ({
       teamPositionIds,
     ],
   );
-  // Load the catalog only for a schedule whose team uses microphones. The
-  // selectors live alongside each role, so the list must be ready in the grid.
+  // Load each catalog only when its independent team option is enabled.
   useEffect(() => {
-    if (!selectedTeam?.usesMicrophoneAssignments || !churchId) {
+    if (!churchId) {
       setMicrophones([]);
       setMicrophoneCatalogStatus("idle");
+      setIems([]);
+      setIemCatalogStatus("idle");
       return undefined;
     }
     let cancelled = false;
-    setMicrophoneCatalogStatus("loading");
-    getServicePlanMicrophones(churchId)
-      .then((result) => {
-        if (cancelled) return;
-        setMicrophones(result.microphones);
-        setMicrophoneCatalogStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setMicrophoneCatalogStatus("error");
-      });
+    if (selectedTeam?.usesMicrophoneAssignments) {
+      setMicrophoneCatalogStatus("loading");
+      getServicePlanMicrophones(churchId).then((result) => {
+        if (!cancelled) { setMicrophones(result.microphones); setMicrophoneCatalogStatus("ready"); }
+      }).catch(() => { if (!cancelled) setMicrophoneCatalogStatus("error"); });
+    } else { setMicrophones([]); setMicrophoneCatalogStatus("idle"); }
+    if (selectedTeam?.usesIemAssignments) {
+      setIemCatalogStatus("loading");
+      Promise.resolve().then(() => getServiceEquipment(churchId)).then((result) => {
+        if (!cancelled) { setIems(result.equipment.filter((item) => item.category === "iem")); setIemCatalogStatus("ready"); }
+      }).catch(() => { if (!cancelled) setIemCatalogStatus("error"); });
+    } else { setIems([]); setIemCatalogStatus("idle"); }
     return () => {
       cancelled = true;
     };
-  }, [churchId, selectedTeam?.usesMicrophoneAssignments]);
+  }, [churchId, selectedTeam?.usesIemAssignments, selectedTeam?.usesMicrophoneAssignments]);
   const teamMembers = useMemo(() => {
     if (!selectedTeam) return [] as TeamRosterMember[];
     const membersById = new Map(
@@ -1969,6 +1986,7 @@ const ScheduleTab = ({
           assignments: selectedSchedule.assignments,
           guests,
           microphoneAssignments: selectedSchedule.microphoneAssignments,
+          iemAssignments: selectedSchedule.iemAssignments,
           additionalPositionSlots: selectedSchedule.additionalPositionSlots,
         }),
       );
@@ -2450,6 +2468,7 @@ const ScheduleTab = ({
         occurrences: scheduleOccurrences,
         assignments: finalAssignments,
         microphoneAssignments: selectedSchedule.microphoneAssignments,
+        iemAssignments: selectedSchedule.iemAssignments,
         additionalPositionSlots: selectedSchedule.additionalPositionSlots,
       }),
     );
@@ -3778,14 +3797,38 @@ const ScheduleTab = ({
     selectedTeam?.usesMicrophoneAssignments,
   ]);
 
+  const iemHoldersByOccurrence = useMemo(() => {
+    const holdersByOccurrence = new Map<string, Map<string, { slotKey: string; label: string }[]>>();
+    if (!selectedTeam?.usesIemAssignments || !selectedSchedule) return holdersByOccurrence;
+    scheduleOccurrences.forEach((occurrence) => {
+      const holdersByIem = new Map<string, { slotKey: string; label: string }[]>();
+      scheduleColumns.forEach((column) => {
+        const cell = selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
+        const memberId = getCellPrimaryMemberId(cell);
+        const member = scheduleDisplayMembers.find((item) => item.memberId === memberId);
+        const label = member ? scheduleMemberName(member, duplicateScheduleFirstNames) : column.label;
+        const slotKey = `${occurrence.occurrenceId}:${column.columnKey}`;
+        (selectedSchedule.iemAssignments?.[occurrence.occurrenceId]?.[column.columnKey] || []).forEach((iemId) => {
+          const holders = holdersByIem.get(iemId) || [];
+          holders.push({ slotKey, label });
+          holdersByIem.set(iemId, holders);
+        });
+      });
+      holdersByOccurrence.set(occurrence.occurrenceId, holdersByIem);
+    });
+    return holdersByOccurrence;
+  }, [duplicateScheduleFirstNames, scheduleColumns, scheduleDisplayMembers, scheduleOccurrences, selectedSchedule, selectedTeam?.usesIemAssignments]);
+
   const saveMicrophoneAssignment = useCallback(
     async (
       { occurrenceId, columnKey }: { occurrenceId: string; columnKey: string },
       microphoneIds: string[],
     ) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const previousSchedule = selectedSchedule;
-      const assignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+      const baseSchedule = latestScheduleRef.current || selectedSchedule;
+      if (!baseSchedule) return;
+      const previousSchedule = baseSchedule;
+      const assignments = { ...(baseSchedule.microphoneAssignments || {}) };
       const occurrenceAssignments = { ...(assignments[occurrenceId] || {}) };
       if (microphoneIds.length) occurrenceAssignments[columnKey] = microphoneIds;
       else delete occurrenceAssignments[columnKey];
@@ -3797,7 +3840,9 @@ const ScheduleTab = ({
 
       const mutationSeq = ++scheduleMutationSeqRef.current;
       setSavingMicrophoneSlot(`${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
-      onScheduleSaved({ ...selectedSchedule, microphoneAssignments: assignments });
+      const optimisticSchedule = { ...baseSchedule, microphoneAssignments: assignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       try {
         const response = await enqueueAssignmentSave(() =>
           updateTeamScheduleAssignmentMicrophones(churchId, selectedSchedule.scheduleId, {
@@ -3810,10 +3855,12 @@ const ScheduleTab = ({
         // replace a newer optimistic microphone choice made while it was in
         // flight; the queued request will persist that newer choice next.
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
           onScheduleSaved(response.schedule);
         }
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
         }
         showApiErrorToast(showToast, error, "Could not update microphone assignments.");
@@ -3829,6 +3876,47 @@ const ScheduleTab = ({
       selectedSchedule,
       showToast,
     ],
+  );
+
+  const saveIemAssignment = useCallback(
+    async ({ occurrenceId, columnKey }: { occurrenceId: string; columnKey: string }, iemIds: string[]) => {
+      if (!canEdit || !churchId || !selectedSchedule) return;
+      const baseSchedule = latestScheduleRef.current || selectedSchedule;
+      if (!baseSchedule || baseSchedule.scheduleId !== selectedSchedule.scheduleId) return;
+      const previousSchedule = baseSchedule;
+      const assignments = { ...(baseSchedule.iemAssignments || {}) };
+      const row = { ...(assignments[occurrenceId] || {}) };
+      if (iemIds.length) row[columnKey] = iemIds;
+      else delete row[columnKey];
+      if (Object.keys(row).length) assignments[occurrenceId] = row;
+      else delete assignments[occurrenceId];
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      const slotId = `${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`;
+      setSavingIemSlot(slotId);
+      const optimisticSchedule = { ...baseSchedule, iemAssignments: assignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
+      try {
+        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentIems(
+          churchId,
+          selectedSchedule.scheduleId,
+          { serviceId: occurrenceId, positionSlotKey: columnKey, iemIds },
+        ));
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
+        }
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not update IEM assignments.");
+      } finally {
+        setSavingIemSlot((current) => current === slotId ? null : current);
+      }
+    },
+    [canEdit, churchId, enqueueAssignmentSave, onScheduleSaved, selectedSchedule, showToast],
   );
 
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
@@ -4108,6 +4196,11 @@ const ScheduleTab = ({
     delete microphoneRow[cellKey];
     if (Object.keys(microphoneRow).length) microphoneAssignments[serviceId] = microphoneRow;
     else delete microphoneAssignments[serviceId];
+    const iemAssignments = { ...(selectedSchedule.iemAssignments || {}) };
+    const iemRow = { ...(iemAssignments[serviceId] || {}) };
+    delete iemRow[cellKey];
+    if (Object.keys(iemRow).length) iemAssignments[serviceId] = iemRow;
+    else delete iemAssignments[serviceId];
 
     setPendingAdditionalPositionRemoval(null);
     onScheduleSaved({
@@ -4115,6 +4208,7 @@ const ScheduleTab = ({
       additionalPositionSlots,
       assignments,
       microphoneAssignments,
+      iemAssignments,
     });
     try {
       const response = await removeTeamSchedulePositionSlot(
@@ -4228,6 +4322,17 @@ const ScheduleTab = ({
             );
           }
           : undefined,
+        iems: selectedTeam?.usesIemAssignments ? iems : undefined,
+        iemLoading: iemCatalogStatus === "loading",
+        iemUnavailable: iemCatalogStatus === "error",
+        iemIds: selectedSchedule?.iemAssignments?.[occurrence.occurrenceId]?.[column.columnKey],
+        iemHoldersByIem: selectedTeam?.usesIemAssignments
+          ? iemHoldersByOccurrence.get(occurrence.occurrenceId)
+          : undefined,
+        savingIem: savingIemSlot === `${selectedSchedule?.scheduleId}:${occurrence.occurrenceId}:${column.columnKey}`,
+        onIemChange: selectedTeam?.usesIemAssignments
+          ? (iemIds: string[]) => { void saveIemAssignment({ occurrenceId: occurrence.occurrenceId, columnKey: column.columnKey }, iemIds); }
+          : undefined,
       };
     },
     [
@@ -4241,11 +4346,17 @@ const ScheduleTab = ({
       microphoneCatalogStatus,
       microphoneHoldersByOccurrence,
       microphones,
+      iems,
+      iemCatalogStatus,
+      iemHoldersByOccurrence,
       requirementsByOccurrence,
       saveMicrophoneAssignment,
+      saveIemAssignment,
       savingMicrophoneSlot,
+      savingIemSlot,
       selectedSchedule,
       selectedTeam?.usesMicrophoneAssignments,
+      selectedTeam?.usesIemAssignments,
     ],
   );
 

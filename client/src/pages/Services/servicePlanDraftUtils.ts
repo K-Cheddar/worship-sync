@@ -291,10 +291,11 @@ export const cloneSectionsForTemplate = (
         // the microphone slot it describes, and gains a name back when the
         // template is applied to a date. Slots holding nothing are dropped.
         assignees: getServicePlanElementAssignees(element)
-          .filter((assignee) => assignee.microphoneIds?.length)
+          .filter((assignee) => assignee.microphoneIds?.length || assignee.iemIds?.length)
           .map((assignee) => ({
             id: generateRandomId(),
-            microphoneIds: [...(assignee.microphoneIds || [])],
+            ...(assignee.microphoneIds?.length ? { microphoneIds: [...assignee.microphoneIds] } : {}),
+            ...(assignee.iemIds?.length ? { iemIds: [...assignee.iemIds] } : {}),
           })),
         assignedName: undefined,
         assignedMemberId: undefined,

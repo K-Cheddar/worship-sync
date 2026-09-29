@@ -343,6 +343,15 @@ const ScheduleEditForm = ({
             }),
           }
           : {}),
+        ...(selectedSchedule?.iemAssignments
+          ? {
+            iemAssignments: rekeyScheduleOccurrenceRowsByServiceDate({
+              sourceOccurrences: selectedSchedule.occurrences || [],
+              targetOccurrences: occurrences,
+              rows: selectedSchedule.iemAssignments,
+            }),
+          }
+          : {}),
         ...(selectedSchedule?.additionalPositionSlots
           ? {
             additionalPositionSlots: rekeyScheduleOccurrenceRowsByServiceDate({
@@ -383,6 +392,7 @@ const ScheduleEditForm = ({
         assignments,
         ...(payload.guests !== undefined ? { guests: payload.guests } : {}),
         microphoneAssignments: payload.microphoneAssignments,
+        iemAssignments: payload.iemAssignments,
         additionalPositionSlots: payload.additionalPositionSlots,
         archivedAt: selectedSchedule?.archivedAt || null,
       };

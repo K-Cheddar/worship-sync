@@ -4467,6 +4467,35 @@ const richText = (text) => ({
   blocks: [{ type: "paragraph", spans: [{ text }] }],
 });
 
+test("service plan normalization retains IEM-only and mixed equipment slots", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_iem_assignees");
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: "service@2026-09-20" },
+    body: {
+      serviceId: "service",
+      date: "2026-09-20",
+      name: "Sunday Service",
+      sections: [{ id: "section", name: "Music", elements: [{
+        id: "song",
+        type: "song",
+        title: richText("Song"),
+        assignees: [
+          { id: "iem-slot", iemIds: ["iem-only"] },
+          { id: "mixed-slot", name: "Sarah", microphoneIds: ["same-id"], iemIds: ["same-id", "same-id"] },
+          { id: "duplicate-slot", iemIds: ["same-id"] },
+        ],
+      }] }],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].assignees, [
+    { id: "iem-slot", iemIds: ["iem-only"] },
+    { id: "mixed-slot", name: "Sarah", microphoneIds: ["same-id"], iemIds: ["same-id"] },
+  ]);
+});
+
 test("service plan endpoints: create, read, update, delete, permission gating, and SSE", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("service_plan");
@@ -8745,4 +8774,57 @@ test("individual intake SMS records provider failure and blocks missing consent,
     body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(revokedSend.statusCode, 404);
+});
+
+test("generic IEM catalog rejects microphones and concurrent schedule maps coexist", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("iem_catalog_and_schedule");
+  const missingCatalog = await callHandler(authHandlers.saveServiceEquipment, {
+    context,
+    body: {},
+  });
+  assert.equal(missingCatalog.statusCode, 400);
+  const invalid = await callHandler(authHandlers.saveServiceEquipment, {
+    context,
+    body: { equipment: [{ id: "not-a-mic", category: "microphone", name: "Mic 1" }] },
+  });
+  assert.equal(invalid.statusCode, 400);
+
+  const catalog = await callHandler(authHandlers.saveServiceEquipment, {
+    context,
+    body: { equipment: [{ id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack" }] },
+  });
+  assert.equal(catalog.statusCode, 200);
+  assert.equal(catalog.payload.equipment[0].category, "iem");
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: { microphones: [{ id: "iem-1", name: "Mic 1", type: "Handheld", color: "#22d3ee" }], audiences: [] },
+  });
+  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Worship", memberIds: [] } });
+  const teamId = team.payload.team.teamId;
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true, usesIemAssignments: true },
+  });
+  const position = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Lead", teamId, defaultIemId: "iem-1" } });
+  const positionId = position.payload.position.positionId;
+  const occurrenceId = "service-sunday@2026-09-06T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "September", teamId, startDate: "2026-09-06", endDate: "2026-09-06", serviceIds: ["service-sunday"],
+      occurrences: [{ occurrenceId, serviceId: "service-sunday", name: "Sunday", startsAt: "2026-09-06T10:00:00.000Z", positionRequirements: [{ positionId, count: 1 }] }],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  const slotKey = `${positionId}::0`;
+  const results = await Promise.all([
+    callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, { context, params: { scheduleId }, body: { serviceId: occurrenceId, positionSlotKey: slotKey, microphoneIds: ["iem-1"] } }),
+    callHandler(authHandlers.updateTeamScheduleAssignmentIems, { context, params: { scheduleId }, body: { serviceId: occurrenceId, positionSlotKey: slotKey, iemIds: ["iem-1"] } }),
+  ]);
+  assert.equal(results.every((result) => result.statusCode === 200), true);
+  const final = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
+  assert.deepEqual(final.payload.schedule.microphoneAssignments[occurrenceId][slotKey], ["iem-1"]);
+  assert.deepEqual(final.payload.schedule.iemAssignments[occurrenceId][slotKey], ["iem-1"]);
 });

@@ -27,6 +27,7 @@ import ScheduleMicrophoneSelect, {
 } from "./ScheduleMicrophoneSelect";
 import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment } from "../../../types/servicePlan";
 
 type ScheduleBoardCellProps = {
   occurrenceId: string;
@@ -55,6 +56,13 @@ type ScheduleBoardCellProps = {
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
+  iems?: ServiceEquipment[];
+  iemIds?: string[];
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  savingIem?: boolean;
+  onIemChange?: (iemIds: string[]) => void;
+  iemLoading?: boolean;
+  iemUnavailable?: boolean;
 };
 
 /**
@@ -88,6 +96,13 @@ const ScheduleBoardCell = memo(({
   microphonesUnavailable = false,
   savingMicrophone = false,
   onMicrophoneChange,
+  iems,
+  iemIds,
+  iemHoldersByIem,
+  savingIem,
+  onIemChange,
+  iemLoading,
+  iemUnavailable,
 }: ScheduleBoardCellProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
@@ -217,19 +232,27 @@ const ScheduleBoardCell = memo(({
           ) : null}
         </span>
       </button>
-      {microphones && microphoneHolders && onMicrophoneChange ? (
+      {(microphones && microphoneHolders && onMicrophoneChange) || (iems && onIemChange) ? (
         <div className="pl-11">
           <ScheduleMicrophoneSelect
             microphoneIds={microphoneIds}
-            microphones={microphones}
-            holdersByMicrophone={microphoneHolders}
+            microphones={microphones || []}
+            holdersByMicrophone={microphoneHolders || new Map()}
             slotKey={`${occurrenceId}:${columnKey}`}
             ariaLabel={`Microphone for ${assigneeLabel || "Unassigned"} (${positionLabel})`}
             canEdit={canEdit}
             loading={microphonesLoading}
             unavailable={microphonesUnavailable}
             saving={savingMicrophone}
-            onChange={onMicrophoneChange}
+            onChange={onMicrophoneChange || (() => undefined)}
+            iems={iems}
+            iemIds={iemIds}
+            iemHoldersByIem={iemHoldersByIem}
+            savingIem={savingIem}
+            onIemChange={onIemChange}
+            iemLoading={iemLoading}
+            iemUnavailable={iemUnavailable}
+            showMicrophones={Boolean(microphones && onMicrophoneChange)}
           />
         </div>
       ) : null}

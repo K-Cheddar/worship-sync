@@ -88,6 +88,7 @@ const TeamManager = ({
     icon: "",
     memberIds: [],
     usesMicrophoneAssignments: false,
+    usesIemAssignments: false,
   });
   // Teams with a save currently in flight, keyed by teamId (or CREATE_SAVING_KEY
   // for a new team). Tracking per-editor keeps the Save spinner on the team
@@ -131,6 +132,7 @@ const TeamManager = ({
       icon: "",
       memberIds: [],
       usesMicrophoneAssignments: false,
+      usesIemAssignments: false,
     });
   };
 
@@ -147,6 +149,7 @@ const TeamManager = ({
       icon: team.icon || "",
       memberIds: team.memberIds || [],
       usesMicrophoneAssignments: Boolean(team.usesMicrophoneAssignments),
+      usesIemAssignments: Boolean(team.usesIemAssignments),
     });
   }, []);
 
@@ -214,6 +217,7 @@ const TeamManager = ({
       icon: draft.icon || "",
       memberIds: draft.memberIds,
       usesMicrophoneAssignments: Boolean(draft.usesMicrophoneAssignments),
+      usesIemAssignments: Boolean(draft.usesIemAssignments),
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -267,6 +271,7 @@ const TeamManager = ({
         icon: editing.icon || "",
         memberIds: editing.memberIds || [],
         usesMicrophoneAssignments: Boolean(editing.usesMicrophoneAssignments),
+        usesIemAssignments: Boolean(editing.usesIemAssignments),
       })
     : JSON.stringify(draft) !==
       JSON.stringify({
@@ -275,6 +280,7 @@ const TeamManager = ({
         icon: "",
         memberIds: [],
         usesMicrophoneAssignments: false,
+        usesIemAssignments: false,
       });
   useTeamsUnsavedChanges(hasPendingChanges);
 
@@ -404,6 +410,16 @@ const TeamManager = ({
             ...current,
             usesMicrophoneAssignments,
           }))}
+        />
+        <Checkbox
+          label={(
+            <span className="flex flex-col gap-0.5">
+              <span>Use IEM assignments</span>
+              <span className="text-xs text-gray-400">Assign physical IEMs/beltpacks to this team&apos;s roles.</span>
+            </span>
+          )}
+          checked={Boolean(draft.usesIemAssignments)}
+          onCheckedChange={(usesIemAssignments) => setDraft((current) => ({ ...current, usesIemAssignments }))}
         />
         {editing ? (
           <div className="space-y-4">

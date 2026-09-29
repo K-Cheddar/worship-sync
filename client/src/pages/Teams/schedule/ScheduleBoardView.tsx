@@ -17,6 +17,7 @@ import type { OccurrenceFill, ScheduleSlotColumn } from "./scheduleRequirements"
 import ScheduleBoardCell from "./ScheduleBoardCell";
 import type { TeamScheduleAssignmentResponse } from "./scheduleResponseState";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment } from "../../../types/servicePlan";
 import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
 import ScheduleFillBadge from "./ScheduleFillBadge";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
@@ -64,6 +65,13 @@ type BoardCellData = {
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
+  iems?: ServiceEquipment[];
+  iemIds?: string[];
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  savingIem?: boolean;
+  onIemChange?: (iemIds: string[]) => void;
+  iemLoading?: boolean;
+  iemUnavailable?: boolean;
 };
 
 type BoardOccurrenceGroup = {
@@ -264,6 +272,13 @@ const ScheduleBoardView = ({
                   microphonesUnavailable={cellProps.microphonesUnavailable}
                   savingMicrophone={cellProps.savingMicrophone}
                   onMicrophoneChange={cellProps.onMicrophoneChange}
+                  iems={cellProps.iems}
+                  iemIds={cellProps.iemIds}
+                  iemHoldersByIem={cellProps.iemHoldersByIem}
+                  savingIem={cellProps.savingIem}
+                  onIemChange={cellProps.onIemChange}
+                  iemLoading={cellProps.iemLoading}
+                  iemUnavailable={cellProps.iemUnavailable}
                 />
               ))
             ) : (

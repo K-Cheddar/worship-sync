@@ -74,6 +74,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServicePlanAssignee,
+  ServiceEquipment,
 } from "../../types/servicePlan";
 import { getServicePlanElementAssignees, getServicePlanElementLead } from "../../types/servicePlan";
 import { richTextToPlainText } from "../../types/richText";
@@ -135,6 +136,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   scheduledPositionOptions: ServicePlanRoleNoteOption[];
   teamNoteOptions: ServicePlanTeamNoteOption[];
   microphones: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
@@ -189,6 +191,7 @@ const SortableSectionCard = ({
   scheduledPositionOptions,
   teamNoteOptions,
   microphones,
+  iemEquipment = [],
   microphoneAudiences,
   scheduledMicrophoneHolders,
   scheduledAssignmentRows,
@@ -353,6 +356,7 @@ const SortableSectionCard = ({
                   roleNoteOptions={roleNoteOptions}
                   teamNoteOptions={teamNoteOptions}
                   microphones={microphones}
+                  iemEquipment={iemEquipment}
                   microphoneAudiences={microphoneAudiences}
                   scheduledMicrophoneHolders={scheduledMicrophoneHolders}
                   scheduledAssignmentRows={scheduledAssignmentRows}
@@ -395,6 +399,7 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   scheduledPositionOptions?: ServicePlanRoleNoteOption[];
   teamNoteOptions?: ServicePlanTeamNoteOption[];
   microphones?: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
@@ -454,6 +459,7 @@ const ServicePlanSectionList = ({
   scheduledPositionOptions = roleNoteOptions,
   teamNoteOptions = [],
   microphones = [],
+  iemEquipment = [],
   microphoneAudiences,
   scheduledMicrophoneHolders,
   scheduledAssignmentRows,
@@ -859,6 +865,7 @@ const ServicePlanSectionList = ({
           assignees={getServicePlanElementAssignees(assignmentPanelElement)}
           allowEdit={canEdit && isEditing}
           microphones={microphones}
+          iemEquipment={iemEquipment}
           assignedToHistoryValues={assignedToHistoryValues}
           onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
           isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}

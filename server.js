@@ -1641,6 +1641,10 @@ app.post(
   authHandlers.updateTeamScheduleAssignmentMicrophones,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-iems",
+  authHandlers.updateTeamScheduleAssignmentIems,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/additional-position-slots",
   authHandlers.addTeamSchedulePositionSlot,
 );
@@ -1726,6 +1730,8 @@ app.post(
   "/api/churches/:churchId/service-plan-microphones",
   authHandlers.saveServicePlanMicrophones,
 );
+app.get("/api/churches/:churchId/service-equipment", authHandlers.getServiceEquipment);
+app.post("/api/churches/:churchId/service-equipment", authHandlers.saveServiceEquipment);
 app.get("/api/service-plan/public", authHandlers.getPublicServicePlan);
 app.get(
   "/api/service-plan/public/stream",

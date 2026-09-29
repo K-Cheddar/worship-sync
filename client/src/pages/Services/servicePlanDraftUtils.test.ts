@@ -445,6 +445,7 @@ describe("cloneSectionsForTemplate", () => {
           name: "Jamie",
           memberId: "member-1",
           microphoneIds: ["mic-orange"],
+          iemIds: ["iem-3"],
         },
       ],
     });
@@ -455,6 +456,7 @@ describe("cloneSectionsForTemplate", () => {
     expect(element.assignees).toHaveLength(1);
     expect(element.assignees?.[0]).toMatchObject({
       microphoneIds: ["mic-orange"],
+      iemIds: ["iem-3"],
     });
     // Still no claim about who is holding it on any given week.
     expect(element.assignees?.[0].name).toBeUndefined();

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, ExternalLink, FileText, Music } from "lucide-react";
-import { getServicePlanMicrophones } from "../../api/auth";
+import { getServicePlanMicrophones, getServiceEquipment } from "../../api/auth";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
@@ -17,6 +17,7 @@ import {
   type ServicePlan,
   type ServicePlanMicrophone,
   type ServicePlanMicrophoneAudience,
+  type ServiceEquipment,
   type ServicePlanTeamNote,
 } from "../../types/servicePlan";
 import {
@@ -96,6 +97,7 @@ const ControllerServicePlanView = ({
   const preferenceKey = `worship-sync:service-plan-operator:${churchId}:${controllerProfileId}`;
   const [preference, setPreference] = useState(() => readPreference(preferenceKey));
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iems, setIems] = useState<ServiceEquipment[]>([]);
   const [audiences, setAudiences] = useState<ServicePlanMicrophoneAudience[]>([]);
   useEffect(() => {
     let active = true;
@@ -111,6 +113,13 @@ const ControllerServicePlanView = ({
           setAudiences([]);
         }
       });
+    return () => { active = false; };
+  }, [churchId]);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => getServiceEquipment(churchId)).then((result) => {
+      if (active) setIems(result.equipment.filter((item) => item.category === "iem"));
+    }).catch(() => { if (active) setIems([]); });
     return () => { active = false; };
   }, [churchId]);
 
@@ -129,6 +138,7 @@ const ControllerServicePlanView = ({
   };
   const visibleRoles = roles.filter((role) => !effectivePreference.teamName || role.teamName === effectivePreference.teamName);
   const microphoneById = useMemo(() => new Map(microphones.map((microphone) => [microphone.id, microphone])), [microphones]);
+  const iemById = useMemo(() => new Map(iems.map((iem) => [iem.id, iem])), [iems]);
 
   const updatePreference = (next: Preference) => {
     setPreference(next);
@@ -227,10 +237,11 @@ const ControllerServicePlanView = ({
                   ))}
                   {assignees.map((assignee) => {
                     const assignedMicrophones = getVisibleMicrophones(assignee.microphoneIds || [], element);
-                    return assignedMicrophones.length ? (
+                    const assignedIems = (assignee.iemIds || []).flatMap((id) => iemById.has(id) ? [iemById.get(id)!] : []);
+                    return assignedMicrophones.length || assignedIems.length ? (
                       <div key={`${element.id}:${assignee.id}`} className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>
-                        {assignedMicrophones.map((microphone) => <ServicePlanMicrophoneChip key={microphone.id} microphone={microphone} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}
+                        {assignedMicrophones.length ? <><span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>{assignedMicrophones.map((microphone) => <ServicePlanMicrophoneChip key={microphone.id} microphone={microphone} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}</> : null}
+                        {assignedIems.length ? <><span className="ml-1 text-[10px] font-semibold uppercase text-zinc-500">IEMs</span>{assignedIems.map((iem) => <span key={iem.id} className="rounded-full border border-cyan-700/60 bg-cyan-950/50 px-2 py-0.5 text-[11px] text-cyan-100">{iem.name}</span>)}</> : null}
                         {(effectivePreference.teamName || effectivePreference.positionIds.length) && hasUnscopedMicrophoneAssignment(assignee.microphoneIds || [], element) ? <span className="text-[10px] text-zinc-500">Role not specified</span> : null}
                       </div>
                     ) : null;
