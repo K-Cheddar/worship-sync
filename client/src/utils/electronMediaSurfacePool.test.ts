@@ -4,6 +4,7 @@ import {
   getEvictedElectronMediaSurfaceKeys,
   resolveElectronMediaSurfaceBudget,
   selectElectronMediaSurfaceCandidates,
+  selectElectronMediaCandidatesForResourcePolicy,
 } from "./electronMediaSurfacePool";
 
 const candidate = (
@@ -85,6 +86,39 @@ describe("electronMediaSurfacePool", () => {
       "near-before",
       "near-after",
     ]);
+  });
+
+  it("reduces distant preparation while protecting active, current, and next-likely media", () => {
+    const candidates = Array.from({ length: 12 }, (_, index) =>
+      candidate(`media-${index}`, `item-${index}`, index),
+    );
+    const selected = selectElectronMediaCandidatesForResourcePolicy({
+      candidates,
+      currentMediaKey: "media-5",
+      currentItemId: "item-5",
+      protectedMediaKeys: ["media-10"], // outgoing transition owner
+      baseBudget: 10,
+      aggressiveness: "reduced",
+    });
+    const selectedKeys = new Set(selected.map(({ mediaKey }) => mediaKey));
+
+    expect(selectedKeys.has("media-5")).toBe(true);
+    expect(selectedKeys.has("media-4")).toBe(true);
+    expect(selectedKeys.has("media-6")).toBe(true);
+    expect(selectedKeys.has("media-10")).toBe(true);
+    expect(selectedKeys.has("media-11")).toBe(false);
+    expect(selected.length).toBeLessThan(candidates.length);
+  });
+
+  it("keeps every protected key even when distant preparation is paused", () => {
+    const selected = selectElectronMediaCandidatesForResourcePolicy({
+      candidates: [candidate("current"), candidate("active")],
+      currentMediaKey: "current",
+      protectedMediaKeys: ["active"],
+      baseBudget: 14,
+      aggressiveness: "paused",
+    });
+    expect(selected.map(({ mediaKey }) => mediaKey).sort()).toEqual(["active", "current"]);
   });
 
   it("orders equally ranked candidates deterministically regardless of input order", () => {

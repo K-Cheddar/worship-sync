@@ -14,6 +14,7 @@ import {
   type ElectronMediaSurfacePoolDiagnostics,
 } from "../../../utils/electronMediaSurfaceDiagnostics";
 import type { PreparedVideoMetricValue, PreparedVideoMetrics } from "../../../types/electron";
+import type { ResourcePolicy } from "../../../../electron/resourceGovernor";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import {
   MEDIA_READINESS_STATUS_EVENT,
@@ -223,6 +224,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const [diagnostics, setDiagnostics] = useState<Record<string, ReceivedDiagnostics>>({});
   const [remoteReadinessReports, setRemoteReadinessReports] = useState<Record<string, MediaPreparationReadinessReport[]>>({});
   const [metrics, setMetrics] = useState<PreparedVideoMetrics>();
+  const [resourcePolicy, setResourcePolicy] = useState<ResourcePolicy>();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const displayOutputs = useSelector(selectDisplayOutputs);
 
@@ -237,8 +239,8 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   useEffect(() => {
     if (!open) return;
     const api = window.electronAPI;
-    const unsubscribeMetrics = api?.onPreparedVideoMetrics?.(setMetrics);
-    void api?.subscribePreparedVideoMetrics?.().catch(() => undefined);
+    const unsubscribeMetrics = api?.subscribePreparedVideoMetrics?.(setMetrics);
+    const unsubscribeResourcePolicy = api?.subscribeResourceGovernorPolicy?.(setResourcePolicy);
     requestElectronMediaSurfaceDiagnostics();
     const intervalId = window.setInterval(() => {
       requestElectronMediaSurfaceDiagnostics();
@@ -257,7 +259,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
     return () => {
       window.clearInterval(intervalId);
       unsubscribeMetrics?.();
-      void api?.unsubscribePreparedVideoMetrics?.().catch(() => undefined);
+      unsubscribeResourcePolicy?.();
       closeElectronMediaSurfaceDiagnostics();
     };
   }, [open]);
@@ -434,6 +436,12 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   <div className="mt-3 space-y-3 text-xs text-gray-300">
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       <Metric label="App CPU" value={formatMetric(metrics?.total?.cpu, "%")} />
+                      <Metric
+                        label="Resource governor"
+                        value={resourcePolicy
+                          ? `${resourcePolicy.mode} · Tier ${resourcePolicy.tier} · ${resourcePolicy.pressure} · ${resourcePolicy.metrics} metrics`
+                          : "Waiting for shared policy"}
+                      />
                       <Metric label="App private RAM" value={formatMetric(metrics?.total?.privateMemory, "MB")} />
                       <Metric label="Summed working sets" value={formatMetric(metrics?.total?.workingSetMemory, "MB")} />
                       <Metric label="Process count" value={metrics?.total?.processCount ?? "—"} />

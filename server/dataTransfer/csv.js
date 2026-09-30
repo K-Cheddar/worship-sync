@@ -1,8 +1,18 @@
 const FORMULA_PREFIX = /^[\s\u0000-\u001f]*[=+@-]/;
 
+export const decodeSpreadsheetFormula = (value) => {
+  const text = value == null ? "" : String(value);
+  // The backslash marks only WorshipSync's reversible formula-safety prefix.
+  // A doubled apostrophe preserves literal values that begin with that marker.
+  if (/^''\\[\s\u0000-\u001f]*[=+@-]/.test(text)) return text.slice(1);
+  if (/^'\\[\s\u0000-\u001f]*[=+@-]/.test(text)) return text.slice(2);
+  return text;
+};
+
 export const protectSpreadsheetFormula = (value) => {
   const text = value == null ? "" : String(value);
-  return FORMULA_PREFIX.test(text) ? `'${text}` : text;
+  if (/^'\\[=+@-]/.test(text)) return `'${text}`;
+  return FORMULA_PREFIX.test(text) ? `'\\${text}` : text;
 };
 
 export const encodeCsv = (headers, rows) => {
@@ -95,7 +105,7 @@ export const parseCsv = (input) => {
       issues.push({ row: sourceRow, code: "column_count_mismatch", message: `Expected ${headers.length} columns but found ${values.length}.` });
       return;
     }
-    rows.push({ rowNumber: sourceRow, values: Object.fromEntries(headers.map((header, index) => [header, values[index]])) });
+    rows.push({ rowNumber: sourceRow, values: Object.fromEntries(headers.map((header, index) => [header, decodeSpreadsheetFormula(values[index])])) });
   });
   issues.sort((left, right) => left.row - right.row);
   return { headers, rows, totalRows, issues };

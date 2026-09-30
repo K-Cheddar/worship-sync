@@ -1,5 +1,11 @@
 const formatterCache = new Map();
 
+export const isValidPortablePlainDate = (value) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};
+
 export const isValidPortableTimeZone = (timeZone) => {
   if (typeof timeZone !== "string" || !timeZone.trim()) return false;
   try {
@@ -44,7 +50,7 @@ const partsAt = (instant, timeZone) => {
 /** Convert a portable wall-clock date/time using the same browser timezone the
  * schedule UI uses, without depending on the Node process timezone. */
 export const portableWallClockToIso = (date, time, timeZone = "UTC") => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+  if (!isValidPortablePlainDate(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
   const requested = `${date}T${time}:00`;
   const naive = Date.parse(`${requested}Z`);
   if (Number.isNaN(naive) || new Date(naive).toISOString().slice(0, 19) !== requested) return null;

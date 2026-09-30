@@ -335,15 +335,20 @@ const changedFields = (
   const nextAssignees = getServicePlanElementAssigneeNames(next).map(normalizedText);
   const assignmentIdentity = (element: ServicePlanElement) =>
     getServicePlanElementAssignees(element)
-      .filter((assignee) => assignee.name?.trim() || assignee.memberId)
-      .map((assignee) => [normalizedText(assignee.name), assignee.memberId || ""]);
+      .map((assignee) => ({
+        name: normalizedText(assignee.name),
+        memberId: assignee.memberId || "",
+        microphoneIds: [...(assignee.microphoneIds || [])].sort(),
+        iemIds: [...(assignee.iemIds || [])].sort(),
+      }))
+      .filter((assignee) => assignee.name || assignee.memberId || assignee.microphoneIds.length || assignee.iemIds.length);
   const sameAssignment = JSON.stringify(assignmentIdentity(current)) ===
     JSON.stringify(assignmentIdentity(next));
   if (!sameAssignment) {
     fields.push({
-      label: "Assigned to",
-      before: optionalValue(currentAssignees.join(", "), "Unassigned"),
-      after: optionalValue(nextAssignees.join(", "), "Unassigned") +
+      label: "Assignments and equipment",
+      before: optionalValue(formatAssignmentSummary(current), "Unassigned"),
+      after: optionalValue(formatAssignmentSummary(next), "Unassigned") +
         (JSON.stringify(currentAssignees) === JSON.stringify(nextAssignees)
           ? " (person link changed)"
           : ""),
@@ -372,6 +377,16 @@ const changedFields = (
   }
   return fields;
 };
+
+const formatAssignmentSummary = (element: ServicePlanElement) =>
+  getServicePlanElementAssignees(element).map((assignee) => {
+    const identity = normalizedText(assignee.name) || (assignee.memberId ? "Linked member" : "Unassigned slot");
+    const equipment = [
+      ...(assignee.microphoneIds || []).map((id) => `Mic ${id}`),
+      ...(assignee.iemIds || []).map((id) => `IEM ${id}`),
+    ].sort();
+    return equipment.length ? `${identity} (${equipment.join(", ")})` : identity;
+  }).join(", ");
 
 /** Describes the user-visible result of a selected Service Planning refresh. */
 export const summarizeServicePlanImport = (

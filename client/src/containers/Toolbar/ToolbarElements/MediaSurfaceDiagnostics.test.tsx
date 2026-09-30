@@ -84,12 +84,12 @@ const publish = (outputId: string, readyCount: number, candidateCount: number) =
 describe("MediaSurfaceDiagnostics", () => {
   it("labels private RAM as the headline estimate and keeps per-process working sets available", () => {
     let receiveMetrics: ((value: unknown) => void) | undefined;
+    let receivePolicy: ((value: unknown) => void) | undefined;
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
       value: {
-        onPreparedVideoMetrics: jest.fn((listener: (value: unknown) => void) => { receiveMetrics = listener; return jest.fn(); }),
-        subscribePreparedVideoMetrics: jest.fn(async () => true),
-        unsubscribePreparedVideoMetrics: jest.fn(async () => true),
+        subscribePreparedVideoMetrics: jest.fn((listener: (value: unknown) => void) => { receiveMetrics = listener; return jest.fn(); }),
+        subscribeResourceGovernorPolicy: jest.fn((listener: (value: unknown) => void) => { receivePolicy = listener; return jest.fn(); }),
       },
     });
     renderDiagnostics();
@@ -110,9 +110,12 @@ describe("MediaSurfaceDiagnostics", () => {
         memory: { private: { status: "available", value: 80_000 }, workingSet: { status: "available", value: 120_000 } },
       }],
     }));
+    act(() => receivePolicy?.({ mode: "auto", tier: 1, pressure: "elevated", metrics: "available" }));
 
     expect(screen.getByLabelText("Computer health")).toHaveTextContent("App CPU 7.3% · App RAM ≈918 MB");
     fireEvent.click(screen.getAllByText("Advanced diagnostics")[0]);
+    expect(screen.getByText("Resource governor")).toBeInTheDocument();
+    expect(screen.getByText("auto · Tier 1 · elevated · available metrics")).toBeInTheDocument();
     expect(screen.getByText("App private RAM")).toBeInTheDocument();
     expect(screen.getByText("Summed working sets")).toBeInTheDocument();
     expect(screen.getByText("Process count")).toBeInTheDocument();

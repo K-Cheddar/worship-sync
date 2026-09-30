@@ -45,7 +45,14 @@ export const buildPortableDatasets = ({ members = [], teams = [], positions = []
   services.forEach((service) => combinedGroupById.set(service.serviceId || service.id, portableServiceGroupLabel(service, services)));
 
   const memberRows = members.map((member) => {
-    const memberTeamIds = teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId);
+    const effectiveTeamIds = new Set([
+      ...(member.teamMemberships && typeof member.teamMemberships === "object"
+        ? Object.keys(member.teamMemberships)
+        : []),
+      ...(member.positionIds || []).map((positionId) => positionsById.get(positionId)?.teamId).filter(Boolean),
+      ...teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId),
+    ]);
+    const memberTeamIds = teams.map((team) => team.teamId).filter((teamId) => effectiveTeamIds.has(teamId));
     return [member.firstName, member.lastName, member.title, member.email, member.phoneNumber,
       listNames(memberTeamIds, teamsById), listNames(member.positionIds, positionsById), member.notes,
       member.servingFrequency, archived(member), member.memberId,
@@ -139,6 +146,10 @@ export const parsePortablePositionIcon = (value) => {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("not an icon object");
+    }
+    if (!["lucide", "tabler", "worshipsync"].includes(parsed.source)
+      || typeof parsed.name !== "string" || !parsed.name.trim()) {
+      throw new Error("unsupported icon reference");
     }
     return parsed;
   } catch {

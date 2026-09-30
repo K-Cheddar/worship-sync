@@ -2083,6 +2083,22 @@ test("schedule assignments require confirmation for cross-team service conflicts
     name: "Sunday",
     startsAt: "2026-07-05T10:00:00.000Z",
   };
+  // More than the former 5,000-schedule cap of unrelated history must not
+  // hide the overlapping schedule created below from the assignment check.
+  await Promise.all(Array.from({ length: 5001 }, (_, index) => {
+    const scheduleId = `old-unrelated-schedule-${index}`;
+    return setDoc("teamSchedules", scheduleId, {
+      scheduleId,
+      churchId: context.churchId,
+      teamId: productionTeamId,
+      name: "Old unrelated history",
+      startDate: "2020-01-01",
+      endDate: "2020-01-31",
+      serviceIds: [`old-service-${index}`],
+      occurrences: [],
+      assignments: {},
+    });
+  }));
   const worshipSchedule = await callHandler(authHandlers.createTeamSchedule, {
     context,
     body: {
@@ -2135,6 +2151,41 @@ test("schedule assignments require confirmation for cross-team service conflicts
     blocked.payload.errorMessage,
     /already scheduled on another team/i,
   );
+  assert.equal(blocked.payload.occurrenceConflicts.length, 1);
+  assert.ok(blocked.payload.conflictFingerprint);
+
+  // A second overlapping occurrence appears after the operator has reviewed
+  // the first warning. The old fingerprint must not authorize the new set.
+  const newlyDiscoveredOccurrenceId = "svc-joined@2026-07-05T10:00:00.000Z";
+  const currentWorshipSchedule = await getDoc("teamSchedules", worshipSchedule.payload.schedule.scheduleId);
+  await setDoc("teamSchedules", worshipSchedule.payload.schedule.scheduleId, {
+    ...currentWorshipSchedule,
+    occurrences: [
+      ...(currentWorshipSchedule.occurrences || []),
+      { ...occurrence, occurrenceId: newlyDiscoveredOccurrenceId, serviceIds: ["svc", "svc-joined"] },
+    ],
+    serviceIds: ["svc", "svc-joined"],
+    assignments: {
+      ...(currentWorshipSchedule.assignments || {}),
+      [newlyDiscoveredOccurrenceId]: {
+        [`${worship.positionIds.Vocal}::0`]: { primaryMemberId: averyId },
+      },
+    },
+  });
+  const staleConfirmation = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: productionSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+      confirmedOccurrenceConflictFingerprint: blocked.payload.conflictFingerprint,
+    },
+  });
+  assert.equal(staleConfirmation.statusCode, 409);
+  assert.equal(staleConfirmation.payload.occurrenceConflicts.length, 2);
+  assert.notEqual(staleConfirmation.payload.conflictFingerprint, blocked.payload.conflictFingerprint);
 
   const bulkBlocked = await callHandler(authHandlers.updateTeamSchedule, {
     context,
@@ -2165,7 +2216,7 @@ test("schedule assignments require confirmation for cross-team service conflicts
         positionSlotKey: `${cameraId}::0`,
         memberId: averyId,
         serviceDate: "2026-07-05",
-        allowCrossTeamConflict: true,
+        confirmedOccurrenceConflictFingerprint: staleConfirmation.payload.conflictFingerprint,
       },
     },
   );
@@ -2219,7 +2270,7 @@ test("schedule assignments require confirmation for cross-team service conflicts
   );
   assert.equal(copiedScheduleBlocked.statusCode, 409);
 
-  const copiedScheduleConfirmed = await callHandler(
+  const copiedScheduleStillBlocked = await callHandler(
     authHandlers.createTeamSchedule,
     {
       context,
@@ -2239,7 +2290,34 @@ test("schedule assignments require confirmation for cross-team service conflicts
       },
     },
   );
-  assert.equal(copiedScheduleConfirmed.statusCode, 200);
+  assert.equal(copiedScheduleStillBlocked.statusCode, 409);
+
+  await setDoc("teamSchedules", "schedule-with-incomplete-conflict-range", {
+    scheduleId: "schedule-with-incomplete-conflict-range",
+    churchId: context.churchId,
+    teamId: productionTeamId,
+    name: "Incomplete legacy schedule",
+    startDate: "",
+    endDate: "",
+    serviceIds: [],
+    occurrences: [],
+    assignments: {},
+  });
+  const incompleteConflictLookup = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: worshipSchedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${worship.positionIds.Vocal}::0`,
+        memberId: averyId,
+        serviceDate: "2026-07-05",
+      },
+    },
+  );
+  assert.equal(incompleteConflictLookup.statusCode, 409);
+  assert.match(incompleteConflictLookup.payload.errorMessage, /incomplete dates.*checked safely/i);
 });
 
 test("joined and standalone member service occurrences require cross-team conflict confirmation", async (t) => {
@@ -2332,7 +2410,7 @@ test("joined and standalone member service occurrences require cross-team confli
   assert.equal(worshipSchedule.statusCode, 200);
   assert.equal(productionSchedule.statusCode, 200);
 
-  const assign = async (scheduleId, occurrenceId, positionId, memberId, allow = false) =>
+  const assign = async (scheduleId, occurrenceId, positionId, memberId, fingerprint = "") =>
     callHandler(authHandlers.updateTeamScheduleAssignment, {
       context,
       params: { scheduleId },
@@ -2341,7 +2419,7 @@ test("joined and standalone member service occurrences require cross-team confli
         positionSlotKey: `${positionId}::0`,
         memberId,
         serviceDate: "2026-10-03",
-        ...(allow ? { allowCrossTeamConflict: true } : {}),
+        ...(fingerprint ? { confirmedOccurrenceConflictFingerprint: fingerprint } : {}),
       },
     });
 
@@ -2366,7 +2444,7 @@ test("joined and standalone member service occurrences require cross-team confli
     standaloneOccurrence.occurrenceId,
     production.positionIds.Camera,
     averyId,
-    true,
+    blockedStandalone.payload.conflictFingerprint,
   );
   assert.equal(confirmedStandalone.statusCode, 200);
 
@@ -2391,7 +2469,7 @@ test("joined and standalone member service occurrences require cross-team confli
     joinedOccurrence.occurrenceId,
     worship.positionIds.Keys,
     caseyId,
-    true,
+    blockedJoined.payload.conflictFingerprint,
   );
   assert.equal(confirmedJoined.statusCode, 200);
 });
@@ -2539,7 +2617,7 @@ test("occurrence conflict checks include same-team roles, different dates, and a
         positionSlotKey: `${worship.positionIds.Vocal}::0`,
         memberId: averyId,
         serviceDate: "2026-07-05",
-        allowOccurrenceConflict: true,
+        confirmedOccurrenceConflictFingerprint: sameTeam.payload.conflictFingerprint,
       },
     },
   );
@@ -6422,7 +6500,6 @@ const seedDatedSchedule = async (
         positionSlotKey: `${positionId}::0`,
         memberId,
         serviceDate: startDate,
-        allowCrossTeamConflict: true,
       },
     },
   );
@@ -9793,6 +9870,28 @@ test("schedule assignment paths share requirement and implicit slot validation",
   assert.equal(addTwoExtra.statusCode, 200);
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, true);
 
+  const concurrentAdds = await Promise.all([
+    callHandler(authHandlers.addTeamSchedulePositionSlot, {
+      context,
+      params: { scheduleId },
+      body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Lead}::3` },
+    }),
+    callHandler(authHandlers.addTeamSchedulePositionSlot, {
+      context,
+      params: { scheduleId },
+      body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Keys}::0` },
+    }),
+  ]);
+  assert.deepEqual(concurrentAdds.map(({ statusCode }) => statusCode), [200, 200]);
+  const afterConcurrentAdds = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId },
+  });
+  assert.deepEqual(
+    new Set(afterConcurrentAdds.payload.schedule.additionalPositionSlots[occurrenceIds.two]),
+    new Set([`${positionIds.Lead}::2`, `${positionIds.Lead}::3`, `${positionIds.Keys}::0`]),
+  );
+
   // Race both equipment writers with removal after the slot has been created.
   // Whichever write reaches the in-memory save queue first, no equipment map
   // may retain an assignment for the removed slot.
@@ -9898,6 +9997,70 @@ test("portable CSV preview is read-only and commit never links imported members 
   const imported = after.payload.members.filter((member) => member.email === "shared@example.com");
   assert.equal(imported.length, 2);
   assert.equal(imported.every((member) => !member.userId), true);
+});
+
+test("portable create commits deduplicate safe entity identities across rows and retries", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_idempotent_creates");
+  const teamRows = [1, 2].map((row) => ({ row, action: "create", record: { name: "Import Team" } }));
+  const teamCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: teamRows } });
+  assert.equal(teamCommit.payload.summary.created, 2);
+  const retry = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: teamRows } });
+  assert.equal(retry.payload.summary.created, 2);
+  const teamsAfter = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(teamsAfter.payload.teams.filter((team) => team.name === "Import Team").length, 1);
+
+  const teamId = teamsAfter.payload.teams.find((team) => team.name === "Import Team").teamId;
+  const unsupportedCustomIcon = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Unsupported Icon", teamId, icon: { source: "custom", id: "church-icon" } } });
+  assert.equal(unsupportedCustomIcon.statusCode, 400);
+  const positionRows = [1, 2].map((row) => ({ row, action: "create", record: { name: "Imported Role", team: "Import Team", teamId } }));
+  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
+  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
+  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(afterPositions.payload.positions.filter((position) => position.name === "Imported Role").length, 1);
+
+  const memberRows = [
+    { row: 2, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex@example.com" } },
+    { row: 3, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex@example.com" } },
+    { row: 4, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex2@example.com" } },
+    { row: 5, action: "create", record: { firstName: "Alex", lastName: "Same" } },
+    { row: 6, action: "create", record: { firstName: "Alex", lastName: "Same" } },
+  ];
+  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
+  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
+  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(afterMembers.payload.members.filter((member) => member.firstName === "Alex" && member.lastName === "Same").length, 4);
+  assert.equal(afterMembers.payload.members.filter((member) => member.email === "alex@example.com").length, 1);
+
+  const existing = afterMembers.payload.members.find((member) => member.email === "alex@example.com");
+  const update = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: [{ row: 2, action: "update", recordId: existing.memberId, record: { firstName: "Alex Updated", lastName: "Same", email: "alex@example.com" } }] } });
+  assert.equal(update.payload.summary.updated, 1);
+  assert.equal((await callHandler(authHandlers.getTeamsBootstrap, { context })).payload.members.find((member) => member.memberId === existing.memberId).firstName, "Alex Updated");
+});
+
+test("portable service preview and commit validate actual calendar dates", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_service_calendar_dates");
+  const previewCsv = async (csv) => {
+    const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "services", csv } });
+    return callHandler(authHandlers.previewPortableImport, { context, body: { type: "services", csv, mapping: inspected.payload.mapping } });
+  };
+  for (const date of ["2026-02-30", "2026-13-01", "2025-02-29"]) {
+    const preview = await previewCsv(`Service,Recurrence,Date\nHoliday,one_time,${date}\n`);
+    assert.equal(preview.payload.rows[0].action, "invalid");
+  }
+  const invalidRange = await previewCsv("Service,Recurrence,Start Date,End Date\nSunday,weekly,2026-06-01,2026-05-01\n");
+  assert.equal(invalidRange.payload.rows[0].action, "invalid");
+  assert.equal(invalidRange.payload.rows[0].issues.some((issue) => issue.field === "endDate"), true);
+  const leap = await previewCsv("Service,Recurrence,Date\nLeap Day,one_time,2024-02-29\n");
+  assert.equal(leap.payload.rows[0].action, "create");
+  const approved = leap.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record }));
+  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "services", approvedRows: approved } })).payload.summary.created, 1);
+  const exported = await callHandler(authHandlers.exportPortableData, { context, params: { type: "services" } });
+  const roundTrip = await previewCsv(String(exported.body));
+  assert.equal(roundTrip.payload.summary.update, 1);
+  const tampered = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "services", approvedRows: [{ row: 2, action: "create", record: { name: "Bad Date", recurrence: "one_time", date: "2026-02-30" } }] } });
+  assert.equal(tampered.payload.summary.failed, 1);
 });
 
 test("portable member IDs only match records in the current church", async (t) => {
@@ -10017,7 +10180,7 @@ test("portable CSV transfer requires an admin and export reads complete schedule
   assert.match(String(schedules.body), /member-old/);
   const teams = await callHandler(authHandlers.exportPortableData, { context, params: { type: "teams" } });
   assert.equal(teams.statusCode, 200);
-  assert.match(String(teams.body), /'=1\+1/);
+  assert.match(String(teams.body), /'\\=1\+1/);
   const archive = await callHandler(authHandlers.exportPortableData, { context, params: { type: "all" } });
   assert.equal(archive.statusCode, 200);
   assert.equal(archive.body.readUInt32LE(0), 0x04034b50);

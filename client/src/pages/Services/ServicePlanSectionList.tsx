@@ -138,7 +138,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   microphones: ServicePlanMicrophone[];
   iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /** Local view preference: hide shared and team notes on every element. */
@@ -193,7 +193,7 @@ const SortableSectionCard = ({
   microphones,
   iemEquipment = [],
   microphoneAudiences,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   isServiceDay = false,
@@ -358,7 +358,7 @@ const SortableSectionCard = ({
                   microphones={microphones}
                   iemEquipment={iemEquipment}
                   microphoneAudiences={microphoneAudiences}
-                  scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                  scheduledEquipmentHolders={scheduledEquipmentHolders}
                   scheduledAssignmentRows={scheduledAssignmentRows}
                   onOpenScheduledAssignment={onOpenScheduledAssignment}
                   onViewSongLyrics={onViewSongLyrics}
@@ -401,7 +401,7 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   microphones?: ServicePlanMicrophone[];
   iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   hideNotes?: boolean;
@@ -461,7 +461,7 @@ const ServicePlanSectionList = ({
   microphones = [],
   iemEquipment = [],
   microphoneAudiences,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   hideNotes = false,
@@ -871,7 +871,7 @@ const ServicePlanSectionList = ({
           isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
           itemLabel={richTextToPlainText(assignmentPanelElement.title).trim() || "Untitled item"}
           structureOnly={structureOnly}
-          scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+          scheduledEquipmentHolders={scheduledEquipmentHolders}
           onChange={updatePanelAssignees}
         />
       ) : null}
@@ -972,7 +972,7 @@ const ServicePlanSectionList = ({
                 teamNoteOptions={teamNoteOptions}
                 microphones={microphones}
                 microphoneAudiences={microphoneAudiences}
-                scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                scheduledEquipmentHolders={scheduledEquipmentHolders}
                 scheduledAssignmentRows={scheduledAssignmentRows}
                 onOpenScheduledAssignment={onOpenScheduledAssignment}
                 hideNotes={hideNotes}

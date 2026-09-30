@@ -1,5 +1,6 @@
 import type { Box } from "../types";
 import type { ElectronMediaCandidateSourceKind } from "./electronMediaSurfaceDiagnostics";
+import type { ResourceAggressiveness } from "../../electron/resourceGovernor";
 
 export type ElectronMediaSurfacePerformanceClass =
   | "constrained"
@@ -121,6 +122,9 @@ export const selectElectronMediaSurfaceCandidates = ({
   });
 
   const protectedSet = new Set(protectedMediaKeys.filter(Boolean));
+  unique.forEach((candidate) => {
+    if (candidate.protected) protectedSet.add(candidate.mediaKey);
+  });
   if (currentMediaKey) protectedSet.add(currentMediaKey);
   const currentItemIndex = candidates.find(
     (candidate) => candidate.itemId === currentItemId,
@@ -164,6 +168,46 @@ export const selectElectronMediaSurfaceCandidates = ({
     priority,
     protected: protectedSet.has(candidate.mediaKey),
   }));
+};
+
+/** Applies optional-work pressure only to distant candidates, retaining live and next-likely media. */
+export const selectElectronMediaCandidatesForResourcePolicy = ({
+  candidates,
+  currentMediaKey,
+  currentItemId,
+  protectedMediaKeys = [],
+  baseBudget,
+  aggressiveness,
+  performanceClass = "normal",
+}: {
+  candidates: ElectronMediaSurfaceCandidate[];
+  currentMediaKey?: string;
+  currentItemId?: string;
+  protectedMediaKeys?: string[];
+  baseBudget: number;
+  aggressiveness: ResourceAggressiveness;
+  performanceClass?: ElectronMediaSurfacePerformanceClass;
+}): ElectronMediaSurfaceCandidate[] => {
+  const currentItemIndex = candidates.find((candidate) => candidate.itemId === currentItemId)?.itemIndex;
+  const nearbyKeys = candidates
+    .filter((candidate) => currentItemIndex != null && candidate.itemIndex != null && Math.abs(candidate.itemIndex - currentItemIndex) <= 1)
+    .map((candidate) => candidate.mediaKey);
+  const protectedKeys = [...new Set([...protectedMediaKeys, ...nearbyKeys])];
+  const budget = aggressiveness === "paused"
+    ? 0
+    : aggressiveness === "minimal"
+      ? Math.min(baseBudget, 4)
+      : aggressiveness === "reduced"
+        ? Math.max(1, Math.floor(baseBudget * 0.6))
+        : baseBudget;
+  return selectElectronMediaSurfaceCandidates({
+    candidates,
+    currentMediaKey,
+    currentItemId,
+    protectedMediaKeys: protectedKeys,
+    maxSurfaces: budget,
+    performanceClass,
+  });
 };
 
 export const getEvictedElectronMediaSurfaceKeys = (

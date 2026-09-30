@@ -13,14 +13,18 @@ export type UpcomingAvailabilitySuggestion = {
 };
 
 const toPlainDate = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // Match the server's plain-date deadline comparison, which uses the UTC
+  // calendar date rather than interpreting these date-only values in local time.
+  return date.toISOString().slice(0, 10);
+};
+
+const isEffectivelyOpen = (form: TeamIntakeForm, today: string) => {
+  const deadline = form.responseDeadline || form.endDate;
+  return Boolean(form.active && !form.archivedAt && deadline && deadline >= today);
 };
 
 const monthLabel = (date: Date) =>
-  date.toLocaleDateString(undefined, { month: "long" });
+  date.toLocaleDateString(undefined, { month: "long", timeZone: "UTC" });
 
 const safeTemplate = (forms: TeamIntakeForm[]) =>
   forms
@@ -64,7 +68,7 @@ export const getUpcomingAvailabilitySuggestion = ({
   const template = safeTemplate(forms);
   const proposedTeamIds = template?.teamIds || [];
   const coveringForms = forms.filter((form) =>
-    form.active && !form.archivedAt && scopeCovers(form.teamIds || [], proposedTeamIds),
+    isEffectivelyOpen(form, today) && scopeCovers(form.teamIds || [], proposedTeamIds),
   );
   const coveredOccurrenceIds = new Set<string>();
   coveringForms.forEach((form) => {
@@ -73,9 +77,19 @@ export const getUpcomingAvailabilitySuggestion = ({
 
   // Look ahead only far enough to find the next useful month; no records are created.
   for (let offset = 0; offset < 12; offset += 1) {
-    const month = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const month = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth() + offset,
+      1,
+      12,
+    ));
     const startDate = offset === 0 ? today : toPlainDate(month);
-    const endDate = toPlainDate(new Date(month.getFullYear(), month.getMonth() + 1, 0));
+    const endDate = toPlainDate(new Date(Date.UTC(
+      month.getUTCFullYear(),
+      month.getUTCMonth() + 1,
+      0,
+      12,
+    )));
     const occurrences = generateScheduleOccurrences({
       services: activeServices,
       serviceIds: activeServices.map(({ serviceId }) => serviceId),

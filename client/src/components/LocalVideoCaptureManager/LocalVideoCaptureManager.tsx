@@ -27,6 +27,7 @@ type ManagedSource = {
   sourceId: string;
   deviceLabel: string;
   captureKind?: "device" | "screen" | "window";
+  bindingSignature: string;
 };
 
 const LocalVideoCaptureManager = () => {
@@ -52,10 +53,12 @@ const LocalVideoCaptureManager = () => {
     Object.values(outputSlots).forEach((slot) => {
       const input = slot.info.localVideoInput;
       if (!input || input.ownerDeviceId !== deviceId) return;
+      const binding = resolveLocalVideoInputBinding(input.sourceId);
       bySource.set(input.sourceId, {
         sourceId: input.sourceId,
         deviceLabel: input.deviceLabel,
         captureKind: input.captureKind,
+        bindingSignature: JSON.stringify(binding ?? null),
       });
     });
 
@@ -67,22 +70,32 @@ const LocalVideoCaptureManager = () => {
         sourceId,
         deviceLabel: binding.deviceLabel || "Video input",
         captureKind: binding.captureKind,
+        bindingSignature: JSON.stringify(binding),
       });
     });
 
     return [...bySource.values()];
   }, [deviceId, listWarmSourceIds, outputSlots]);
 
-  const activeInputKey = activeInputs
-    .map((input) => `${input.sourceId}:${input.deviceLabel}`)
-    .sort()
-    .join("|");
+  const activeInputKey = JSON.stringify(
+    activeInputs
+      .map(({ sourceId, deviceLabel, captureKind, bindingSignature }) => ({
+        sourceId,
+        deviceLabel,
+        captureKind,
+        bindingSignature,
+      }))
+      .sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
+  );
+  const activeInputsRef = useRef(activeInputs);
+  activeInputsRef.current = activeInputs;
 
   useEffect(() => {
     let active = true;
     let recoveryRunning = false;
     let reconcileQueued = false;
-    const nextSourceIds = new Set(activeInputs.map((input) => input.sourceId));
+    const inputs = activeInputsRef.current;
+    const nextSourceIds = new Set(inputs.map((input) => input.sourceId));
     const removedSourceIds = [...managedSourceIdsRef.current].filter(
       (sourceId) => !nextSourceIds.has(sourceId),
     );
@@ -99,9 +112,13 @@ const LocalVideoCaptureManager = () => {
         if (managedSourceIdsRef.current.has(sourceId)) return;
         operationQueueRef.current = operationQueueRef.current
           .catch(() => undefined)
-          .then(() =>
-            releaseWarmLocalVideoCapture(sourceId, CAPTURE_MANAGER_CONSUMER_ID),
-          );
+          .then(() => {
+            // Re-check at the serialized operation boundary: the source may
+            // have returned after the grace timer fired but before this write
+            // reached the queue head.
+            if (managedSourceIdsRef.current.has(sourceId)) return;
+            return releaseWarmLocalVideoCapture(sourceId, CAPTURE_MANAGER_CONSUMER_ID);
+          });
       }, CAPTURE_RELEASE_GRACE_MS);
       pendingReleaseTimersRef.current.set(sourceId, timer);
     });
@@ -125,7 +142,7 @@ const LocalVideoCaptureManager = () => {
       try {
         if (!active) return;
         await Promise.all(
-          activeInputs.map(async (input) => {
+          inputs.map(async (input) => {
             const binding = resolveLocalVideoInputBinding(input.sourceId);
             if (!binding) {
               reportIssue(
@@ -181,7 +198,7 @@ const LocalVideoCaptureManager = () => {
       active = false;
       window.clearInterval(recoveryTimer);
     };
-  }, [activeInputKey, activeInputs]);
+  }, [activeInputKey]);
 
   useEffect(
     () => () => {

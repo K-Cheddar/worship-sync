@@ -5,6 +5,7 @@ import type {
 import { getServicePlanElementLead } from "../../types/servicePlan";
 import { promoteServicePlanAssignee } from "./ServicePlanAssigneeList";
 import { plainTextToRichText } from "../../types/richText";
+import { DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, refreshServicePlanFromImport } from "./servicePlanImportSync";
 import {
   addElement,
   addSection,
@@ -375,6 +376,81 @@ describe("moveElementToPosition", () => {
 });
 
 describe("cloneSectionsForTemplate", () => {
+  it("strips dated import provenance while preserving reusable structure and equipment", () => {
+    const imported = section("source-section", {
+      sourcePlanningManaged: true,
+      elements: [{
+        id: "source-row",
+        sourceOccurrenceId: "external-row-1",
+        sourcePlanningManaged: true,
+        type: "free",
+        title: plainTextToRichText("Prayer"),
+        notes: plainTextToRichText("Keep this reusable cue."),
+        teamNotes: [{ id: "team-note", label: "Band", note: plainTextToRichText("Watch the ending.") }],
+        durationSeconds: 90,
+        scheduledPositionIds: ["position-pastor"],
+        assignees: [{ id: "jamie", name: "Jamie", memberId: "member-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+        servicePlanningImport: {
+          observed: { elementType: "Prayer", title: "Prayer", ledBy: "Jamie", note: "" },
+          applied: { elementType: "Prayer", title: "Prayer", ledBy: "Jamie", note: "" },
+          pendingFields: [],
+        },
+        importAmbiguity: {
+          source: "servicePlanning", sourceKey: "Worship:0", sourceElementType: "Prayer",
+          sourceTitle: "Prayer", sourceLedBy: "Jamie", sourceNote: "",
+          parts: [], reasons: [], status: "confirmed", sourceFingerprint: "source-fingerprint",
+        },
+        sourceElementTypeRaw: "Prayer",
+        sourceContentTitleRaw: "Prayer",
+        sourceLedByRaw: "Jamie",
+        sourceLedByAssignments: [{ kind: "person", id: "person-1", name: "Jamie" }],
+        sourceNoteRaw: "Old imported note",
+        pushedOutlineListId: "outline-item",
+        pushedOutlineListIds: ["outline-item", "outline-item-2"],
+      }],
+    });
+
+    const [template] = cloneSectionsForTemplate([imported]);
+    const [templateElement] = template.elements;
+
+    expect(template.sourcePlanningManaged).toBeUndefined();
+    expect(templateElement).toMatchObject({
+      notes: plainTextToRichText("Keep this reusable cue."),
+      durationSeconds: 90,
+      teamNotes: [{ label: "Band", note: plainTextToRichText("Watch the ending.") }],
+      scheduledPositionIds: ["position-pastor"],
+      assignees: [{ microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+    });
+    expect(templateElement.assignees?.[0]).not.toHaveProperty("name");
+    expect(templateElement).toMatchObject({
+      sourcePlanningManaged: undefined,
+      sourceOccurrenceId: undefined,
+        contentOrder: undefined,
+      servicePlanningImport: undefined,
+      importAmbiguity: undefined,
+      sourceElementTypeRaw: undefined,
+      sourceContentTitleRaw: undefined,
+      sourceLedByRaw: undefined,
+      sourceLedByAssignments: undefined,
+      sourceNoteRaw: undefined,
+      pushedOutlineListId: undefined,
+      pushedOutlineListIds: undefined,
+    });
+
+    const [dated] = cloneSectionsFromTemplate([template]);
+    expect(dated.elements[0].sourcePlanningManaged).toBeUndefined();
+    expect(dated.elements[0].servicePlanningImport).toBeUndefined();
+    expect(dated.elements[0].importAmbiguity).toBeUndefined();
+    expect(dated.elements[0].assignees?.[0].iemIds).toEqual(["iem-1"]);
+
+    const localTemplateRow = { ...dated.elements[0], sourcePlanningManaged: undefined };
+    const refreshed = refreshServicePlanFromImport(
+      [{ ...dated, elements: [localTemplateRow, { id: "owned", type: "free", title: plainTextToRichText("Imported"), sourcePlanningManaged: true }] }],
+      [{ id: "incoming-section", name: dated.name, sourcePlanningManaged: true, elements: [] }],
+      { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, removeMissing: true },
+    );
+    expect(refreshed[0].elements).toContainEqual(localTemplateRow);
+  });
   it("gives sections and elements fresh ids while keeping structure/content", () => {
     let sections = addElement([section("a")], "a");
     sections = updateElement(sections, "a", sections[0].elements[0].id, {

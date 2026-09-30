@@ -91,6 +91,36 @@ describe("library index repair middleware", () => {
     expect(store.getState().allItems.list).toEqual([]);
   });
 
+  it("does not resurrect a remote song deletion while its stale document catches up", () => {
+    const store = createStore();
+    const remoteSong: ServiceItem = {
+      _id: "song-remote-delete",
+      name: "Remote Song",
+      type: "song",
+      listId: "song-remote-delete",
+      background: "",
+    };
+    const staleDoc = songDoc("song-remote-delete", "Remote Song");
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([remoteSong]));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([staleDoc]));
+    store.dispatch(allItemsSlice.actions.updateAllItemsListFromRemote([]));
+    const deletedIndex = store.getState().allItems.list;
+
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([staleDoc]));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([staleDoc]));
+    expect(store.getState().allItems.list).toBe(deletedIndex);
+    expect(store.getState().allItems.list).toEqual([]);
+
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([]));
+    expect(store.getState().allItems.list).toEqual([]);
+
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([songDoc("song-remote-delete", "Song Restored Legitimately")]));
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({ _id: "song-remote-delete", name: "Song Restored Legitimately" }),
+    ]);
+  });
+
+
   it("recovers Welcome Slides from its durable custom document", () => {
     const store = createStore();
     const welcomeSlides = freeDoc("Welcome Slides", "Welcome Slides", [

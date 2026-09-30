@@ -214,7 +214,7 @@ type ServicePlanAssigneeListProps = {
    */
   structureOnly?: boolean;
   /** Scheduled holders for the plan date, keyed by church microphone id. */
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   onEdit?: () => void;
   onChange: (next: ServicePlanAssignee[], coalesceKey?: string) => void;
 };
@@ -290,7 +290,7 @@ const ServicePlanAssigneeList = ({
   isAssignedToHistoryValueRemovable,
   itemLabel,
   structureOnly = false,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
   onEdit,
   onChange,
 }: ServicePlanAssigneeListProps) => {
@@ -462,7 +462,7 @@ const ServicePlanAssigneeList = ({
 
               {assigneeMicrophones.map((microphone) => {
                 const scheduledHolders =
-                  scheduledMicrophoneHolders?.get(microphone.id) || [];
+                  scheduledEquipmentHolders?.get(microphone.id) || [];
                 const replaceableMicrophones = microphones.filter(
                   (candidate) =>
                     candidate.id !== microphone.id
@@ -513,7 +513,7 @@ const ServicePlanAssigneeList = ({
                         <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
                           <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                             {replaceableMicrophones.map((candidate) => {
-                              const candidateHolders = scheduledMicrophoneHolders?.get(candidate.id) || [];
+                              const candidateHolders = scheduledEquipmentHolders?.get(candidate.id) || [];
                               return (
                                 <DropdownMenuItem
                                   key={candidate.id}
@@ -572,26 +572,48 @@ const ServicePlanAssigneeList = ({
               })}
 
               {assigneeIems.map((iem) => (
-                <ServiceEquipmentChip key={iem.id} equipment={iem} className="gap-1 rounded-full px-2 py-1">
-                  {allowEdit ? (
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      iconSize="sm"
-                      padding="p-0"
-                      className="h-6 w-6 justify-center"
-                      svg={X}
-                      aria-label={`Remove ${iem.name} from ${label}`}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        updateAssignee(assignee.id, {
-                          iemIds: (assignee.iemIds || []).filter((id) => id !== iem.id),
-                        });
-                      }}
-                    />
+                <span key={iem.id} className="inline-flex items-center gap-0.5">
+                  <ServiceEquipmentChip equipment={iem} className="gap-1 rounded-full px-2 py-1">
+                    {allowEdit ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        iconSize="sm"
+                        padding="p-0"
+                        className="h-6 w-6 justify-center"
+                        svg={X}
+                        aria-label={`Remove ${iem.name} from ${label}`}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          updateAssignee(assignee.id, {
+                            iemIds: (assignee.iemIds || []).filter((id) => id !== iem.id),
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </ServiceEquipmentChip>
+                  {(scheduledEquipmentHolders?.get(iem.id) || []).length ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                          aria-label={`IEM conflict for ${iem.name}`}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
+                        <p className="text-xs font-semibold text-amber-200">IEM conflict</p>
+                        <p className="mt-1 text-xs text-gray-300">
+                          {iem.name} is scheduled to {(scheduledEquipmentHolders?.get(iem.id) || []).join(", ")}.
+                        </p>
+                      </PopoverContent>
+                    </Popover>
                   ) : null}
-                </ServiceEquipmentChip>
+                </span>
               ))}
 
               {allowEdit && availableIems.length ? (
@@ -608,7 +630,9 @@ const ServicePlanAssigneeList = ({
                     >IEM</Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="min-w-40">
-                    {availableIems.map((iem) => (
+                    {availableIems.map((iem) => {
+                      const scheduledHolders = scheduledEquipmentHolders?.get(iem.id) || [];
+                      return (
                       <DropdownMenuItem
                         key={iem.id}
                         onSelect={() => updateAssignee(assignee.id, {
@@ -617,9 +641,12 @@ const ServicePlanAssigneeList = ({
                       >
                         <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
                         <span className="truncate">{iem.name}</span>
-                        <span className="ml-auto shrink-0 text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span>
+                        <span className={cn("ml-auto shrink-0 text-xs", scheduledHolders.length ? "text-amber-300" : "text-gray-400")}>
+                          {scheduledHolders.length ? `Assigned: ${scheduledHolders.join(", ")}` : getServiceEquipmentSubtypeLabel(iem.subtype)}
+                        </span>
                       </DropdownMenuItem>
-                    ))}
+                      );
+                    })}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
@@ -649,7 +676,7 @@ const ServicePlanAssigneeList = ({
                     <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                       {availableMicrophones.map((microphone) => {
                         const scheduledHolders =
-                          scheduledMicrophoneHolders?.get(microphone.id) || [];
+                          scheduledEquipmentHolders?.get(microphone.id) || [];
                         const scheduledLabel = scheduledHolders.length
                           ? `Assigned: ${scheduledHolders.join(", ")}`
                           : null;

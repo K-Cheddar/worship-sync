@@ -1184,7 +1184,7 @@ export type TeamSchedulePayload = {
   microphoneAssignments?: TeamSchedule["microphoneAssignments"];
   iemAssignments?: TeamSchedule["iemAssignments"];
   additionalPositionSlots?: TeamSchedule["additionalPositionSlots"];
-  allowCrossTeamConflict?: boolean;
+  confirmedOccurrenceConflictFingerprint?: string;
 };
 
 export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
@@ -2147,8 +2147,8 @@ export const updateTeamScheduleAssignment = async (
     allowBlockout?: boolean;
     /** Explicit acknowledgement that recurring availability excludes this service. */
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
-    allowOccurrenceConflict?: boolean;
+    /** A server-issued fingerprint for the exact occurrence conflicts reviewed by the operator. */
+    confirmedOccurrenceConflictFingerprint?: string;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
@@ -2213,8 +2213,8 @@ export const updateTeamScheduleAssignmentSwap = async (
     currentMemberId: string;
     candidateMemberId: string;
     serviceDate?: string;
-    allowCrossTeamConflict?: boolean;
-    allowOccurrenceConflict?: boolean;
+    /** A server-issued fingerprint for the exact occurrence conflicts reviewed by the operator. */
+    confirmedOccurrenceConflictFingerprint?: string;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(

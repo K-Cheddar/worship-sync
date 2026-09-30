@@ -19,6 +19,18 @@ export function setDisplayWindow(
   }
 }
 
+/** Clears a registration only when the callback still belongs to its owner. */
+export function clearDisplayWindowIfMatches(
+  displayType: string,
+  expectedWindow: unknown,
+  onCurrentWindowClosed?: () => void,
+): boolean {
+  if (getDisplayWindow(displayType) !== expectedWindow) return false;
+  displayWindows.delete(displayType);
+  onCurrentWindowClosed?.();
+  return true;
+}
+
 export function hasDisplayWindow(displayType: string): boolean {
   return displayWindows.has(displayType);
 }

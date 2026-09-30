@@ -53,6 +53,8 @@ export type TeamScheduleCreditsResult = {
    * loaded", not "nobody scheduled" — say so rather than writing blanks.
    */
   scheduleUnavailable: boolean;
+  /** A matching schedule occurrence was hydrated, including a genuinely empty one. */
+  scheduleLoaded: boolean;
 };
 
 type ScheduleOccurrenceWithOwner = {
@@ -246,18 +248,18 @@ export const buildTeamScheduleCreditEntries = ({
   servicePlanKey,
 }: BuildTeamScheduleCreditEntriesInput): TeamScheduleCreditsResult => {
   const mediaTeam = findMediaTeam(teams, mediaTeamName);
-  if (!mediaTeam) return { entries: [], scheduleUnavailable: false };
+  if (!mediaTeam) return { entries: [], scheduleUnavailable: false, scheduleLoaded: false };
 
   const teamSchedules = schedules.filter(
     (schedule) => !schedule.archivedAt && schedule.teamId === mediaTeam.teamId,
   );
   const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes, servicePlanKey);
-  if (!target) return { entries: [], scheduleUnavailable: false };
+  if (!target) return { entries: [], scheduleUnavailable: false, scheduleLoaded: false };
   // The schedule the credits would come from is outside the bootstrap's
   // hydrated window. Reporting no names would be indistinguishable from an
   // unstaffed service, so hand the caller the difference.
   if (!isHydratedSchedule(target.schedule)) {
-    return { entries: [], scheduleUnavailable: true };
+    return { entries: [], scheduleUnavailable: true, scheduleLoaded: false };
   }
   const targetSchedule = target.schedule;
 
@@ -308,19 +310,16 @@ export const buildTeamScheduleCreditEntries = ({
       seenMemberIdsByPositionId.set(slot.positionId, seenMemberIds);
     });
 
-  const entries = teamPositions.flatMap((position) => {
+  const entries = teamPositions.map((position) => {
     const names = namesByPositionId.get(position.positionId) || [];
-    if (!names.length) return [];
-    return [
-      {
-        heading: position.name,
-        names: names.join("\n"),
-        sourceLabel: buildScheduleSourceLabel({
-          scheduleName: targetSchedule.name,
-          occurrenceName: target.occurrence.name,
-        }),
-      },
-    ];
+    return {
+      heading: position.name,
+      names: names.join("\n"),
+      sourceLabel: buildScheduleSourceLabel({
+        scheduleName: targetSchedule.name,
+        occurrenceName: target.occurrence.name,
+      }),
+    };
   });
-  return { entries, scheduleUnavailable: false };
+  return { entries, scheduleUnavailable: false, scheduleLoaded: true };
 };

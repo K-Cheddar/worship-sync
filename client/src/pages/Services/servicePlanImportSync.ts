@@ -13,6 +13,7 @@ import type {
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
 import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
+import { copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -354,12 +355,25 @@ const pairByLabelThenOrder = <T>(
   label: (item: T) => string | string[],
   canPairByLabel: (item: T) => boolean = () => true,
   canPairByOrder: (item: T) => boolean = () => true,
+  identity: (item: T) => string | undefined = () => undefined,
 ): Array<[Indexed<T>, Indexed<T>]> => {
   const availableCurrent = current.map((value, index) => ({ value, index }));
   const availableImported = imported.map((value, index) => ({ value, index }));
   const pairs: Array<[Indexed<T>, Indexed<T>]> = [];
   const usedCurrent = new Set<number>();
   const usedImported = new Set<number>();
+
+  for (const incoming of availableImported) {
+    const sourceIdentity = identity(incoming.value);
+    if (!sourceIdentity) continue;
+    const candidate = availableCurrent.find((existing) =>
+      !usedCurrent.has(existing.index) && identity(existing.value) === sourceIdentity,
+    );
+    if (!candidate) continue;
+    usedCurrent.add(candidate.index);
+    usedImported.add(incoming.index);
+    pairs.push([candidate, incoming]);
+  }
 
   for (const incoming of availableImported) {
     const candidate = availableCurrent.find(
@@ -388,14 +402,14 @@ const pairByLabelThenOrder = <T>(
 };
 
 /**
- * Take the source's people while keeping the operator's microphone plan.
+ * Take the source's people while keeping operator-owned equipment.
  *
- * Microphones live on assignees, so replacing the list outright would delete
- * the mic assignments on every refresh — the very thing "Assigned to" updates
- * must not touch. Local microphones follow the person by name when the source
+ * Microphones and IEMs live on assignees, so replacing the list outright would
+ * delete equipment on every refresh — the very thing assignment updates must
+ * not touch. Local equipment follows the person by name when the source
  * reorders them; unmatched slots still fall back to position so a rename keeps
  * the mic. Any local slot the source does not name survives as an unassigned
- * one so its microphones are never dropped.
+ * one so its equipment is never dropped.
  */
 export const mergeImportedAssignees = (
   current: ServicePlanElement,
@@ -404,18 +418,12 @@ export const mergeImportedAssignees = (
   const currentAssignees = getServicePlanElementAssignees(current);
   const importedAssignees = getServicePlanElementAssignees(imported);
   /** Strip the person, keep whatever they were carrying. */
-  const asUnassigned = (
-    assignee: ServicePlanAssignee,
-  ): ServicePlanAssignee => ({
-    id: assignee.id,
-    ...(assignee.microphoneIds?.length
-      ? { microphoneIds: assignee.microphoneIds }
-      : {}),
-  });
+  const asUnassigned = (assignee: ServicePlanAssignee): ServicePlanAssignee =>
+    stripServicePlanAssigneeIdentityPreservingEquipment(assignee) || { id: assignee.id };
 
   if (!importedAssignees.length) {
     return currentAssignees
-      .filter((assignee) => assignee.microphoneIds?.length)
+      .filter(hasServicePlanAssigneeEquipment)
       .map(asUnassigned);
   }
 
@@ -435,17 +443,14 @@ export const mergeImportedAssignees = (
   return [
     ...importedAssignees.map((importedAssignee, index) => {
       const existing = currentByImportedIndex.get(index)?.value;
-      return {
+      return copyServicePlanAssigneeEquipment({
         id: existing?.id ?? importedAssignee.id,
         ...(importedAssignee.name ? { name: importedAssignee.name } : {}),
-        ...(existing?.microphoneIds?.length
-          ? { microphoneIds: existing.microphoneIds }
-          : {}),
-      };
+      }, existing);
     }),
     ...currentAssignees
       .filter((_, index) => !pairedCurrentIndexes.has(index))
-      .filter((assignee) => assignee.microphoneIds?.length)
+      .filter(hasServicePlanAssigneeEquipment)
       .map(asUnassigned),
   ];
 };
@@ -453,7 +458,7 @@ export const mergeImportedAssignees = (
 const assigneeFingerprint = (assignee: ServicePlanAssignee) => JSON.stringify({ name: assignee.name });
 
 /** Reconcile the independently owned title and Led By people while leaving
- * operator-created assignees and their member/microphone links intact. */
+ * operator-created assignees and their member/equipment links intact. */
 const reconcileImportedSourceAssignees = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
@@ -546,12 +551,11 @@ const reconcileImportedSourceAssignees = (
     const isSamePerson = previous && (identity && previousIdentity
       ? identity === previousIdentity
       : normalizedName(previous.name) === normalizedName(incomingAssignee.assignee.name));
-    const assignee = {
+    const assignee = copyServicePlanAssigneeEquipment({
       ...incomingAssignee.assignee,
       id: previous?.id || incomingAssignee.assignee.id,
       ...(isSamePerson && previous?.memberId ? { memberId: previous.memberId } : {}),
-      ...(previous?.microphoneIds?.length ? { microphoneIds: previous.microphoneIds } : {}),
-    };
+    }, previous);
     return {
       assignee,
       ownership: {
@@ -578,7 +582,8 @@ const reconcileImportedSourceAssignees = (
       ownershipById.set(assignee.id, titleOwnership);
       return [assignee];
     }
-    return assignee.microphoneIds?.length ? [{ id: assignee.id, microphoneIds: assignee.microphoneIds }] : [];
+    const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(assignee);
+    return equipmentSlot ? [equipmentSlot] : [];
   });
   existingOwnership.forEach((ownership) => {
     const assignee = result.find((item) => item.id === ownership.id);
@@ -715,6 +720,9 @@ const mergeElement = (
   options: ServicePlanningRefreshOptions,
 ): ServicePlanElement => {
   let next: ServicePlanElement = { ...current, sourcePlanningManaged: true };
+  if (imported.sourceOccurrenceId && current.sourceOccurrenceId !== imported.sourceOccurrenceId) {
+    next.sourceOccurrenceId = imported.sourceOccurrenceId;
+  }
   const snapshotFor = (element: ServicePlanElement) =>
     element.servicePlanningImport?.observed || {
       elementType: element.sourceElementTypeRaw || element.importAmbiguity?.sourceElementType || "",
@@ -1162,6 +1170,7 @@ export const refreshServicePlanFromImport = (
         ],
         canPairByLabel,
         isSourceOwned,
+        (element) => element.sourceOccurrenceId,
       );
       const importedByCurrentElementIndex = new Map(
         elementPairs.map(([current, imported]) => [current.index, imported]),

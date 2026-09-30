@@ -15,6 +15,7 @@ import {
   addTeamSchedulePositionSlot,
   deleteTeamPosition,
   getServicePlanMicrophones,
+  getServiceEquipment,
   getTeamScheduleDetail,
   ensureTeamScheduleForPeriod,
   getNotificationIntents,
@@ -26,6 +27,7 @@ import {
   updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
 } from "../../api/auth";
 import type { TeamSchedulePayload } from "../../api/auth";
@@ -96,11 +98,13 @@ jest.mock("../../api/auth", () => ({
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
   listServicePlans: jest.fn(),
   getServicePlanMicrophones: jest.fn(),
+  getServiceEquipment: jest.fn(),
   saveServicePlanMicrophones: jest.fn(),
   createTeamPosition: jest.fn(),
   updateTeamPosition: jest.fn(),
   updateTeamScheduleAssignment: jest.fn(),
   updateTeamScheduleAssignmentMicrophones: jest.fn(),
+  updateTeamScheduleAssignmentIems: jest.fn(),
   updateTeamScheduleAssignmentSwap: jest.fn(),
   archiveTeamPosition: jest.fn(),
   deleteTeamPosition: jest.fn(),
@@ -126,6 +130,7 @@ const mockGetNotificationIntents = jest.mocked(getNotificationIntents);
 const mockSendTeamSchedule = jest.mocked(sendTeamSchedule);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
+const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
 const mockCreateTeamPosition = jest.mocked(createTeamPosition);
 const mockUpdateTeamPosition = jest.mocked(updateTeamPosition);
 const mockUpdateTeamSchedule = jest.mocked(updateTeamSchedule);
@@ -136,6 +141,7 @@ const mockUpdateTeamScheduleAssignment = jest.mocked(
 const mockUpdateTeamScheduleAssignmentMicrophones = jest.mocked(
   updateTeamScheduleAssignmentMicrophones,
 );
+const mockUpdateTeamScheduleAssignmentIems = jest.mocked(updateTeamScheduleAssignmentIems);
 const mockUpdateTeamScheduleAssignmentSwap = jest.mocked(
   updateTeamScheduleAssignmentSwap,
 );
@@ -165,6 +171,9 @@ type UpdateTeamScheduleAssignmentResponse = Awaited<
 >;
 type UpdateTeamScheduleAssignmentMicrophonesResponse = Awaited<
   ReturnType<typeof updateTeamScheduleAssignmentMicrophones>
+>;
+type UpdateTeamScheduleAssignmentIemsResponse = Awaited<
+  ReturnType<typeof updateTeamScheduleAssignmentIems>
 >;
 type UpdateTeamScheduleResponse = Awaited<ReturnType<typeof updateTeamSchedule>>;
 type UpdateTeamScheduleAssignmentSwapResponse = Awaited<
@@ -408,6 +417,7 @@ describe("Teams", () => {
       microphones: [],
       audiences: [],
     });
+    mockGetServiceEquipment.mockResolvedValue({ success: true, equipment: [] });
     mockGetNotificationIntents.mockResolvedValue({
       success: true,
       intents: [],
@@ -862,6 +872,94 @@ describe("Teams", () => {
         },
       );
     });
+  });
+
+  it("queues microphone assignment after a newly added schedule slot is saved", async () => {
+    const user = userEvent.setup();
+    const microphoneSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      microphoneAssignments: {},
+    };
+    const addedSchedule = {
+      ...microphoneSchedule,
+      additionalPositionSlots: { [sundayOccurrenceId]: ["position-vocal::1"] },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      teams: scheduleBootstrap.teams.map((team) => ({ ...team, usesMicrophoneAssignments: true })),
+      schedules: [microphoneSchedule],
+    }));
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [{ id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" }],
+      audiences: [],
+    });
+    let resolveAddSlot!: (value: Awaited<ReturnType<typeof addTeamSchedulePositionSlot>>) => void;
+    mockAddTeamSchedulePositionSlot.mockImplementationOnce(() => new Promise((resolve) => { resolveAddSlot = resolve; }));
+    mockUpdateTeamScheduleAssignmentMicrophones.mockResolvedValue({
+      success: true,
+      schedule: { ...addedSchedule, microphoneAssignments: { [sundayOccurrenceId]: { "position-vocal::1": ["mic-lead"] } } },
+    } satisfies UpdateTeamScheduleAssignmentMicrophonesResponse);
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /Add position/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
+    await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
+
+    const microphoneSelect = await screen.findByRole("combobox", { name: /Microphone for Empty \(Vocal 2\)/i });
+    await user.click(microphoneSelect);
+    await user.click(await screen.findByRole("option", { name: /Lead vocal/i }));
+    expect(mockUpdateTeamScheduleAssignmentMicrophones).not.toHaveBeenCalled();
+
+    await act(async () => resolveAddSlot({ success: true, schedule: addedSchedule }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledWith(
+      "church-1",
+      "schedule-july",
+      { serviceId: sundayOccurrenceId, positionSlotKey: "position-vocal::1", microphoneIds: ["mic-lead"] },
+    ));
+  });
+
+  it("queues IEM assignment after a newly added schedule slot is saved", async () => {
+    const user = userEvent.setup();
+    const iemSchedule: TeamSchedule = { ...scheduleBootstrap.schedules[0], iemAssignments: {} };
+    const addedSchedule = {
+      ...iemSchedule,
+      additionalPositionSlots: { [sundayOccurrenceId]: ["position-vocal::1"] },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      teams: scheduleBootstrap.teams.map((team) => ({ ...team, usesIemAssignments: true })),
+      schedules: [iemSchedule],
+    }));
+    mockGetServiceEquipment.mockResolvedValue({
+      success: true,
+      equipment: [{ id: "iem-pack", category: "iem", name: "Stage pack", subtype: "wireless-beltpack" }],
+    });
+    let resolveAddSlot!: (value: Awaited<ReturnType<typeof addTeamSchedulePositionSlot>>) => void;
+    mockAddTeamSchedulePositionSlot.mockImplementationOnce(() => new Promise((resolve) => { resolveAddSlot = resolve; }));
+    mockUpdateTeamScheduleAssignmentIems.mockResolvedValue({
+      success: true,
+      schedule: { ...addedSchedule, iemAssignments: { [sundayOccurrenceId]: { "position-vocal::1": ["iem-pack"] } } },
+    } satisfies UpdateTeamScheduleAssignmentIemsResponse);
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /Add position/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
+    await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
+
+    const iemSelect = await screen.findByRole("combobox", { name: /Microphone for Empty \(Vocal 2\) IEM/i });
+    await user.click(iemSelect);
+    await user.click(await screen.findByRole("option", { name: /Stage pack/i }));
+    expect(mockUpdateTeamScheduleAssignmentIems).not.toHaveBeenCalled();
+
+    await act(async () => resolveAddSlot({ success: true, schedule: addedSchedule }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledWith(
+      "church-1",
+      "schedule-july",
+      { serviceId: sundayOccurrenceId, positionSlotKey: "position-vocal::1", iemIds: ["iem-pack"] },
+    ));
   });
 
   it("keeps a newer microphone choice when an earlier save responds", async () => {
@@ -1791,6 +1889,7 @@ describe("Teams", () => {
     );
 
     renderTeams();
+    await waitFor(() => expect(mockGetNotificationIntents).toHaveBeenCalledTimes(1));
     await openVocalSlot(user);
 
     expect(await screen.findByRole("button", { name: /Assign Morgan/i })).toBeEnabled();
@@ -1804,7 +1903,6 @@ describe("Teams", () => {
 
     await user.click(averyOption);
     await user.click(await screen.findByRole("button", { name: /Move anyway/i }));
-
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(
         "church-1",
@@ -1816,7 +1914,6 @@ describe("Teams", () => {
           serviceDate: "2026-07-05",
           sourceServiceId: sundayOccurrenceId,
           sourcePositionSlotKey: "position-keys::0",
-          allowOccurrenceConflict: true,
         },
       );
     });
@@ -1882,6 +1979,7 @@ describe("Teams", () => {
         },
       );
     });
+    expect(mockGetNotificationIntents).toHaveBeenCalledTimes(1);
   });
 
   it("does not focus the assignment search when opening a schedule cell", async () => {
@@ -2055,18 +2153,36 @@ describe("Teams", () => {
         ],
       }),
     );
-    mockUpdateTeamScheduleAssignmentSwap.mockResolvedValue({
-      success: true,
-      schedule: {
-        ...scheduleBootstrap.schedules[0],
-        assignments: {
-          [sundayOccurrenceId]: {
-            "position-vocal::0": { primaryMemberId: "member-jordan" },
-            "position-keys::0": { primaryMemberId: "member-avery" },
+    mockUpdateTeamScheduleAssignmentSwap
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Schedule conflict"), {
+          status: 409,
+          details: {
+            conflictFingerprint: "swap-conflict-v1",
+            occurrenceConflicts: [{
+              memberId: "member-jordan",
+              scheduleId: "other-schedule",
+              scheduleName: "Production July",
+              teamId: "team-production",
+              occurrenceId: sundayOccurrenceId,
+              conflictingOccurrenceId: sundayOccurrenceId,
+              cellKeys: ["position-camera::0"],
+            }],
+          },
+        }),
+      )
+      .mockResolvedValueOnce({
+        success: true,
+        schedule: {
+          ...scheduleBootstrap.schedules[0],
+          assignments: {
+            [sundayOccurrenceId]: {
+              "position-vocal::0": { primaryMemberId: "member-jordan" },
+              "position-keys::0": { primaryMemberId: "member-avery" },
+            },
           },
         },
-      },
-    } satisfies UpdateTeamScheduleAssignmentSwapResponse);
+      } satisfies UpdateTeamScheduleAssignmentSwapResponse);
 
     renderTeams();
     await openVocalSlot(user, /Sunday Vocal, Avery/i);
@@ -2080,10 +2196,12 @@ describe("Teams", () => {
     expect(screen.getByText(/Move Avery from Vocal to Keys/i)).toBeInTheDocument();
     expect(screen.getByText(/Assign Jordan to Vocal/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply swap/i }));
-    await user.click(await screen.findByRole("button", { name: /Move anyway/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { name: /Schedule conflict/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Move anyway/i }));
 
     await waitFor(() => {
-      expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1);
+      expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(2);
     });
     expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledWith(
       "church-1",
@@ -2095,7 +2213,7 @@ describe("Teams", () => {
         currentMemberId: "member-avery",
         candidateMemberId: "member-jordan",
         serviceDate: "2026-07-05",
-        allowOccurrenceConflict: true,
+        confirmedOccurrenceConflictFingerprint: "swap-conflict-v1",
       },
     );
     expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
@@ -2672,6 +2790,7 @@ describe("Teams", () => {
         },
       );
     });
+    expect(mockGetNotificationIntents).toHaveBeenCalledTimes(1);
   });
 
   it("offers Schedule anyway when the server detects an assignment conflict", async () => {
@@ -2688,7 +2807,21 @@ describe("Teams", () => {
     );
     mockUpdateTeamScheduleAssignment
       .mockRejectedValueOnce(
-        Object.assign(new Error("Schedule conflict"), { status: 409 }),
+        Object.assign(new Error("Schedule conflict"), {
+          status: 409,
+          details: {
+            conflictFingerprint: "conflict-v1",
+            occurrenceConflicts: [{
+              memberId: "member-avery",
+              scheduleId: "other-schedule",
+              scheduleName: "Worship",
+              teamId: "team-main",
+              occurrenceId: sundayOccurrenceId,
+              conflictingOccurrenceId: sundayOccurrenceId,
+              cellKeys: ["position-keys::0"],
+            }],
+          },
+        }),
       )
       .mockResolvedValueOnce({
         success: true,
@@ -2722,7 +2855,7 @@ describe("Teams", () => {
           positionSlotKey: "position-vocal::0",
           memberId: "member-avery",
           serviceDate: "2026-07-05",
-          allowOccurrenceConflict: true,
+          confirmedOccurrenceConflictFingerprint: "conflict-v1",
         },
       );
     });

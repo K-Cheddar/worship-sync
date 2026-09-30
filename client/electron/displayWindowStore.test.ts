@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "@jest/globals";
 import {
   getDisplayWindow,
   setDisplayWindow,
+  clearDisplayWindowIfMatches,
   hasDisplayWindow,
   clearDisplayWindows,
 } from "./displayWindowStore";
@@ -46,5 +47,25 @@ describe("displayWindowStore", () => {
     setDisplayWindow("projector", null);
     expect(getDisplayWindow("projector")).toBeNull();
     expect(getDisplayWindow("monitor")).toBe(monitor);
+  });
+
+  it("ignores an obsolete window close callback after same-key replacement", () => {
+    const oldWindow = { id: "old-projector" };
+    const replacement = { id: "new-projector" };
+    const windowState = { isOpen: true };
+    setDisplayWindow("projector", oldWindow);
+    clearDisplayWindowIfMatches("projector", oldWindow); // surface change disowns old
+    setDisplayWindow("projector", replacement);
+
+    const staleCloseWasCurrent = clearDisplayWindowIfMatches(
+      "projector",
+      oldWindow,
+      () => { windowState.isOpen = false; },
+    );
+
+    expect(staleCloseWasCurrent).toBe(false);
+    expect(getDisplayWindow("projector")).toBe(replacement);
+    expect(hasDisplayWindow("projector")).toBe(true);
+    expect(windowState.isOpen).toBe(true);
   });
 });

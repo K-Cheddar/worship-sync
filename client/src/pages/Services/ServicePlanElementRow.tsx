@@ -1099,7 +1099,7 @@ type ServicePlanElementRowProps = {
   iemEquipment?: ServiceEquipment[];
   /** Church-wide roles that see every assigned microphone. */
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   /** Schedule-derived people; never persisted as plan assignees. */
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
@@ -1181,7 +1181,7 @@ const ServicePlanElementRow = ({
   microphones = [],
   iemEquipment = [],
   microphoneAudiences,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
   scheduledAssignmentRows = [],
   onOpenScheduledAssignment,
   isEditing = false,
@@ -1386,7 +1386,7 @@ const ServicePlanElementRow = ({
   );
   const hasMicrophoneConflict = assignees.some((assignee) =>
     (assignee.microphoneIds || []).some(
-      (microphoneId) => (scheduledMicrophoneHolders?.get(microphoneId) || []).length > 0,
+      (microphoneId) => (scheduledEquipmentHolders?.get(microphoneId) || []).length > 0,
     ),
   );
   const hasMissingMicrophone = hasAssignedMicrophone && assignees.some(
@@ -1452,7 +1452,7 @@ const ServicePlanElementRow = ({
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
       itemLabel={itemLabel}
       structureOnly={structureOnly}
-      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      scheduledEquipmentHolders={scheduledEquipmentHolders}
       onChange={() => undefined}
     />
   ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
@@ -2526,7 +2526,7 @@ const ServicePlanElementRow = ({
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
       itemLabel={itemLabel}
       structureOnly={structureOnly}
-      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      scheduledEquipmentHolders={scheduledEquipmentHolders}
       onChange={(nextAssignees, coalesceKey) =>
         onUpdate({ assignees: nextAssignees }, coalesceKey)
       }
@@ -2543,7 +2543,7 @@ const ServicePlanElementRow = ({
       isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
       itemLabel={itemLabel}
       structureOnly={structureOnly}
-      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      scheduledEquipmentHolders={scheduledEquipmentHolders}
       onEdit={() => openAssignment()}
       onChange={() => undefined}
     />

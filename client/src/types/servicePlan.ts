@@ -282,6 +282,8 @@ export const getServicePlanCustomDocumentId = (
 
 export type ServicePlanElement = {
   id: string;
+  /** Durable row identity supplied by an external plan API, when available. */
+  sourceOccurrenceId?: string;
   /** Internal provenance flag used to safely reconcile later Service Planning
    * refreshes without treating operator-created items as source items. */
   sourcePlanningManaged?: boolean;

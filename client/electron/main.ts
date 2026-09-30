@@ -13,6 +13,7 @@ import {
   type WebContents,
 } from "electron";
 import { join, dirname } from "node:path";
+import { cpus, freemem, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   createReadStream,
@@ -43,6 +44,7 @@ import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
 import {
   getDisplayWindow,
   setDisplayWindow,
+  clearDisplayWindowIfMatches,
   hasDisplayWindow,
   listDisplayWindowKeys,
 } from "./displayWindowStore";
@@ -82,6 +84,10 @@ import {
   PreparedVideoMetricsSampler,
   type PreparedVideoMetricsResponse,
 } from "./preparedVideoMetrics";
+import {
+  createResourceGovernorState,
+  subscribeResourceGovernorToPreparedMetrics,
+} from "./resourceGovernor";
 
 const { autoUpdater } = updaterPkg;
 
@@ -336,7 +342,100 @@ const preparedVideoMetricsSampler = new PreparedVideoMetricsSampler<PreparedVide
   },
   4000,
 );
-const preparedVideoMetricSubscriptions = new Map<number, () => void>();
+const preparedVideoMetricSubscribers = new Map<number, WebContents>();
+const resourceGovernorSubscribers = new Map<number, WebContents>();
+const preparedVideoMetricSenderCleanup = new Map<number, () => void>();
+let preparedVideoMetricsRuntimeUnsubscribe: (() => void) | undefined;
+let lastBroadcastResourcePolicy = "";
+let resourceGovernorState = createResourceGovernorState("auto", {
+  logicalCpuCount: cpus().length,
+  totalMemoryMB: totalmem() / (1024 * 1024),
+});
+
+const sendToSubscribers = <T,>(
+  subscribers: Map<number, WebContents>,
+  channel: string,
+  value: T | ((sender: WebContents) => T),
+): void => {
+  subscribers.forEach((sender, id) => {
+    if (sender.isDestroyed()) {
+      subscribers.delete(id);
+      return;
+    }
+    sender.send(channel, typeof value === "function" ? (value as (sender: WebContents) => T)(sender) : value);
+  });
+};
+
+const ensurePreparedVideoMetricsRuntime = (): void => {
+  if (preparedVideoMetricsRuntimeUnsubscribe) return;
+  const logicalCpuCount = cpus().length;
+  preparedVideoMetricsRuntimeUnsubscribe = preparedVideoMetricsSampler.subscribe((metrics) => {
+    sendToSubscribers(
+      preparedVideoMetricSubscribers,
+      "prepared-video-metrics",
+      (sender) => getPreparedVideoMetricsForRenderer(metrics, sender.getOSProcessId()),
+    );
+  });
+  const stopGovernor = subscribeResourceGovernorToPreparedMetrics(
+    preparedVideoMetricsSampler,
+    {
+      initialState: resourceGovernorState,
+      logicalCpuCount,
+      totalMemoryMB: totalmem() / (1024 * 1024),
+      getSystemMemoryUsedPercent: () => {
+        const memoryTotal = totalmem();
+        return memoryTotal > 0 ? ((memoryTotal - freemem()) / memoryTotal) * 100 : undefined;
+      },
+      onState: (state) => {
+        resourceGovernorState = state;
+        const policySignature = JSON.stringify(state.policy);
+        if (policySignature === lastBroadcastResourcePolicy) return;
+        lastBroadcastResourcePolicy = policySignature;
+        sendToSubscribers(resourceGovernorSubscribers, "resource-governor-policy", state.policy);
+      },
+    },
+  );
+  const stopMetricsBroadcast = preparedVideoMetricsRuntimeUnsubscribe;
+  preparedVideoMetricsRuntimeUnsubscribe = () => {
+    stopGovernor();
+    stopMetricsBroadcast?.();
+  };
+};
+
+const cleanupPreparedVideoMetricSender = (sender: WebContents): void => {
+  preparedVideoMetricSubscribers.delete(sender.id);
+  resourceGovernorSubscribers.delete(sender.id);
+  const cleanup = preparedVideoMetricSenderCleanup.get(sender.id);
+  if (cleanup) sender.removeListener("destroyed", cleanup);
+  preparedVideoMetricSenderCleanup.delete(sender.id);
+  if (
+    preparedVideoMetricSubscribers.size === 0 &&
+    resourceGovernorSubscribers.size === 0
+  ) {
+    preparedVideoMetricsRuntimeUnsubscribe?.();
+    preparedVideoMetricsRuntimeUnsubscribe = undefined;
+  }
+};
+
+const releasePreparedVideoMetricSenderIfUnused = (sender: WebContents): void => {
+  if (preparedVideoMetricSubscribers.has(sender.id) || resourceGovernorSubscribers.has(sender.id)) return;
+  const cleanup = preparedVideoMetricSenderCleanup.get(sender.id);
+  if (cleanup) sender.removeListener("destroyed", cleanup);
+  preparedVideoMetricSenderCleanup.delete(sender.id);
+  if (preparedVideoMetricSubscribers.size === 0 && resourceGovernorSubscribers.size === 0) {
+    preparedVideoMetricsRuntimeUnsubscribe?.();
+    preparedVideoMetricsRuntimeUnsubscribe = undefined;
+  }
+};
+
+const registerPreparedVideoMetricSender = (sender: WebContents): void => {
+  if (!preparedVideoMetricSenderCleanup.has(sender.id)) {
+    const cleanup = () => cleanupPreparedVideoMetricSender(sender);
+    preparedVideoMetricSenderCleanup.set(sender.id, cleanup);
+    sender.once("destroyed", cleanup);
+  }
+  ensurePreparedVideoMetricsRuntime();
+};
 
 const notifyDesktopAuthCallback = (
   payload: DesktopAuthCallbackPayload,
@@ -461,6 +560,9 @@ const createWindowForKey = (windowKey: string, surface?: string): boolean => {
     // The display changed render profile, so this window is on the wrong route.
     // Focusing here left the old deck on that screen until someone closed it by
     // hand, and the stale surface was persisted, so a restart put it back.
+    // Disown the obsolete instance before destroy; its close callback must
+    // neither persist a manual close nor clear a replacement for this key.
+    clearDisplayWindowIfMatches(windowKey, existing);
     existing.destroy();
   }
 
@@ -490,11 +592,13 @@ const createWindowForKey = (windowKey: string, surface?: string): boolean => {
   setupReadyToShow(newWindow, windowKey, windowStateManager);
 
   setupWindowEventListeners(newWindow, windowKey, windowStateManager, () => {
-    // Only mark as closed if app is not closing (user manually closed the window)
-    if (!isAppClosing) {
-      windowStateManager.markWindowClosed(windowKey);
-    }
-    setDisplayWindow(windowKey, null);
+    // A delayed close callback belongs only to this BrowserWindow generation.
+    // Surface replacement has already disowned the old window.
+    const isCurrentWindow = clearDisplayWindowIfMatches(windowKey, newWindow, () => {
+      // Only mark as closed if app is not closing (user manually closed the window)
+      if (!isAppClosing) windowStateManager.markWindowClosed(windowKey);
+    });
+    if (!isCurrentWindow) return;
     notifyWindowStateChanged();
   });
 
@@ -1152,31 +1256,44 @@ ipcMain.handle("get-prepared-video-metrics", (event) => {
   return getPreparedVideoMetricsForRenderer(snapshot, event.sender.getOSProcessId());
 });
 
+ipcMain.handle("get-resource-governor-policy", (event) => {
+  assertMediaCacheIpcSender(event.sender);
+  return resourceGovernorState.policy;
+});
+
 ipcMain.handle("subscribe-prepared-video-metrics", (event) => {
   assertMediaCacheIpcSender(event.sender);
   const sender = event.sender;
-  preparedVideoMetricSubscriptions.get(sender.id)?.();
-  const unsubscribe = preparedVideoMetricsSampler.subscribe((snapshot) => {
-    if (!sender.isDestroyed()) {
-      sender.send(
-        "prepared-video-metrics",
-        getPreparedVideoMetricsForRenderer(snapshot, sender.getOSProcessId()),
-      );
-    }
-  });
-  const cleanup = () => {
-    preparedVideoMetricSubscriptions.delete(sender.id);
-    unsubscribe();
-    sender.removeListener("destroyed", cleanup);
-  };
-  preparedVideoMetricSubscriptions.set(sender.id, cleanup);
-  sender.once("destroyed", cleanup);
+  const runtimeAlreadyRunning = Boolean(preparedVideoMetricsRuntimeUnsubscribe);
+  preparedVideoMetricSubscribers.set(sender.id, sender);
+  registerPreparedVideoMetricSender(sender);
+  if (runtimeAlreadyRunning && latestPreparedVideoMetrics && !sender.isDestroyed()) {
+    sender.send("prepared-video-metrics", getPreparedVideoMetricsForRenderer(latestPreparedVideoMetrics, sender.getOSProcessId()));
+  }
   return true;
 });
 
 ipcMain.handle("unsubscribe-prepared-video-metrics", (event) => {
   assertMediaCacheIpcSender(event.sender);
-  preparedVideoMetricSubscriptions.get(event.sender.id)?.();
+  preparedVideoMetricSubscribers.delete(event.sender.id);
+  releasePreparedVideoMetricSenderIfUnused(event.sender);
+  return true;
+});
+
+ipcMain.handle("subscribe-resource-governor-policy", (event) => {
+  assertMediaCacheIpcSender(event.sender);
+  const sender = event.sender;
+  const runtimeAlreadyRunning = Boolean(preparedVideoMetricsRuntimeUnsubscribe);
+  resourceGovernorSubscribers.set(sender.id, sender);
+  registerPreparedVideoMetricSender(sender);
+  if (runtimeAlreadyRunning && !sender.isDestroyed()) sender.send("resource-governor-policy", resourceGovernorState.policy);
+  return true;
+});
+
+ipcMain.handle("unsubscribe-resource-governor-policy", (event) => {
+  assertMediaCacheIpcSender(event.sender);
+  resourceGovernorSubscribers.delete(event.sender.id);
+  releasePreparedVideoMetricSenderIfUnused(event.sender);
   return true;
 });
 

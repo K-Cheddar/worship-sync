@@ -53,7 +53,7 @@ import ServicePlanEditor from "../Services/ServicePlanEditor";
 import CurrentServiceItemList from "./CurrentServiceItemList";
 import {
   getOccurrenceAssignmentSummary,
-  getScheduledMicrophoneHolders,
+  getScheduledEquipmentHolders,
   groupAssignmentSummaryByTeam,
   teamMicrophoneSlotKey,
   type TeamsAssignmentSummaryRow,
@@ -1061,10 +1061,10 @@ const CurrentServiceWorkspace = () => {
     [assignmentRows, canLoadRoleData, roleSchedules],
   );
 
-  const scheduledMicrophoneHolders = useMemo(
+  const scheduledEquipmentHolders = useMemo(
     () =>
       canLoadRoleData
-        ? getScheduledMicrophoneHolders(assignmentRows, roleTeams)
+        ? getScheduledEquipmentHolders(assignmentRows, roleTeams)
         : new Map(),
     [assignmentRows, canLoadRoleData, roleTeams],
   );
@@ -1220,8 +1220,8 @@ const CurrentServiceWorkspace = () => {
       members={roleMembers}
       positions={rolePositions}
       teams={roleTeams}
-      scheduledMicrophoneHolders={
-        canLoadRoleData ? scheduledMicrophoneHolders : undefined
+      scheduledEquipmentHolders={
+        canLoadRoleData ? scheduledEquipmentHolders : undefined
       }
       teamMicrophones={
         canLoadRoleData

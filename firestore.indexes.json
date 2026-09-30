@@ -145,6 +145,15 @@
       ]
     },
     {
+      "collectionGroup": "teamSchedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "startDate", "order": "ASCENDING" },
+        { "fieldPath": "endDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "notificationIntents",
       "queryScope": "COLLECTION",
       "fields": [

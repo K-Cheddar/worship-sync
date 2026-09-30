@@ -207,6 +207,9 @@ const buildElementFromRow = <
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
+    ...((row.sourceOccurrenceId || row.sourcePlanElementId)
+      ? { sourceOccurrenceId: row.sourceOccurrenceId || row.sourcePlanElementId }
+      : {}),
     sourcePlanningManaged: true,
     type,
     title: plainTextToRichText(rawTitle),

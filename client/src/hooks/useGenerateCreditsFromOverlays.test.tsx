@@ -47,6 +47,14 @@ const baseMockState = {
       },
     },
   },
+  servicePlanningImport: {
+    servicePlanKey: undefined as string | undefined,
+    serviceOutline: {
+      preview: {
+        teamAssignments: [] as { teamName: string; role: string; name: string }[],
+      },
+    },
+  },
 };
 
 let mockState: typeof baseMockState;
@@ -426,6 +434,49 @@ describe("useGenerateCreditsFromOverlays", () => {
       payload: { creditId: "c1", status: "preserved" },
     }));
     expect(putCreditDoc).not.toHaveBeenCalled();
+  });
+
+  it("uses a loaded empty schedule row instead of stale imported team assignments", async () => {
+    const matchingSchedule = {
+      ...teamsBootstrap,
+      positions: [
+        ...teamsBootstrap.positions,
+        {
+          positionId: "band",
+          churchId: "church-1",
+          teamId: "team-media",
+          name: "Band",
+          order: 2,
+        },
+      ],
+      schedules: teamsBootstrap.schedules.map((schedule) => ({
+        ...schedule,
+        assignments: { "occ-1": {} },
+      })),
+    };
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(matchingSchedule);
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Band",
+      text: "",
+      hidden: false,
+    }];
+    mockState.servicePlanningImport.serviceOutline.preview.teamAssignments = [
+      { teamName: "Band", role: "Guitar", name: "Stale Imported Name" },
+    ];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const report = mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits");
+    expect(report?.[0].payload.items).toContainEqual(expect.objectContaining({
+      creditHeading: "Band",
+      sourceLabel: "Media schedule: July Media - Sabbath Worship",
+      nextText: "",
+    }));
+    expect(report?.[0].payload.items).not.toContainEqual(expect.objectContaining({
+      nextText: "Guitar - Stale Imported Name",
+    }));
   });
 
   it("does not split an intentional comma or ampersand in an overlay display name", async () => {

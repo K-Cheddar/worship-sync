@@ -33,6 +33,30 @@ const namedSection = (
 ): ServicePlanSection => ({ id, name, elements });
 
 describe("summarizeServicePlanImport", () => {
+  it("surfaces semantic microphone and IEM equipment changes in review", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"], microphoneIds: ["mic-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer updated", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"] }],
+    })])];
+    const summary = summarizeServicePlanImport(current, next);
+    expect(summary.changes[0].fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Assignments and equipment", before: expect.stringContaining("Mic mic-1"), after: expect.stringContaining("IEM iem-1") }),
+    ]));
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, new Set(["updated:equipment"]));
+    expect(applied[0].elements[0].assignees).toEqual(next[0].elements[0].assignees);
+  });
+
+  it("ignores harmless equipment ID ordering differences", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-2", "iem-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1", "iem-2"] }],
+    })])];
+    expect(summarizeServicePlanImport(current, next).changes).toEqual([]);
+  });
   it("keeps changes in the order of items on the service", () => {
     const current = [section([
       element("first", "Zulu", { notes: plainTextToRichText("old") }),
@@ -84,7 +108,7 @@ describe("summarizeServicePlanImport", () => {
           itemName: "Welcome",
           fields: [
             { label: "Title", before: "Old welcome", after: "Welcome" },
-            { label: "Assigned to", before: "Avery", after: "Blair" },
+            { label: "Assignments and equipment", before: "Avery", after: "Blair" },
             {
               label: "Time or duration",
               before: "09:00 · 1m",
@@ -382,7 +406,7 @@ describe("summarizeServicePlanImport", () => {
     })])];
 
     expect(summarizeServicePlanImport(current, next).changes[0].fields.map(({ label }) => label)).toEqual([
-      "Title", "Assigned to", "Time or duration", "Notes",
+      "Title", "Assignments and equipment", "Time or duration", "Notes",
     ]);
   });
 

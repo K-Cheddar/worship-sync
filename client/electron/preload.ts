@@ -2,6 +2,28 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { WindowType } from "./windowState";
 import type { LocalAssetMetadata } from "./localAssetStore";
 import type { PreparedVideoMetrics } from "../src/types/electron";
+import type { ResourcePolicy } from "./resourceGovernor";
+import { createSharedEventSubscription } from "./rendererSubscription";
+
+const preparedVideoMetricsSubscription = createSharedEventSubscription<PreparedVideoMetrics>((publish) => {
+  const listener = (_: Electron.IpcRendererEvent, value: unknown) => publish(value as PreparedVideoMetrics);
+  ipcRenderer.on("prepared-video-metrics", listener);
+  void ipcRenderer.invoke("subscribe-prepared-video-metrics").catch(() => undefined);
+  return () => {
+    ipcRenderer.removeListener("prepared-video-metrics", listener);
+    void ipcRenderer.invoke("unsubscribe-prepared-video-metrics").catch(() => undefined);
+  };
+});
+
+const resourceGovernorSubscription = createSharedEventSubscription<ResourcePolicy>((publish) => {
+  const listener = (_: Electron.IpcRendererEvent, value: unknown) => publish(value as ResourcePolicy);
+  ipcRenderer.on("resource-governor-policy", listener);
+  void ipcRenderer.invoke("subscribe-resource-governor-policy").catch(() => undefined);
+  return () => {
+    ipcRenderer.removeListener("resource-governor-policy", listener);
+    void ipcRenderer.invoke("unsubscribe-resource-governor-policy").catch(() => undefined);
+  };
+});
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -149,16 +171,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   syncMediaCache: (mediaUrls: string[]) =>
     ipcRenderer.invoke("sync-media-cache", mediaUrls),
   getPreparedVideoMetrics: () => ipcRenderer.invoke("get-prepared-video-metrics"),
-  subscribePreparedVideoMetrics: () =>
-    ipcRenderer.invoke("subscribe-prepared-video-metrics"),
-  unsubscribePreparedVideoMetrics: () =>
-    ipcRenderer.invoke("unsubscribe-prepared-video-metrics"),
-  onPreparedVideoMetrics: (callback: (metrics: PreparedVideoMetrics) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, metrics: unknown) =>
-      callback(metrics as PreparedVideoMetrics);
-    ipcRenderer.on("prepared-video-metrics", listener);
-    return () => ipcRenderer.removeListener("prepared-video-metrics", listener);
-  },
+  subscribePreparedVideoMetrics: (callback: (metrics: PreparedVideoMetrics) => void) =>
+    preparedVideoMetricsSubscription.subscribe(callback),
+  getResourceGovernorPolicy: () => ipcRenderer.invoke("get-resource-governor-policy"),
+  subscribeResourceGovernorPolicy: (callback: (policy: ResourcePolicy) => void) =>
+    resourceGovernorSubscription.subscribe(callback),
 
   // App-managed local assets. Native paths stay inside the preload/main
   // boundary; renderers receive only metadata and a streamable protocol URL.

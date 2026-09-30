@@ -73,6 +73,7 @@ import {
   buildTeamSchedulePeriod,
   findInitialTeamSchedulePeriod,
 } from "./teamSchedulePeriod";
+import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory";
 import PeriodRangeFilter from "./PeriodRangeFilter";
 import {
   createTeamRosterMember,
@@ -300,9 +301,32 @@ type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
 type PendingCrossTeamConflict = {
   memberId: string;
   warning: string;
+  fingerprint: string;
+  conflicts: Array<{
+    memberId: string;
+    scheduleId: string;
+    scheduleName?: string;
+    teamId?: string;
+    occurrenceId: string;
+    conflictingOccurrenceId?: string;
+    cellKeys?: string[];
+  }>;
   isMove?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
+};
+
+type OccurrenceConflictDetails = Pick<PendingCrossTeamConflict, "fingerprint" | "conflicts">;
+
+const getOccurrenceConflictDetails = (error: unknown): OccurrenceConflictDetails | null => {
+  const details = (error as { details?: unknown } | null)?.details;
+  if (!details || typeof details !== "object") return null;
+  const payload = details as { conflictFingerprint?: unknown; occurrenceConflicts?: unknown };
+  if (typeof payload.conflictFingerprint !== "string" || !Array.isArray(payload.occurrenceConflicts)) return null;
+  return {
+    fingerprint: payload.conflictFingerprint,
+    conflicts: payload.occurrenceConflicts as PendingCrossTeamConflict["conflicts"],
+  };
 };
 
 type PendingAvailabilityConfirmation = {
@@ -956,8 +980,19 @@ const ScheduleTab = ({
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
   const wasMembersDrawerOpenRef = useRef(false);
+  const scheduleHistoryScheduleIdRef = useRef(selectedScheduleId);
+  const refreshScheduleNotificationHistory = useCallback(async (scheduleId: string) => {
+    const response = await getNotificationIntents(churchId, { scheduleId });
+    if (scheduleHistoryScheduleIdRef.current === scheduleId) {
+      setScheduleNotificationIntents((current) =>
+        mergeScheduleNotificationIntents(current, response.intents || []),
+      );
+      setScheduleNotificationNextCursor(response.nextCursor || "");
+    }
+  }, [churchId]);
   useEffect(() => {
     let active = true;
+    scheduleHistoryScheduleIdRef.current = selectedScheduleId;
     setScheduleNotificationIntents([]);
     setScheduleNotificationNextCursor("");
     if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
@@ -967,14 +1002,14 @@ const ScheduleTab = ({
       .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
       .finally(() => { if (active) setLoadingScheduleNotifications(false); });
     return () => { active = false; };
-  }, [canEdit, churchId, selectedSchedule?.assignments, selectedSchedule?.responses, selectedScheduleId, showToast]);
+  }, [canEdit, churchId, selectedScheduleId, showToast]);
 
   const loadOlderScheduleNotifications = async () => {
     if (!scheduleNotificationNextCursor || loadingScheduleNotifications || !selectedScheduleId) return;
     setLoadingScheduleNotifications(true);
     try {
       const response = await getNotificationIntents(churchId, { scheduleId: selectedScheduleId, cursor: scheduleNotificationNextCursor });
-      setScheduleNotificationIntents((current) => [...current, ...(response.intents || [])]);
+      setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, response.intents || []));
       setScheduleNotificationNextCursor(response.nextCursor || "");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not load older schedule message history.");
@@ -1024,16 +1059,12 @@ const ScheduleTab = ({
       const recipient = memberName ? `${memberName.firstName} ${memberName.lastName}`.trim() : "this volunteer";
       if (!window.confirm(`Send one SMS to ${recipient} at ${preview.preview.phoneNumberSnapshot}?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"}.`)) return;
       const result = await sendNotificationIntent(churchId, intent.intentId, preview.preview.approvalVersion);
-      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-      setScheduleNotificationIntents(latest.intents || []);
-      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      await refreshScheduleNotificationHistory(intent.sourceId);
       showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
-        const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-        setScheduleNotificationIntents(latest.intents || []);
-        setScheduleNotificationNextCursor(latest.nextCursor || "");
+        await refreshScheduleNotificationHistory(intent.sourceId);
       } catch { /* Keep the last known queue visible. */ }
     } finally {
       setSendingNotificationIntentId("");
@@ -1046,9 +1077,7 @@ const ScheduleTab = ({
     setSendingNotificationIntentId(intent.intentId);
     try {
       await resolveReplacementNotificationIntent(churchId, intent.intentId);
-      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-      setScheduleNotificationIntents(latest.intents || []);
-      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      await refreshScheduleNotificationHistory(intent.sourceId);
       showToast("Invitation closed. The schedule remains unchanged.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
@@ -1287,10 +1316,15 @@ const ScheduleTab = ({
       isMove,
       onConfirm,
       onCancel,
-    }: PendingCrossTeamConflict) => {
+      fingerprint = "",
+      conflicts = [],
+    }: Omit<PendingCrossTeamConflict, "fingerprint" | "conflicts"> &
+      Partial<Pick<PendingCrossTeamConflict, "fingerprint" | "conflicts">>) => {
       setPendingCrossTeamConflict({
         memberId,
         warning,
+        fingerprint,
+        conflicts,
         isMove,
         onConfirm,
         onCancel,
@@ -1310,8 +1344,10 @@ const ScheduleTab = ({
     setPendingAvailabilityConfirmation(null);
   }, []);
 
-  const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
-    allowCrossTeamConflict ? { allowOccurrenceConflict: true as const } : {};
+  const assignmentConflictPayload = (fingerprint?: string | boolean) =>
+    typeof fingerprint === "string" && fingerprint
+      ? { confirmedOccurrenceConflictFingerprint: fingerprint }
+      : {};
 
   const positionNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1892,6 +1928,7 @@ const ScheduleTab = ({
         churchId,
         schedule.scheduleId,
       );
+      await refreshScheduleNotificationHistory(schedule.scheduleId);
       const unreachable = result.unreachableMemberIds?.length || 0;
       const sentLabel =
         result.notified === 0
@@ -1912,7 +1949,7 @@ const ScheduleTab = ({
       setIsSendingSchedule(false);
       setIsConfirmingSend(false);
     }
-  }, [churchId, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast]);
+  }, [churchId, ensureActiveSchedule, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -1923,7 +1960,8 @@ const ScheduleTab = ({
     sourcePositionSlotKey,
     allowBlockout = false,
     allowRecurringAvailability = false,
-    allowCrossTeamConflict = false,
+    skipClientConflictWarning = false,
+    confirmedOccurrenceConflictFingerprint,
   }: {
     serviceId: string;
     cellKey: string;
@@ -1933,7 +1971,8 @@ const ScheduleTab = ({
     sourcePositionSlotKey?: string;
     allowBlockout?: boolean;
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
+    skipClientConflictWarning?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
@@ -1995,11 +2034,11 @@ const ScheduleTab = ({
         showToast(blockingIssue, "neutral");
         return;
       }
-      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
-      if (conflictWarning && !allowCrossTeamConflict) {
+      const hydratedConflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
+      if (hydratedConflictWarning && !skipClientConflictWarning) {
         requestCrossTeamConflictConfirmation({
           memberId,
-          warning: conflictWarning,
+          warning: hydratedConflictWarning,
           isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
           onConfirm: () =>
             void commitAssignment({
@@ -2011,7 +2050,7 @@ const ScheduleTab = ({
               sourcePositionSlotKey,
               allowBlockout,
               allowRecurringAvailability,
-              allowCrossTeamConflict: true,
+              skipClientConflictWarning: true,
             }),
         });
         return;
@@ -2094,11 +2133,15 @@ const ScheduleTab = ({
       undoChanges,
     );
 
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
+    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
+    latestScheduleRef.current = optimisticSchedule;
+    onScheduleSaved(optimisticSchedule);
     clearActiveSlot();
 
-    await enqueueAssignmentSave(async () => {
+    const saveAssignment = async (fingerprint?: string) => {
+      const attemptSeq = ++scheduleMutationSeqRef.current;
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       try {
         await updateTeamScheduleAssignment(
           churchId,
@@ -2114,62 +2157,35 @@ const ScheduleTab = ({
             ...(allowRecurringAvailability
               ? { allowRecurringAvailability: true }
               : {}),
-            ...assignmentConflictPayload(allowCrossTeamConflict),
+            ...assignmentConflictPayload(fingerprint),
           },
         );
       } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
-        }
-        if (
-          memberId &&
-          !allowCrossTeamConflict &&
-          (error as { status?: number })?.status === 409
-        ) {
+        const conflictDetails = memberId ? getOccurrenceConflictDetails(error) : null;
+        if (conflictDetails) {
+          if (scheduleMutationSeqRef.current === attemptSeq) {
+            latestScheduleRef.current = previousSchedule;
+            onScheduleSaved(previousSchedule);
+          }
           requestCrossTeamConflictConfirmation({
-            memberId,
-            warning: "already scheduled on another team or in another role",
+            memberId: memberId || "",
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
             isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
             onConfirm: () => {
-              const retryMutationSeq = ++scheduleMutationSeqRef.current;
-              onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
-              void enqueueAssignmentSave(async () => {
-                try {
-                  await updateTeamScheduleAssignment(
-                    churchId,
-                    previousSchedule.scheduleId,
-                    {
-                      serviceId,
-                      positionSlotKey: cellKey,
-                      memberId,
-                      serviceDate,
-                      sourceServiceId,
-                      sourcePositionSlotKey,
-                      ...(allowBlockout ? { allowBlockout: true } : {}),
-                      ...(allowRecurringAvailability
-                        ? { allowRecurringAvailability: true }
-                        : {}),
-                      ...assignmentConflictPayload(true),
-                    },
-                  );
-                } catch (retryError) {
-                  if (scheduleMutationSeqRef.current === retryMutationSeq) {
-                    onScheduleSaved(previousSchedule);
-                  }
-                  showApiErrorToast(
-                    showToast,
-                    retryError,
-                    "Could not update this assignment.",
-                  );
-                }
-              });
+              void enqueueAssignmentSave(() => saveAssignment(conflictDetails.fingerprint));
             },
           });
           return;
         }
+        if (scheduleMutationSeqRef.current === attemptSeq) {
+          latestScheduleRef.current = previousSchedule;
+          onScheduleSaved(previousSchedule);
+        }
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
-    });
+    };
+    void enqueueAssignmentSave(() => saveAssignment(confirmedOccurrenceConflictFingerprint));
   };
 
   const commitGuestAssignment = async (
@@ -2393,7 +2409,7 @@ const ScheduleTab = ({
     action,
     allowBlockout = false,
     allowRecurringAvailability = false,
-    allowCrossTeamConflict = false,
+    confirmedOccurrenceConflictFingerprint,
   }: {
     serviceId: string;
     cellKey: string;
@@ -2403,7 +2419,7 @@ const ScheduleTab = ({
     action: "add" | "remove";
     allowBlockout?: boolean;
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
@@ -2464,26 +2480,6 @@ const ScheduleTab = ({
           : issue;
       if (blockingIssue) {
         showToast(blockingIssue, "neutral");
-        return;
-      }
-      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
-      if (conflictWarning && !allowCrossTeamConflict) {
-        requestCrossTeamConflictConfirmation({
-          memberId,
-          warning: conflictWarning,
-          onConfirm: () =>
-            void commitShadowAssignment({
-              serviceId,
-              cellKey,
-              basePositionId,
-              memberId,
-              shadowKind,
-              action,
-              allowBlockout,
-              allowRecurringAvailability,
-              allowCrossTeamConflict: true,
-            }),
-        });
         return;
       }
     }
@@ -2557,12 +2553,34 @@ const ScheduleTab = ({
             ...(allowRecurringAvailability
               ? { allowRecurringAvailability: true }
               : {}),
-            ...assignmentConflictPayload(allowCrossTeamConflict),
+            ...assignmentConflictPayload(confirmedOccurrenceConflictFingerprint),
           },
         );
       } catch (error) {
+        const conflictDetails = action === "add" ? getOccurrenceConflictDetails(error) : null;
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId,
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () =>
+              void commitShadowAssignment({
+                serviceId,
+                cellKey,
+                basePositionId,
+                memberId,
+                shadowKind,
+                action,
+                allowBlockout,
+                allowRecurringAvailability,
+                confirmedOccurrenceConflictFingerprint: conflictDetails.fingerprint,
+              }),
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
@@ -2738,8 +2756,7 @@ const ScheduleTab = ({
     // change midway through. Start saving before the local reveal so the two
     // can run together, then keep autoFilling true until this request settles.
     let saveFailed = false;
-    const save = enqueueAssignmentSave(() =>
-      updateTeamSchedule(churchId, previousSchedule.scheduleId, {
+    const autoFillPayload = {
         name: previousSchedule.name,
         description: previousSchedule.description || "",
         teamId: previousSchedule.teamId,
@@ -2751,8 +2768,50 @@ const ScheduleTab = ({
         microphoneAssignments: previousSchedule.microphoneAssignments,
         iemAssignments: previousSchedule.iemAssignments,
         additionalPositionSlots: previousSchedule.additionalPositionSlots,
-      }),
-    );
+      };
+    const saveWithConflictConfirmation = async (fingerprint?: string): Promise<void> => {
+      try {
+        const response = await enqueueAssignmentSave(() =>
+          updateTeamSchedule(churchId, previousSchedule.scheduleId, {
+            ...autoFillPayload,
+            ...assignmentConflictPayload(fingerprint),
+          }),
+        );
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(response.schedule);
+        }
+        showToast(
+          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+          "success",
+        );
+      } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
+        if (conflictDetails) {
+          saveFailed = true;
+          setJustFilledCellKeys(() => new Set());
+          if (scheduleMutationSeqRef.current === mutationSeq) {
+            onScheduleSaved(previousSchedule);
+          }
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || "",
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () => {
+              onScheduleSaved({ ...previousSchedule, assignments: finalAssignments });
+              void saveWithConflictConfirmation(conflictDetails.fingerprint);
+            },
+          });
+          return;
+        }
+        saveFailed = true;
+        setJustFilledCellKeys(() => new Set());
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+      }
+    };
+    const save = saveWithConflictConfirmation();
     // The reveal may outlast a fast rejected request. Observe it immediately so
     // the browser does not report a transient unhandled rejection; stop adding
     // highlight keys and clear any already shown so rolled-back cells do not
@@ -2797,22 +2856,7 @@ const ScheduleTab = ({
       await sleep(stepDelayMs);
     }
 
-    try {
-      const response = await save;
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        onScheduleSaved(response.schedule);
-      }
-      showToast(
-        `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
-        "success",
-      );
-    } catch (error) {
-      setJustFilledCellKeys(() => new Set());
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        onScheduleSaved(previousSchedule);
-      }
-      showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
-    }
+    await save;
   };
 
   const handleAutoFillSchedule = async () => {
@@ -3612,9 +3656,7 @@ const ScheduleTab = ({
         cellKey: activeSlot.columnKey,
         memberId,
       });
-      const response = await getNotificationIntents(churchId, { scheduleId: selectedSchedule.scheduleId });
-      setScheduleNotificationIntents(response.intents || []);
-      setScheduleNotificationNextCursor(response.nextCursor || "");
+      await refreshScheduleNotificationHistory(selectedSchedule.scheduleId);
       setScheduleMessagesOpen(true);
       showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
     } catch (error) {
@@ -3783,7 +3825,7 @@ const ScheduleTab = ({
 
   const commitActiveSlotSwapRecommendation = async (
     recommendation: ScheduleAssignmentSwapRecommendation,
-    allowCrossTeamConflict = false,
+    confirmedFingerprint?: string,
   ) => {
     if (!canEdit || !selectedSchedule) return;
     const plan = activeSlotSwapRecommendations.find(
@@ -3817,28 +3859,6 @@ const ScheduleTab = ({
       showToast(issue, "neutral");
       return;
     }
-    const candidateConflictWarning = getCrossTeamConflictWarning(
-      plan.candidateMemberId,
-      plan.serviceId,
-    );
-    const currentConflictWarning = getCrossTeamConflictWarning(
-      plan.currentMemberId,
-      plan.serviceId,
-    );
-    const conflictWarning = candidateConflictWarning || currentConflictWarning;
-    if (conflictWarning && !allowCrossTeamConflict) {
-      requestCrossTeamConflictConfirmation({
-        memberId: candidateConflictWarning
-          ? plan.candidateMemberId
-          : plan.currentMemberId,
-        warning: conflictWarning,
-        isMove: true,
-        onConfirm: () =>
-          void commitActiveSlotSwapRecommendation(recommendation, true),
-      });
-      return;
-    }
-
     let previousSchedule: TeamSchedule;
     try {
       previousSchedule = await ensureActiveSchedule();
@@ -3909,11 +3929,27 @@ const ScheduleTab = ({
           currentMemberId: plan.currentMemberId,
           candidateMemberId: plan.candidateMemberId,
           serviceDate: plan.serviceDate,
-          ...assignmentConflictPayload(allowCrossTeamConflict),
+          ...assignmentConflictPayload(confirmedFingerprint),
         });
       } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || plan.candidateMemberId,
+            warning: "already scheduled in an overlapping service",
+            isMove: true,
+            ...conflictDetails,
+            onConfirm: () =>
+              void commitActiveSlotSwapRecommendation(
+                recommendation,
+                conflictDetails.fingerprint,
+              ),
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not apply this swap.");
       }
@@ -4167,8 +4203,17 @@ const ScheduleTab = ({
         }
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
+          const current = latestScheduleRef.current || previousSchedule;
+          const microphoneAssignments = { ...(current.microphoneAssignments || {}) };
+          const row = { ...(microphoneAssignments[occurrenceId] || {}) };
+          const previousIds = previousSchedule.microphoneAssignments?.[occurrenceId]?.[columnKey];
+          if (previousIds?.length) row[columnKey] = previousIds;
+          else delete row[columnKey];
+          if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
+          else delete microphoneAssignments[occurrenceId];
+          const rolledBack = { ...current, microphoneAssignments };
+          latestScheduleRef.current = rolledBack;
+          onScheduleSaved(rolledBack);
         }
         showApiErrorToast(showToast, error, "Could not update microphone assignments.");
       } finally {
@@ -4221,8 +4266,17 @@ const ScheduleTab = ({
         }
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
+          const current = latestScheduleRef.current || previousSchedule;
+          const iemAssignments = { ...(current.iemAssignments || {}) };
+          const row = { ...(iemAssignments[occurrenceId] || {}) };
+          const previousIds = previousSchedule.iemAssignments?.[occurrenceId]?.[columnKey];
+          if (previousIds?.length) row[columnKey] = previousIds;
+          else delete row[columnKey];
+          if (Object.keys(row).length) iemAssignments[occurrenceId] = row;
+          else delete iemAssignments[occurrenceId];
+          const rolledBack = { ...current, iemAssignments };
+          latestScheduleRef.current = rolledBack;
+          onScheduleSaved(rolledBack);
         }
         showApiErrorToast(showToast, error, "Could not update IEM assignments.");
       } finally {
@@ -4430,21 +4484,37 @@ const ScheduleTab = ({
           ]),
         ],
       };
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      latestScheduleRef.current = { ...previousSchedule, additionalPositionSlots };
       onScheduleSaved({ ...previousSchedule, additionalPositionSlots });
       try {
-        const response = await addTeamSchedulePositionSlot(
-          churchId,
-          previousSchedule.scheduleId,
-          { serviceId, positionSlotKey: cellKey },
+        const response = await enqueueAssignmentSave(() =>
+          addTeamSchedulePositionSlot(
+            churchId,
+            previousSchedule.scheduleId,
+            { serviceId, positionSlotKey: cellKey },
+          ),
         );
-        onScheduleSaved(response.schedule);
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
+        }
         showToast("Position added for this date.", "success");
       } catch (error) {
-        onScheduleSaved(previousSchedule);
+        // Remove only this optimistic slot. A later assignment or equipment
+        // edit may already be visible in the current schedule state.
+        const current = latestScheduleRef.current || previousSchedule;
+        const slots = { ...(current.additionalPositionSlots || {}) };
+        const row = (slots[serviceId] || []).filter((key) => key !== cellKey);
+        if (row.length) slots[serviceId] = row;
+        else delete slots[serviceId];
+        const rolledBack = { ...current, additionalPositionSlots: slots };
+        latestScheduleRef.current = rolledBack;
+        onScheduleSaved(rolledBack);
         showApiErrorToast(showToast, error, "Could not add this position.");
       }
     },
-    [canEdit, churchId, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
   );
 
   const addAdditionalPosition = useCallback(
@@ -4528,6 +4598,14 @@ const ScheduleTab = ({
     else delete iemAssignments[serviceId];
 
     setPendingAdditionalPositionRemoval(null);
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+    latestScheduleRef.current = {
+      ...previousSchedule,
+      additionalPositionSlots,
+      assignments,
+      microphoneAssignments,
+      iemAssignments,
+    };
     onScheduleSaved({
       ...previousSchedule,
       additionalPositionSlots,
@@ -4536,19 +4614,28 @@ const ScheduleTab = ({
       iemAssignments,
     });
     try {
-      const response = await removeTeamSchedulePositionSlot(
-        churchId,
-        previousSchedule.scheduleId,
-        { serviceId, positionSlotKey: cellKey },
+      const response = await enqueueAssignmentSave(() =>
+        removeTeamSchedulePositionSlot(
+          churchId,
+          previousSchedule.scheduleId,
+          { serviceId, positionSlotKey: cellKey },
+        ),
       );
-      onScheduleSaved(response.schedule);
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        latestScheduleRef.current = response.schedule;
+        onScheduleSaved(response.schedule);
+      }
       showToast("Position removed from this service.", "success");
     } catch (error) {
-      onScheduleSaved(previousSchedule);
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        latestScheduleRef.current = previousSchedule;
+        onScheduleSaved(previousSchedule);
+      }
       showApiErrorToast(showToast, error, "Could not remove this position.");
     }
   }, [
     churchId,
+    enqueueAssignmentSave,
     ensureActiveSchedule,
     onScheduleSaved,
     pendingAdditionalPositionRemoval,
@@ -5989,15 +6076,28 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingCrossTeamConflictMemberLabel} is{" "}
-            {pendingCrossTeamConflict?.warning
-              ? pendingCrossTeamConflict.warning.charAt(0).toLowerCase() +
-              pendingCrossTeamConflict.warning.slice(1)
-              : "already scheduled on another team"}{" "}
-            for this service.
+            {pendingCrossTeamConflictMemberLabel} has these overlapping schedule assignments:
           </p>
+          {pendingCrossTeamConflict?.conflicts.length ? (
+            <ul className="max-h-48 space-y-2 overflow-y-auto rounded border border-gray-700 p-3 text-sm text-gray-300">
+              {pendingCrossTeamConflict.conflicts.map((conflict, index) => {
+                const teamName = data.teams.find((team) => team.teamId === conflict.teamId)?.name;
+                return (
+                  <li key={`${conflict.scheduleId}:${conflict.conflictingOccurrenceId || conflict.occurrenceId}:${index}`}>
+                    {teamName || conflict.teamId || "Another team"}
+                    {conflict.scheduleName ? ` · ${conflict.scheduleName}` : ""}
+                    {conflict.conflictingOccurrenceId ? ` · ${conflict.conflictingOccurrenceId}` : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : pendingCrossTeamConflict?.fingerprint ? (
+            <p className="text-sm text-amber-300">The conflict set changed. There are no current overlaps; confirm again to continue.</p>
+          ) : (
+            <p className="text-sm text-gray-200">{pendingCrossTeamConflict?.warning}</p>
+          )}
           <p className="text-sm text-gray-400">
-            Confirm if this is intentional.
+            Confirm only if these schedule overlaps are intentional.
           </p>
           <div className="flex flex-wrap justify-end gap-2">
             <Button

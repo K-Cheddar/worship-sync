@@ -4,7 +4,7 @@ import { encodeCsv, parseCsv, protectSpreadsheetFormula } from "./csv.js";
 import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortablePositionIcon, serializePortablePositionIcon } from "./schemas.js";
 import { portableServiceMatches } from "./matching.js";
 import { classifyPortablePreviewAction } from "./matching.js";
-import { portableWallClockToIso } from "./time.js";
+import { isValidPortablePlainDate, portableWallClockToIso } from "./time.js";
 import { formatPortableDate, formatPortableTime } from "./time.js";
 import { createZip } from "./zip.js";
 
@@ -28,8 +28,23 @@ test("CSV parser reports an empty file without headers", () => {
 
 test("CSV serializer quotes values and protects formula injection", () => {
   const csv = encodeCsv(["Name", "Notes"], [["Jane", "=HYPERLINK(\"https://bad\")"]]);
-  assert.match(csv, /'=HYPERLINK\(""https:\/\/bad""\)/);
+  assert.match(csv, /'\\=HYPERLINK\(""https:\/\/bad""\)/);
   assert.equal(protectSpreadsheetFormula("normal text"), "normal text");
+});
+
+test("formula protection round-trips WorshipSync values without changing third-party apostrophes", () => {
+  const values = ["=1+1", "+value", "-value", "@value", " =with leading space", "'intended", "normal text", "'\\=literal"];
+  const csv = encodeCsv(["Value"], values.map((value) => [value]));
+  const parsed = parseCsv(csv);
+  assert.deepEqual(parsed.rows.map(({ values: row }) => row.Value), values);
+  assert.equal(parseCsv("Value\n'=1+1\n").rows[0].values.Value, "'=1+1");
+});
+
+test("plain date validation follows the Gregorian calendar", () => {
+  assert.equal(isValidPortablePlainDate("2026-02-30"), false);
+  assert.equal(isValidPortablePlainDate("2026-13-01"), false);
+  assert.equal(isValidPortablePlainDate("2024-02-29"), true);
+  assert.equal(isValidPortablePlainDate("2025-02-29"), false);
 });
 
 test("preview action classification keeps resolvable ambiguity in review", () => {
@@ -105,6 +120,27 @@ test("portable exports use readable fields and flatten schedules by slot", () =>
   assert.deepEqual(Object.keys(PORTABLE_SCHEMAS), ["members", "teams", "positions", "services", "schedules"]);
 });
 
+test("member export unions current, legacy, and position-derived team membership", () => {
+  const exported = buildPortableDatasets({
+    members: [
+      { memberId: "m1", firstName: "Normal", lastName: "Member", positionIds: [] },
+      { memberId: "m2", firstName: "Legacy", lastName: "Member", teamMemberships: { t2: true, gone: true } },
+      { memberId: "m3", firstName: "Position", lastName: "Member", positionIds: ["p1", "missing"] },
+      { memberId: "m4", firstName: "Overlap", lastName: "Member", teamMemberships: { t1: true }, positionIds: ["p1"] },
+    ],
+    teams: [
+      { teamId: "t1", name: "Worship", memberIds: ["m1", "m4"] },
+      { teamId: "t2", name: "Media", memberIds: [] },
+    ],
+    positions: [{ positionId: "p1", teamId: "t1", name: "Keys" }],
+  }).members;
+  assert.equal(exported[0][11], "t1");
+  assert.equal(exported[1][11], "t2");
+  assert.equal(exported[2][11], "t1");
+  assert.equal(exported[3][11], "t1");
+  assert.equal(exported[1][5], "Media");
+});
+
 test("position CSV preserves legacy names and structured icon references", () => {
   const icon = { source: "tabler", name: "camera", color: "#22d3ee" };
   const exported = buildPortableDatasets({
@@ -121,6 +157,12 @@ test("position CSV preserves legacy names and structured icon references", () =>
   assert.deepEqual(parsePortablePositionIcon(exported[1].at(-1)), icon);
   assert.equal(serializePortablePositionIcon(undefined), "");
   assert.throws(() => parsePortablePositionIcon("{invalid"), { statusCode: 400 });
+  assert.throws(() => parsePortablePositionIcon('{"source":"custom","id":"church-icon"}'), { statusCode: 400 });
+  for (const iconRef of [
+    { source: "lucide", name: "MicVocal" },
+    { source: "tabler", name: "camera" },
+    { source: "worshipsync", name: "cross" },
+  ]) assert.deepEqual(parsePortablePositionIcon(serializePortablePositionIcon(iconRef)), iconRef);
 });
 
 test("combined service exports retain recurrence details and match on re-import", () => {

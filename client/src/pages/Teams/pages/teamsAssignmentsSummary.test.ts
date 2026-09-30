@@ -8,6 +8,7 @@ import type {
 } from "../../../api/authTypes";
 import {
   getOccurrenceAssignmentSummary,
+  getScheduledEquipmentHolders,
   getScheduledMicrophoneHolders,
   getTeamMicrophoneRows,
   groupAssignmentSummaryByTeam,
@@ -562,6 +563,24 @@ describe("getTeamMicrophoneRows", () => {
 });
 
 describe("getScheduledMicrophoneHolders", () => {
+  it("projects IEM holders only from the matching scheduled occurrence", () => {
+    const rows = summaryFor([
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+        },
+      }, {
+        iemAssignments: {
+          [occurrence.occurrenceId]: { "position-vocal::0": ["iem-one"] },
+          "another-date": { "position-vocal::0": ["iem-other"] },
+        },
+      }),
+    ]);
+    const holders = getScheduledEquipmentHolders(rows, [{ ...teams[0], usesIemAssignments: true }, teams[1]]);
+    expect(holders.get("iem-one")).toEqual(["Morgan Lee"]);
+    expect(holders.has("iem-other")).toBe(false);
+  });
+
   it("lists every holder of a microphone so the plan can warn about sharing", () => {
     const holders = getScheduledMicrophoneHolders(
       summaryFor([

@@ -95,6 +95,36 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(result?.occurrenceCount).toBeGreaterThan(0);
   });
 
+  it("suppresses suggestions only for open covering forms, using endDate when no deadline is stored", () => {
+    const services = [{ ...service, endDateISO: "2026-10-31" }];
+    const now = new Date("2026-09-29T12:00:00.000Z");
+    const futureDeadline = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ startDate: "2026-09-29", endDate: "2026-10-31", responseDeadline: "2026-10-01" })],
+      now,
+    });
+    const expiredDeadline = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ startDate: "2026-09-29", endDate: "2026-10-31", responseDeadline: "2026-09-28" })],
+      now,
+    });
+    const fallbackFuture = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ startDate: "2026-09-29", endDate: "2026-10-31", responseDeadline: undefined })],
+      now,
+    });
+    const fallbackExpired = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ startDate: "2026-09-01", endDate: "2026-09-28", responseDeadline: undefined })],
+      now,
+    });
+
+    expect(futureDeadline).toBeNull();
+    expect(fallbackFuture).toBeNull();
+    expect(expiredDeadline?.occurrenceCount).toBeGreaterThan(0);
+    expect(fallbackExpired?.occurrenceCount).toBeGreaterThan(0);
+  });
+
   it("suppresses duplicates only for active equivalent-scope forms", () => {
     const services = [{ ...service, endDateISO: "2026-10-31" }];
     const template = makeForm({ formId: "template", startDate: "2026-08-01", endDate: "2026-08-31", teamIds: ["worship"] });

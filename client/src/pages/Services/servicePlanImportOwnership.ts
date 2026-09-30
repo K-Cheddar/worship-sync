@@ -12,6 +12,7 @@ import { getServicePlanElementAssignees, getServicePlanElementScriptureRefs, get
 import generateRandomId from "../../utils/generateRandomId";
 import { getServicePlanResourceText, createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
+import { stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
 
 type Part = ServicePlanImportAmbiguity["parts"][number];
 
@@ -69,7 +70,8 @@ export const applyReviewedServicePlanParts = (
     if (managed.kind === "assignee") {
       assignees = assignees.flatMap((person) => {
         if (person.id !== managed.id || JSON.stringify({ name: person.name }) !== managed.fingerprint) return [person];
-        return person.microphoneIds?.length ? [{ id: person.id, microphoneIds: person.microphoneIds }] : [];
+        const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(person);
+        return equipmentSlot ? [equipmentSlot] : [];
       });
     } else if (managed.kind === "scripture") {
       scriptures = scriptures.filter((reference) =>
@@ -235,9 +237,11 @@ export const reconcileReviewedServicePlanParts = (
       const assignees = getServicePlanElementAssignees(next);
       const match = assignees.find((person) => person.id === managed.id);
       if (!match || JSON.stringify({ name: match.name }) !== managed.fingerprint) return false;
-      next.assignees = assignees.flatMap((person) => person !== match ? [person] : person.microphoneIds?.length
-        ? [{ id: person.id, microphoneIds: person.microphoneIds }]
-        : []);
+      next.assignees = assignees.flatMap((person) => {
+        if (person !== match) return [person];
+        const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(person);
+        return equipmentSlot ? [equipmentSlot] : [];
+      });
       return true;
     }
     return false;

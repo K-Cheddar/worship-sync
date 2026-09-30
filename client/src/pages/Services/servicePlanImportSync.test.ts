@@ -173,6 +173,82 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
   });
 });
 
+describe("ambiguity reassignment and assignee equipment", () => {
+  it("moves a source-managed person out of assignees without deleting their IEM", () => {
+    const before = element("row", "Reading", {
+      assignees: [{ id: "source-person", name: "Jamie", iemIds: ["iem-1"] }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jamie", sourceLedBy: "",
+        parts: [{
+          kind: "person", value: "Jamie", destination: "assignee", sourceField: "title",
+          managed: { kind: "assignee", id: "source-person", fingerprint: JSON.stringify({ name: "Jamie" }) },
+        }],
+        reasons: [], status: "confirmed", sourceFingerprint: "source-person",
+      },
+    });
+    const reviewed = applyReviewedServicePlanParts(before, [
+      { ...before.importAmbiguity!.parts[0], destination: "unassigned" },
+    ]);
+    expect(reviewed.element.assignees).toEqual([{ id: "source-person", iemIds: ["iem-1"] }]);
+  });
+});
+
+describe("stable external row identity", () => {
+  it("keeps local notes, equipment, and review state with duplicate rows through insertion and reorder", () => {
+    const build = (rows: Array<{ sourceOccurrenceId: string; title: string }>) => buildServicePlanSectionsFromImport({
+      planLabel: "Sunday worship",
+      sections: [{ sectionName: "Worship", rows: rows.map((row) => ({ elementType: "Moment", ...row, ledBy: "" })) }],
+      teamAssignments: [],
+    }, []);
+    const parsed = build([
+      { sourceOccurrenceId: "prayer-1", title: "Prayer" },
+      { sourceOccurrenceId: "prayer-2", title: "Prayer" },
+      { sourceOccurrenceId: "music-1", title: "Special Music" },
+      { sourceOccurrenceId: "music-2", title: "Special Music" },
+    ]);
+    const current = [section("section", "Worship", parsed[0].elements.map((item) => ({
+      ...item,
+      notes: plainTextToRichText(`Local note ${item.sourceOccurrenceId}`),
+      assignees: [{ id: `slot-${item.sourceOccurrenceId}`, iemIds: [`iem-${item.sourceOccurrenceId}`], microphoneIds: [`mic-${item.sourceOccurrenceId}`] }],
+      importAmbiguity: {
+        source: "servicePlanning" as const,
+        sourceKey: item.sourceOccurrenceId!,
+        sourceElementType: "Moment",
+        sourceTitle: "same source title",
+        sourceLedBy: "",
+        parts: [{ kind: "description" as const, value: `review-${item.sourceOccurrenceId}`, destination: "notes" as const }],
+        reasons: [],
+        status: "confirmed" as const,
+        sourceFingerprint: item.sourceOccurrenceId!,
+      },
+    })) )];
+    const incoming = build([
+      { sourceOccurrenceId: "new-prayer", title: "Prayer" },
+      { sourceOccurrenceId: "music-2", title: "Special Music" },
+      { sourceOccurrenceId: "prayer-2", title: "Prayer" },
+      { sourceOccurrenceId: "music-1", title: "Special Music" },
+      { sourceOccurrenceId: "prayer-1", title: "Prayer" },
+    ]);
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const originalRows = refreshed[0].elements.filter((item) => item.sourceOccurrenceId !== "new-prayer");
+
+    expect(originalRows.map((item) => item.sourceOccurrenceId)).toEqual(["prayer-1", "prayer-2", "music-1", "music-2"]);
+    originalRows.forEach((item) => {
+      expect(richTextToPlainText(item.notes)).toBe(`Local note ${item.sourceOccurrenceId}`);
+      expect(item.assignees?.[0]).toMatchObject({
+        microphoneIds: [`mic-${item.sourceOccurrenceId}`],
+        iemIds: [`iem-${item.sourceOccurrenceId}`],
+      });
+      expect(item.importAmbiguity?.sourceKey).toBe(item.sourceOccurrenceId);
+    });
+    const saved = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(saved, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(saved);
+  });
+});
+
 describe("remaining Service Planning import reconciliation defects", () => {
   const importState = (title: string, ledBy: string, note = "") => ({
     observed: { elementType: "Reading", title, ledBy, note },
@@ -2014,6 +2090,76 @@ describe("refresh source snapshots and field selections", () => {
 });
 
 describe("refreshing reviewed source-owned occurrences", () => {
+  const managedAssigneeElement = (
+    people: Array<{ id: string; name: string; sourceId: string; microphoneIds?: string[]; iemIds?: string[] }>,
+    ledBy: string,
+  ) => element("source-row", "Prayer", {
+    sourcePlanningManaged: true,
+    sourceElementTypeRaw: "Prayer",
+    sourceLedByRaw: ledBy,
+    assignees: people.map(({ sourceId, ...person }) => person),
+    servicePlanningImport: {
+      observed: { elementType: "Prayer", title: "Prayer", ledBy, note: "" },
+      applied: { elementType: "Prayer", title: "Prayer", ledBy, note: "" },
+      pendingFields: [],
+      managedAssignees: people.map(({ id, name, sourceId }) => ({
+        id,
+        fields: ["ledBy" as const],
+        ledByIdentity: sourceId,
+        fingerprint: JSON.stringify({ name }),
+      })),
+    },
+  });
+
+  const managedRefresh = (currentElement: ServicePlanElement, importedElement: ServicePlanElement) =>
+    refreshServicePlanFromImport(
+      [section("section", "Worship", [currentElement])],
+      [section("section", "Worship", [importedElement])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+  it.each([
+    ["IEM only", { iemIds: ["iem-2"] }],
+    ["microphone and IEM", { microphoneIds: ["mic-1"], iemIds: ["iem-2"] }],
+  ])("preserves %s when an imported Led By person is renamed", (_label, equipment) => {
+    const current = managedAssigneeElement([{ id: "managed", name: "Jamie", sourceId: "person-1", ...equipment }], "Jamie");
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Jamey", sourceId: "person-1" }], "Jamey");
+    const refreshed = managedRefresh(current, incoming);
+    expect(refreshed[0].elements[0].assignees).toEqual([{ id: "managed", name: "Jamey", ...equipment }]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(serialized, [section("section", "Worship", [incoming])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(serialized);
+  });
+
+  it.each([
+    ["IEM-only", { iemIds: ["iem-1"] }],
+    ["microphone and IEM", { microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+  ])("leaves a removed imported person as an unassigned %s equipment slot", (_label, equipment) => {
+    const current = managedAssigneeElement([{ id: "managed", name: "Jamie", sourceId: "person-1", ...equipment }], "Jamie");
+    const removed = managedAssigneeElement([], "");
+    const refreshed = managedRefresh(current, removed);
+    expect(refreshed[0].elements[0].assignees).toEqual([{ id: "managed", ...equipment }]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(serialized, [section("section", "Worship", [removed])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(serialized);
+  });
+
+  it("keeps equipment attached to the stable person identity when imported people reorder", () => {
+    const current = managedAssigneeElement([
+      { id: "one", name: "Jamie", sourceId: "person-1", iemIds: ["iem-1"] },
+      { id: "two", name: "Riley", sourceId: "person-2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] },
+    ], "Jamie, Riley");
+    const incoming = managedAssigneeElement([
+      { id: "new-two", name: "Riley", sourceId: "person-2" },
+      { id: "new-one", name: "Jamie", sourceId: "person-1" },
+    ], "Riley, Jamie");
+    const refreshed = managedRefresh(current, incoming);
+    expect(refreshed[0].elements[0].assignees).toEqual([
+      { id: "one", name: "Jamie", iemIds: ["iem-1"] },
+      { id: "two", name: "Riley", microphoneIds: ["mic-2"], iemIds: ["iem-2"] },
+    ]);
+  });
+
   const source = (title: string, ledBy: string) => ({
     elementType: "Reading the Word", title, ledBy, note: "",
   });

@@ -241,12 +241,7 @@ const PreparedVideoSurfaces = () => {
     void window.electronAPI?.isDev().then(setIsDevElectron);
     void refreshSources();
     void refreshMetrics();
-    const unsubscribe = window.electronAPI?.onPreparedVideoMetrics?.(setProcessMetric);
-    void window.electronAPI?.subscribePreparedVideoMetrics?.().catch(() => undefined);
-    return () => {
-      unsubscribe?.();
-      void window.electronAPI?.unsubscribePreparedVideoMetrics?.().catch(() => undefined);
-    };
+    return window.electronAPI?.subscribePreparedVideoMetrics?.(setProcessMetric);
   }, [refreshMetrics, refreshSources]);
 
   if (!window.electronAPI || isDevElectron === false) return <main className="p-8">Prepared-surface diagnostics are available only in Electron development mode.</main>;

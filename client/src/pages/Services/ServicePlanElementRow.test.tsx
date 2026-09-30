@@ -13,6 +13,7 @@ import { plainTextToRichText } from "../../types/richText";
 import type {
   ServicePlanElement,
   ServicePlanMicrophone,
+  ServiceEquipment,
   ServicePlanSongReference,
 } from "../../types/servicePlan";
 
@@ -201,7 +202,8 @@ const renderRow = (
     canCreateLibrarySong?: boolean;
     resolvedSongRef?: ServicePlanSongReference;
     microphones?: ServicePlanMicrophone[];
-    scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+    iemEquipment?: ServiceEquipment[];
+    scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
     onReviewImportAmbiguity?: jest.Mock;
   } = {},
 ) => {
@@ -239,7 +241,8 @@ const renderRow = (
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
-          scheduledMicrophoneHolders={overrides.scheduledMicrophoneHolders}
+          iemEquipment={overrides.iemEquipment}
+          scheduledEquipmentHolders={overrides.scheduledEquipmentHolders}
         />
       </SortableContext>
     </DndContext>,
@@ -1693,7 +1696,7 @@ describe("assignees and their microphones", () => {
     const user = userEvent.setup();
     renderRow({
       microphones: [orange, lapel],
-      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      scheduledEquipmentHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
       element: {
         ...baseElement,
         assignees: [{ id: "a1", name: "Abigail" }],
@@ -1717,11 +1720,24 @@ describe("assignees and their microphones", () => {
     expect(within(lapelOption).getByText("Lapel")).toBeInTheDocument();
   });
 
+  it("shows schedule holders and conflict details for IEM assignments", async () => {
+    const user = userEvent.setup();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      iemEquipment: [iem],
+      scheduledEquipmentHolders: new Map([[iem.id, ["Jordan Lee"]]]),
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail", iemIds: [iem.id] }] },
+    });
+    await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
+    await user.click(screen.getByRole("button", { name: "IEM conflict for IEM 1" }));
+    expect(await screen.findByText("IEM 1 is scheduled to Jordan Lee.")).toBeInTheDocument();
+  });
+
   it("keeps conflict details in a popover behind the warning icon", async () => {
     const user = userEvent.setup();
     renderRow({
       microphones: [orange],
-      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      scheduledEquipmentHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
       element: {
         ...baseElement,
         assignees: [{ id: "a1", name: "Abigail", microphoneIds: ["mic-orange"] }],

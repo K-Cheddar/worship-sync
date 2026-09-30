@@ -3,6 +3,7 @@ import type { SVGProps } from "react";
 import WorshipSyncIcon from "./WorshipSyncIcon";
 import {
   loadPositionIconCatalog,
+  normalizePositionIcon,
   resolveWorshipSyncIcon,
   searchPositionIconCatalog,
 } from "./iconRegistry";
@@ -55,6 +56,15 @@ describe("WorshipSync position icons", () => {
     expect(resolveWorshipSyncIcon("MicVocal")).not.toBeNull();
     expect(resolveWorshipSyncIcon({ source: "lucide", name: "Camera" })).not.toBeNull();
     expect(resolveWorshipSyncIcon({ source: "tabler", name: "camera" })).toBeNull();
+  });
+
+  it("normalizes WorshipSync refs and safely ignores unsupported or invalid refs", () => {
+    expect(normalizePositionIcon({ source: "worshipsync", name: "service" })).toEqual({ source: "worshipsync", name: "service" });
+    expect(resolveWorshipSyncIcon({ source: "worshipsync", name: "unregistered" })).toBeNull();
+    expect(normalizePositionIcon({ source: "custom", id: "old-icon" })).toEqual({ source: "custom", id: "old-icon" });
+    expect(resolveWorshipSyncIcon({ source: "custom", id: "old-icon" })).toBeNull();
+    expect(normalizePositionIcon({ source: "lucide", name: "" })).toBeNull();
+    expect(resolveWorshipSyncIcon({ source: "invalid" } as never)).toBeNull();
   });
 
   it("renders a legacy Lucide string icon", () => {

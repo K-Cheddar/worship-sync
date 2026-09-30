@@ -50,7 +50,7 @@ import {
 } from "../plansFilterPersistence";
 import {
   getOccurrenceAssignmentSummary,
-  getScheduledMicrophoneHolders,
+  getScheduledEquipmentHolders,
   getUnhydratedOccurrenceScheduleIds,
   groupAssignmentSummaryByTeam,
   teamMicrophoneSlotKey,
@@ -996,7 +996,7 @@ const TeamsPlansPage = () => {
         hydratingScheduleIds.includes(scheduleId))
         ? "loading"
         : "unavailable";
-    const scheduledMicrophoneHolders = getScheduledMicrophoneHolders(
+    const scheduledEquipmentHolders = getScheduledEquipmentHolders(
       assignments,
       pageData.teams,
     );
@@ -1019,7 +1019,7 @@ const TeamsPlansPage = () => {
               members={pageData.members}
               positions={pageData.positions}
               teams={pageData.teams}
-              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledEquipmentHolders={scheduledEquipmentHolders}
               scheduledAssignmentRows={assignments}
               onOpenScheduledAssignment={(row) => {
                 if (!row.scheduleId) return;

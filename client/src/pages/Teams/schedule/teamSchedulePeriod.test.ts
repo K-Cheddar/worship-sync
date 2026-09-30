@@ -235,6 +235,69 @@ describe("findInitialTeamSchedulePeriod", () => {
     expect(result.period.occurrences).toEqual([]);
   });
 
+  it.each([
+    ["month", "2026-11-08T10:00:00.000Z", "2026-11-01", "2026-11-30"],
+    ["cross-month custom", "2026-11-08T10:00:00.000Z", "2026-09-15", "2026-12-15"],
+    ["quarterly", "2026-11-08T10:00:00.000Z", "2026-10-01", "2026-12-31"],
+  ])("finds a team slot in a %s schedule", (_label, startsAt, startDate, endDate) => {
+    const occurrenceId = `manual@${startsAt}`;
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({ serviceId: "manual", dateTimeISO: startsAt })],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "custom-period",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Custom period",
+        serviceIds: ["manual"],
+        startDate,
+        endDate,
+        occurrences: [{ occurrenceId, serviceId: "manual", name: "Service", startsAt }],
+        assignments: {},
+        additionalPositionSlots: { [occurrenceId]: ["camera::0"] },
+      }],
+      now,
+    });
+
+    expect(result.nextOccurrence?.occurrenceId).toBe(occurrenceId);
+    expect(result.end).toBe("2026-11-30");
+  });
+
+  it("ignores past and other-team explicit slots while selecting the next future team slot", () => {
+    const pastId = "past@2026-09-20T10:00:00.000Z";
+    const futureId = "future@2026-11-08T10:00:00.000Z";
+    const schedule = (scheduleId: string, teamId: string, occurrenceId: string, startsAt: string) => ({
+      scheduleId,
+      churchId: "church-1",
+      teamId,
+      name: scheduleId,
+      serviceIds: [occurrenceId.split("@")[0]],
+      startDate: "2026-09-01",
+      endDate: "2026-12-31",
+      occurrences: [{ occurrenceId, serviceId: occurrenceId.split("@")[0], name: "Service", startsAt }],
+      assignments: {},
+      additionalPositionSlots: { [occurrenceId]: [teamId === "media" ? "camera::0" : "vocal::0"] },
+    });
+    const result = findInitialTeamSchedulePeriod({
+      services: [
+        service({ serviceId: "past", dateTimeISO: "2026-09-20T10:00:00.000Z" }),
+        service({ serviceId: "future", dateTimeISO: "2026-11-08T10:00:00.000Z" }),
+      ],
+      positions,
+      teamId: "media",
+      schedules: [
+        schedule("past-schedule", "media", pastId, "2026-09-20T10:00:00.000Z"),
+        schedule("future-schedule", "media", futureId, "2026-11-08T10:00:00.000Z"),
+        schedule("worship-schedule", "worship", "unrelated@2026-10-04T10:00:00.000Z", "2026-10-04T10:00:00.000Z"),
+      ],
+      now,
+    });
+
+    expect(result.nextOccurrence?.occurrenceId).toBe(futureId);
+    expect(result.period.occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual([futureId]);
+  });
+
   it("keeps explicit This month selection on its full calendar range", () => {
     expect(rangeFromPreset("thisMonth", now)).toEqual({ start: "2026-09-01", end: "2026-09-30" });
   });

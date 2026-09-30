@@ -135,52 +135,94 @@ const isImmediateSurfaceSource = (source: string): boolean =>
   source.startsWith("media-cache://") ||
   source.startsWith("worshipsync-media://");
 
+type CancellableWait<T> = {
+  promise: Promise<T>;
+  cancel: (reason?: Error) => void;
+};
+
 const waitForVideoEvent = (
   video: HTMLVideoElement,
   event: "loadedmetadata" | "seeked",
-): Promise<void> =>
-  new Promise((resolve, reject) => {
+): CancellableWait<void> => {
+  let cancelWait: (reason?: Error) => void = () => undefined;
+  const promise = new Promise<void>((resolve, reject) => {
+    let settled = false;
     const done = () => {
+      if (settled) return;
+      settled = true;
       cleanup();
       resolve();
     };
     const failed = () => {
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(new Error("video element error"));
+    };
+    const cancelled = (reason: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(reason);
     };
     const cleanup = () => {
       video.removeEventListener(event, done);
       video.removeEventListener("error", failed);
     };
+    cancelWait = (reason = new Error(`${event} wait cancelled`)) => cancelled(reason);
     video.addEventListener(event, done, { once: true });
     video.addEventListener("error", failed, { once: true });
   });
+  return { promise, cancel: (reason) => cancelWait(reason) };
+};
 
 const waitForPresentedFrame = (
   video: HTMLVideoElement,
-): Promise<void> =>
-  new Promise((resolve, reject) => {
+): CancellableWait<void> => {
+  const frameVideo = video as VideoWithFrameMetadata;
+  let frameRequest: number | undefined;
+  let animationFrames: number[] = [];
+  let cancelWait: (reason?: Error) => void = () => undefined;
+  const promise = new Promise<void>((resolve, reject) => {
     let settled = false;
-    const timeoutId = window.setTimeout(() => {
+    const cleanup = () => {
+      if (frameRequest != null) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+      frameRequest = undefined;
+      animationFrames.forEach((id) => window.cancelAnimationFrame(id));
+      animationFrames = [];
+    };
+    const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      reject(new Error("presented-frame timeout"));
-    }, PRESENTED_FRAME_TIMEOUT_MS);
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
-      resolve();
+      cleanup();
+      if (error) reject(error);
+      else resolve();
     };
-    const videoWithFrameCallback = video as HTMLVideoElement & {
-      requestVideoFrameCallback?: (callback: () => void) => number;
-    };
-    if (videoWithFrameCallback.requestVideoFrameCallback) {
-      videoWithFrameCallback.requestVideoFrameCallback(finish);
+    cancelWait = (reason = new Error("presented-frame wait cancelled")) => finish(reason);
+    if (frameVideo.requestVideoFrameCallback) {
+      frameRequest = frameVideo.requestVideoFrameCallback(() => finish());
       return;
     }
-    window.requestAnimationFrame(() => window.requestAnimationFrame(finish));
+    const requestNext = () => {
+      const id = window.requestAnimationFrame(() => {
+        animationFrames = animationFrames.filter((frameId) => frameId !== id);
+        if (settled) return;
+        // Match the previous two-frame paint fallback, while keeping both
+        // handles owned so cancellation can release either queued callback.
+        if (animationFrames.length === 0 && !presentedFallbackStarted) {
+          presentedFallbackStarted = true;
+          requestNext();
+        } else {
+          finish();
+        }
+      });
+      animationFrames.push(id);
+    };
+    let presentedFallbackStarted = false;
+    requestNext();
   });
+  return { promise, cancel: (reason) => cancelWait(reason) };
+};
 
 type VideoWithFrameMetadata = HTMLVideoElement & {
   requestVideoFrameCallback?: (
@@ -215,10 +257,17 @@ const waitForAdvancingFrame = (
     const baseline = readFrameMetadata(video);
     let settled = false;
     let frameRequest: number | undefined;
+    let animationFrame: number | undefined;
+    const cleanup = () => {
+      if (frameRequest != null) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+      frameRequest = undefined;
+      if (animationFrame != null) window.cancelAnimationFrame(animationFrame);
+      animationFrame = undefined;
+    };
     const timeoutId = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      if (frameRequest != null) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+      cleanup();
       reject(new Error("advancing-frame timeout"));
     }, PRESENTED_FRAME_TIMEOUT_MS);
 
@@ -226,6 +275,7 @@ const waitForAdvancingFrame = (
       if (settled || !isAdvancingMediaFrame(baseline, metadata)) return false;
       settled = true;
       window.clearTimeout(timeoutId);
+      cleanup();
       resolve(metadata);
       return true;
     };
@@ -240,10 +290,10 @@ const waitForAdvancingFrame = (
       }
       const check = () => {
         if (!finish(readFrameMetadata(video)) && !settled) {
-          window.requestAnimationFrame(check);
+          animationFrame = window.requestAnimationFrame(check);
         }
       };
-      window.requestAnimationFrame(check);
+      animationFrame = window.requestAnimationFrame(check);
     };
 
     requestNext();
@@ -270,7 +320,7 @@ const settlePreparedStartingFrame = async (
     Promise.resolve(video.play()),
     "presented-frame",
   );
-  await waitForPresentedFrame(video);
+  await withPreparationWatchdog(waitForPresentedFrame(video), "presented-frame");
   video.pause();
 };
 
@@ -321,12 +371,20 @@ const resolveSurfaceSource = async (
 };
 
 const withPreparationWatchdog = async <T,>(
-  promise: Promise<T>,
+  operation: Promise<T> | CancellableWait<T>,
   stage: "source" | "metadata" | "playback" | "presented-frame",
-): Promise<T> =>
-  new Promise<T>((resolve, reject) => {
+): Promise<T> => {
+  const isWait = (value: Promise<T> | CancellableWait<T>): value is CancellableWait<T> =>
+    typeof (value as CancellableWait<T>).cancel === "function";
+  const wait = isWait(operation) ? operation : undefined;
+  const promise = wait?.promise ?? operation as Promise<T>;
+  return new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(
-      () => reject(new Error(`${stage} preparation watchdog timeout`)),
+      () => {
+        const error = new Error(`${stage} preparation watchdog timeout`);
+        wait?.cancel(error);
+        reject(error);
+      },
       PREPARATION_WATCHDOG_MS,
     );
     promise.then(
@@ -340,6 +398,7 @@ const withPreparationWatchdog = async <T,>(
       },
     );
   });
+};
 
 const PreparedSurface = ({
   candidate,
@@ -729,6 +788,16 @@ const PreparedSurface = ({
       }
     } catch (error) {
       if (stateRef.current.generation !== loading.generation) return;
+      // A timed-out, hidden preparation must not keep decoding while the
+      // bounded retry waits. A newer generation or a live view owns the
+      // element and is therefore never paused by this attempt's cleanup.
+      if (
+        generationRef.current === loading.generation &&
+        !viewRef.current &&
+        lifecyclePhaseRef.current !== "active-playing"
+      ) {
+        video.pause();
+      }
       const message = getPreparedVideoSurfaceErrorMessage(stage, error);
       onReadyChange(candidate.mediaKey, false);
       frozenSourceRef.current = undefined;
@@ -768,7 +837,7 @@ const PreparedSurface = ({
       return;
     }
     resetInFlightRef.current = true;
-    playbackAttemptRef.current += 1;
+    const resetAttempt = ++playbackAttemptRef.current;
     const generation = stateRef.current.generation;
     update(
       advancePreparedVideoSurface(stateRef.current, generation, "resetting"),
@@ -800,7 +869,13 @@ const PreparedSurface = ({
           (preparationStartedAtRef.current ?? performance.now()),
       });
     } catch (error) {
-      if (stateRef.current.generation !== generation) return;
+      if (
+        stateRef.current.generation !== generation ||
+        playbackAttemptRef.current !== resetAttempt
+      ) return;
+      // Reset failure leaves the surface unusable. Pause only while this
+      // reset still owns the element; a later play/reset generation wins.
+      video.pause();
       const message = getPreparedVideoSurfaceErrorMessage(
         "presented-frame",
         error,
@@ -1003,6 +1078,10 @@ const PreparedSurface = ({
         restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
       }
+      // A failed activation cannot remain an invisible decoder after fallback
+      // takes over. Attempt and generation checks above keep newer playback
+      // owners untouched.
+      video.pause();
       playingGenerationRef.current = undefined;
       update(
         advancePreparedVideoSurface(

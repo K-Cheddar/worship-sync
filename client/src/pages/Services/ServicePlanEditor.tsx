@@ -401,7 +401,7 @@ type ServicePlanEditorProps = {
   positions?: TeamPosition[];
   teams?: TeamRecord[];
   /** Scheduled team holders for church microphones on this occurrence. */
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   /** Schedule-derived rows shown under linked plan items. */
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
@@ -482,7 +482,7 @@ const ServicePlanEditor = ({
   members,
   positions = [],
   teams = [],
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   teamMicrophones,
@@ -2933,7 +2933,7 @@ const ServicePlanEditor = ({
               microphones={microphones}
               iemEquipment={iemEquipment}
               microphoneAudiences={microphoneAudiences}
-              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledEquipmentHolders={scheduledEquipmentHolders}
               scheduledAssignmentRows={scheduledAssignmentRows}
               onOpenScheduledAssignment={onOpenScheduledAssignment}
               isServiceDay={isServiceDay}

@@ -42,6 +42,10 @@ export type ResourceGovernorSample = {
   systemMemoryUsedPercent?: number;
 };
 
+type SharedPreparedMetricsSampler = {
+  subscribe(listener: (snapshot: PreparedVideoMetricsResponse) => void): () => void;
+};
+
 export type ResourceGovernorCapabilities = {
   logicalCpuCount?: number;
   totalMemoryMB?: number;
@@ -322,4 +326,34 @@ export const createResourceGovernorSample = (
     ...(Number.isFinite(logicalCpuCount) && (logicalCpuCount ?? 0) > 0 && { logicalCpuCount }),
     ...(validPercent(systemMemoryUsedPercent) && { systemMemoryUsedPercent }),
   };
+};
+
+/** Connects policy updates to the already shared Electron metrics cadence. */
+export const subscribeResourceGovernorToPreparedMetrics = (
+  sampler: SharedPreparedMetricsSampler,
+  options: {
+    logicalCpuCount?: number;
+    totalMemoryMB?: number;
+    initialState?: ResourceGovernorState;
+    getSystemMemoryUsedPercent: () => number | undefined;
+    onState: (state: ResourceGovernorState) => void;
+    now?: () => number;
+  },
+): (() => void) => {
+  let state = options.initialState ?? createResourceGovernorState("auto", {
+    logicalCpuCount: options.logicalCpuCount,
+    totalMemoryMB: options.totalMemoryMB,
+  });
+  return sampler.subscribe((metrics) => {
+    state = updateResourceGovernor(
+      state,
+      createResourceGovernorSample(
+        metrics,
+        options.logicalCpuCount,
+        options.getSystemMemoryUsedPercent(),
+      ),
+      (options.now ?? Date.now)(),
+    );
+    options.onState(state);
+  });
 };

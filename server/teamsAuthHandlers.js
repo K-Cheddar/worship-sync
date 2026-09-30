@@ -68,6 +68,7 @@ import {
 } from "./dataTransfer/matching.js";
 import { createZip } from "./dataTransfer/zip.js";
 import {
+  isValidPortablePlainDate,
   isValidPortableTimeZone,
   portableWallClockToIso,
 } from "./dataTransfer/time.js";
@@ -240,6 +241,12 @@ export const createTeamsAuthHandlers = ({
         statusCode < 500 && error?.message
           ? error.message
           : withTeamsErrorNextStep(fallbackMessage),
+      ...(Array.isArray(error?.occurrenceConflicts)
+        ? {
+            occurrenceConflicts: error.occurrenceConflicts,
+            conflictFingerprint: error.conflictFingerprint || "",
+          }
+        : {}),
     });
   };
 
@@ -914,14 +921,7 @@ export const createTeamsAuthHandlers = ({
 
   const assertPlainDate = (value, fieldLabel) => {
     const date = String(value || "").trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw httpError(400, `${fieldLabel} must be a valid date.`);
-    }
-    const parsed = new Date(`${date}T00:00:00.000Z`);
-    if (
-      Number.isNaN(parsed.getTime()) ||
-      parsed.toISOString().slice(0, 10) !== date
-    ) {
+    if (!isValidPortablePlainDate(date)) {
       throw httpError(400, `${fieldLabel} must be a valid date.`);
     }
     return date;
@@ -3868,11 +3868,8 @@ export const createTeamsAuthHandlers = ({
       );
     }
     const colorField = color ? { color: color.toLowerCase() } : {};
-    if (source === "custom") {
-      const id = normalizeShortText(value.id, { max: 160 });
-      if (!id) throw httpError(400, "Custom position icon ID is required.");
-      return { source, id, ...colorField };
-    }
+    if (source === "custom")
+      throw httpError(400, "Custom position icons are not supported yet.");
     if (
       source !== "lucide" &&
       source !== "tabler" &&
@@ -6368,12 +6365,12 @@ export const createTeamsAuthHandlers = ({
   const CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE =
     "This person is already scheduled on another team or in another role for this service. Confirm to schedule them anyway.";
 
-  const normalizeAllowCrossTeamConflict = (value) => value === true;
-  // Canonical name for all occurrence conflicts. Keep the old field accepted
-  // through this release so older clients can still acknowledge warnings.
+  // Legacy boolean fields are deliberately ignored. A conflict can only be
+  // acknowledged with the fingerprint returned for the exact server conflict set.
   const normalizeAllowOccurrenceConflict = (body) =>
-    body?.allowOccurrenceConflict === true ||
-    body?.allowCrossTeamConflict === true;
+    typeof body?.confirmedOccurrenceConflictFingerprint === "string"
+      ? body.confirmedOccurrenceConflictFingerprint
+      : "";
   const normalizeAllowBlockout = (value) => value === true;
   const normalizeAllowRecurringAvailability = (value) => value === true;
 
@@ -6491,41 +6488,34 @@ export const createTeamsAuthHandlers = ({
         // provide the target cell, allowing same-schedule role conflicts too.
         if (otherSchedule.scheduleId === schedule.scheduleId && !targetCellKey)
           continue;
-        const otherOccurrence = getScheduleOccurrencesForConflict(
-          otherSchedule,
-        ).find((candidate) =>
-          scheduleOccurrencesConflict(currentOccurrence, candidate, {
-            schedulesOverlap: scheduleDateRangesOverlap(
-              schedule,
-              otherSchedule,
-            ),
-          }),
-        );
-        if (!otherOccurrence) continue;
-        const otherRow =
-          otherSchedule.scheduleId === schedule.scheduleId
+        const otherOccurrences = getScheduleOccurrencesForConflict(otherSchedule)
+          .filter((candidate) => scheduleOccurrencesConflict(currentOccurrence, candidate, {
+            schedulesOverlap: scheduleDateRangesOverlap(schedule, otherSchedule),
+          }));
+        otherOccurrences.forEach((otherOccurrence) => {
+          const otherRow = otherSchedule.scheduleId === schedule.scheduleId
             ? assignments?.[otherOccurrence.occurrenceId] || {}
             : otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
-        const otherMemberIds = new Set(
-          Object.entries(otherRow)
-            .filter(
-              ([cellKey]) =>
-                !(
-                  otherSchedule.scheduleId === schedule.scheduleId &&
-                  cellKey === targetCellKey
+          const otherMemberIds = new Set(
+            Object.entries(otherRow)
+              .filter(([cellKey]) => !(otherSchedule.scheduleId === schedule.scheduleId && cellKey === targetCellKey))
+              .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
+          );
+          targetMemberIds.forEach((memberId) => {
+            if (otherMemberIds.has(memberId)) {
+              conflicts.push({
+                memberId,
+                scheduleId: otherSchedule.scheduleId,
+                scheduleName: otherSchedule.name || "",
+                teamId: otherSchedule.teamId || "",
+                occurrenceId: currentOccurrence.occurrenceId,
+                conflictingOccurrenceId: otherOccurrence.occurrenceId,
+                cellKeys: Object.keys(otherRow).filter((cellKey) =>
+                  cellKey !== targetCellKey && getScheduleAssignmentCellMemberIds(otherRow[cellKey]).includes(memberId),
                 ),
-            )
-            .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
-        );
-        targetMemberIds.forEach((memberId) => {
-          if (otherMemberIds.has(memberId)) {
-            conflicts.push({
-              memberId,
-              scheduleId: otherSchedule.scheduleId,
-              teamId: otherSchedule.teamId,
-              occurrenceId: currentOccurrence.occurrenceId,
-            });
-          }
+              });
+            }
+          });
         });
       }
     }
@@ -6537,11 +6527,10 @@ export const createTeamsAuthHandlers = ({
     assignments,
     schedules,
     memberIds,
-    allowCrossTeamConflict,
+    confirmedFingerprint,
     targetCellKey,
     targetOccurrenceId,
   }) => {
-    if (allowCrossTeamConflict) return;
     const conflicts = findCrossTeamScheduleAssignmentConflicts({
       schedule,
       assignments,
@@ -6550,8 +6539,30 @@ export const createTeamsAuthHandlers = ({
       targetCellKey,
       targetOccurrenceId,
     });
-    if (conflicts.length > 0) {
-      throw httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
+    const canonicalConflicts = [...new Map(conflicts.map((conflict) => [
+      JSON.stringify(conflict), conflict,
+    ])).values()].sort((a, b) =>
+      JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    );
+    const fingerprint = hashValue(JSON.stringify({
+      churchId: schedule.churchId,
+      scheduleId: schedule.scheduleId,
+      targetOccurrenceId: targetOccurrenceId || "",
+      targetCellKey: targetCellKey || "",
+      memberIds: [...(memberIds || [])].sort(),
+      conflicts: canonicalConflicts,
+    }));
+    if (canonicalConflicts.length > 0 && confirmedFingerprint !== fingerprint) {
+      const error = httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
+      error.occurrenceConflicts = canonicalConflicts;
+      error.conflictFingerprint = fingerprint;
+      throw error;
+    }
+    if (confirmedFingerprint && confirmedFingerprint !== fingerprint) {
+      const error = httpError(409, "The schedule conflicts changed. Review the updated conflict details before continuing.");
+      error.occurrenceConflicts = canonicalConflicts;
+      error.conflictFingerprint = fingerprint;
+      throw error;
     }
   };
 
@@ -7070,9 +7081,9 @@ export const createTeamsAuthHandlers = ({
       primaryMemberId: normalizedCurrentMemberId,
       shadows: sourceCell.shadows,
     });
-    if (!allowOccurrenceConflict) {
-      assertNoDuplicateScheduleMembersForService(row);
-    }
+    // A cross-schedule confirmation never grants permission to put one person
+    // in two roles in this service row.
+    assertNoDuplicateScheduleMembersForService(row);
     assignments[serviceId] = row;
     return assignments;
   };
@@ -7161,17 +7172,17 @@ export const createTeamsAuthHandlers = ({
       !resolvedGuest.guest &&
       shadowAction !== "remove"
     ) {
-      const schedules = await listTeamCollectionForChurch(
-        COLLECTIONS.teamSchedules,
-        "scheduleId",
+      const schedules = await listScheduleConflictCandidates({
         churchId,
-      );
+        schedule,
+        occurrenceId: serviceId,
+      });
       assertNoCrossTeamScheduleAssignmentConflicts({
         schedule,
         assignments,
         schedules,
         memberIds: new Set([normalizedMemberId]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetCellKey: positionSlotKey,
         targetOccurrenceId: serviceId,
       });
@@ -7179,26 +7190,67 @@ export const createTeamsAuthHandlers = ({
     return { assignments, guests: resolvedGuest.guests };
   };
 
-  const listTransactionSchedulesForChurch = async (
+  const getScheduleConflictDateRange = (schedule, occurrenceId) => {
+    const occurrence = getScheduleOccurrencesForConflict(schedule).find(
+      (item) => item.occurrenceId === occurrenceId,
+    );
+    const occurrenceDate = String(occurrence?.startsAt || "").slice(0, 10);
+    // Most writes target one concrete service date. Query only that day; use
+    // the wider custom schedule range only for legacy occurrences without time
+    // details, whose conflict relation depends on overlapping parent ranges.
+    const startDate = /^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)
+      ? occurrenceDate
+      : schedule?.startDate || schedule?.endDate || "";
+    const endDate = /^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)
+      ? occurrenceDate
+      : schedule?.endDate || schedule?.startDate || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      throw httpError(409, "Schedule dates are incomplete, so conflicts cannot be checked safely.");
+    }
+    return { startDate, endDate };
+  };
+
+  const listScheduleConflictCandidates = async ({
+    churchId,
+    schedule,
+    occurrenceId,
     transaction,
     db,
-    churchId,
-  ) => {
-    const snapshot = await transaction.get(
-      db
-        .collection(COLLECTIONS.teamSchedules)
-        .where("churchId", "==", churchId)
-        .limit(TEAM_COLLECTION_QUERY_LIMIT),
-    );
-    if (snapshot.docs.length >= TEAM_COLLECTION_QUERY_LIMIT) {
-      console.warn(
-        `Teams: ${COLLECTIONS.teamSchedules} returned the ${TEAM_COLLECTION_QUERY_LIMIT}-row query cap for church ${churchId}; conflict checks may be truncated.`,
-      );
+  }) => {
+    const { startDate, endDate } = getScheduleConflictDateRange(schedule, occurrenceId);
+    const matchesRange = (candidate) => {
+      if (!candidate || candidate.churchId !== churchId) return false;
+      const candidateStart = candidate.startDate || candidate.endDate || "";
+      const candidateEnd = candidate.endDate || candidate.startDate || "";
+      // Date-less legacy candidates cannot be excluded safely after a bounded
+      // query, so the target write fails closed when one appears in fallback data.
+      if (!candidateStart || !candidateEnd) {
+        throw httpError(409, "A schedule has incomplete dates, so conflicts cannot be checked safely.");
+      }
+      return candidateStart <= endDate && candidateEnd >= startDate;
+    };
+    const firestore = db || requireFirestore();
+    if (!transaction && !firestore) {
+      const docs = await queryDocs(COLLECTIONS.teamSchedules, [
+        { field: "churchId", value: churchId },
+      ], { limit: 0 });
+      return docs
+        .map((doc) => ({ scheduleId: doc.id, ...doc }))
+        .filter(matchesRange);
     }
-    return snapshot.docs.map((doc) => ({
-      scheduleId: doc.id,
-      ...doc.data(),
-    }));
+
+    // The parent range is intentionally used here: legacy rows can have
+    // incomplete occurrence details, in which case conflict matching falls
+    // back to overlapping schedule ranges. Firestore uses this composite index
+    // to read only schedules whose ranges can overlap this schedule window.
+    let query = firestore.collection(COLLECTIONS.teamSchedules)
+      .where("churchId", "==", churchId)
+      .where("startDate", "<=", endDate)
+      .where("endDate", ">=", startDate);
+    const snapshot = transaction
+      ? await transaction.get(query)
+      : await query.get();
+    return snapshot.docs.map((doc) => ({ scheduleId: doc.id, ...doc.data() }));
   };
 
   const readTransactionTeamEntity = (
@@ -7357,17 +7409,19 @@ export const createTeamsAuthHandlers = ({
         !resolvedGuest.guest &&
         shadowAction !== "remove"
       ) {
-        const schedules = await listTransactionSchedulesForChurch(
+        const schedules = await listScheduleConflictCandidates({
           transaction,
           db,
           churchId,
-        );
+          schedule,
+          occurrenceId: serviceId,
+        });
         assertNoCrossTeamScheduleAssignmentConflicts({
           schedule,
           assignments,
           schedules,
           memberIds: new Set([normalizedMemberId]),
-          allowCrossTeamConflict,
+          confirmedFingerprint: allowCrossTeamConflict,
           targetCellKey: positionSlotKey,
           targetOccurrenceId: serviceId,
         });
@@ -7498,7 +7552,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCurrentMemberId,
           normalizedCandidateMemberId,
         ]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetOccurrenceId: serviceId,
       });
       await setDoc(
@@ -7601,11 +7655,13 @@ export const createTeamsAuthHandlers = ({
         serviceDate,
         allowOccurrenceConflict: allowCrossTeamConflict,
       });
-      const schedules = await listTransactionSchedulesForChurch(
+      const schedules = await listScheduleConflictCandidates({
         transaction,
         db,
         churchId,
-      );
+        schedule,
+        occurrenceId: serviceId,
+      });
       assertNoCrossTeamScheduleAssignmentConflicts({
         schedule,
         assignments,
@@ -7614,7 +7670,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCurrentMemberId,
           normalizedCandidateMemberId,
         ]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetOccurrenceId: serviceId,
       });
       const update = {
@@ -8170,7 +8226,7 @@ export const createTeamsAuthHandlers = ({
       assignments: validated.assignments,
       schedules,
       memberIds: new Set([memberId]),
-      allowCrossTeamConflict: false,
+      confirmedFingerprint: "",
       targetCellKey: cellKey,
       targetOccurrenceId: occurrenceId,
     });
@@ -8837,6 +8893,28 @@ export const createTeamsAuthHandlers = ({
                 code: "required",
                 message: "Service name and recurrence are required.",
               });
+            const serviceDateFields = record.recurrence === "one_time"
+              ? [["date", record.date, "Date"]]
+              : [["startDate", record.startDate, "Start Date"], ["endDate", record.endDate, "End Date"]];
+            for (const [field, value, label] of serviceDateFields) {
+              if ((!value && field === "date") || (value && !isValidPortablePlainDate(String(value)))) {
+                issues.push({
+                  field,
+                  code: "invalid_value",
+                  message: `${label} must be a real calendar date in YYYY-MM-DD format.`,
+                });
+              }
+            }
+            if (record.startDate && record.endDate
+              && isValidPortablePlainDate(String(record.startDate))
+              && isValidPortablePlainDate(String(record.endDate))
+              && record.startDate > record.endDate) {
+              issues.push({
+                field: "endDate",
+                code: "invalid_value",
+                message: "End Date must be on or after Start Date.",
+              });
+            }
             const positionName = String(record.position || "").trim();
             if (positionName) {
               let positionMatches = record.positionId
@@ -9353,8 +9431,25 @@ export const createTeamsAuthHandlers = ({
           : [];
         if (!approvedRows.length || approvedRows.length > 2000)
           throw httpError(400, "Choose up to 2,000 valid rows to import.");
+        const stablePortableValue = (value) => {
+          if (Array.isArray(value)) return value.map(stablePortableValue);
+          if (value && typeof value === "object")
+            return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stablePortableValue(value[key])]));
+          return value;
+        };
+        const createBatchIdentity = crypto.createHash("sha256")
+          .update(JSON.stringify(stablePortableValue([churchId, type, approvedRows])))
+          .digest("hex");
+        const portableCreateKey = (approved) => crypto.createHash("sha256")
+          .update(`${createBatchIdentity}:${approved.row}`)
+          .digest("hex");
         const data = await readPortableDatasets(churchId);
         const results = [];
+        const replaceDatasetEntity = (key, idField, saved) => {
+          const index = data[key].findIndex((item) => item[idField] === saved[idField]);
+          if (index < 0) data[key].push(saved);
+          else data[key][index] = saved;
+        };
         if (type === "services") {
           const groups = new Map();
           approvedRows.forEach((approved) => {
@@ -9503,14 +9598,17 @@ export const createTeamsAuthHandlers = ({
                   400,
                   "Add at least one valid weekday and time for this multi-day service.",
                 );
-              if (
-                recurrence === "one_time" &&
-                !/^\d{4}-\d{2}-\d{2}$/.test(String(first.date || ""))
-              )
-                throw httpError(
-                  400,
-                  "One-time services need a date in YYYY-MM-DD format.",
-                );
+              const serviceDate = recurrence === "one_time"
+                ? assertPlainDate(first.date, "Service date")
+                : "";
+              const startDate = recurrence !== "one_time" && first.startDate
+                ? assertPlainDate(first.startDate, "Service start date")
+                : "";
+              const endDate = recurrence !== "one_time" && first.endDate
+                ? assertPlainDate(first.endDate, "Service end date")
+                : "";
+              if (startDate && endDate && startDate > endDate)
+                throw httpError(400, "Service start date must be on or before its end date.");
               if (
                 recurrence === "monthly" &&
                 (!Number.isInteger(Number(first.weekOrdinal)) ||
@@ -9543,7 +9641,7 @@ export const createTeamsAuthHandlers = ({
                 ...(time ? { time } : {}),
                 ...(recurrence === "one_time"
                   ? {
-                      dateTimeISO: `${String(first.date).slice(0, 10)}T${String(time || "10:00")}:00`,
+                      dateTimeISO: `${serviceDate}T${String(time || "10:00")}:00`,
                     }
                   : {}),
                 ...(recurrence === "multi_weekly" ? { daysOfWeek } : {}),
@@ -9551,12 +9649,8 @@ export const createTeamsAuthHandlers = ({
                 ...(recurrence === "monthly"
                   ? { ordinal: Number(first.weekOrdinal), weekday }
                   : {}),
-                ...(recurrence !== "one_time" && first.startDate
-                  ? { startDateISO: String(first.startDate).slice(0, 10) }
-                  : {}),
-                ...(recurrence !== "one_time" && first.endDate
-                  ? { endDateISO: String(first.endDate).slice(0, 10) }
-                  : {}),
+                ...(startDate ? { startDateISO: startDate } : {}),
+                ...(endDate ? { endDateISO: endDate } : {}),
                 positionRequirements: requirements,
                 updatedAt: nowIso(),
               };
@@ -10164,7 +10258,7 @@ export const createTeamsAuthHandlers = ({
                 },
                 assignments: payload.assignments,
                 schedules: allSchedules,
-                allowCrossTeamConflict: false,
+                confirmedFingerprint: "",
               });
               let saved;
               if (!existing) {
@@ -10395,20 +10489,28 @@ export const createTeamsAuthHandlers = ({
               portableResolutionId(approved, "person", 0) ||
               portableResolutionId(approved, "memberId", 0);
           const requestedAction = approved.action;
+          const importKey = requestedAction === "create" ? portableCreateKey(approved) : "";
           try {
             if (requestedAction !== "create" && requestedAction !== "update")
               throw httpError(400, "Choose create or update for this row.");
             if (type === "teams") {
               const id = String(approved.recordId || "").trim();
-              const existing = id
+              const byId = id
                 ? data.teams.find((item) => item.teamId === id)
                 : null;
+              const createMatches = !id && !record.teamId
+                ? data.teams.filter((item) => !item.archivedAt
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
+                : [];
+              const idempotentMatch = importKey && data.teams.find((item) => item._portableCreateKey === importKey);
+              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
                   409,
                   "The selected team is no longer active in this church. Preview the file again.",
                 );
-              if ((requestedAction === "update") !== Boolean(existing))
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
                 throw httpError(
                   409,
                   "This row no longer matches the preview. Preview it again.",
@@ -10431,6 +10533,7 @@ export const createTeamsAuthHandlers = ({
                 },
                 churchId,
               );
+              if (importKey) payload._portableCreateKey = importKey;
               const saved = await upsertTeamEntity({
                 kind: "team",
                 churchId,
@@ -10438,9 +10541,10 @@ export const createTeamsAuthHandlers = ({
                 payload,
                 adminUserId: admin.user.uid,
               });
+              replaceDatasetEntity("teams", "teamId", saved);
               results.push({
                 row,
-                status: existing ? "updated" : "created",
+                status: existing && !alreadyCreated ? "updated" : "created",
                 id: saved.teamId,
               });
               continue;
@@ -10473,18 +10577,26 @@ export const createTeamsAuthHandlers = ({
                   `The selected team "${record.team || ""}" is no longer active. Preview the file again.`,
                 );
               const id = String(approved.recordId || "").trim();
-              const existing = id
+              const byId = id
                 ? data.positions.find(
                     (item) =>
                       item.positionId === id && item.teamId === team.teamId,
                   )
                 : null;
+              const createMatches = !id && !record.positionId
+                ? data.positions.filter((item) => !item.archivedAt
+                  && item.teamId === team.teamId
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
+                : [];
+              const idempotentMatch = importKey && data.positions.find((item) => item._portableCreateKey === importKey);
+              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
                   409,
                   "The selected position is no longer active in this team. Preview the file again.",
                 );
-              if ((requestedAction === "update") !== Boolean(existing))
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
                 throw httpError(
                   409,
                   "This row no longer matches the preview. Preview it again.",
@@ -10505,6 +10617,7 @@ export const createTeamsAuthHandlers = ({
                 },
                 churchId,
               );
+              if (importKey) payload._portableCreateKey = importKey;
               const saved = await upsertTeamEntity({
                 kind: "position",
                 churchId,
@@ -10512,24 +10625,38 @@ export const createTeamsAuthHandlers = ({
                 payload,
                 adminUserId: admin.user.uid,
               });
+              replaceDatasetEntity("positions", "positionId", saved);
               results.push({
                 row,
-                status: existing ? "updated" : "created",
+                status: existing && !alreadyCreated ? "updated" : "created",
                 id: saved.positionId,
               });
               continue;
             }
             if (type === "members") {
               const id = String(approved.recordId || "").trim();
-              const existing = id
+              const byId = id
                 ? data.members.find((item) => item.memberId === id)
                 : null;
+              const importedEmail = normalizePortableMatchValue(record.email);
+              const importedPhone = String(record.phone || "").replace(/\D/g, "");
+              const hasStableContact = Boolean(importedEmail || importedPhone);
+              const createMatches = !id && !record.memberId && hasStableContact
+                ? data.members.filter((item) => !item.archivedAt
+                  && normalizePortableMatchValue(item.firstName) === normalizePortableMatchValue(record.firstName)
+                  && normalizePortableMatchValue(item.lastName) === normalizePortableMatchValue(record.lastName)
+                  && (!importedEmail || normalizePortableMatchValue(item.email) === importedEmail)
+                  && (!importedPhone || String(item.phoneNumber || "").replace(/\D/g, "") === importedPhone))
+                : [];
+              const idempotentMatch = importKey && data.members.find((item) => item._portableCreateKey === importKey);
+              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
                   409,
                   "The selected member is no longer active in this church. Preview the file again.",
                 );
-              if ((requestedAction === "update") !== Boolean(existing))
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
                 throw httpError(
                   409,
                   "This row no longer matches the preview. Preview it again.",
@@ -10629,6 +10756,7 @@ export const createTeamsAuthHandlers = ({
                   : {}),
               };
               const payload = await validateTeamMemberPayload(body, churchId);
+              if (importKey) payload._portableCreateKey = importKey;
               const requestedTeamIds = await validateMemberTeamIds(
                 body,
                 churchId,
@@ -10648,9 +10776,10 @@ export const createTeamsAuthHandlers = ({
                 requestedTeamIds,
                 adminUserId: admin.user.uid,
               });
+              replaceDatasetEntity("members", "memberId", reconciled.member);
               results.push({
                 row,
-                status: existing ? "updated" : "created",
+                status: existing && !alreadyCreated ? "updated" : "created",
                 id: reconciled.member.memberId,
               });
               continue;
@@ -13611,16 +13740,15 @@ export const createTeamsAuthHandlers = ({
           payload.teamId,
         );
         if (Object.keys(payload.assignments || {}).length > 0) {
-          const schedules = await listTeamCollectionForChurch(
-            COLLECTIONS.teamSchedules,
-            "scheduleId",
-            req.params.churchId,
-          );
+          const schedules = await listScheduleConflictCandidates({
+            churchId: req.params.churchId,
+            schedule: { churchId: req.params.churchId, ...payload },
+          });
           assertNoCrossTeamScheduleAssignmentConflicts({
             schedule: { churchId: req.params.churchId, ...payload },
             assignments: payload.assignments,
             schedules,
-            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
+            confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const schedule = await upsertTeamEntity({
@@ -13726,11 +13854,10 @@ export const createTeamsAuthHandlers = ({
             nextAssignments: payload.assignments,
           });
         if (Object.keys(newAssignmentConflictChecks).length > 0) {
-          const schedules = await listTeamCollectionForChurch(
-            COLLECTIONS.teamSchedules,
-            "scheduleId",
-            req.params.churchId,
-          );
+          const schedules = await listScheduleConflictCandidates({
+            churchId: req.params.churchId,
+            schedule: { ...existing, ...payload, scheduleId: req.params.scheduleId },
+          });
           assertNoCrossTeamScheduleAssignmentConflicts({
             schedule: {
               scheduleId: req.params.scheduleId,
@@ -13739,7 +13866,7 @@ export const createTeamsAuthHandlers = ({
             },
             assignments: newAssignmentConflictChecks,
             schedules,
-            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
+            confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const saved = await upsertTeamEntity({
@@ -15874,58 +16001,65 @@ export const createTeamsAuthHandlers = ({
         });
         const slot = parseScheduleSlotKey(slotKey);
         if (!slot) throw httpError(400, "Position slot key is invalid.");
-        assertScheduleRowContains(schedule, occurrenceId);
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item.occurrenceId === occurrenceId,
-        );
-        const requirements = await resolveScheduleOccurrenceRequirements({
-          churchId,
-          occurrence,
-        });
-        const requirement = requirements.find(
-          (item) => item?.positionId === slot.positionId,
-        );
-        const requiredCount = Math.max(
-          0,
-          Math.floor(Number(requirement?.count) || 0),
-        );
-        if (slot.slot < requiredCount || slot.slot > 99) {
-          throw httpError(
-            400,
-            "That additional position slot is not available for this service.",
+        const normalizedSlotKey = makeScheduleSlotKey(slot.positionId, slot.slot);
+        const buildUpdate = async (currentSchedule, currentTeam, currentPosition) => {
+          if (currentSchedule.churchId !== churchId || currentSchedule.teamId !== schedule.teamId) {
+            throw httpError(409, "This schedule changed. Reload and try again.");
+          }
+          assertScheduleRowContains(currentSchedule, occurrenceId);
+          const occurrence = (currentSchedule.occurrences || []).find(
+            (item) => item.occurrenceId === occurrenceId,
           );
-        }
-        const position = await assertTeamEntityInChurch(
-          "position",
-          slot.positionId,
-          churchId,
-          { label: "Position" },
-        );
-        const team = await assertTeamEntityInChurch(
-          "team",
-          schedule.teamId,
-          churchId,
-          {
-            label: "Team",
-          },
-        );
-        assertSchedulePositionForTeam({ churchId, team, position });
-        const additionalPositionSlots =
-          normalizeTeamScheduleAdditionalPositionSlots(
-            schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+          if (!occurrence) throw httpError(400, "That service is not on this schedule.");
+          const requirements = await resolveScheduleOccurrenceRequirements({ churchId, occurrence });
+          const requirement = requirements.find((item) => item?.positionId === slot.positionId);
+          const requiredCount = Math.max(0, Math.floor(Number(requirement?.count) || 0));
+          if (slot.slot < requiredCount || slot.slot > 99) {
+            throw httpError(400, "That additional position slot is not available for this service.");
+          }
+          assertSchedulePositionForTeam({ churchId, team: currentTeam, position: currentPosition });
+          const additionalPositionSlots = normalizeTeamScheduleAdditionalPositionSlots(
+            currentSchedule.additionalPositionSlots ?? currentSchedule.optionalPositionSlots,
           );
-        const row = new Set(additionalPositionSlots[occurrenceId] || []);
-        row.add(makeScheduleSlotKey(slot.positionId, slot.slot));
-        additionalPositionSlots[occurrenceId] = [...row];
-        const update = {
-          additionalPositionSlots,
-          updatedAt: nowIso(),
-          updatedByUid: admin.user.uid,
+          const row = new Set(additionalPositionSlots[occurrenceId] || []);
+          row.add(normalizedSlotKey);
+          additionalPositionSlots[occurrenceId] = [...row];
+          return {
+            additionalPositionSlots,
+            updatedAt: nowIso(),
+            updatedByUid: admin.user.uid,
+          };
         };
-        await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
-          merge: true,
-        });
-        const updatedSchedule = { ...schedule, ...update };
+        const db = requireFirestore();
+        let updatedSchedule;
+        if (db) {
+          updatedSchedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(schedule.scheduleId);
+            const teamRef = db.collection(COLLECTIONS.teams).doc(schedule.teamId);
+            const positionRef = db.collection(COLLECTIONS.teamPositions).doc(slot.positionId);
+            const [scheduleSnapshot, teamSnapshot, positionSnapshot] = await Promise.all([
+              transaction.get(scheduleRef),
+              transaction.get(teamRef),
+              transaction.get(positionRef),
+            ]);
+            const currentSchedule = readTransactionTeamEntity(scheduleSnapshot, "scheduleId", "Schedule", { active: false });
+            const currentTeam = readTransactionTeamEntity(teamSnapshot, "teamId", "Team");
+            const currentPosition = readTransactionTeamEntity(positionSnapshot, "positionId", "Position");
+            const update = await buildUpdate(currentSchedule, currentTeam, currentPosition);
+            transaction.update(scheduleRef, update);
+            return { ...currentSchedule, ...update };
+          });
+        } else {
+          updatedSchedule = await enqueueInMemoryScheduleSave(schedule.scheduleId, async () => {
+            const currentSchedule = await assertTeamEntityInChurch("schedule", schedule.scheduleId, churchId, { label: "Schedule", active: false });
+            const currentTeam = await assertTeamEntityInChurch("team", currentSchedule.teamId, churchId, { label: "Team" });
+            const currentPosition = await assertTeamEntityInChurch("position", slot.positionId, churchId, { label: "Position" });
+            const update = await buildUpdate(currentSchedule, currentTeam, currentPosition);
+            const nextSchedule = { ...currentSchedule, ...update };
+            await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, nextSchedule, { merge: false });
+            return nextSchedule;
+          });
+        }
         emitTeamsEvent(churchId, "schedule-updated", {
           schedule: updatedSchedule,
         });

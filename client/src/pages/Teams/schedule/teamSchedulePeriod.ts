@@ -140,6 +140,18 @@ export const findInitialTeamSchedulePeriod = ({
     });
   });
   const todayPlainDate = formatPlainDate(today);
+  const additionalPositionSlots = schedules
+    .filter((schedule): schedule is TeamSchedule =>
+      !schedule.archivedAt &&
+      schedule.teamId === teamId &&
+      isHydratedSchedule(schedule),
+    )
+    .reduce<Record<string, string[]>>((slots, schedule) => {
+      Object.entries(schedule.additionalPositionSlots || {}).forEach(([occurrenceId, keys]) => {
+        slots[occurrenceId] = [...(slots[occurrenceId] || []), ...keys];
+      });
+      return slots;
+    }, {});
   let target = today;
   let nextOccurrence: TeamScheduleOccurrence | null = null;
   for (const cursor = new Date(today.getFullYear(), today.getMonth(), 1); cursor <= scanEnd; cursor.setMonth(cursor.getMonth() + 1)) {
@@ -147,21 +159,6 @@ export const findInitialTeamSchedulePeriod = ({
     const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
     const monthStartDate = formatPlainDate(start);
     const monthEndDate = formatPlainDate(monthEnd);
-    const additionalPositionSlots = schedules
-      .filter((schedule) =>
-        !schedule.archivedAt &&
-        schedule.teamId === teamId &&
-        isHydratedSchedule(schedule) &&
-        schedule.startDate === monthStartDate &&
-        schedule.endDate === monthEndDate,
-      )
-      .reduce<Record<string, string[]>>((slots, schedule) => {
-        if (!isHydratedSchedule(schedule)) return slots;
-        Object.entries(schedule.additionalPositionSlots || {}).forEach(([occurrenceId, keys]) => {
-          slots[occurrenceId] = [...(slots[occurrenceId] || []), ...keys];
-        });
-        return slots;
-      }, {});
     const period = buildTeamSchedulePeriod({
       services,
       positions,
@@ -182,16 +179,6 @@ export const findInitialTeamSchedulePeriod = ({
     ? formatPlainDate(new Date(target.getFullYear(), target.getMonth() + 1, 0))
     : defaultRange.end;
   const startDate = todayPlainDate;
-  const additionalPositionSlots = schedules
-    .filter((schedule): schedule is TeamSchedule =>
-      schedule.teamId === teamId && !schedule.archivedAt && isHydratedSchedule(schedule),
-    )
-    .reduce<Record<string, string[]>>((slots, schedule) => {
-      Object.entries(schedule.additionalPositionSlots || {}).forEach(([occurrenceId, keys]) => {
-        slots[occurrenceId] = [...(slots[occurrenceId] || []), ...keys];
-      });
-      return slots;
-    }, {});
   return {
     start: startDate,
     end: periodEnd,
