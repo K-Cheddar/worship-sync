@@ -83,6 +83,17 @@ describe("resolveOccurrenceRequirements", () => {
     ]);
   });
 
+  it("can disable the legacy fallback for generated periods", () => {
+    expect(
+      resolveOccurrenceRequirements({
+        occurrence: null,
+        service: null,
+        teamPositionIds,
+        fallbackToAllTeamPositions: false,
+      }),
+    ).toEqual([]);
+  });
+
   it("uses service requirements over the team fallback", () => {
     expect(
       resolveOccurrenceRequirements({

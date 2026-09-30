@@ -2,6 +2,7 @@ import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 
 export type SchedulePeriodPreset =
+  | "upcoming"
   | "thisMonth"
   | "nextMonth"
   | "thisQuarter"
@@ -9,6 +10,7 @@ export type SchedulePeriodPreset =
   | "custom";
 
 export const SCHEDULE_PERIOD_OPTIONS: { value: SchedulePeriodPreset; label: string }[] = [
+  { value: "upcoming", label: "Upcoming" },
   { value: "thisMonth", label: "This month" },
   { value: "nextMonth", label: "Next month" },
   { value: "thisQuarter", label: "This quarter" },
@@ -26,6 +28,10 @@ export const rangeFromPreset = (
   let start: Date;
   let end: Date;
   switch (preset) {
+    case "upcoming":
+      start = new Date(year, month, now.getDate());
+      end = new Date(year, month + 2, 0);
+      break;
     case "thisMonth":
       start = new Date(year, month, 1);
       end = new Date(year, month + 1, 0);

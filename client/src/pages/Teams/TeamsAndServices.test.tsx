@@ -337,6 +337,11 @@ const openTeamsNavigationIfNeeded = async (
 
 const waitForScheduleGrid = async () => {
   await waitForTeamsBootstrap();
+  if (!screen.queryByRole("button", { name: /Sunday Vocal/i })) {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Schedule history/i }));
+    await user.click(await screen.findByRole("button", { name: /July/i }));
+  }
   await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
 };
 
@@ -662,6 +667,9 @@ describe("Teams", () => {
 
     renderTeams();
     await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Upcoming" }));
     await user.click(screen.getByRole("button", { name: "Next period" }));
     expect(await screen.findByRole("group", { name: "Team schedule identity" })).toBeInTheDocument();
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
@@ -969,7 +977,7 @@ describe("Teams", () => {
     }
   });
 
-  it("hydrates the remembered schedule after its bootstrap summary arrives", async () => {
+  it("hydrates a schedule explicitly opened from history after its summary arrives", async () => {
     const { assignments: _assignments, ...summaryBase } = scheduleBootstrap.schedules[0];
     const scheduleId = "schedule-june";
     const summary = {
@@ -983,10 +991,6 @@ describe("Teams", () => {
       scheduleId,
       name: "June",
     };
-    window.localStorage.setItem(
-      "teams:selected-schedule:church-1",
-      scheduleId,
-    );
     mockGetTeamsBootstrap.mockResolvedValue({
       ...scheduleBootstrap,
       schedules: [summary],
@@ -997,7 +1001,11 @@ describe("Teams", () => {
       relatedSchedules: [],
     });
 
+    const user = userEvent.setup();
     renderTeams();
+    await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: /Schedule history/i }));
+    await user.click(await screen.findByRole("button", { name: /June/i }));
 
     await waitFor(() => {
       expect(mockGetTeamScheduleDetail).toHaveBeenCalledWith("church-1", scheduleId);

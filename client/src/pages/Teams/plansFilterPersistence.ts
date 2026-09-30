@@ -1,6 +1,7 @@
 import type { OccurrenceOrganizeMode } from "./occurrenceOrganizeMode";
 
 export type PlansRangePreset =
+  | "upcoming"
   | "thisMonth"
   | "nextMonth"
   | "thisQuarter"
@@ -15,11 +16,14 @@ export type PlansFilterPreferences = {
   customEndDate?: string;
 };
 
+const CURRENT_PREFERENCES_VERSION = 1;
+
 const STORAGE_KEY_PREFIX = "worshipSync:teamsPlansFilters:";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const isRangePreset = (value: unknown): value is PlansRangePreset =>
-  value === "thisMonth"
+  value === "upcoming"
+  || value === "thisMonth"
   || value === "nextMonth"
   || value === "thisQuarter"
   || value === "nextQuarter"
@@ -54,9 +58,17 @@ export const readPlansFilterPreferences = (
     const serviceIds = Array.isArray(value.serviceIds)
       ? value.serviceIds.filter((id): id is string => typeof id === "string")
       : [];
-    const rangePreset = isRangePreset(value.rangePreset)
+    const storedPreset = isRangePreset(value.rangePreset)
       ? value.rangePreset
-      : "thisMonth";
+      : "upcoming";
+    // The old default was persisted as "thisMonth" with no marker, so it
+    // cannot be distinguished from an explicit choice. Treat that legacy value
+    // as the old default once; all writes below carry the new version marker.
+    const rangePreset = value.version === CURRENT_PREFERENCES_VERSION
+      ? storedPreset
+      : storedPreset === "thisMonth"
+        ? "upcoming"
+        : storedPreset;
     const customStartDate = isDate(value.customStartDate)
       ? value.customStartDate
       : undefined;
@@ -73,7 +85,7 @@ export const readPlansFilterPreferences = (
         organizeMode: isOrganizeMode(value.organizeMode)
           ? value.organizeMode
           : "byDate",
-        rangePreset: "thisMonth",
+        rangePreset: "upcoming",
       };
     }
 
@@ -96,7 +108,10 @@ export const writePlansFilterPreferences = (
   preferences: PlansFilterPreferences,
 ) => {
   try {
-    window.localStorage.setItem(storageKey(churchId), JSON.stringify(preferences));
+    window.localStorage.setItem(storageKey(churchId), JSON.stringify({
+      ...preferences,
+      version: CURRENT_PREFERENCES_VERSION,
+    }));
   } catch {
     // Ignore storage failures (private mode, quota).
   }

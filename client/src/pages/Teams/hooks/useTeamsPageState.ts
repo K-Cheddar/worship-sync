@@ -36,7 +36,6 @@ import {
 } from "../teamsUtils";
 import {
   readScheduleDrafts,
-  readSelectedScheduleId,
   writeScheduleDrafts,
   writeSelectedScheduleId,
 } from "../teamsLocalStore";
@@ -125,6 +124,7 @@ export const useTeamsPageState = () => {
   const [data, setData] = useState<TeamsData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
+  const [scheduleHydrationRequestId, setScheduleHydrationRequestId] = useState("");
   /** Bumped when another admin changes a service plan, so the Plans page can
    * refetch its summary list instead of showing stale "has plan" badges. */
   const [servicePlansRevision, setServicePlansRevision] = useState(0);
@@ -196,20 +196,13 @@ export const useTeamsPageState = () => {
     scheduleDraftsRef.current = scheduleDrafts;
   }, [scheduleDrafts]);
 
-  // Restore per-church local UI state (in-progress drafts + last-selected
-  // schedule) from localStorage. This is local-only and synchronous, so it
-  // seeds the refs before the REST bootstrap resolves — letting `refresh`
-  // preserve the user's last selection. Server data is never read from here.
+  // Restore per-church drafts. A saved schedule selection is only meaningful
+  // when the operator explicitly opens one from history or a restore link.
   useEffect(() => {
     if (!churchId) return;
     const storedDrafts = readScheduleDrafts(churchId);
     scheduleDraftsRef.current = storedDrafts;
     setScheduleDrafts(storedDrafts);
-    const storedSelected = readSelectedScheduleId(churchId);
-    if (storedSelected) {
-      selectedScheduleIdRef.current = storedSelected;
-      setSelectedScheduleId(storedSelected);
-    }
   }, [churchId]);
 
   // Show the toolbar autosave chip while teams edits are saving. begin is
@@ -313,13 +306,14 @@ export const useTeamsPageState = () => {
   );
 
   const updateSelectedScheduleId = useCallback(
-    (scheduleId: string) => {
+    (scheduleId: string, hydrate = false) => {
       // Note: changing which schedule is in view is not a data edit, so it must
       // NOT start the local-edit cooldown — doing so would needlessly block
       // inbound SSE/bootstrap grid updates for a few seconds after every dropdown
       // switch. Only edits to schedule data set lastLocalEditAtRef.
       setSelectedScheduleId(scheduleId);
       selectedScheduleIdRef.current = scheduleId;
+      setScheduleHydrationRequestId(hydrate ? scheduleId : "");
       writeSelectedScheduleId(churchId, scheduleId);
     },
     [churchId],
@@ -484,9 +478,7 @@ export const useTeamsPageState = () => {
             (schedule) => schedule.scheduleId === selectedScheduleIdRef.current,
           )
             ? selectedScheduleIdRef.current
-            : nextData.schedules.find(isActive)?.scheduleId ||
-              nextData.schedules[0]?.scheduleId ||
-              "";
+            : "";
         setData(nextData);
         setSelectedScheduleId(nextSelectedScheduleId);
         selectedScheduleIdRef.current = nextSelectedScheduleId;
@@ -677,9 +669,7 @@ export const useTeamsPageState = () => {
           current &&
           nextData.schedules.some((schedule) => schedule.scheduleId === current)
             ? current
-            : nextData.schedules.find(isActive)?.scheduleId ||
-              nextData.schedules[0]?.scheduleId ||
-              "";
+            : "";
         setSelectedScheduleId(nextSelectedScheduleId);
         selectedScheduleIdRef.current = nextSelectedScheduleId;
         writeSelectedScheduleId(churchId, nextSelectedScheduleId);
@@ -811,14 +801,21 @@ export const useTeamsPageState = () => {
   // in full, fetch its detail if an overlapping other-team schedule is only a
   // summary: Auto-fill must not plan with incomplete conflict data.
   useEffect(() => {
-    if (!churchId || !selectedScheduleId) return undefined;
-    if (hydratedScheduleIdsRef.current.has(selectedScheduleId))
+    if (
+      !churchId ||
+      !selectedScheduleId ||
+      scheduleHydrationRequestId !== selectedScheduleId
+    ) return undefined;
+    if (hydratedScheduleIdsRef.current.has(selectedScheduleId)) {
+      setScheduleHydrationRequestId("");
       return undefined;
-    const selected = data.schedules.find(
+    }
+    const currentSchedules = dataRef.current.schedules;
+    const selected = currentSchedules.find(
       (schedule) => schedule.scheduleId === selectedScheduleId,
     );
     if (!selected) return undefined;
-    const hasUnhydratedOverlappingTeamSchedule = data.schedules.some(
+    const hasUnhydratedOverlappingTeamSchedule = currentSchedules.some(
       (schedule) =>
         schedule.scheduleId !== selected.scheduleId &&
         schedule.teamId !== selected.teamId &&
@@ -827,10 +824,12 @@ export const useTeamsPageState = () => {
         scheduleDateRangesOverlap(selected, schedule),
     );
     if (isHydratedSchedule(selected) && !hasUnhydratedOverlappingTeamSchedule) {
+      setScheduleHydrationRequestId("");
       return undefined;
     }
 
     let cancelled = false;
+    let completed = false;
     hydratedScheduleIdsRef.current.add(selectedScheduleId);
     setHydratingScheduleId(selectedScheduleId);
     (async () => {
@@ -841,10 +840,18 @@ export const useTeamsPageState = () => {
         );
         if (cancelled || !isMountedRef.current) return;
         if (churchIdRef.current !== churchId) return;
-        mergeHydratedSchedules([
+        const currentById = new Map(
+          dataRef.current.schedules.map((schedule) => [schedule.scheduleId, schedule]),
+        );
+        const stillExisting = [
           response.schedule,
           ...(response.relatedSchedules || []),
-        ]);
+        ].filter((schedule) => {
+          const current = currentById.get(schedule.scheduleId);
+          return current !== undefined && !isHydratedSchedule(current);
+        });
+        if (stillExisting.length > 0) mergeHydratedSchedules(stillExisting);
+        completed = true;
       } catch (error) {
         // Allow a retry on the next selection rather than stranding the grid on
         // a summary forever.
@@ -852,18 +859,22 @@ export const useTeamsPageState = () => {
         if (cancelled || !isMountedRef.current) return;
         showApiErrorToast(showToast, error, "Could not load this schedule.");
       } finally {
-        if (!cancelled && isMountedRef.current) setHydratingScheduleId("");
+        if (!cancelled && isMountedRef.current) {
+          setHydratingScheduleId("");
+          setScheduleHydrationRequestId("");
+        }
       }
     })();
 
     return () => {
       cancelled = true;
+      if (!completed) hydratedScheduleIdsRef.current.delete(selectedScheduleId);
     };
   }, [
     churchId,
-    data.schedules,
     mergeHydratedSchedules,
     selectedScheduleId,
+    scheduleHydrationRequestId,
     showToast,
   ]);
 

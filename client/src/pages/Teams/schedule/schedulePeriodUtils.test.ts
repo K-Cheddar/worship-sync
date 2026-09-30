@@ -1,5 +1,5 @@
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
-import { findReusablePeriodSchedule } from "./schedulePeriodUtils";
+import { findReusablePeriodSchedule, rangeFromPreset } from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
   occurrenceId: "service@2026-10-03T10:00:00.000Z",
@@ -25,6 +25,29 @@ const schedule = (changes: Partial<TeamScheduleSummary> = {}): TeamScheduleSumma
   serviceIds: target.serviceIds,
   occurrences: target.occurrences,
   ...changes,
+});
+
+describe("rangeFromPreset", () => {
+  it("includes today through the end of next month for Upcoming", () => {
+    expect(rangeFromPreset("upcoming", new Date(2026, 8, 29, 12))).toEqual({
+      start: "2026-09-29",
+      end: "2026-10-31",
+    });
+  });
+
+  it("handles the December to January boundary for Upcoming", () => {
+    expect(rangeFromPreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
+      start: "2026-12-31",
+      end: "2027-01-31",
+    });
+  });
+
+  it("keeps This month as the full current calendar month", () => {
+    expect(rangeFromPreset("thisMonth", new Date(2026, 8, 29, 12))).toEqual({
+      start: "2026-09-01",
+      end: "2026-09-30",
+    });
+  });
 });
 
 describe("findReusablePeriodSchedule", () => {

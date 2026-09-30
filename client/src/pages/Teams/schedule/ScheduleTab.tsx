@@ -11,8 +11,6 @@ import {
 } from "react";
 import {
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Clipboard,
@@ -39,7 +37,6 @@ import SegmentedControl from "../../../components/SegmentedControl/SegmentedCont
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
-import DateRangePicker from "@/components/ui/DateRangePicker";
 import {
   Popover,
   PopoverContent,
@@ -68,9 +65,13 @@ import {
   findReusablePeriodSchedule,
   formatSchedulePeriodName,
   rangeFromPreset,
-  SCHEDULE_PERIOD_OPTIONS,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
+import {
+  buildTeamSchedulePeriod,
+  findInitialTeamSchedulePeriod,
+} from "./teamSchedulePeriod";
+import PeriodRangeFilter from "./PeriodRangeFilter";
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
@@ -197,6 +198,7 @@ import {
   getRequiredCount,
   isOccurrenceStaffingSlot,
   makeSlotKey,
+  parseSlotKey,
   resolveOccurrenceRequirements,
   type OccurrenceFill,
   type ScheduleSlotColumn,
@@ -333,7 +335,7 @@ const ScheduleTab = ({
   canEditMember?: (member: TeamRosterMember) => boolean;
   onEditMember?: (memberId: string, returnTo: TeamsReturnTo) => void;
   selectedScheduleId: string;
-  setSelectedScheduleId: (scheduleId: string) => void;
+  setSelectedScheduleId: (scheduleId: string, hydrate?: boolean) => void;
   scheduleDrafts: TeamsScheduleDrafts;
   onScheduleSaved: (schedule: TeamSchedule, replaceId?: string) => void;
   onScheduleRemoved: (scheduleId: string) => void;
@@ -353,8 +355,6 @@ const ScheduleTab = ({
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
   const schedules = data.schedules;
-  const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>("thisMonth");
-  const [periodRange, setPeriodRange] = useState(() => rangeFromPreset("thisMonth"));
   const [viewingSavedSchedule, setViewingSavedSchedule] = useState(false);
   // Archived schedules stay out of the quick-switcher; the browse dialog's
   // status filter is the one place to go through everything.
@@ -366,7 +366,10 @@ const ScheduleTab = ({
   // teams" from "nothing chosen yet", which is what lets the default below
   // apply only once.
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState<string | null>(
-    null,
+    () => {
+      const stored = churchId ? readScheduleTeamFilter(churchId) : null;
+      return stored ? (stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored) : null;
+    },
   );
   useEffect(() => {
     if (!churchId) return;
@@ -405,39 +408,57 @@ const ScheduleTab = ({
     return firstEditable?.teamId || activeTeams[0]?.teamId || "";
   }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
   const workspaceTeamId = (scheduleTeamFilter || defaultTeamId) ?? "";
+  const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
+  const initialTeamPeriodResult = useMemo(
+    () => findInitialTeamSchedulePeriod({
+      services: activeServices,
+      positions: data.positions,
+      teamId: workspaceTeamId,
+      schedules: data.schedules,
+    }),
+    [activeServices, data.positions, data.schedules, workspaceTeamId],
+  );
+  const initialPeriodRange = useMemo(
+    () => ({ start: initialTeamPeriodResult.start, end: initialTeamPeriodResult.end }),
+    [initialTeamPeriodResult.end, initialTeamPeriodResult.start],
+  );
+  const hasExplicitPeriodSelectionRef = useRef(false);
+  const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>(initialTeamPeriodResult.preset);
+  const [periodRange, setPeriodRange] = useState(initialPeriodRange);
+  useEffect(() => {
+    if (hasExplicitPeriodSelectionRef.current) return;
+    setPeriodPreset(initialTeamPeriodResult.preset);
+    setPeriodRange(initialPeriodRange);
+  }, [initialPeriodRange, initialTeamPeriodResult.preset]);
+  const initialTeamPeriod = initialTeamPeriodResult;
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule
     : Boolean(
         (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
         (!editableTeamIds && canEditSelectedSchedule),
       );
-  const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
-  const periodServiceIds = useMemo(() => {
-    const generated = generateScheduleOccurrences({
-      services: activeServices,
-      serviceIds: activeServices.map((service) => service.serviceId),
-      startDate: periodRange.start,
-      endDate: periodRange.end,
-    });
-    return [...new Set(generated.flatMap((occurrence) => occurrence.serviceIds || [occurrence.serviceId]))];
-  }, [activeServices, periodRange.end, periodRange.start]);
-  const generatedPeriodOccurrences = useMemo(
-    () => generateScheduleOccurrences({
-      services: activeServices,
-      serviceIds: periodServiceIds,
-      startDate: periodRange.start,
-      endDate: periodRange.end,
-    }),
-    [activeServices, periodRange.end, periodRange.start, periodServiceIds],
+  const teamPeriod = useMemo(
+    () => periodRange.start === initialTeamPeriod.start && periodRange.end === initialTeamPeriod.end
+      ? initialTeamPeriod.period
+      : buildTeamSchedulePeriod({
+          services: activeServices,
+          positions: data.positions,
+          teamId: workspaceTeamId,
+          startDate: periodRange.start,
+          endDate: periodRange.end,
+        }),
+    [activeServices, data.positions, initialTeamPeriod, periodRange.end, periodRange.start, workspaceTeamId],
   );
+  const periodServiceIds = teamPeriod.serviceIds;
+  const generatedPeriodOccurrences = teamPeriod.occurrences;
   const periodScheduleMatch = findReusablePeriodSchedule({
     schedules,
     churchId,
     teamId: workspaceTeamId,
     startDate: periodRange.start,
     endDate: periodRange.end,
-    serviceIds: periodServiceIds,
-    occurrences: generatedPeriodOccurrences,
+    serviceIds: activeServices.map((service) => service.serviceId),
+    occurrences: teamPeriod.allOccurrences,
   });
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
@@ -479,7 +500,7 @@ const ScheduleTab = ({
   useEffect(() => {
     if (viewingSavedSchedule) return;
     const nextId = matchedPeriodSchedule?.scheduleId || "";
-    if (selectedScheduleId !== nextId) setSelectedScheduleId(nextId);
+    if (selectedScheduleId !== nextId) setSelectedScheduleId(nextId, Boolean(nextId));
   }, [matchedPeriodSchedule, selectedScheduleId, setSelectedScheduleId, viewingSavedSchedule]);
   const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
     ? selectedScheduleRecord
@@ -582,6 +603,7 @@ const ScheduleTab = ({
   );
 
   const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
+    hasExplicitPeriodSelectionRef.current = true;
     setPeriodPreset(preset);
     if (preset !== "custom") setPeriodRange(rangeFromPreset(preset));
     setViewingSavedSchedule(false);
@@ -590,6 +612,7 @@ const ScheduleTab = ({
     const start = new Date(`${periodRange.start}T12:00:00`);
     const end = new Date(`${periodRange.end}T12:00:00`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    hasExplicitPeriodSelectionRef.current = true;
     if (periodPreset === "custom") {
       const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
       start.setDate(start.getDate() + days * direction);
@@ -617,23 +640,35 @@ const ScheduleTab = ({
     () => schedulePositions.map((position) => position.positionId),
     [schedulePositions],
   );
+  const serviceById = useMemo(
+    () => new Map(data.services.map((service) => [service.serviceId, service])),
+    [data.services],
+  );
   // Stable placeholder for dateless services in legacy schedules that carry no
   // occurrences and no date range. Computed once so it never drifts as the memo
   // below recomputes on data refreshes.
   const fallbackStartsAt = useMemo(() => new Date().toISOString(), []);
-  const scheduleOccurrences = useMemo(() => {
+  // What occurrences this schedule's services + date range would produce right
+  // now. Compared against the stored shape to detect grouping/timing drift.
+  const regeneratedOccurrences = useMemo(() => {
+    if (
+      !selectedSchedule?.startDate ||
+      !selectedSchedule?.endDate ||
+      selectedSchedule.scheduleId.startsWith("virtual:")
+    ) return null;
+    return generateScheduleOccurrences({
+      services: data.services,
+      serviceIds: selectedSchedule.serviceIds || [],
+      startDate: selectedSchedule.startDate,
+      endDate: selectedSchedule.endDate,
+    });
+  }, [data.services, selectedSchedule]);
+  const baseScheduleOccurrences = useMemo(() => {
     if (selectedSchedule?.occurrences?.length) return selectedSchedule.occurrences;
-    if (selectedSchedule?.startDate && selectedSchedule.endDate) {
-      return generateScheduleOccurrences({
-        services: data.services,
-        serviceIds: selectedSchedule.serviceIds || [],
-        startDate: selectedSchedule.startDate,
-        endDate: selectedSchedule.endDate,
-      });
-    }
+    if (regeneratedOccurrences) return regeneratedOccurrences;
     return (selectedSchedule?.serviceIds || [])
       .map((serviceId) => {
-        const service = data.services.find((item) => item.serviceId === serviceId);
+        const service = serviceById.get(serviceId);
         if (!service) return null;
         return {
           occurrenceId: service.serviceId,
@@ -643,18 +678,7 @@ const ScheduleTab = ({
         };
       })
       .filter(Boolean) as TeamScheduleOccurrence[];
-  }, [data.services, selectedSchedule, fallbackStartsAt]);
-  // What occurrences this schedule's services + date range would produce right
-  // now. Compared against the stored shape to detect grouping/timing drift.
-  const regeneratedOccurrences = useMemo(() => {
-    if (!selectedSchedule?.startDate || !selectedSchedule?.endDate) return null;
-    return generateScheduleOccurrences({
-      services: data.services,
-      serviceIds: selectedSchedule.serviceIds || [],
-      startDate: selectedSchedule.startDate,
-      endDate: selectedSchedule.endDate,
-    });
-  }, [data.services, selectedSchedule]);
+  }, [fallbackStartsAt, regeneratedOccurrences, selectedSchedule, serviceById]);
   // A saved schedule keeps its stored occurrence shape (so the grid stays stable);
   // if the services changed since — combined/un-combined, or a time/recurrence
   // edit — the stored occurrence ids drift from what we'd generate now, and the
@@ -776,19 +800,42 @@ const ScheduleTab = ({
     selectedSchedule,
     showToast,
   ]);
-  const requirementsByOccurrence = useMemo(() => {
+  const allRequirementsByOccurrence = useMemo(() => {
     const map = new Map<string, PositionRequirement[]>();
-    scheduleOccurrences.forEach((occurrence) => {
-      const service = data.services.find(
-        (item) => item.serviceId === occurrence.serviceId,
-      );
+    const allowLegacyFallback =
+      viewingSavedSchedule || selectedSchedule?.source == null;
+    baseScheduleOccurrences.forEach((occurrence) => {
+      const service = serviceById.get(occurrence.serviceId);
       map.set(
         occurrence.occurrenceId,
-        resolveOccurrenceRequirements({ occurrence, service, teamPositionIds }),
+        resolveOccurrenceRequirements({
+          occurrence,
+          service,
+          teamPositionIds,
+          fallbackToAllTeamPositions: allowLegacyFallback,
+        }),
       );
     });
     return map;
-  }, [data.services, scheduleOccurrences, teamPositionIds]);
+  }, [baseScheduleOccurrences, selectedSchedule?.source, serviceById, teamPositionIds, viewingSavedSchedule]);
+  const scheduleOccurrences = useMemo(() => {
+    if (viewingSavedSchedule) return baseScheduleOccurrences;
+    return baseScheduleOccurrences.filter((occurrence) =>
+      (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
+      (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
+        .some((slotKey) => {
+          const slot = parseSlotKey(slotKey);
+          return Boolean(slot && teamPositionIds.includes(slot.positionId));
+        }),
+    );
+  }, [allRequirementsByOccurrence, baseScheduleOccurrences, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
+  const requirementsByOccurrence = useMemo(
+    () => new Map(scheduleOccurrences.map((occurrence) => [
+      occurrence.occurrenceId,
+      allRequirementsByOccurrence.get(occurrence.occurrenceId) || [],
+    ])),
+    [allRequirementsByOccurrence, scheduleOccurrences],
+  );
   const scheduleColumns = useMemo(
     () =>
       buildScheduleColumns({
@@ -1499,6 +1546,7 @@ const ScheduleTab = ({
 
   useTeamsRestoreOnMount({
     onSchedulePeriodRestore: (restore) => {
+      hasExplicitPeriodSelectionRef.current = true;
       setViewingSavedSchedule(false);
       updateScheduleTeamFilter(restore.teamId);
       setPeriodPreset("custom");
@@ -1509,7 +1557,7 @@ const ScheduleTab = ({
     onScheduleRestore: (restore) => {
       if (restore.scheduleId) {
         setViewingSavedSchedule(true);
-        setSelectedScheduleId(restore.scheduleId);
+        setSelectedScheduleId(restore.scheduleId, true);
       }
       if (restore.membersPanelOpen !== undefined) {
         setMembersPanelOpen(restore.membersPanelOpen);
@@ -4743,33 +4791,23 @@ const ScheduleTab = ({
                     options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
                     disabled={!activeTeams.length}
                   />
-                  <Select
-                    className="w-full sm:min-w-40 sm:w-auto"
-                    label="Date range"
-                    hideLabel
-                    value={periodPreset}
-                    onChange={(value) => selectPeriodPreset(value as SchedulePeriodPreset)}
-                    options={SCHEDULE_PERIOD_OPTIONS}
+                  <PeriodRangeFilter
+                    preset={periodPreset}
+                    range={periodRange}
+                    displayRange={viewingSavedSchedule && selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
+                      ? { start: selectedScheduleRecord.startDate, end: selectedScheduleRecord.endDate }
+                      : periodRange}
+                    onPresetChange={selectPeriodPreset}
+                    onCustomRangeChange={(range) => {
+                      if (range.startDate && range.endDate) {
+                        hasExplicitPeriodSelectionRef.current = true;
+                        setPeriodRange({ start: range.startDate, end: range.endDate });
+                      }
+                      setViewingSavedSchedule(false);
+                    }}
+                    onNavigate={shiftPeriod}
+                    className="min-w-56 sm:w-[27rem]"
                   />
-                  <Button variant="tertiary" svg={ChevronLeft} aria-label="Previous period" onClick={() => shiftPeriod(-1)} />
-                  <span className="min-w-36 self-center text-center text-sm font-medium text-gray-200">
-                    {viewingSavedSchedule && selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
-                      ? formatSchedulePeriodName(selectedScheduleRecord.startDate, selectedScheduleRecord.endDate)
-                      : formatSchedulePeriodName(periodRange.start, periodRange.end)}
-                  </span>
-                  <Button variant="tertiary" svg={ChevronRight} aria-label="Next period" onClick={() => shiftPeriod(1)} />
-                  {periodPreset === "custom" ? (
-                    <DateRangePicker
-                      label="Custom date range"
-                      hideLabel
-                      value={{ startDate: periodRange.start, endDate: periodRange.end }}
-                      onChange={(range) => {
-                        if (range.startDate && range.endDate) setPeriodRange({ start: range.startDate, end: range.endDate });
-                        setViewingSavedSchedule(false);
-                      }}
-                      className="w-full sm:w-64"
-                    />
-                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>Schedule history</Button>
@@ -5811,7 +5849,7 @@ const ScheduleTab = ({
         initialTeamId={workspaceTeamId}
         onSelectSchedule={(scheduleId) => {
           setViewingSavedSchedule(true);
-          setSelectedScheduleId(scheduleId);
+          setSelectedScheduleId(scheduleId, true);
           setShowForm(false);
         }}
       />

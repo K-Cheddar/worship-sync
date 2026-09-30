@@ -90,6 +90,8 @@ import {
 
 type IntakeManagerProps = {
   forms: TeamIntakeForm[];
+  displayForms?: TeamIntakeForm[];
+  listHeader?: ReactNode;
   submissions: TeamIntakeSubmission[];
   intakeRecipients: TeamIntakeRecipient[];
   smsEligibilityByMemberId?: Record<
@@ -199,6 +201,8 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 
 const IntakeManager = ({
   forms,
+  displayForms,
+  listHeader,
   submissions,
   intakeRecipients,
   smsEligibilityByMemberId,
@@ -215,6 +219,7 @@ const IntakeManager = ({
   onRecipientSaved,
   onSmsDeliveryAttemptSaved,
 }: IntakeManagerProps) => {
+  const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
@@ -1952,6 +1957,7 @@ const IntakeManager = ({
         }
         list={
           <>
+            {listHeader}
             {lastCreatedPublicUrl && canEdit && !panelOpen ? (
               <div className="mb-3 rounded-md border border-emerald-400/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                 <p className="font-semibold">New public link ready.</p>
@@ -1979,7 +1985,10 @@ const IntakeManager = ({
             {forms.length === 0 ? (
               <p className="text-sm text-gray-300">No intake forms yet.</p>
             ) : null}
-            {forms.map((form) => (
+            {forms.length > 0 && visibleForms.length === 0 ? (
+              <p className="text-sm text-gray-300">No intake forms match this date range.</p>
+            ) : null}
+            {visibleForms.map((form) => (
               <EntityRow
                 key={form.formId}
                 title={form.name}

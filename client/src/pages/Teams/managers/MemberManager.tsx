@@ -67,7 +67,7 @@ import {
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
 import { formatMemberSaveToast } from "../teamsSaveToasts";
-import { canNotifyMember } from "../unnotifiableMembers";
+import { hasMemberContactInfo } from "../memberContactInfo";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -1131,11 +1131,10 @@ const MemberManager = ({
                 key={member.memberId}
                 compact
                 title={memberName(member)}
-                // Surfaced in the list, not only inside the form, so an admin
-                // can see at a glance who a notification would never reach —
-                // and fix it here, where addresses are entered.
+                // Surfaced in the list so an admin can see at a glance which
+                // roster records are missing contact information.
                 subtitle={
-                  canNotifyMember(member) ? undefined : "No email"
+                  hasMemberContactInfo(member) ? undefined : "No contact info"
                 }
                 archived={Boolean(member.archivedAt)}
                 canEdit={canEdit}
@@ -1564,7 +1563,6 @@ const MemberManager = ({
           groups={positionTeamFilters}
           groupFilterLabel="Filter positions by team"
           defaultGroupIds={draftTeamIds}
-          defaultGroupsLabel="Selected teams"
           allGroupsLabel="All teams"
           value={draft.positionIds}
           onChange={applyPositionSelection}

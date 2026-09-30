@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastContext } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
-import { getTeamsBootstrap } from "../../../api/auth";
+import { getTeamScheduleDetail, getTeamsBootstrap } from "../../../api/auth";
 import { useTeamsPageState } from "./useTeamsPageState";
 
 let mockState: unknown;
@@ -46,6 +46,7 @@ const emptyBootstrap = {
 };
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
+const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
 const originalEventSource = (global as { EventSource?: unknown }).EventSource;
 
 const emitFocus = () => act(() => window.dispatchEvent(new Event("focus")));
@@ -98,7 +99,9 @@ describe("useTeamsPageState bootstrap recovery", () => {
       value: "visible",
     });
     mockGetTeamsBootstrap.mockReset();
+    mockGetTeamScheduleDetail.mockReset();
     mockGetTeamsBootstrap.mockResolvedValue(emptyBootstrap as never);
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -118,6 +121,29 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
 
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("does not restore or hydrate the last locally selected schedule on normal entry", async () => {
+    window.localStorage.setItem("teams:selected-schedule:church-1", "old-schedule");
+    mockGetTeamsBootstrap.mockResolvedValue({
+      ...emptyBootstrap,
+      schedules: [{
+        scheduleId: "old-schedule",
+        churchId: "church-1",
+        name: "Old schedule",
+        teamId: "team-1",
+        startDate: "2025-01-01",
+        endDate: "2025-01-31",
+        serviceIds: [],
+      }],
+    } as never);
+
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    expect(result.current.selectedScheduleId).toBe("");
+    expect(mockGetTeamScheduleDetail).not.toHaveBeenCalled();
     unmount();
   });
 

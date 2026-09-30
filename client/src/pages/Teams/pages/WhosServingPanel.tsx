@@ -116,7 +116,7 @@ const ServingMemberName = ({
             context for one person, not a state the operator scans for. */}
         {canNotify === false ? (
           <p className="text-xs text-amber-300">
-            No email — they won&apos;t get notifications.
+            No email or linked account — email notifications won&apos;t reach them.
           </p>
         ) : null}
         {heldMicrophones.length ? (

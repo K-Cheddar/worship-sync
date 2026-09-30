@@ -488,10 +488,7 @@ describe("MemberManager team membership", () => {
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
     expect(vocalPositionCheckbox()).toBeChecked();
     expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
-    expect(within(positionsField()).getByRole("button", { name: "Selected teams" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(within(positionsField()).queryByRole("button", { name: "Selected teams" })).not.toBeInTheDocument();
   });
 
   it("defaults an existing member to the union of roster and team-membership teams", async () => {
@@ -513,9 +510,12 @@ describe("MemberManager team membership", () => {
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
     expect(vocalPositionCheckbox()).toBeChecked();
     expect(producerPositionCheckbox()).toBeInTheDocument();
-    expect(within(positionsField()).getByRole("button", { name: "Selected teams" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    expect(within(positionsField()).queryByRole("button", { name: "Selected teams" })).not.toBeInTheDocument();
+    expect(within(positionsField()).getByRole("button", { name: "Worship" })).toHaveAttribute(
+      "aria-pressed", "true",
+    );
+    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
+      "aria-pressed", "true",
     );
   });
 
@@ -535,9 +535,15 @@ describe("MemberManager team membership", () => {
       "true",
     );
     await toggleWorshipTeam(user);
+    expect(within(positionsField()).getByRole("button", { name: "Worship" })).toHaveAttribute(
+      "aria-pressed", "true",
+    );
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
     await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
+      "aria-pressed", "true",
+    );
     await user.click(producerPositionCheckbox());
     expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
       "aria-checked",
@@ -545,6 +551,9 @@ describe("MemberManager team membership", () => {
     );
     await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
     expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
+    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
+      "aria-pressed", "false",
+    );
     expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
       "aria-checked",
       "false",
@@ -583,6 +592,49 @@ describe("MemberManager team membership", () => {
     expect(worshipTeamCheckbox()).toHaveAttribute("aria-checked", "false");
     await toggleVocalPosition(user);
     expect(worshipTeamCheckbox()).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("keeps the team filter separate from membership until a position is selected", async () => {
+    const user = userEvent.setup();
+    const praiseTeam: TeamRecord = {
+      teamId: "team-praise",
+      churchId: "church-1",
+      name: "Praise Team",
+      memberIds: [],
+    };
+    const praisePosition = {
+      positionId: "position-praise",
+      churchId: "church-1",
+      teamId: "team-praise",
+      name: "Singer",
+    };
+    renderManager({
+      data: joinedData({
+        positions: [vocalPosition, producerPosition, praisePosition],
+        teams: [
+          { ...worshipTeam, memberIds: ["member-1"] },
+          { ...mediaTeam, memberIds: ["member-1"] },
+          praiseTeam,
+        ],
+        members: [{
+          ...worshipMember,
+          teamMemberships: { "team-media": { teamId: "team-media" } },
+        }],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+
+    const praiseFilter = within(positionsField()).getByRole("button", { name: "Praise Team" });
+    await user.click(praiseFilter);
+    expect(praiseFilter).toHaveAttribute("aria-pressed", "true");
+    expect(within(teamsField()).getByRole("checkbox", { name: /Praise Team/ })).toHaveAttribute(
+      "aria-checked", "false",
+    );
+
+    await user.click(within(positionsField()).getByRole("checkbox", { name: /Singer/ }));
+    expect(within(teamsField()).getByRole("checkbox", { name: /Praise Team/ })).toHaveAttribute(
+      "aria-checked", "true",
+    );
   });
 
   it("offers a team role as soon as a team is on the draft, before saving", async () => {
@@ -883,8 +935,8 @@ describe("MemberManager account linking", () => {
   });
 });
 
-describe("MemberManager notification readiness", () => {
-  const rosterWithAndWithoutEmail = () =>
+describe("MemberManager roster contact information", () => {
+  const rosterWithAndWithoutContactInfo = () =>
     buildData({
       members: [
         {
@@ -897,22 +949,31 @@ describe("MemberManager notification readiness", () => {
           blockoutDates: [],
         },
         {
+          memberId: "member-phone-only",
+          churchId: "church-1",
+          firstName: "Phone",
+          lastName: "Only",
+          phoneNumber: "+15555550123",
+          positionIds: [],
+          blockoutDates: [],
+        },
+        {
           memberId: "member-unreachable",
           churchId: "church-1",
           firstName: "No",
-          lastName: "Email",
+          lastName: "Contact",
           positionIds: [],
           blockoutDates: [],
         },
       ],
     } as Partial<TeamsData>);
 
-  it("flags members a notification could never reach", () => {
-    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+  it("flags only members without an email address or phone number", () => {
+    renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
-    // Surfaced in the list so it is fixable where addresses are entered,
-    // rather than only visible after opening each member.
-    expect(screen.getByText("No email")).toBeInTheDocument();
+    expect(screen.getByText("No contact info")).toBeInTheDocument();
+    expect(screen.queryByText("No email")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Phone Only/ })).toBeInTheDocument();
   });
 
   it("offers contextual SMS opt-in link actions for a saved member", async () => {
@@ -926,7 +987,7 @@ describe("MemberManager notification readiness", () => {
     });
 
     try {
-      renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+      renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
       await user.click(screen.getByRole("button", { name: /Has Email/ }));
       await user.click(screen.getByRole("button", { name: /Member actions/i }));
 
@@ -957,9 +1018,9 @@ describe("MemberManager notification readiness", () => {
 
   it("shows the invite disabled, with the reason, when there is no address", async () => {
     const user = userEvent.setup();
-    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+    renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
-    await user.click(screen.getByRole("button", { name: /No Email/ }));
+    await user.click(screen.getByRole("button", { name: /No Contact/ }));
 
     // Hidden would mean a roster that never collected emails shows this action
     // nowhere, so it looks like it does not exist. Disabled with the reason is
@@ -974,7 +1035,7 @@ describe("MemberManager notification readiness", () => {
 
   it("blocks the invite while an email edit is unsaved", async () => {
     const user = userEvent.setup();
-    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+    renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
     await user.click(screen.getByRole("button", { name: /Has Email/ }));
     await user.type(screen.getByLabelText(/^Email/i), "x");
@@ -991,7 +1052,7 @@ describe("MemberManager notification readiness", () => {
 
   it("records that an invite went out so it is not sent twice", async () => {
     const user = userEvent.setup();
-    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+    renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
     await user.click(screen.getByRole("button", { name: /Has Email/ }));
     await user.click(

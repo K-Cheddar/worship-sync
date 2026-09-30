@@ -324,10 +324,9 @@ export const generateScheduleOccurrences = ({
 
   // Keep archived services so historical occurrences can still be resolved
   // (e.g. reopening a saved plan). Future dates after archivedAt are skipped below.
+  const serviceById = new Map(services.map((service) => [service.serviceId, service]));
   const selectedServices = serviceIds
-    .map((serviceId) =>
-      services.find((service) => service.serviceId === serviceId),
-    )
+    .map((serviceId) => serviceById.get(serviceId))
     .filter((service): service is TeamService => Boolean(service));
   const endTime = new Date(end);
   endTime.setHours(23, 59, 59, 999);
@@ -421,9 +420,6 @@ export const generateScheduleOccurrences = ({
     }
   }
 
-  const serviceById = new Map(
-    selectedServices.map((service) => [service.serviceId, service]),
-  );
   return mergeGroupedOccurrences(occurrences, serviceById).sort(
     (a, b) =>
       new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||

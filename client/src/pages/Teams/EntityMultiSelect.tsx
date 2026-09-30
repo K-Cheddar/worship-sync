@@ -56,14 +56,12 @@ type EntityMultiSelectProps = {
   allGroupsLabel?: string;
   /** Group IDs used by the initial, reactive filter scope. Empty means all groups. */
   defaultGroupIds?: string[];
-  /** Optional chip label for the default set of groups. */
-  defaultGroupsLabel?: string;
 };
 
 type GroupScope =
   | { type: "default" }
   | { type: "all" }
-  | { type: "group"; groupId: string };
+  | { type: "groups"; groupIds: string[] };
 
 const DEFAULT_GROUP_SCOPE: GroupScope = { type: "default" };
 
@@ -90,27 +88,34 @@ const EntityMultiSelect = ({
   groupFilterLabel,
   allGroupsLabel = "All",
   defaultGroupIds = [],
-  defaultGroupsLabel,
 }: EntityMultiSelectProps) => {
   const [query, setQuery] = useState("");
   const [groupScope, setGroupScope] = useState<GroupScope>(DEFAULT_GROUP_SCOPE);
   const isBoard = variant === "board-attendee";
 
-  const groupChips =
-    groups && (groups.length > 1 || defaultGroupsLabel) ? groups : undefined;
-  // Ignore a stale selection if the group disappears (e.g. its team was removed)
-  // and return to the reactive default scope.
+  const groupChips = groups && groups.length > 1 ? groups : undefined;
+  const validGroupIds = useMemo(
+    () => new Set(groupChips?.map((group) => group.id) || []),
+    [groupChips],
+  );
+  const validDefaultGroupIds = useMemo(
+    () => defaultGroupIds.filter((id) => validGroupIds.has(id)),
+    [defaultGroupIds, validGroupIds],
+  );
+  // Stale explicit IDs are ignored; when none remain, resume the reactive default.
   const activeScope =
-    groupScope.type === "group" &&
-    !groupChips?.some((group) => group.id === groupScope.groupId)
-      ? DEFAULT_GROUP_SCOPE
+    groupScope.type === "groups"
+      ? (() => {
+          const groupIds = groupScope.groupIds.filter((id) => validGroupIds.has(id));
+          if (groupIds.length || groupScope.groupIds.length === 0) {
+            return { type: "groups" as const, groupIds };
+          }
+          return DEFAULT_GROUP_SCOPE;
+        })()
       : groupScope;
-  const hasDefaultGroups = defaultGroupIds.length > 0;
+  const hasDefaultGroups = validDefaultGroupIds.length > 0;
   const scopeChips = groupChips
     ? [
-        ...(defaultGroupsLabel && hasDefaultGroups
-          ? [{ key: "default", label: defaultGroupsLabel, scope: { type: "default" as const } }]
-          : []),
         { key: "all", label: allGroupsLabel, scope: { type: "all" as const } },
         ...groupChips.map((group) => ({
           key: `group-${group.id}`,
@@ -125,15 +130,17 @@ const EntityMultiSelect = ({
   const scopedOptions = useMemo(
     () => {
       if (activeScope.type === "all") return options;
-      if (activeScope.type === "group") {
-        return options.filter((option) => option.groupId === activeScope.groupId);
-      }
-      if (!hasDefaultGroups) return options;
+      const groupIds =
+        activeScope.type === "groups"
+          ? activeScope.groupIds
+          : validDefaultGroupIds;
+      if (!groupIds.length) return options;
+      const allowedGroupIds = new Set(groupIds);
       return options.filter(
-        (option) => option.groupId && defaultGroupIds.includes(option.groupId),
+        (option) => option.groupId && allowedGroupIds.has(option.groupId),
       );
     },
-    [activeScope, defaultGroupIds, hasDefaultGroups, options],
+    [activeScope, options, validDefaultGroupIds],
   );
 
   const selectableIds = useMemo(
@@ -230,14 +237,19 @@ const EntityMultiSelect = ({
           aria-label={groupFilterLabel || `Filter ${label.toLowerCase()}`}
         >
           {scopeChips?.map((chip) => {
-            const selected =
-              chip.scope.type === "default"
-                ? activeScope.type === "default" && hasDefaultGroups
-                : chip.scope.type === "all"
-                  ? activeScope.type === "all" ||
-                    (activeScope.type === "default" && !hasDefaultGroups)
-                  : activeScope.type === "group" &&
-                    activeScope.groupId === chip.scope.groupId;
+            let selected = false;
+            if (chip.scope.type === "all") {
+              selected =
+                activeScope.type === "all" ||
+                (activeScope.type === "default" && !hasDefaultGroups) ||
+                (activeScope.type === "groups" && activeScope.groupIds.length === 0);
+            } else if (chip.scope.type === "group") {
+              selected =
+                activeScope.type === "groups"
+                  ? activeScope.groupIds.includes(chip.scope.groupId)
+                  : activeScope.type === "default" &&
+                    validDefaultGroupIds.includes(chip.scope.groupId);
+            }
             return (
               <Button
                 key={chip.key}
@@ -255,12 +267,20 @@ const EntityMultiSelect = ({
                     : "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100"),
                 )}
                 onClick={() => {
-                  if (chip.scope.type === "default") {
-                    setGroupScope({ type: "default" });
-                  } else if (chip.scope.type === "all") {
+                  if (chip.scope.type === "all") {
                     setGroupScope({ type: "all" });
-                  } else {
-                    setGroupScope(chip.scope);
+                  } else if (chip.scope.type === "group") {
+                    const { groupId } = chip.scope;
+                    const currentGroupIds =
+                      activeScope.type === "groups"
+                        ? activeScope.groupIds
+                        : activeScope.type === "default"
+                          ? validDefaultGroupIds
+                          : [];
+                    const nextGroupIds = currentGroupIds.includes(groupId)
+                      ? currentGroupIds.filter((id) => id !== groupId)
+                      : [...currentGroupIds, groupId];
+                    setGroupScope({ type: "groups", groupIds: nextGroupIds });
                   }
                 }}
               >

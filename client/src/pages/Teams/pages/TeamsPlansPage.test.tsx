@@ -61,10 +61,10 @@ const sabbath: TeamService = {
   time: "10:00",
 };
 
-/** Keep the fixture inside the default current-month range at month boundaries. */
+/** Keep the fixture inside Upcoming even when the suite runs near month end. */
 const oneTimeDate = (() => {
   const date = new Date();
-  date.setDate(15);
+  date.setDate(date.getDate() + 15);
   return date;
 })();
 const oneTimePlainDate = formatPlainDate(oneTimeDate);
@@ -209,6 +209,7 @@ describe("TeamsPlansPage", () => {
   });
 
   it("defaults to by-date order with an organize control when multiple services exist", async () => {
+    const user = userEvent.setup();
     renderPage();
 
     expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
@@ -219,6 +220,8 @@ describe("TeamsPlansPage", () => {
     );
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -240,6 +243,34 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "All services" })).not.toBeInTheDocument();
+  });
+
+  it("scopes By service Apply template to that service", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: /^By service$/i }));
+    await screen.findByRole("heading", { name: "Sabbath Service" });
+    await user.click(screen.getAllByRole("button", { name: "Apply template" })[0]);
+
+    const dialog = await screen.findByRole("dialog", { name: "Apply plan templates" });
+    expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).not.toBeChecked();
+  });
+
+  it("scopes By date Apply template to selected service filters", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Sabbath Service" }));
+    await user.click(screen.getByRole("button", { name: "Apply template" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Apply plan templates" });
+    expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).not.toBeChecked();
   });
 
   it("lists each service's occurrences as date tiles without repeating Add plan labels", async () => {

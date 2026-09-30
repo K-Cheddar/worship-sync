@@ -62,16 +62,19 @@ export const sanitizePositionRequirements = (
  * Resolve the position requirements that apply to one occurrence, by precedence:
  *   1. the occurrence's own override
  *   2. the service's default requirements
- *   3. fallback: every team position, one slot each
+ *   3. optional legacy fallback: every team position, one slot each
  */
 export const resolveOccurrenceRequirements = ({
   occurrence,
   service,
   teamPositionIds,
+  fallbackToAllTeamPositions = true,
 }: {
   occurrence?: Pick<TeamScheduleOccurrence, "positionRequirements"> | null;
   service?: Pick<TeamService, "positionRequirements"> | null;
   teamPositionIds: string[];
+  /** Keep legacy saved schedules readable; generated periods should pass false. */
+  fallbackToAllTeamPositions?: boolean;
 }): PositionRequirement[] => {
   // Requirements can reference positions from several teams (a service may be run by
   // more than one team), so scope them to this schedule's team.
@@ -86,7 +89,9 @@ export const resolveOccurrenceRequirements = ({
     service?.positionRequirements,
   );
   if (serviceRequirements.length) return scope(serviceRequirements);
-  return teamPositionIds.map((positionId) => ({ positionId, count: 1 }));
+  return fallbackToAllTeamPositions
+    ? teamPositionIds.map((positionId) => ({ positionId, count: 1 }))
+    : [];
 };
 
 /** How many slots a position needs for a given requirement set. */

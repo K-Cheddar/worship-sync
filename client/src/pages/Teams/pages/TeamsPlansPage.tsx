@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -15,7 +14,6 @@ import Modal from "../../../components/Modal/Modal";
 import Select from "../../../components/Select/Select";
 import Icon from "../../../components/Icon/Icon";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
-import DateRangePicker from "@/components/ui/DateRangePicker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
@@ -75,9 +73,9 @@ import {
 } from "../schedule/scheduleUtils";
 import {
   rangeFromPreset,
-  SCHEDULE_PERIOD_OPTIONS,
   type SchedulePeriodPreset,
 } from "../schedule/schedulePeriodUtils";
+import PeriodRangeFilter from "../schedule/PeriodRangeFilter";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamScheduleOccurrence,
@@ -90,10 +88,9 @@ import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
 type RangePreset = SchedulePeriodPreset;
 
-const RANGE_PRESET_OPTIONS = SCHEDULE_PERIOD_OPTIONS;
 export { rangeFromPreset };
 
-const defaultRange = () => rangeFromPreset("thisMonth");
+const defaultRange = () => rangeFromPreset("upcoming");
 
 const formatRangeDate = (value: string) =>
   new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
@@ -342,8 +339,7 @@ const TeamsPlansPage = () => {
   const initialRange = useMemo(() => defaultRange(), []);
   const [windowStart, setWindowStart] = useState(initialRange.start);
   const [windowEnd, setWindowEnd] = useState(initialRange.end);
-  const [rangePreset, setRangePreset] = useState<RangePreset>("thisMonth");
-  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const [rangePreset, setRangePreset] = useState<RangePreset>("upcoming");
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
@@ -392,7 +388,7 @@ const TeamsPlansPage = () => {
     } else {
       setSelectedServiceIds([]);
       setOrganizeMode(readPlansOrganizeMode());
-      setRangePreset("thisMonth");
+      setRangePreset("upcoming");
       setWindowStart(initialRange.start);
       setWindowEnd(initialRange.end);
     }
@@ -709,8 +705,15 @@ const TeamsPlansPage = () => {
     return () => { cancelled = true; };
   }, [bulkApplyOpen, churchId, showToast]);
 
-  const openBulkApply = () => {
-    setBulkServiceIds(selectedServiceIds.length ? selectedServiceIds : activeServices.map((service) => service.serviceId));
+  const openBulkApply = (serviceIds?: string[]) => {
+    const requestedServiceIds = serviceIds ?? (
+      selectedServiceIds.length
+        ? selectedServiceIds
+        : activeServices.map((service) => service.serviceId)
+    );
+    setBulkServiceIds(requestedServiceIds.filter((id) =>
+      activeServices.some((service) => service.serviceId === id),
+    ));
     setBulkUseDefaults(false);
     setBulkTemplatesLoaded(false);
     setBulkApplyOpen(true);
@@ -1175,84 +1178,12 @@ const TeamsPlansPage = () => {
               "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5",
               !showOrganizeToggle && "max-md:col-span-2",
             )}>
-              <div className="flex flex-col gap-1.5">
-                <span className="px-0.5 text-sm font-semibold">Range</span>
-                {isDesktop ? (
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Date range presets">
-                    {RANGE_PRESET_OPTIONS.map((option) => (
-                      <Button
-                        key={option.value}
-                        type="button"
-                        variant="tertiary"
-                        isSelected={rangePreset === option.value}
-                        className={cn(
-                          "text-xs",
-                          rangePreset === option.value &&
-                          "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                        )}
-                        onClick={() => selectRangePreset(option.value)}
-                      >
-                        {option.label}
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <Popover open={rangePopoverOpen} onOpenChange={setRangePopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        aria-label="Date range"
-                        aria-haspopup="dialog"
-                        className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
-                      >
-                        <span>{RANGE_PRESET_OPTIONS.find((option) => option.value === rangePreset)?.label}</span>
-                        <ChevronDown className="size-4 text-gray-300" aria-hidden />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="w-56 border-gray-700 bg-gray-900 p-1.5 text-gray-100">
-                      <div className="flex flex-col gap-1" role="group" aria-label="Date range presets">
-                        {RANGE_PRESET_OPTIONS.map((option) => (
-                          <Button
-                            key={option.value}
-                            type="button"
-                            variant="tertiary"
-                            isSelected={rangePreset === option.value}
-                            className={cn(
-                              "w-full text-left text-sm max-md:min-h-0 max-md:px-2 max-md:py-1.5",
-                              rangePreset === option.value && "bg-cyan-950/40 text-cyan-100",
-                            )}
-                            onClick={() => {
-                              selectRangePreset(option.value);
-                              setRangePopoverOpen(false);
-                            }}
-                          >
-                            {option.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                )}
-                <p className="px-0.5 text-xs text-gray-400">
-                  {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
-                </p>
-                {rangePreset === "custom" ? (
-                  <DateRangePicker
-                    label="Date range"
-                    hideLabel
-                    value={{ startDate: windowStart, endDate: windowEnd }}
-                    onChange={setCustomRange}
-                    className="w-full max-w-xs"
-                    inputClassName="py-1 text-xs"
-                  />
-                ) : null}
-                {canEditServices ? (
-                  <Button type="button" variant="secondary" onClick={openBulkApply}>
-                    Apply template
-                  </Button>
-                ) : null}
-              </div>
+              <PeriodRangeFilter
+                preset={rangePreset}
+                range={{ start: windowStart, end: windowEnd }}
+                onPresetChange={selectRangePreset}
+                onCustomRangeChange={setCustomRange}
+              />
             </div>
           </div>
         </div>
@@ -1280,7 +1211,7 @@ const TeamsPlansPage = () => {
             : {})}
         >
           <header className="space-y-3 border-b border-gray-800 px-3.5 pb-3">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start justify-between gap-3">
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
                 <Icon
                   svg={CalendarDays}
@@ -1319,6 +1250,11 @@ const TeamsPlansPage = () => {
                   )}
                 </div>
               </div>
+              {canEditServices ? (
+                <Button type="button" variant="tertiary" className="shrink-0" onClick={() => openBulkApply()}>
+                  Apply template
+                </Button>
+              ) : null}
             </div>
           </header>
 
@@ -1393,7 +1329,7 @@ const TeamsPlansPage = () => {
             }
             : {})}
         >
-          {visibleGroups.map(({ key, name, service, occurrences }) => {
+          {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
             const shared = getSharedOccurrenceTiming(occurrences);
             const plannedCount = occurrences.filter((occurrence) =>
               planKeysWithPlans.has(getServicePlanKey(occurrence)),
@@ -1409,7 +1345,7 @@ const TeamsPlansPage = () => {
                 className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
               >
                 <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
                       <Icon
                         svg={CalendarDays}
@@ -1458,6 +1394,11 @@ const TeamsPlansPage = () => {
                         ) : null}
                       </div>
                     </div>
+                    {canEditServices ? (
+                      <Button type="button" variant="tertiary" className="shrink-0" onClick={() => openBulkApply(serviceIds)}>
+                        Apply template
+                      </Button>
+                    ) : null}
                   </div>
                   <div
                     className={cn(
