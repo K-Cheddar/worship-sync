@@ -546,6 +546,8 @@ export type TeamScheduleSummary = {
     /** Latest occurrence date assigned to each member in this schedule. */
     lastAssignmentDateByMemberId?: Record<string, string>;
   };
+  /** Whether any assignment, response, equipment, extra slot, or guest data exists. */
+  hasScheduleData?: boolean;
 };
 
 export type TeamSchedule = TeamScheduleSummary & {

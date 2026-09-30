@@ -452,6 +452,98 @@ test("generated schedule ensure merges combined-service requirements from curren
   ]);
 });
 
+test("generated schedule ensure reuses an older rolling record containing every visible occurrence", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_rolling_reuse");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }],
+  });
+  const cameraId = positionIds.Camera;
+  const occurrenceId = "service-sabbath@2026-10-03T10:00:00.000Z";
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6,
+      time: "10:00", positionRequirements: [{ positionId: cameraId, count: 1 }],
+    }],
+  });
+  const oldKey = createHash("sha256")
+    .update(`${teamId}\u00002026-09-29\u00002026-10-31`).digest("hex");
+  const oldScheduleId = `generated_${oldKey}`;
+  await setDoc("teamSchedules", oldScheduleId, {
+    scheduleId: oldScheduleId,
+    churchId: context.churchId,
+    name: "Sep 29 – Oct 31",
+    teamId,
+    startDate: "2026-09-29",
+    endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"],
+    source: "generated-period",
+    generatedPeriodKey: oldKey,
+    occurrences: [{
+      occurrenceId,
+      serviceId: "service-sabbath",
+      name: "Sabbath Service",
+      startsAt: "2026-10-03T10:00:00.000Z",
+      positionRequirements: [{ positionId: cameraId, count: 1 }],
+    }],
+    assignments: {
+      [occurrenceId]: { [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] } },
+    },
+  });
+  const emptyOldKey = createHash("sha256")
+    .update(`${teamId}\u00002026-09-01\u00002026-10-31`).digest("hex");
+  const emptyOldScheduleId = `generated_${emptyOldKey}`;
+  await setDoc("teamSchedules", emptyOldScheduleId, {
+    scheduleId: emptyOldScheduleId,
+    churchId: context.churchId,
+    name: "September – October 2026 (empty duplicate)",
+    teamId,
+    startDate: "2026-09-01",
+    endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"],
+    source: "generated-period",
+    generatedPeriodKey: emptyOldKey,
+    occurrences: [{
+      occurrenceId,
+      serviceId: "service-sabbath",
+      name: "Sabbath Service",
+      startsAt: "2026-10-03T10:00:00.000Z",
+      positionRequirements: [{ positionId: cameraId, count: 1 }],
+    }],
+    assignments: {},
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "September – October 2026",
+      teamId,
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+      serviceIds: ["service-sabbath"],
+      visibleOccurrenceIds: [occurrenceId],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "service-sabbath",
+        name: "Sabbath Service",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      }],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, oldScheduleId);
+  assert.equal(
+    result.payload.schedule.assignments[occurrenceId][`${cameraId}::0`].primaryMemberId,
+    "existing-member",
+  );
+});
+
 test("generated schedule ensure reuses only an equivalent source-less legacy period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_equivalent_legacy");
@@ -6398,6 +6490,7 @@ test("teams bootstrap summarizes schedules outside the hydration window", async 
   );
 
   assert.equal(summaryDistant.assignmentsOmitted, true);
+  assert.equal(summaryDistant.hasScheduleData, true);
   assert.equal(summaryDistant.assignments, undefined);
   assert.equal(summaryDistant.microphoneAssignments, undefined);
   assert.equal(summaryDistant.assignmentCounts.byMemberId[memberId], 1);
@@ -9391,6 +9484,44 @@ test("individual intake SMS records provider failure and blocks missing consent,
     body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
   });
   assert.equal(revokedSend.statusCode, 404);
+});
+
+test("default position IEM must come from equipment categorized as IEM", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("position_default_iem_category");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  const enabled = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesIemAssignments: true },
+  });
+  assert.equal(enabled.statusCode, 200);
+  const church = await getDoc("churches", context.churchId);
+  await setDoc("churches", context.churchId, {
+    ...church,
+    serviceEquipment: [
+      { id: "iem-1", category: "iem", name: "IEM 1" },
+      { id: "speaker-1", category: "speaker", name: "Speaker" },
+    ],
+  });
+
+  const invalid = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Invalid IEM", teamId, defaultIemId: "speaker-1" },
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.match(invalid.payload.errorMessage, /default IEM/i);
+
+  const valid = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Valid IEM", teamId, defaultIemId: "iem-1" },
+  });
+  assert.equal(valid.statusCode, 200);
+  assert.equal(valid.payload.position.defaultIemId, "iem-1");
 });
 
 test("generic IEM catalog rejects microphones and concurrent schedule maps coexist", async (t) => {

@@ -1,56 +1,40 @@
 name: Build Electron App
 
-# This workflow provides a manual option for building Electron apps.
-# The main auto-release workflow handles automatic electron builds on releases.
-# Use this workflow for:
-# - Manual builds (Actions tab → Run workflow)
-# - Testing electron builds independently
-# - Rebuilding a specific release tag manually
-
+# Manual native builds for validating or rebuilding the selected platform(s).
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to build
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - windows
+          - macos
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build Electron App
-    runs-on: ${{ matrix.os }}
+    name: Build Electron (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-latest' || 'macos-latest' }}
+    timeout-minutes: 20
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
-        # os: [ubuntu-latest, windows-latest]  # Linux commented out for now
-        include:
-          # - os: ubuntu-latest
-          #   platform: linux
-          - os: windows-latest
-            platform: win
-          - os: macos-latest
-            platform: mac
+        platform: ${{ fromJSON(inputs.platform == 'both' && '["windows","macos"]' || inputs.platform == 'windows' && '["windows"]' || '["macos"]') }}
 
     steps:
-      # Commented out - checking out release tag uses old code
-      # For testing, checkout current branch/commit instead
-      # - name: Get latest release tag
-      #   id: latest_release
-      #   uses: actions/github-script@v7
-      #   with:
-      #     script: |
-      #       const { data: releases } = await github.rest.repos.listReleases({
-      #         owner: context.repo.owner,
-      #         repo: context.repo.repo,
-      #         per_page: 1
-      #       });
-      #       if (releases.length > 0) {
-      #         core.setOutput('tag', releases[0].tag_name);
-      #         console.log('Latest release tag:', releases[0].tag_name);
-      #       }
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Checkout current branch/commit instead of release tag for testing
           ref: ${{ github.ref }}
           fetch-depth: 0
 
@@ -58,90 +42,67 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: "npm"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Restore Electron build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('client/package-lock.json') }}
 
       - name: Install server dependencies
         run: npm ci
 
       - name: Install client dependencies
-        run: cd client && npm ci
+        run: npm ci --prefix client
 
       - name: Build Electron app
+        run: npm run build:electron --prefix client
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build:electron
 
-      # - name: Build Electron app (Linux)
-      #   if: matrix.platform == 'linux'
-      #   run: cd client && npx electron-builder --linux --publish never
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #     NODE_OPTIONS: --max-old-space-size=4096
-      #     ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-
-      - name: Debug - Verify buildResources structure (Windows)
-        if: matrix.platform == 'win'
-        run: |
-          Write-Host "=== Current directory ==="
-          Get-Location
-          Write-Host "=== Listing buildResources directory ==="
-          Get-ChildItem client\buildResources
-          Write-Host "=== Icon file details ==="
-          Get-Item client\buildResources\icon.ico | Format-List
-          Write-Host "=== Checking config file ==="
-          Select-String -Path client\electron-builder.config.js -Pattern "win:" -Context 0,5
-          Write-Host "=== Running verification script ==="
-          cd client
-          node scripts/verify-icon-config.js
-        shell: pwsh
-
-      - name: Build Electron app (Windows)
-        if: matrix.platform == 'win'
-        run: cd client && npx electron-builder --win --publish never --config electron-builder.config.js
+      - name: Package Windows app
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win --publish never --config electron-builder.config.js
+        working-directory: client
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          DEBUG: electron-builder
-          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
-      - name: Build Electron app (macOS, unsigned)
-        if: matrix.platform == 'mac'
-        run: cd client && npx electron-builder --mac --publish never --config electron-builder.config.js
+      - name: Package macOS app (unsigned)
+        if: matrix.platform == 'macos'
+        run: npx electron-builder --mac --publish never --config electron-builder.config.js
+        working-directory: client
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      - name: Debug - Verify built executable (Windows)
-        if: matrix.platform == 'win'
-        run: |
-          Write-Host "=== Built files ==="
-          Get-ChildItem client\dist\*.exe
-          Write-Host "=== Checking executable properties ==="
-          Get-Item client\dist\*.exe | Select-Object Name, Length, LastWriteTime | Format-List
-          Write-Host "=== Attempting to read executable icon info ==="
-          $exe = Get-Item client\dist\*.exe | Select-Object -First 1
-          Write-Host "Executable: $($exe.FullName)"
-        shell: pwsh
-        continue-on-error: true
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload Windows artifacts
-        if: matrix.platform == 'win'
+        if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: electron-win
           path: |
             client/dist/*.exe
+            client/dist/*.exe.blockmap
+            client/dist/latest.yml
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload macOS artifacts
-        if: matrix.platform == 'mac'
+        if: matrix.platform == 'macos'
         uses: actions/upload-artifact@v4
         with:
           name: electron-mac
           path: |
             client/dist/*.dmg
+            client/dist/*.dmg.blockmap
             client/dist/*.zip
+            client/dist/latest-mac.yml
+          if-no-files-found: error
           retention-days: 30

@@ -143,6 +143,24 @@ describe("findInitialTeamSchedulePeriod", () => {
     expect(result.nextOccurrence?.serviceId).toBe("october");
   });
 
+  it("keeps an October 3 occurrence in the normal window on September 30", () => {
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({
+        serviceId: "october",
+        dateTimeISO: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      now: new Date("2026-09-30T12:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ start: "2026-09-30", end: "2026-10-31", preset: "upcoming" });
+    expect(result.period.occurrences.map((item) => item.occurrenceId)).toContain(
+      "october@2026-10-03T10:00:00.000Z",
+    );
+  });
+
   it("counts today's occurrence as upcoming", () => {
     const result = findInitialTeamSchedulePeriod({
       services: [service({

@@ -714,6 +714,101 @@ describe("Teams", () => {
     expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe("generated-period-2026-11-01");
   });
 
+  it("keeps an October 3 assignment visible after reopening Upcoming on September 30", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date(2026, 8, 29, 12));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const serviceId = "service-october-sabbath";
+    const positionId = "position-vocal";
+    mockState = {
+      undoable: {
+        present: {
+          serviceTimes: {
+            list: [{
+              ...mockSharedServices[0],
+              id: serviceId,
+              serviceId,
+              name: "Saturday service",
+              reccurence: "weekly",
+              dayOfWeek: 6,
+              time: "10:00",
+              positionRequirements: [{ positionId, count: 1 }],
+            }],
+          },
+        },
+      },
+    };
+    const bootstrap = {
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal", icon: "mic" }],
+      members: [{
+        memberId: "member-morgan", churchId: "church-1", firstName: "Morgan", lastName: "Lee",
+        positionIds: [positionId], blockoutDates: [], notes: "",
+      }],
+      teams: [{ ...baseBootstrap.teams[0], memberIds: ["member-morgan"] }],
+      schedules: [] as TeamSchedule[],
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(bootstrap));
+    let persistedSchedule: TeamSchedule | null = null;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      persistedSchedule = {
+        scheduleId: "generated_october-continuity",
+        churchId: "church-1",
+        name: body.name,
+        teamId: body.teamId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        serviceIds: body.serviceIds,
+        occurrences: body.occurrences,
+        source: "generated-period",
+        generatedPeriodKey: "october-continuity",
+        assignments: {},
+      };
+      return { success: true, created: true, schedule: persistedSchedule };
+    });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      persistedSchedule = {
+        ...persistedSchedule!,
+        scheduleId,
+        assignments: {
+          ...persistedSchedule!.assignments,
+          [body.serviceId]: {
+            [body.positionSlotKey]: { primaryMemberId: body.memberId || "" },
+          },
+        },
+      };
+      return { success: true, schedule: persistedSchedule };
+    });
+
+    const { unmount } = renderTeams();
+    await waitForTeamsBootstrap();
+    const [slot] = await screen.findAllByRole("button", { name: /Saturday service Vocal, Empty/i });
+    expect(slot).toBeDefined();
+    await user.click(slot);
+    await screen.findByRole("combobox", { name: /Saturday service Vocal/i });
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).toMatchObject({
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+      visibleOccurrenceIds: expect.arrayContaining([expect.stringContaining("2026-10-03")]),
+    });
+    unmount();
+
+    jest.setSystemTime(new Date(2026, 8, 30, 12));
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...bootstrap,
+      schedules: [persistedSchedule!],
+    }));
+    renderTeams();
+
+    expect(await screen.findByRole("button", { name: /Saturday service Vocal, Morgan/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sep 29/i })).not.toBeInTheDocument();
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+  });
+
   it("assigns a microphone from the selected team's schedule", async () => {
     const user = userEvent.setup();
     const microphoneSchedule: TeamSchedule = {

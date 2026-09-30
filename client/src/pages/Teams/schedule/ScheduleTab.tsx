@@ -63,7 +63,9 @@ import {
 } from "../../../api/auth";
 import {
   findReusablePeriodSchedule,
+  filterOccurrencesToRange,
   formatSchedulePeriodName,
+  persistedScheduleRange,
   rangeFromPreset,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
@@ -435,35 +437,41 @@ const ScheduleTab = ({
     setPeriodPreset(initialTeamPeriodResult.preset);
     setPeriodRange(initialPeriodRange);
   }, [initialPeriodRange, initialTeamPeriodResult.preset, workspaceTeamId]);
-  const initialTeamPeriod = initialTeamPeriodResult;
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule
     : Boolean(
         (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
         (!editableTeamIds && canEditSelectedSchedule),
       );
+  const persistedPeriodRange = useMemo(
+    () => persistedScheduleRange(periodPreset, periodRange),
+    [periodPreset, periodRange],
+  );
   const teamPeriod = useMemo(
-    () => periodRange.start === initialTeamPeriod.start && periodRange.end === initialTeamPeriod.end
-      ? initialTeamPeriod.period
-      : buildTeamSchedulePeriod({
-          services: activeServices,
-          positions: data.positions,
-          teamId: workspaceTeamId,
-          startDate: periodRange.start,
-          endDate: periodRange.end,
-        }),
-    [activeServices, data.positions, initialTeamPeriod, periodRange.end, periodRange.start, workspaceTeamId],
+    () => buildTeamSchedulePeriod({
+      services: activeServices,
+      positions: data.positions,
+      teamId: workspaceTeamId,
+      startDate: persistedPeriodRange.start,
+      endDate: persistedPeriodRange.end,
+    }),
+    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, workspaceTeamId],
   );
   const periodServiceIds = teamPeriod.serviceIds;
-  const generatedPeriodOccurrences = teamPeriod.occurrences;
+  const generatedPeriodOccurrences = useMemo(
+    () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange),
+    [periodRange, teamPeriod.occurrences],
+  );
   const periodScheduleMatch = findReusablePeriodSchedule({
     schedules,
     churchId,
     teamId: workspaceTeamId,
-    startDate: periodRange.start,
-    endDate: periodRange.end,
-    serviceIds: activeServices.map((service) => service.serviceId),
-    occurrences: teamPeriod.allOccurrences,
+    startDate: persistedPeriodRange.start,
+    endDate: persistedPeriodRange.end,
+    serviceIds: periodServiceIds,
+    occurrences: generatedPeriodOccurrences,
+    visibleStartDate: periodRange.start,
+    visibleEndDate: periodRange.end,
   });
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
@@ -476,12 +484,12 @@ const ScheduleTab = ({
       return null;
     }
     return {
-      scheduleId: `virtual:${workspaceTeamId}:${periodRange.start}:${periodRange.end}`,
+      scheduleId: `virtual:${workspaceTeamId}:${persistedPeriodRange.start}:${persistedPeriodRange.end}`,
       churchId,
-      name: formatSchedulePeriodName(periodRange.start, periodRange.end),
+      name: formatSchedulePeriodName(persistedPeriodRange.start, persistedPeriodRange.end),
       teamId: workspaceTeamId,
-      startDate: periodRange.start,
-      endDate: periodRange.end,
+      startDate: persistedPeriodRange.start,
+      endDate: persistedPeriodRange.end,
       serviceIds: periodServiceIds,
       occurrences: generatedPeriodOccurrences,
       assignments: {},
@@ -492,8 +500,8 @@ const ScheduleTab = ({
     churchId,
     generatedPeriodOccurrences,
     hasAmbiguousPeriodSchedules,
-    periodRange.end,
-    periodRange.start,
+    persistedPeriodRange.end,
+    persistedPeriodRange.start,
     periodServiceIds,
     workspaceTeamId,
   ]);
@@ -531,12 +539,13 @@ const ScheduleTab = ({
         setEnsuringScheduleId(virtualScheduleId);
         try {
           const result = await trackTeamsSave(ensureTeamScheduleForPeriod(churchId, {
-            name: formatSuggestedScheduleName(periodRange.start, periodRange.end),
+            name: formatSuggestedScheduleName(persistedPeriodRange.start, persistedPeriodRange.end),
             teamId: workspaceTeamId,
-            startDate: periodRange.start,
-            endDate: periodRange.end,
+            startDate: persistedPeriodRange.start,
+            endDate: persistedPeriodRange.end,
             serviceIds: periodServiceIds,
-            occurrences: generatedPeriodOccurrences,
+            occurrences: teamPeriod.occurrences,
+            visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           }));
           onScheduleSaved(result.schedule);
@@ -558,9 +567,10 @@ const ScheduleTab = ({
   }, [
     churchId,
     generatedPeriodOccurrences,
+    teamPeriod.occurrences,
     onScheduleSaved,
-    periodRange.end,
-    periodRange.start,
+    persistedPeriodRange.end,
+    persistedPeriodRange.start,
     periodServiceIds,
     setSelectedScheduleId,
     trackTeamsSave,
@@ -825,15 +835,15 @@ const ScheduleTab = ({
   }, [baseScheduleOccurrences, selectedSchedule?.source, serviceById, teamPositionIds, viewingSavedSchedule]);
   const scheduleOccurrences = useMemo(() => {
     if (viewingSavedSchedule) return baseScheduleOccurrences;
-    return baseScheduleOccurrences.filter((occurrence) =>
+    return filterOccurrencesToRange(baseScheduleOccurrences, periodRange).filter((occurrence) =>
       (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
-      (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
-        .some((slotKey) => {
-          const slot = parseSlotKey(slotKey);
-          return Boolean(slot && teamPositionIds.includes(slot.positionId));
-        }),
+        (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
+          .some((slotKey) => {
+            const slot = parseSlotKey(slotKey);
+            return Boolean(slot && teamPositionIds.includes(slot.positionId));
+          }),
     );
-  }, [allRequirementsByOccurrence, baseScheduleOccurrences, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
+  }, [allRequirementsByOccurrence, baseScheduleOccurrences, periodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
   const requirementsByOccurrence = useMemo(
     () => new Map(scheduleOccurrences.map((occurrence) => [
       occurrence.occurrenceId,

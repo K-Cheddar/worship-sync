@@ -1190,6 +1190,8 @@ export type TeamSchedulePayload = {
 export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
   /** IANA zone used to validate each generated service occurrence. */
   timeZone: string;
+  /** Visible Upcoming occurrences used to reuse an older wider generated period safely. */
+  visibleOccurrenceIds?: string[];
 };
 
 export type TeamIntakeFormPayload = {

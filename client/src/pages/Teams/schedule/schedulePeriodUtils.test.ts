@@ -1,5 +1,10 @@
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
-import { findReusablePeriodSchedule, rangeFromPreset } from "./schedulePeriodUtils";
+import {
+  filterOccurrencesToRange,
+  findReusablePeriodSchedule,
+  persistedScheduleRange,
+  rangeFromPreset,
+} from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
   occurrenceId: "service@2026-10-03T10:00:00.000Z",
@@ -50,6 +55,39 @@ describe("rangeFromPreset", () => {
   });
 });
 
+describe("persistedScheduleRange", () => {
+  it("keeps Upcoming identity on calendar bounds while its visible start advances", () => {
+    const dayOne = persistedScheduleRange("upcoming", { start: "2026-09-29", end: "2026-10-31" });
+    const dayTwo = persistedScheduleRange("upcoming", { start: "2026-09-30", end: "2026-10-31" });
+
+    expect(dayOne).toEqual({ start: "2026-09-01", end: "2026-10-31" });
+    expect(dayTwo).toEqual(dayOne);
+    expect(persistedScheduleRange("upcoming", { start: "2026-10-01", end: "2026-10-31" })).toEqual({
+      start: "2026-10-01",
+      end: "2026-10-31",
+    });
+  });
+
+  it("preserves explicit full-month and custom ranges", () => {
+    expect(persistedScheduleRange("thisMonth", { start: "2026-09-01", end: "2026-09-30" })).toEqual({
+      start: "2026-09-01",
+      end: "2026-09-30",
+    });
+    expect(persistedScheduleRange("custom", { start: "2026-09-29", end: "2026-10-03" })).toEqual({
+      start: "2026-09-29",
+      end: "2026-10-03",
+    });
+  });
+});
+
+it("filters past occurrences from the visible Upcoming range", () => {
+  const septemberOccurrence = { ...occurrence, occurrenceId: "service@2026-09-29T10:00:00.000Z", startsAt: "2026-09-29T10:00:00.000Z" };
+  expect(filterOccurrencesToRange([septemberOccurrence, occurrence], {
+    start: "2026-09-30",
+    end: "2026-10-31",
+  })).toEqual([occurrence]);
+});
+
 describe("findReusablePeriodSchedule", () => {
   it("reuses an exact generated-period schedule", () => {
     const generated = schedule({
@@ -61,6 +99,118 @@ describe("findReusablePeriodSchedule", () => {
       schedule: generated,
       ambiguous: false,
     });
+  });
+
+  it("reuses the same generated schedule on the first day of a new month", () => {
+    const septemberCreatedSchedule = schedule({
+      scheduleId: "generated_stable-september-window",
+      source: "generated-period",
+      generatedPeriodKey: "stable-september-window",
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+    });
+    const dayTwoTarget = {
+      ...target,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+    };
+
+    expect(findReusablePeriodSchedule({ schedules: [septemberCreatedSchedule], ...dayTwoTarget })).toEqual({
+      schedule: septemberCreatedSchedule,
+      ambiguous: false,
+    });
+  });
+
+  it("reuses legacy rolling generated records without dropping their assignments", () => {
+    const legacyRollingRecord = schedule({
+      scheduleId: "generated_old-rolling-key",
+      source: "generated-period",
+      generatedPeriodKey: "old-rolling-key",
+      startDate: "2026-09-29",
+      endDate: "2026-10-31",
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
+    });
+
+    expect(findReusablePeriodSchedule({
+      schedules: [legacyRollingRecord],
+      ...target,
+      startDate: "2026-09-01",
+      visibleStartDate: "2026-09-29",
+    })).toEqual({ schedule: legacyRollingRecord, ambiguous: false });
+  });
+
+  it("prefers the sole populated overlapping generated schedule", () => {
+    const empty = schedule({
+      scheduleId: "generated_empty-window",
+      generatedPeriodKey: "empty-window",
+      source: "generated-period",
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+    });
+    const populated = schedule({
+      scheduleId: "generated_populated-window",
+      generatedPeriodKey: "populated-window",
+      source: "generated-period",
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
+    });
+
+    expect(findReusablePeriodSchedule({
+      schedules: [empty, populated],
+      ...target,
+      startDate: "2026-10-01",
+      visibleStartDate: "2026-10-01",
+    })).toEqual({ schedule: populated, ambiguous: false });
+  });
+
+  it("surfaces multiple populated overlapping schedules as ambiguous", () => {
+    const populatedA = schedule({
+      scheduleId: "generated_populated-a",
+      generatedPeriodKey: "populated-a",
+      source: "generated-period",
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+      assignmentCounts: { byMemberId: { memberA: 1 }, byPositionId: { camera: 1 } },
+    });
+    const populatedB = schedule({
+      scheduleId: "generated_populated-b",
+      generatedPeriodKey: "populated-b",
+      source: "generated-period",
+      startDate: "2026-09-01",
+      endDate: "2026-10-31",
+      assignmentCounts: { byMemberId: { memberB: 1 }, byPositionId: { camera: 1 } },
+    });
+
+    expect(findReusablePeriodSchedule({
+      schedules: [populatedA, populatedB],
+      ...target,
+      startDate: "2026-10-01",
+      visibleStartDate: "2026-10-01",
+    })).toEqual({ schedule: null, ambiguous: true });
+  });
+
+  it("does not cross-wire schedules from another team", () => {
+    const otherTeam = schedule({
+      teamId: "worship",
+      scheduleId: "generated_other-team",
+      source: "generated-period",
+      generatedPeriodKey: "other-team",
+    });
+    expect(findReusablePeriodSchedule({ schedules: [otherTeam], ...target })).toEqual({
+      schedule: null,
+      ambiguous: false,
+    });
+  });
+
+  it("does not select a schedule when Upcoming has no visible team occurrences", () => {
+    expect(findReusablePeriodSchedule({
+      schedules: [schedule({ source: "generated-period", generatedPeriodKey: "period-key", scheduleId: "generated_period-key" })],
+      ...target,
+      occurrences: [],
+    })).toEqual({ schedule: null, ambiguous: false });
   });
 
   it("prefers a generated period over an equivalent legacy schedule", () => {

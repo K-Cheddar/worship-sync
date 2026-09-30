@@ -52,6 +52,32 @@ export const rangeFromPreset = (
   return { start: formatPlainDate(start), end: formatPlainDate(end) };
 };
 
+/**
+ * Upcoming is a moving display window; generated schedules use calendar-aligned
+ * bounds so changing the day does not change the period being persisted.
+ */
+export const persistedScheduleRange = (
+  preset: SchedulePeriodPreset,
+  visibleRange: { start: string; end: string },
+) => {
+  if (preset !== "upcoming") return visibleRange;
+  const start = parsePlainDate(visibleRange.start);
+  const end = parsePlainDate(visibleRange.end);
+  if (!start || !end) return visibleRange;
+  return {
+    start: formatPlainDate(new Date(start.getFullYear(), start.getMonth(), 1)),
+    end: formatPlainDate(new Date(end.getFullYear(), end.getMonth() + 1, 0)),
+  };
+};
+
+export const filterOccurrencesToRange = (
+  occurrences: TeamScheduleOccurrence[],
+  range: { start: string; end: string },
+) => occurrences.filter((occurrence) => {
+  const date = occurrence.startsAt.slice(0, 10);
+  return date >= range.start && date <= range.end;
+});
+
 export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
   const start = parsePlainDate(startDate);
   const end = parsePlainDate(endDate);
@@ -75,6 +101,8 @@ export const findReusablePeriodSchedule = ({
   endDate,
   serviceIds,
   occurrences,
+  visibleStartDate = startDate,
+  visibleEndDate = endDate,
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
@@ -83,46 +111,72 @@ export const findReusablePeriodSchedule = ({
   endDate: string;
   serviceIds: string[];
   occurrences: TeamScheduleOccurrence[];
+  visibleStartDate?: string;
+  visibleEndDate?: string;
 }) => {
+  const visibleOccurrenceIds = occurrences.map((occurrence) => occurrence.occurrenceId);
+  if (visibleOccurrenceIds.length === 0) return { schedule: null, ambiguous: false };
   const sameSet = (left: string[] | undefined, right: string[]) => {
     if (!left || left.length !== right.length) return false;
     const sortedLeft = [...left].sort();
     const sortedRight = [...right].sort();
     return sortedLeft.every((value, index) => value === sortedRight[index]);
   };
-  const samePeriod = schedules.filter((schedule) => {
+  const sameVisiblePeriod = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
-      schedule.teamId !== teamId || schedule.startDate !== startDate ||
-      schedule.endDate !== endDate
+      schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
+      schedule.startDate > visibleStartDate || schedule.endDate < visibleEndDate
     ) return false;
-    return true;
+    const storedOccurrenceIds = schedule.occurrences?.map((occurrence) => occurrence.occurrenceId) || [];
+    return visibleOccurrenceIds.every((id) => storedOccurrenceIds.includes(id));
   });
   // Generated records outrank legacy records. The client cannot synchronously
   // hash the current identity, so validate the stored key/ID pair and the
   // church/team/date identity; this also admits records written with the old
   // key that omitted churchId. Multiple generated matches are corrupt/ambiguous.
-  const generated = samePeriod.filter((schedule) =>
+  const generated = sameVisiblePeriod.filter((schedule) =>
     schedule.source === "generated-period" &&
     Boolean(schedule.generatedPeriodKey) &&
     schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
   );
   if (generated.length > 0) {
-    return {
-      schedule: generated.length === 1 ? generated[0] : null,
-      ambiguous: generated.length > 1,
-    };
+    const populated = generated.filter(hasScheduleData);
+    if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
+    if (populated.length > 1) return { schedule: null, ambiguous: true };
+    const exact = generated.filter((schedule) => schedule.startDate === startDate && schedule.endDate === endDate);
+    const preferred = exact.length ? exact : generated;
+    return preferred.length === 1
+      ? { schedule: preferred[0], ambiguous: false }
+      : { schedule: null, ambiguous: true };
   }
-  const legacy = samePeriod.filter((schedule) =>
+  const legacy = schedules.filter((schedule) =>
+    !schedule.archivedAt && schedule.churchId === churchId && schedule.teamId === teamId &&
     schedule.source == null &&
+    schedule.startDate === startDate && schedule.endDate === endDate &&
     sameSet(schedule.serviceIds, serviceIds) &&
     sameSet(
       schedule.occurrences?.map((occurrence) => occurrence.occurrenceId),
       occurrences.map((occurrence) => occurrence.occurrenceId),
     ),
   );
-  return {
-    schedule: legacy.length === 1 ? legacy[0] : null,
-    ambiguous: legacy.length > 1,
-  };
+  if (legacy.length === 1) return { schedule: legacy[0], ambiguous: false };
+  const populated = legacy.filter(hasScheduleData);
+  return populated.length === 1
+    ? { schedule: populated[0], ambiguous: false }
+    : { schedule: null, ambiguous: legacy.length > 0 };
+};
+
+const hasScheduleData = (schedule: TeamScheduleSummary) => {
+  if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;
+  // Older summaries omit some maps, so their emptiness cannot be established.
+  if (schedule.assignmentsOmitted) return true;
+  const assignmentCounts = schedule.assignmentCounts?.byMemberId || {};
+  return Object.values(assignmentCounts).some((count) => count > 0) ||
+    Boolean(schedule.guests?.length) ||
+    ("assignments" in schedule && Object.keys(schedule.assignments || {}).length > 0) ||
+    ("microphoneAssignments" in schedule && Object.keys(schedule.microphoneAssignments || {}).length > 0) ||
+    ("iemAssignments" in schedule && Object.keys(schedule.iemAssignments || {}).length > 0) ||
+    ("additionalPositionSlots" in schedule && Object.keys(schedule.additionalPositionSlots || {}).length > 0) ||
+    ("responses" in schedule && Object.keys(schedule.responses || {}).length > 0);
 };

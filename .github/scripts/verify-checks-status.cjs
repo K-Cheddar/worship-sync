@@ -1,8 +1,5 @@
 const requiredJobs = [
-  "client_tests",
-  "coverage",
-  "server_tests",
-  "lint_typecheck",
+  "core_checks",
   "heroku_build",
   "electron_build",
 ];

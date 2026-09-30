@@ -12,6 +12,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       published: ${{ steps.semantic_release.outputs.published }}
       version: ${{ steps.semantic_release.outputs.version }}
@@ -28,17 +29,23 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
 
       - run: npm ci
 
       - run: npm ci
         working-directory: client
 
+      # Keep release-time tests as a safety net for directly updated master refs.
       - name: Test
         run: npm test
         working-directory: client
 
-      - name: Build web
+      # This build uploads browser source maps to Sentry. Heroku builds its own
+      # Heroku-mode bundle during deployment and does not use client/dist here.
+      - name: Build web and upload Sentry source maps
         run: npm run build
         working-directory: client
         env:
@@ -57,12 +64,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
   build-electron:
-    name: Build Electron
+    name: Build Electron (${{ matrix.os }}, ${{ matrix.platform }})
     needs: release
     if: needs.release.outputs.published == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -84,6 +96,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Restore Electron build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('client/package-lock.json') }}
 
       - run: npm ci
 
@@ -99,7 +122,7 @@ jobs:
 
       - name: Package Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never
+        run: npx electron-builder --linux --publish never --config electron-builder.config.js
         working-directory: client
 
       - name: Package Windows
@@ -114,40 +137,73 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload Windows artifacts
-        if: matrix.platform == 'win'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.release.outputs.tag }}
-          files: |
-            client/dist/*.exe
-            client/dist/*.exe.blockmap
-            client/dist/latest.yml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
-
-      - name: Upload Linux artifacts
+      - name: Persist Linux release assets
         if: matrix.platform == 'linux'
-        uses: softprops/action-gh-release@v3
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.release.outputs.tag }}
-          files: |
+          name: electron-linux
+          path: |
             client/dist/*.AppImage
             client/dist/*.deb
             client/dist/latest-linux.yml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+          if-no-files-found: error
+          retention-days: 3
 
-      - name: Upload macOS artifacts
-        if: matrix.platform == 'mac'
-        uses: softprops/action-gh-release@v3
+      - name: Persist Windows release assets
+        if: matrix.platform == 'win'
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.release.outputs.tag }}
-          files: |
+          name: electron-win
+          path: |
+            client/dist/*.exe
+            client/dist/*.exe.blockmap
+            client/dist/latest.yml
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Persist macOS release assets
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-mac
+          path: |
             client/dist/*.dmg
             client/dist/*.dmg.blockmap
             client/dist/*.zip
             client/dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-electron-release:
+    name: Publish Electron release assets
+    needs: [release, build-electron]
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download platform release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: electron-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Attach assets to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release.outputs.tag }}
+          files: |
+            release-assets/*.exe
+            release-assets/*.exe.blockmap
+            release-assets/latest.yml
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/latest-linux.yml
+            release-assets/*.dmg
+            release-assets/*.dmg.blockmap
+            release-assets/*.zip
+            release-assets/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
@@ -156,6 +212,7 @@ jobs:
     needs: release
     if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout release tag
@@ -165,28 +222,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_RELEASE_PAT }}
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - run: npm ci
-
-      - run: npm ci
-        working-directory: client
-
-      - name: Build web
-        run: npm run build
-        working-directory: client
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
-
+      # Heroku's Node buildpack runs root heroku-postbuild to create its bundle.
       - name: Deploy to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git
-          git add .
-          git commit -m "chore(release): deploy" || true
           git push heroku HEAD:refs/heads/main --force
