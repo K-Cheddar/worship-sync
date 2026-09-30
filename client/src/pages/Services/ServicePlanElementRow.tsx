@@ -133,6 +133,7 @@ import {
   isUnassignedServicePlanAssignee,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
+import { servicePlanImportAmbiguityNeedsReview } from "./servicePlanningTitleClassifier";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
@@ -1158,6 +1159,8 @@ type ServicePlanElementRowProps = {
   onOpenContent?: (trigger?: HTMLElement) => void;
   onOpenSongDetails?: (songRef: ServicePlanSongReference) => void;
   onReviewImportAmbiguity?: () => void;
+  /** Transient imported-item review focus; never persisted or reused as selection. */
+  isReviewing?: boolean;
 };
 
 /**
@@ -1215,6 +1218,7 @@ const ServicePlanElementRow = ({
   onOpenContent,
   onOpenSongDetails,
   onReviewImportAmbiguity,
+  isReviewing = false,
 }: ServicePlanElementRowProps) => {
   const globalInfo = useContext(GlobalInfoContext);
   const churchId = globalInfo?.churchId || "";
@@ -2576,16 +2580,13 @@ const ServicePlanElementRow = ({
     ? readOnlyAssigneesBlock
     : null;
   const importNeedsReview = Boolean(
-    element.importAmbiguity && (
-      element.importAmbiguity.authorizationPending ||
-      (element.importAmbiguity.status !== "confirmed" &&
-        element.importAmbiguity.status !== "acknowledged")
-    ),
+    element.importAmbiguity && servicePlanImportAmbiguityNeedsReview(element.importAmbiguity),
   );
 
   return (
     <div
       id={servicePlanElementDomId(element.id)}
+      data-testid={servicePlanElementDomId(element.id)}
       ref={setNodeRef}
       style={{
         opacity: isDragging ? 0.6 : undefined,
@@ -2593,8 +2594,10 @@ const ServicePlanElementRow = ({
       className={cn(
         surfaceClassName,
         isSelected && isEditing && "bg-cyan-950/35 ring-1 ring-inset ring-cyan-400/50",
+        isReviewing && "bg-amber-950/30 ring-2 ring-inset ring-amber-300/75",
       )}
       data-element-tone={toneIndex % 2 === 0 ? "even" : "odd"}
+      data-reviewing={isReviewing ? "true" : undefined}
       onClick={onSelect}
     >
       {allowEdit ? (

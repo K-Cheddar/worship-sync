@@ -63,9 +63,11 @@ import {
 } from "../teamsReturnNavigation";
 
 const ScheduleEditForm = ({
+  mode,
   draftKey,
   persistedDraft,
   selectedSchedule,
+  copySourceSchedule,
   defaultTeamId,
   defaultServiceIds,
   defaultRange,
@@ -83,10 +85,12 @@ const ScheduleEditForm = ({
   onCancel,
 }: ScheduleEditFormProps) => {
   const { showToast } = useToast();
+  const editingSchedule = mode === "edit" ? selectedSchedule : null;
+  const scheduleForDraft = editingSchedule;
   const [draft, setDraft] = useState<TeamSchedulePayload>(() =>
     buildScheduleDraft({
       persistedDraft,
-      selectedSchedule,
+      selectedSchedule: scheduleForDraft,
       defaultTeamId,
       defaultServiceIds,
       defaultRange,
@@ -101,9 +105,11 @@ const ScheduleEditForm = ({
   } | null>(null);
   const draftRef = useRef(draft);
   const skipNextPersistRef = useRef(false);
-  // After a successful create we clear the `"new"` draft; skip the unmount flush
-  // so it cannot rewrite the just-cleared key with the saved payload.
+  // After a successful create we clear the intent-specific draft; skip the
+  // unmount flush and the resulting one-time prop reconciliation so they cannot
+  // rewrite or replace the just-saved form state.
   const skipUnmountFlushRef = useRef(false);
+  const skipNextPersistedDraftResetRef = useRef(false);
   // The last draft we synced from the schedule/persisted source. If the live
   // draft has diverged from this, the operator has unsaved edits in progress and
   // a remote-driven reset must not clobber them.
@@ -116,7 +122,7 @@ const ScheduleEditForm = ({
   useEffect(() => {
     const nextDraft = buildScheduleDraft({
       persistedDraft,
-      selectedSchedule,
+      selectedSchedule: scheduleForDraft,
       defaultTeamId,
       defaultServiceIds,
       defaultRange,
@@ -128,16 +134,21 @@ const ScheduleEditForm = ({
     // re-seed when create defaults recalculate (schedules sync, team filter
     // load) or an in-progress edit/create would be wiped.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the active schedule changes
-  }, [draftKey, selectedSchedule?.scheduleId]);
+  }, [draftKey, mode, scheduleForDraft?.scheduleId]);
 
   useEffect(() => {
     const nextDraft = buildScheduleDraft({
       persistedDraft,
-      selectedSchedule,
+      selectedSchedule: scheduleForDraft,
       defaultTeamId,
       defaultServiceIds,
       defaultRange,
     });
+    if (skipNextPersistedDraftResetRef.current) {
+      skipNextPersistedDraftResetRef.current = false;
+      syncedBaselineRef.current = draftRef.current;
+      return;
+    }
     if (scheduleDraftsMatch(draftRef.current, nextDraft)) {
       syncedBaselineRef.current = nextDraft;
       return;
@@ -154,7 +165,7 @@ const ScheduleEditForm = ({
     syncedBaselineRef.current = nextDraft;
     setDraft(nextDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- remote draft/schedule sync only
-  }, [persistedDraft, selectedSchedule]);
+  }, [persistedDraft, mode, scheduleForDraft]);
 
   useDebouncedEffect(
     () => {
@@ -178,15 +189,12 @@ const ScheduleEditForm = ({
     [canEdit, draftKey, onDraftFlush],
   );
 
-  // A copy is a create flow (no selectedSchedule) that arrives pre-populated with
-  // assignments. Surface what carries over so the date change isn't a surprise.
-  const isCopy =
-    !selectedSchedule && Object.keys(draft.assignments || {}).length > 0;
+  const isCopy = mode === "copy";
   const isGeneratedPeriodSchedule =
-    selectedSchedule?.source === "generated-period";
+    mode === "edit" && editingSchedule?.source === "generated-period";
   const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
   useTeamsUnsavedChanges(hasPendingChanges);
-  const currentEditorKey = selectedSchedule?.scheduleId || draftKey;
+  const currentEditorKey = editingSchedule?.scheduleId || draftKey;
   const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
 
   const suggestedName = useMemo(
@@ -256,6 +264,8 @@ const ScheduleEditForm = ({
 
   const saveSchedule = async (confirmedOccurrenceConflictFingerprint?: string) => {
     if (!canEdit) return;
+    const isCreate = mode !== "edit";
+    const occurrenceDataSource = editingSchedule || copySourceSchedule;
     const currentDraft = draftRef.current;
     const resolvedName = resolveScheduleNameForSave({
       name: currentDraft.name || "",
@@ -273,8 +283,8 @@ const ScheduleEditForm = ({
     }
     onDraftFlush(draftKey, draftForSave);
     try {
-      const occurrences = isGeneratedPeriodSchedule && selectedSchedule
-        ? selectedSchedule.occurrences || []
+      const occurrences = isGeneratedPeriodSchedule && editingSchedule
+        ? editingSchedule.occurrences || []
         : generateScheduleOccurrences({
           services,
           serviceIds: draftForSave.serviceIds,
@@ -287,7 +297,7 @@ const ScheduleEditForm = ({
       // For a blank new schedule this is a no-op (no source occurrences). Editing
       // an existing schedule re-keys by (service, date) so assignments survive the
       // occurrence-id change when services are combined/un-combined after the fact.
-      const assignments = selectedSchedule
+      const assignments = editingSchedule
         ? rekeyAssignmentsByServiceDate({
           sourceOccurrences: draftForSave.occurrences || [],
           targetOccurrences: occurrences,
@@ -300,40 +310,40 @@ const ScheduleEditForm = ({
         });
       const payload = {
         ...draftForSave,
-        ...(isGeneratedPeriodSchedule && selectedSchedule
+        ...(isGeneratedPeriodSchedule && editingSchedule
           ? {
-            teamId: selectedSchedule.teamId,
-            startDate: selectedSchedule.startDate || "",
-            endDate: selectedSchedule.endDate || "",
-            serviceIds: selectedSchedule.serviceIds || [],
-            occurrences: selectedSchedule.occurrences,
+            teamId: editingSchedule.teamId,
+            startDate: editingSchedule.startDate || "",
+            endDate: editingSchedule.endDate || "",
+            serviceIds: editingSchedule.serviceIds || [],
+            occurrences: editingSchedule.occurrences,
           }
           : { occurrences }),
         assignments,
-        ...(selectedSchedule?.microphoneAssignments
+        ...(occurrenceDataSource?.microphoneAssignments
           ? {
             microphoneAssignments: rekeyScheduleOccurrenceRowsByServiceDate({
-              sourceOccurrences: selectedSchedule.occurrences || [],
+              sourceOccurrences: occurrenceDataSource.occurrences || [],
               targetOccurrences: occurrences,
-              rows: selectedSchedule.microphoneAssignments,
+              rows: occurrenceDataSource.microphoneAssignments,
             }),
           }
           : {}),
-        ...(selectedSchedule?.iemAssignments
+        ...(occurrenceDataSource?.iemAssignments
           ? {
             iemAssignments: rekeyScheduleOccurrenceRowsByServiceDate({
-              sourceOccurrences: selectedSchedule.occurrences || [],
+              sourceOccurrences: occurrenceDataSource.occurrences || [],
               targetOccurrences: occurrences,
-              rows: selectedSchedule.iemAssignments,
+              rows: occurrenceDataSource.iemAssignments,
             }),
           }
           : {}),
-        ...(selectedSchedule?.additionalPositionSlots
+        ...(occurrenceDataSource?.additionalPositionSlots
           ? {
             additionalPositionSlots: rekeyScheduleOccurrenceRowsByServiceDate({
-              sourceOccurrences: selectedSchedule.occurrences || [],
+              sourceOccurrences: occurrenceDataSource.occurrences || [],
               targetOccurrences: occurrences,
-              rows: selectedSchedule.additionalPositionSlots,
+              rows: occurrenceDataSource.additionalPositionSlots,
             }),
           }
           : {}),
@@ -341,7 +351,7 @@ const ScheduleEditForm = ({
           ? { confirmedOccurrenceConflictFingerprint }
           : {}),
       };
-      const saveToastMessage = formatScheduleSaveToast(selectedSchedule, payload, {
+      const saveToastMessage = formatScheduleSaveToast(editingSchedule, payload, {
         teamNameById: new Map(
           activeTeams.map((team) => [team.teamId, team.name]),
         ),
@@ -351,7 +361,7 @@ const ScheduleEditForm = ({
       });
       setSaving(true);
       const localScheduleId =
-        selectedSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
+        editingSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
       const optimisticSchedule: TeamSchedule = {
         churchId,
         scheduleId: localScheduleId,
@@ -367,29 +377,30 @@ const ScheduleEditForm = ({
         microphoneAssignments: payload.microphoneAssignments,
         iemAssignments: payload.iemAssignments,
         additionalPositionSlots: payload.additionalPositionSlots,
-        archivedAt: selectedSchedule?.archivedAt || null,
-        ...(selectedSchedule?.source ? { source: selectedSchedule.source } : {}),
-        ...(selectedSchedule?.generatedPeriodKey
-          ? { generatedPeriodKey: selectedSchedule.generatedPeriodKey }
+        archivedAt: editingSchedule?.archivedAt || null,
+        ...(editingSchedule?.source ? { source: editingSchedule.source } : {}),
+        ...(editingSchedule?.generatedPeriodKey
+          ? { generatedPeriodKey: editingSchedule.generatedPeriodKey }
           : {}),
       };
       onScheduleSaved(optimisticSchedule);
-      const response = selectedSchedule
-        ? await updateTeamSchedule(churchId, selectedSchedule.scheduleId, payload)
+      const response = editingSchedule
+        ? await updateTeamSchedule(churchId, editingSchedule.scheduleId, payload)
         : await createTeamSchedule(churchId, payload);
-      if (!selectedSchedule) {
+      if (isCreate) {
         onScheduleSaved(response.schedule, localScheduleId);
-        // Drop the shared "new" draft so the next New/Copy starts from create
-        // defaults instead of this schedule's leftover values. Skip the unmount
-        // flush so cleanup cannot rewrite the cleared key.
+        // Drop this intent-specific draft after a successful create. Skip the
+        // unmount flush so cleanup cannot rewrite the cleared key.
         skipUnmountFlushRef.current = true;
+        skipNextPersistedDraftResetRef.current = true;
+        syncedBaselineRef.current = draftForSave;
         onDraftClear(draftKey);
       } else {
         onScheduleSaved(response.schedule);
       }
       setSelectedScheduleId(response.schedule.scheduleId);
       if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(response.schedule.scheduleId, selectedSchedule ? "update" : "create");
+      saveFeedback.recordSuccess(response.schedule.scheduleId, isCreate ? "create" : "update");
       setScheduleConflictWarning(null);
     } catch (error) {
       const details = (error as { details?: unknown } | null)?.details;
@@ -400,11 +411,11 @@ const ScheduleEditForm = ({
             fingerprint: conflict.conflictFingerprint,
             conflicts: conflict.occurrenceConflicts as Array<{ teamId?: string; scheduleName?: string; conflictingOccurrenceId?: string; occurrenceId: string }>,
           });
-          if (selectedSchedule) onScheduleSaved(selectedSchedule);
+          if (editingSchedule) onScheduleSaved(editingSchedule);
           return;
         }
       }
-      if (selectedSchedule) onScheduleSaved(selectedSchedule);
+      if (editingSchedule) onScheduleSaved(editingSchedule);
       showApiErrorToast(showToast, error, "Could not save this schedule.");
     } finally {
       setSaving(false);
@@ -413,8 +424,8 @@ const ScheduleEditForm = ({
 
   const confirmDeleteSchedule = async () => {
     if (!canEdit) return;
-    if (!selectedSchedule) return;
-    const schedule = selectedSchedule;
+    if (!editingSchedule) return;
+    const schedule = editingSchedule;
     setDeletingSchedule(false);
     if (schedule.scheduleId.startsWith("local-")) {
       onScheduleRemoved(schedule.scheduleId);
@@ -450,30 +461,36 @@ const ScheduleEditForm = ({
           )}
         >
           <h2 className="text-lg font-semibold">
-            {selectedSchedule ? "Edit schedule" : "New schedule"}
+            {mode === "create-custom"
+              ? "New custom schedule"
+              : mode === "copy"
+                ? "Copy schedule"
+                : isGeneratedPeriodSchedule
+                  ? "Schedule details"
+                  : "Edit schedule"}
           </h2>
-          {canEdit && selectedSchedule ? (
+          {canEdit && editingSchedule ? (
             <EntityFormDangerActions
-              archived={Boolean(selectedSchedule.archivedAt)}
+              archived={Boolean(editingSchedule.archivedAt)}
               canEdit={canEdit}
               archiveLabel="Archive schedule"
               deleteLabel="Delete schedule"
               menuLabel="Schedule actions"
               onArchive={
-                selectedSchedule.archivedAt
+                editingSchedule.archivedAt
                   ? undefined
                   : async () => {
                     if (!canEdit) return;
                     const archivedSchedule = {
-                      ...selectedSchedule,
+                      ...editingSchedule,
                       archivedAt: new Date().toISOString(),
                     };
                     onScheduleSaved(archivedSchedule);
                     try {
-                      await archiveTeamSchedule(churchId, selectedSchedule.scheduleId);
+                      await archiveTeamSchedule(churchId, editingSchedule.scheduleId);
                     } catch (error) {
                       showApiErrorToast(showToast, error, "Could not archive this schedule.");
-                      onScheduleSaved(selectedSchedule);
+                      onScheduleSaved(editingSchedule);
                     }
                   }
               }
@@ -488,23 +505,12 @@ const ScheduleEditForm = ({
           )}
         >
           <div className="grid gap-3 lg:grid-cols-2">
-            <Input
-              className={inputStackClassName}
-              label="Name"
-              value={draft.name}
-              onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
-              helperText={
-                !selectedSchedule && !draft.name.trim() && suggestedName
-                  ? `Saved as “${suggestedName}” unless you enter a name.`
-                  : undefined
-              }
-            />
             {!isGeneratedPeriodSchedule ? <div className={inputStackClassName}>
               <Select
                 label="Team"
                 value={draft.teamId}
                 onChange={(teamId) => {
-                  if (selectedSchedule) {
+                  if (mode === "edit") {
                     setDraft((current) => ({ ...current, teamId }));
                     return;
                   }
@@ -530,13 +536,6 @@ const ScheduleEditForm = ({
                 </p>
               ) : null}
             </div> : null}
-            <TextArea
-              className="lg:col-span-2"
-              label="Description"
-              value={draft.description || ""}
-              textareaClassName="min-h-20"
-              onChange={(description) => setDraft((current) => ({ ...current, description }))}
-            />
             {!isGeneratedPeriodSchedule ? <div className="grid gap-3 sm:grid-cols-2 lg:col-span-2">
               <DatePicker
                 label="Start date"
@@ -566,8 +565,13 @@ const ScheduleEditForm = ({
                 value={draft.serviceIds}
                 onChange={(serviceIds) => setDraft((current) => ({ ...current, serviceIds }))}
               />
-              <p className="mt-2 text-xs text-gray-400">
-                {draftOccurrences.length} service occurrences will appear in the grid for this range.
+              <p className={cn(
+                "mt-2 text-xs",
+                draftOccurrences.length > 0 ? "text-gray-400" : "text-amber-300",
+              )}>
+                {draftOccurrences.length > 0
+                  ? `${draftOccurrences.length} service occurrences will appear in this schedule.`
+                  : "No service occurrences match this date range. Choose another range or service."}
               </p>
               {isCopy ? (
                 <p className="mt-1 text-xs text-gray-400">
@@ -576,6 +580,24 @@ const ScheduleEditForm = ({
                 </p>
               ) : null}
             </div> : null}
+            <Input
+              className={inputStackClassName}
+              label="Name"
+              value={draft.name}
+              onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
+              helperText={
+                mode !== "edit" && !draft.name.trim() && suggestedName
+                  ? `Saved as “${suggestedName}” unless you enter a name.`
+                  : undefined
+              }
+            />
+            <TextArea
+              className="lg:col-span-2"
+              label="Description"
+              value={draft.description || ""}
+              textareaClassName="min-h-20"
+              onChange={(description) => setDraft((current) => ({ ...current, description }))}
+            />
             {isGeneratedPeriodSchedule ? (
               <p className="text-sm text-gray-400 lg:col-span-2">
                 This schedule stays tied to its service period. Copy it to change the team, dates, or services.
@@ -586,7 +608,7 @@ const ScheduleEditForm = ({
         <FormActionButtons
           pinFooter
           entityLabel="schedule"
-          isCreate={!selectedSchedule}
+          isCreate={mode !== "edit"}
           isSaving={saving}
           successMode={saveFeedback.successMode}
           onSave={() => void saveSchedule()}
@@ -606,7 +628,7 @@ const ScheduleEditForm = ({
         isOpen={deletingSchedule}
         onClose={() => setDeletingSchedule(false)}
         onConfirm={() => void confirmDeleteSchedule()}
-        itemName={selectedSchedule?.name}
+        itemName={editingSchedule?.name}
         isConfirming={deleteBusy}
         message="Permanently delete the schedule"
         warningMessage="This cannot be undone, including all of its assignments. Archive instead to keep a record."

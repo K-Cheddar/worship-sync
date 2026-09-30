@@ -33,7 +33,10 @@ import type {
   ServicePlanSection,
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
-import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
+import {
+  classifyServicePlanningTitle,
+  servicePlanningReasonsRequireReview,
+} from "./servicePlanningTitleClassifier";
 import { createServicePlanTextResource } from "./servicePlanResources";
 import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 
@@ -407,7 +410,7 @@ const buildElementFromRow = <
     classification &&
     (classification.parts.length > 0 || classification.reasons.length > 0 || classification.urls.length > 0)
   ) {
-    const unresolved = classification.reasons.length > 0;
+    const unresolved = servicePlanningReasonsRequireReview(classification.reasons);
     element.importAmbiguity = {
       source: "servicePlanning",
       sourceKey: options.sourceKey || "",
@@ -424,9 +427,7 @@ const buildElementFromRow = <
         row.sourceLedByRaw || row.ledBy || "",
         row.note || "",
       ]),
-      ...(!unresolved && classification.urls.length
-        ? { authorizationPending: true }
-        : {}),
+      ...(classification.urls.length ? { authorizationPending: true } : {}),
     };
   }
 

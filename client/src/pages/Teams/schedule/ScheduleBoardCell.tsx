@@ -23,9 +23,9 @@ import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
-import ScheduleMicrophoneSelect, {
-  type ScheduleMicrophoneHolder,
-} from "./ScheduleMicrophoneSelect";
+import ScheduleEquipmentSelect, {
+  type ScheduleEquipmentHolder,
+} from "./ScheduleEquipmentSelect";
 import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import type { ServiceEquipment } from "../../../types/servicePlan";
@@ -52,14 +52,14 @@ type ScheduleBoardCellProps = {
   canEdit: boolean;
   microphones?: ServicePlanMicrophone[];
   microphoneIds?: string[];
-  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphoneHolders?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   microphonesLoading?: boolean;
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
   iems?: ServiceEquipment[];
   iemIds?: string[];
-  iemHoldersByIem?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   savingIem?: boolean;
   onIemChange?: (iemIds: string[]) => void;
   iemLoading?: boolean;
@@ -231,7 +231,7 @@ const ScheduleBoardCell = memo(({
       </button>
       {(microphones && microphoneHolders && onMicrophoneChange) || (iems && onIemChange) ? (
         <div className="pl-11">
-          <ScheduleMicrophoneSelect
+          <ScheduleEquipmentSelect
             microphoneIds={microphoneIds}
             microphones={microphones || []}
             holdersByMicrophone={microphoneHolders || new Map()}

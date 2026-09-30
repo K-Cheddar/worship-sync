@@ -236,7 +236,11 @@ describe("PresentationPreview", () => {
       expect.any(String),
     );
     expect(screen.queryByText(/Content Hidden.*Lobby Stream/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass("@container/preview");
+    expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass(
+      "@container/preview",
+      "isolate",
+    );
+    expect(screen.getByTestId("content-hidden-preview-badge")).toHaveClass("z-10");
 
     await user.click(badge);
     expect(screen.getByText("Content hidden")).toBeInTheDocument();

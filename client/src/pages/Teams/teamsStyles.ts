@@ -75,11 +75,11 @@ export const scheduleWorkspaceTabsClassName =
 
 /** Team schedule panel grows below title/actions with internal scroll regions. */
 export const scheduleWorkspacePanelClassName =
-  "mt-4 flex flex-col overflow-hidden max-lg:flex-none lg:min-h-0 lg:flex-1";
+  "flex flex-col overflow-hidden max-lg:flex-none lg:min-h-0 lg:flex-1";
 
 /** Grid + members row inside the team schedule panel. */
 export const scheduleWorkspaceBodyRowClassName =
-  "relative mt-4 flex min-h-0 min-w-0 flex-col gap-4 max-lg:flex-none lg:flex-1 lg:flex-row lg:items-stretch";
+  "relative mt-2 flex min-h-0 min-w-0 flex-col gap-4 max-lg:flex-none lg:flex-1 lg:flex-row lg:items-stretch";
 
 /** Main column for the schedule grid. */
 export const scheduleWorkspaceMainColumnClassName =

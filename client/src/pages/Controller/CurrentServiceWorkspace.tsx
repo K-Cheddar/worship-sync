@@ -33,6 +33,7 @@ import {
   getServicePlanMicrophones,
   getTeamsBootstrap,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
 } from "../../api/auth";
 import type {
   TeamPosition,
@@ -55,7 +56,7 @@ import {
   getOccurrenceAssignmentSummary,
   getScheduledEquipmentHolders,
   groupAssignmentSummaryByTeam,
-  teamMicrophoneSlotKey,
+  teamEquipmentSlotKey,
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
 import WhosServingPanel from "../Teams/pages/WhosServingPanel";
@@ -639,6 +640,10 @@ const CurrentServiceWorkspace = () => {
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<
     string | null
   >(null);
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
+  const microphoneMutationSeqRef = useRef(0);
+  const iemMutationSeqRef = useRef(0);
+  const equipmentMutationSeqRef = useRef(0);
   const [timingPlan, setTimingPlan] =
     useState<ServicePlanTimingSource | null>(null);
 
@@ -1077,7 +1082,9 @@ const CurrentServiceWorkspace = () => {
   const saveScheduledMicrophones = useCallback(
     async (row: TeamsAssignmentSummaryRow, microphoneIds: string[]) => {
       if (!churchId || !row.scheduleId) return;
-      setSavingMicrophoneSlot(teamMicrophoneSlotKey(row));
+      const mutationSeq = ++microphoneMutationSeqRef.current;
+      const equipmentMutationSeq = ++equipmentMutationSeqRef.current;
+      setSavingMicrophoneSlot(teamEquipmentSlotKey(row));
       // Success feedback is the toolbar Syncing → Synced chip (no toast).
       dispatch(
         autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -1094,13 +1101,15 @@ const CurrentServiceWorkspace = () => {
             microphoneIds,
           },
         );
-        setRoleScheduleSource((current) =>
-          current.map((schedule) =>
-            schedule.scheduleId === result.schedule.scheduleId
-              ? result.schedule
-              : schedule,
-          ),
-        );
+        if (equipmentMutationSeqRef.current === equipmentMutationSeq) {
+          setRoleScheduleSource((current) =>
+            current.map((schedule) =>
+              schedule.scheduleId === result.schedule.scheduleId
+                ? result.schedule
+                : schedule,
+            ),
+          );
+        }
       } catch (error) {
         showApiErrorToast(
           showToast,
@@ -1108,7 +1117,55 @@ const CurrentServiceWorkspace = () => {
           "Could not update team microphones.",
         );
       } finally {
-        setSavingMicrophoneSlot(null);
+        if (microphoneMutationSeqRef.current === mutationSeq) {
+          setSavingMicrophoneSlot(null);
+        }
+        dispatch(
+          autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+            AUTOSAVE_DEBOUNCE_KEYS.teams,
+          ),
+        );
+      }
+    },
+    [churchId, dispatch, showToast],
+  );
+
+  const saveScheduledIems = useCallback(
+    async (row: TeamsAssignmentSummaryRow, iemIds: string[]) => {
+      if (!churchId || !row.scheduleId) return;
+      const mutationSeq = ++iemMutationSeqRef.current;
+      const equipmentMutationSeq = ++equipmentMutationSeqRef.current;
+      setSavingIemSlot(teamEquipmentSlotKey(row));
+      dispatch(
+        autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.teams,
+        ),
+      );
+      try {
+        const result = await updateTeamScheduleAssignmentIems(
+          churchId,
+          row.scheduleId,
+          {
+            serviceId: row.occurrenceId,
+            positionSlotKey: row.columnKey,
+            iemIds,
+          },
+        );
+        if (equipmentMutationSeqRef.current === equipmentMutationSeq) {
+          setRoleScheduleSource((current) =>
+            current.map((schedule) =>
+              schedule.scheduleId === result.schedule.scheduleId
+                ? result.schedule
+                : schedule,
+            ),
+          );
+        }
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not update team IEM assignments.");
+      } finally {
+        if (iemMutationSeqRef.current === mutationSeq) {
+          setSavingIemSlot(null);
+        }
         dispatch(
           autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
             AUTOSAVE_DEBOUNCE_KEYS.teams,
@@ -1226,14 +1283,18 @@ const CurrentServiceWorkspace = () => {
       scheduledEquipmentStatus={
         canLoadRoleData ? assignmentsStatus : "unavailable"
       }
-      teamMicrophones={
+      teamEquipment={
         canLoadRoleData
           ? {
               rows: assignmentRows,
               assignmentsStatus,
-              savingSlot: savingMicrophoneSlot,
-              onChange: (row, microphoneIds) => {
+              savingMicrophoneSlot,
+              savingIemSlot,
+              onMicrophoneChange: (row, microphoneIds) => {
                 void saveScheduledMicrophones(row, microphoneIds);
+              },
+              onIemChange: (row, iemIds) => {
+                void saveScheduledIems(row, iemIds);
               },
             }
           : undefined

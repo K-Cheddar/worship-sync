@@ -66,7 +66,6 @@ import {
   filterOccurrencesToRange,
   formatSchedulePeriodName,
   persistedScheduleRange,
-  rangeFromPreset,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import {
@@ -74,7 +73,13 @@ import {
   findInitialTeamSchedulePeriod,
 } from "./teamSchedulePeriod";
 import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory";
-import PeriodRangeFilter from "./PeriodRangeFilter";
+import RangeSelector from "../components/RangeSelector";
+import {
+  resolveRangePreset,
+  rangeSelectionStorageKey,
+  shiftRange,
+  useRangeSelection,
+} from "../rangeSelection";
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
@@ -110,7 +115,7 @@ import {
   writeScheduleTeamFilter,
 } from "../teamsLocalStore";
 import SchedulePdfExportButton from "./SchedulePdfExportButton";
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { parsePlainDate } from "@/utils/plainDate";
 import {
   ADMIN_SCHEDULE_LAYOUTS,
   hasStoredTeamScheduleAdminLayout,
@@ -146,7 +151,6 @@ import { useToast } from "../../../context/toastContext";
 import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
 import {
   panelClassName,
-  panelHeaderPaddingClassName,
   panelShellClassName,
   scheduleGridScrollClassName,
   scheduleGridFrameClassName,
@@ -235,8 +239,12 @@ import {
 } from "./scheduleConflicts";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
-import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
-import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
+import type { ScheduleEquipmentHolder } from "./ScheduleEquipmentSelect";
+import {
+  buildScheduleCopyDraft,
+  CUSTOM_SCHEDULE_DRAFT_KEY,
+  getScheduleCopyDraftKey,
+} from "./scheduleDraftUtils";
 import {
   cellsMatch,
   type ScheduleCellChange,
@@ -318,6 +326,11 @@ type PendingCrossTeamConflict = {
 
 type OccurrenceConflictDetails = Pick<PendingCrossTeamConflict, "fingerprint" | "conflicts">;
 
+type ScheduleFormState =
+  | { mode: "edit"; scheduleId: string }
+  | { mode: "create-custom" }
+  | { mode: "copy"; sourceScheduleId: string; sourceSchedule: TeamSchedule };
+
 const getOccurrenceConflictDetails = (error: unknown): OccurrenceConflictDetails | null => {
   const details = (error as { details?: unknown } | null)?.details;
   if (!details || typeof details !== "object") return null;
@@ -369,7 +382,7 @@ const ScheduleTab = ({
   onTeamSaved: (team: TeamRecord, replaceId?: string) => void;
   onScheduleDraftChanged: (draftKey: string, draft: TeamSchedulePayload) => void;
   onScheduleDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
-  /** Clears a draft key after a successful create so New schedule starts fresh. */
+  /** Clears an intent-specific draft key after a successful create. */
   onScheduleDraftClear: (draftKey: string) => void;
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a bootstrap/SSE from reverting pending edits).
@@ -444,13 +457,28 @@ const ScheduleTab = ({
     }),
     [activeServices, data.positions, data.schedules, workspaceTeamId],
   );
-  const initialPeriodRange = useMemo(
-    () => ({ start: initialTeamPeriodResult.start, end: initialTeamPeriodResult.end }),
-    [initialTeamPeriodResult.end, initialTeamPeriodResult.start],
+  const initialPeriodRange = useMemo(() => resolveRangePreset("upcoming"), []);
+  const resolveSchedulePresetRange = useCallback(
+    (preset: Exclude<SchedulePeriodPreset, "custom">) =>
+      resolveRangePreset(preset),
+    [],
   );
-  const hasExplicitPeriodSelectionRef = useRef(false);
-  const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>(initialTeamPeriodResult.preset);
-  const [periodRange, setPeriodRange] = useState(initialPeriodRange);
+  const {
+    preset: periodPreset,
+    range: periodRange,
+    selectPreset: selectRangePreset,
+    selectCustomRange,
+    setSelection: setPeriodSelection,
+    restoredFromPersistence,
+  } = useRangeSelection({
+    initialPreset: initialTeamPeriodResult.preset,
+    initialRange: initialPeriodRange,
+    persistence: {
+      key: churchId ? rangeSelectionStorageKey("schedules", churchId) : null,
+    },
+    resolvePresetRange: resolveSchedulePresetRange,
+  });
+  const hasExplicitPeriodSelectionRef = useRef(restoredFromPersistence);
   const periodTeamIdRef = useRef(workspaceTeamId);
   useEffect(() => {
     if (periodTeamIdRef.current !== workspaceTeamId) {
@@ -458,15 +486,14 @@ const ScheduleTab = ({
       hasExplicitPeriodSelectionRef.current = false;
     }
     if (hasExplicitPeriodSelectionRef.current) return;
-    setPeriodPreset(initialTeamPeriodResult.preset);
-    setPeriodRange(initialPeriodRange);
-  }, [initialPeriodRange, initialTeamPeriodResult.preset, workspaceTeamId]);
+    setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange, { persist: false });
+  }, [initialPeriodRange, initialTeamPeriodResult.preset, setPeriodSelection, workspaceTeamId]);
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule
     : Boolean(
-        (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
-        (!editableTeamIds && canEditSelectedSchedule),
-      );
+      (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
+      (!editableTeamIds && canEditSelectedSchedule),
+    );
   const persistedPeriodRange = useMemo(
     () => persistedScheduleRange(periodPreset, periodRange),
     [periodPreset, periodRange],
@@ -620,7 +647,9 @@ const ScheduleTab = ({
     return [...byId.values()];
   }, [schedules, selectedScheduleRecord]);
   const isSelectedScheduleLoading = Boolean(selectedScheduleRecord && !selectedSchedule);
-  const draftKey = selectedScheduleRecord?.scheduleId || "new";
+  const scheduleDraftKey = selectedScheduleRecord?.scheduleId || "new";
+  const [formState, setFormState] = useState<ScheduleFormState | null>(null);
+  const showForm = formState !== null;
   const selectedTeam = data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
   const defaultRange = useMemo(
     () =>
@@ -643,27 +672,12 @@ const ScheduleTab = ({
 
   const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
     hasExplicitPeriodSelectionRef.current = true;
-    setPeriodPreset(preset);
-    if (preset !== "custom") setPeriodRange(rangeFromPreset(preset));
+    selectRangePreset(preset);
     setViewingSavedSchedule(false);
   };
   const shiftPeriod = (direction: -1 | 1) => {
-    const start = new Date(`${periodRange.start}T12:00:00`);
-    const end = new Date(`${periodRange.end}T12:00:00`);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
     hasExplicitPeriodSelectionRef.current = true;
-    if (periodPreset === "custom") {
-      const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
-      start.setDate(start.getDate() + days * direction);
-      end.setDate(end.getDate() + days * direction);
-      setPeriodRange({ start: formatPlainDate(start), end: formatPlainDate(end) });
-    } else {
-      const months = periodPreset.includes("Quarter") ? 3 : 1;
-      start.setDate(1);
-      start.setMonth(start.getMonth() + months * direction);
-      const nextEnd = new Date(start.getFullYear(), start.getMonth() + months, 0);
-      setPeriodRange({ start: formatPlainDate(start), end: formatPlainDate(nextEnd) });
-    }
+    setPeriodSelection(periodPreset, shiftRange(periodPreset, periodRange, direction));
     setViewingSavedSchedule(false);
   };
 
@@ -861,11 +875,11 @@ const ScheduleTab = ({
     if (viewingSavedSchedule) return baseScheduleOccurrences;
     return filterOccurrencesToRange(baseScheduleOccurrences, periodRange).filter((occurrence) =>
       (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
-        (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
-          .some((slotKey) => {
-            const slot = parseSlotKey(slotKey);
-            return Boolean(slot && teamPositionIds.includes(slot.positionId));
-          }),
+      (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
+        .some((slotKey) => {
+          const slot = parseSlotKey(slotKey);
+          return Boolean(slot && teamPositionIds.includes(slot.positionId));
+        }),
     );
   }, [allRequirementsByOccurrence, baseScheduleOccurrences, periodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
   const requirementsByOccurrence = useMemo(
@@ -950,8 +964,6 @@ const ScheduleTab = ({
       data.schedules,
     );
   }, [activeTeamMembers, data.schedules, selectedTeam]);
-  const [showForm, setShowForm] = useState(false);
-
   useEffect(() => {
     if (!showForm) return;
     const scrollContainer = document.querySelector(".teams-section-scroll");
@@ -1237,7 +1249,18 @@ const ScheduleTab = ({
     [trackTeamsSave],
   );
   const [detailOccurrenceId, setDetailOccurrenceId] = useState<string | null>(null);
-  const persistedDraft = scheduleDrafts[draftKey];
+  const formDraftKey = !formState
+    ? scheduleDraftKey
+    : formState.mode === "edit"
+      ? formState.scheduleId
+      : formState.mode === "copy"
+        ? getScheduleCopyDraftKey(formState.sourceScheduleId)
+        : CUSTOM_SCHEDULE_DRAFT_KEY;
+  const formSelectedSchedule = formState?.mode === "edit" ? selectedSchedule : null;
+  const formCopySourceSchedule = formState?.mode === "copy"
+    ? formState.sourceSchedule
+    : null;
+  const persistedDraft = scheduleDrafts[formDraftKey];
 
   useEffect(() => {
     pendingCellAssignmentRef.current = pendingCellAssignment;
@@ -1306,8 +1329,8 @@ const ScheduleTab = ({
             schedule.scheduleId !== selectedSchedule.scheduleId &&
             schedule.teamId !== selectedSchedule.teamId &&
             !schedule.archivedAt &&
-        !isHydratedSchedule(schedule) &&
-        !selectedSchedule?.scheduleId.startsWith("virtual:") &&
+            !isHydratedSchedule(schedule) &&
+            !selectedSchedule?.scheduleId.startsWith("virtual:") &&
             scheduleDateRangesOverlap(selectedSchedule, schedule),
         ),
       ),
@@ -1611,14 +1634,23 @@ const ScheduleTab = ({
       hasExplicitPeriodSelectionRef.current = true;
       setViewingSavedSchedule(false);
       updateScheduleTeamFilter(restore.teamId);
-      setPeriodPreset("custom");
-      setPeriodRange({ start: restore.startDate, end: restore.endDate });
+      setPeriodSelection("custom", { start: restore.startDate, end: restore.endDate });
       setSelectedScheduleId("");
       setDetailOccurrenceId(restore.occurrenceId);
     },
     onScheduleRestore: (restore) => {
       if (restore.scheduleId) {
+        const restoredSchedule = schedules.find(
+          (schedule) => schedule.scheduleId === restore.scheduleId,
+        );
         setViewingSavedSchedule(true);
+        if (restoredSchedule?.startDate && restoredSchedule.endDate) {
+          setPeriodSelection(
+            "custom",
+            { start: restoredSchedule.startDate, end: restoredSchedule.endDate },
+            { persist: false },
+          );
+        }
         setSelectedScheduleId(restore.scheduleId, true);
       }
       if (restore.membersPanelOpen !== undefined) {
@@ -2796,18 +2828,18 @@ const ScheduleTab = ({
     // can run together, then keep autoFilling true until this request settles.
     let saveFailed = false;
     const autoFillPayload = {
-        name: previousSchedule.name,
-        description: previousSchedule.description || "",
-        teamId: previousSchedule.teamId,
-        startDate: previousSchedule.startDate || "",
-        endDate: previousSchedule.endDate || "",
-        serviceIds: previousSchedule.serviceIds || [],
-        occurrences: scheduleOccurrences,
-        assignments: finalAssignments,
-        microphoneAssignments: previousSchedule.microphoneAssignments,
-        iemAssignments: previousSchedule.iemAssignments,
-        additionalPositionSlots: previousSchedule.additionalPositionSlots,
-      };
+      name: previousSchedule.name,
+      description: previousSchedule.description || "",
+      teamId: previousSchedule.teamId,
+      startDate: previousSchedule.startDate || "",
+      endDate: previousSchedule.endDate || "",
+      serviceIds: previousSchedule.serviceIds || [],
+      occurrences: scheduleOccurrences,
+      assignments: finalAssignments,
+      microphoneAssignments: previousSchedule.microphoneAssignments,
+      iemAssignments: previousSchedule.iemAssignments,
+      additionalPositionSlots: previousSchedule.additionalPositionSlots,
+    };
     const saveWithConflictConfirmation = async (fingerprint?: string): Promise<void> => {
       try {
         const response = await enqueueAssignmentSave(() =>
@@ -3276,26 +3308,28 @@ const ScheduleTab = ({
   }, [canEdit, churchId, ensureActiveSchedule, selectedSchedule, showToast]);
 
 
-  // Seed the "new schedule" draft from the selected schedule and open the form
-  // in create mode. The operator typically just changes the date; assignments are
-  // remapped onto the new dates on save.
+  // Seed a copy-specific draft and open an explicit create flow. The operator
+  // typically just changes the date; assignments are remapped onto the new
+  // dates on save.
   const handleCopySchedule = useCallback(() => {
     if (!canEdit || !selectedSchedule) return;
     onScheduleDraftFlush(
-      "new",
+      getScheduleCopyDraftKey(selectedSchedule.scheduleId),
       buildScheduleCopyDraft({
         source: selectedSchedule,
         occurrences: scheduleOccurrences,
       }),
     );
-    setSelectedScheduleId("");
-    setShowForm(true);
+    setFormState({
+      mode: "copy",
+      sourceScheduleId: selectedSchedule.scheduleId,
+      sourceSchedule: selectedSchedule,
+    });
   }, [
     canEdit,
     onScheduleDraftFlush,
     scheduleOccurrences,
     selectedSchedule,
-    setSelectedScheduleId,
   ]);
 
   const occurrenceTimingById = useMemo(() => {
@@ -4131,7 +4165,7 @@ const ScheduleTab = ({
   const microphoneHoldersByOccurrence = useMemo(() => {
     const holdersByOccurrence = new Map<
       string,
-      Map<string, ScheduleMicrophoneHolder[]>
+      Map<string, ScheduleEquipmentHolder[]>
     >();
     if (!selectedSchedule || !selectedTeam?.usesMicrophoneAssignments) {
       return holdersByOccurrence;
@@ -4140,7 +4174,7 @@ const ScheduleTab = ({
       const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
       const additionalSlots =
         selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId] || [];
-      const holdersByMicrophone = new Map<string, ScheduleMicrophoneHolder[]>();
+      const holdersByMicrophone = new Map<string, ScheduleEquipmentHolder[]>();
       scheduleColumns.forEach((column) => {
         if (!isOccurrenceStaffingSlot(column, requirements, additionalSlots)) return;
         const memberId = getCellPrimaryMemberId(
@@ -4867,9 +4901,11 @@ const ScheduleTab = ({
 
   const scheduleEditForm = (
     <ScheduleEditForm
-      draftKey={draftKey}
+      mode={formState?.mode || "create-custom"}
+      draftKey={formDraftKey}
       persistedDraft={persistedDraft}
-      selectedSchedule={selectedSchedule}
+      selectedSchedule={formSelectedSchedule}
+      copySourceSchedule={formCopySourceSchedule}
       defaultTeamId={defaultTeamId}
       defaultServiceIds={defaultServiceIds}
       defaultRange={defaultRange}
@@ -4885,9 +4921,152 @@ const ScheduleTab = ({
       onScheduleSaved={onScheduleSaved}
       onScheduleRemoved={onScheduleRemoved}
       setSelectedScheduleId={setSelectedScheduleId}
-      onCancel={() => requestDiscardAction(() => setShowForm(false))}
+      onCancel={() => requestDiscardAction(() => setFormState(null))}
     />
   );
+
+  const scheduleWorkflowActions = (
+    <div
+      className="flex flex-wrap items-center justify-end gap-2"
+      role="group"
+      aria-label="Schedule actions"
+    >
+      <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>
+        Schedule history
+      </Button>
+      {canEdit ? (
+        <Button
+          variant="tertiary"
+          svg={Plus}
+          iconSize="sm"
+          onClick={() => {
+            setFormState({ mode: "create-custom" });
+          }}
+        >
+          Create custom schedule
+        </Button>
+      ) : null}
+      {canEdit && selectedSchedule ? (
+        <Popover
+          open={isConfirmingSend}
+          onOpenChange={(open) => {
+            if (!open && isSendingSchedule) return;
+            setIsConfirmingSend(open);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="cta"
+              svg={Send}
+              iconSize="sm"
+              disabled={isSendingSchedule || sendRecipientCount === 0}
+            >
+              {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
+          >
+            <p className="text-sm text-gray-300">
+              Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="cta"
+                svg={Send}
+                iconSize="sm"
+                disabled={isSendingSchedule}
+                onClick={handleSendSchedule}
+              >
+                {isSendingSchedule ? "Sending…" : "Yes, send"}
+              </Button>
+              <Button
+                variant="tertiary"
+                iconSize="sm"
+                disabled={isSendingSchedule}
+                onClick={() => setIsConfirmingSend(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+      {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+        <Menu
+          align="end"
+          menuItems={[
+            {
+              element: (
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-2">
+                    <MessageSquareText className="h-4 w-4" aria-hidden />
+                    Messages
+                    {scheduleMessagesRequiringAttention > 0 ? (
+                      <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
+                        {scheduleMessagesRequiringAttention}
+                      </span>
+                    ) : null}
+                  </span>
+                  {scheduleNotificationIntents.length > 0 ? (
+                    <span className="pl-6 text-xs text-gray-400">
+                      {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
+                    </span>
+                  ) : null}
+                </span>
+              ),
+              onClick: () => {
+                if (shouldOverlayMembers) setMembersPanelOpen(false);
+                setScheduleMessagesOpen(true);
+              },
+              "aria-expanded": scheduleMessagesOpen,
+            },
+            {
+              element: (
+                <span className="flex items-center gap-2">
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  {selectedSchedule.source === "generated-period"
+                    ? "Schedule details"
+                    : "Edit schedule"}
+                </span>
+              ),
+              onClick: () => setFormState({
+                mode: "edit",
+                scheduleId: selectedSchedule.scheduleId,
+              }),
+            },
+            {
+              element: (
+                <span className="flex items-center gap-2">
+                  <Copy className="h-4 w-4" aria-hidden />
+                  Copy schedule
+                </span>
+              ),
+              onClick: handleCopySchedule,
+            },
+          ]}
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              svg={MoreHorizontal}
+              iconSize="sm"
+              ref={scheduleActionsTriggerRef}
+              aria-label="More schedule options"
+            />
+          }
+        />
+      ) : null}
+    </div>
+  );
+  const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
+    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:") && ensuringScheduleId === selectedSchedule.scheduleId
+      ? "Starting schedule…"
+      : selectedSchedule.scheduleId.startsWith("virtual:")
+        ? "Staffing not started"
+        : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
+    }`
+    : undefined;
 
   return (
     <div className={scheduleTabRootClassName}>
@@ -4911,179 +5090,45 @@ const ScheduleTab = ({
       ) : (
         <>
           <h2 className="sr-only">Schedules</h2>
-          <section className={cn(panelShellClassName, "w-full shrink-0")}>
-            <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
-              {scheduleReturnTo ? (
-                <div className="mb-2">
-                  <TeamsReturnBackButton
-                    returnTo={scheduleReturnTo}
-                    onClick={() => returnFromSchedule()}
-                  />
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-                  <Select
-                    className="w-full sm:min-w-40 sm:w-auto"
-                    label="Team"
-                    hideLabel
-                    value={workspaceTeamId}
-                    onChange={updateScheduleTeamFilter}
-                    options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-                    disabled={!activeTeams.length}
-                  />
-                  <PeriodRangeFilter
-                    preset={periodPreset}
-                    range={periodRange}
-                    displayRange={viewingSavedSchedule && selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
-                      ? { start: selectedScheduleRecord.startDate, end: selectedScheduleRecord.endDate }
-                      : periodRange}
-                    onPresetChange={selectPeriodPreset}
-                    onCustomRangeChange={(range) => {
-                      if (range.startDate && range.endDate) {
-                        hasExplicitPeriodSelectionRef.current = true;
-                        setPeriodRange({ start: range.startDate, end: range.endDate });
-                      }
-                      setViewingSavedSchedule(false);
-                    }}
-                    onNavigate={shiftPeriod}
-                    className="min-w-56 sm:w-[27rem]"
-                  />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>Schedule history</Button>
-                  {canEdit ? (
-                    <Button variant="tertiary" svg={Plus} iconSize="sm" onClick={() => { setSelectedScheduleId(""); setShowForm(true); }}>
-                      Create custom schedule
-                    </Button>
-                  ) : null}
-                  {/* Confirm in a popover so the toolbar stays put; the
-                      recipient count is still the whole point of asking. */}
-                  {canEdit && selectedSchedule ? (
-                    <Popover
-                      open={isConfirmingSend}
-                      onOpenChange={(open) => {
-                        if (!open && isSendingSchedule) return;
-                        setIsConfirmingSend(open);
-                      }}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="cta"
-                          svg={Send}
-                          iconSize="sm"
-                          disabled={
-                            isSendingSchedule || sendRecipientCount === 0
-                          }
-                        >
-                          {selectedSchedule.sentAt
-                            ? "Send updates"
-                            : "Send schedule"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
-                      >
-                        <p className="text-sm text-gray-300">
-                          Email {sendRecipientCount}{" "}
-                          {sendRecipientCount === 1 ? "person" : "people"} on
-                          this schedule?
-                        </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="cta"
-                            svg={Send}
-                            iconSize="sm"
-                            disabled={isSendingSchedule}
-                            onClick={handleSendSchedule}
-                          >
-                            {isSendingSchedule ? "Sending…" : "Yes, send"}
-                          </Button>
-                          <Button
-                            variant="tertiary"
-                            iconSize="sm"
-                            disabled={isSendingSchedule}
-                            onClick={() => setIsConfirmingSend(false)}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  ) : null}
-                  {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
-                    <Menu
-                      align="end"
-                      menuItems={[
-                        {
-                          element: (
-                            <span className="flex min-w-0 flex-col gap-0.5">
-                              <span className="flex items-center gap-2">
-                                <MessageSquareText className="h-4 w-4" aria-hidden />
-                                Messages
-                                {scheduleMessagesRequiringAttention > 0 ? (
-                                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
-                                    {scheduleMessagesRequiringAttention}
-                                  </span>
-                                ) : null}
-                              </span>
-                              {scheduleNotificationIntents.length > 0 ? (
-                                <span className="pl-6 text-xs text-gray-400">
-                                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
-                                </span>
-                              ) : null}
-                            </span>
-                          ),
-                          onClick: () => {
-                            if (shouldOverlayMembers) setMembersPanelOpen(false);
-                            setScheduleMessagesOpen(true);
-                          },
-                          "aria-expanded": scheduleMessagesOpen,
-                        },
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Pencil className="h-4 w-4" aria-hidden />
-                              Edit schedule
-                            </span>
-                          ),
-                          onClick: () => setShowForm(true),
-                        },
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Copy className="h-4 w-4" aria-hidden />
-                              Copy schedule
-                            </span>
-                          ),
-                          onClick: handleCopySchedule,
-                        },
-                      ]}
-                      TriggeringButton={
-                        <Button
-                          variant="tertiary"
-                          svg={MoreHorizontal}
-                          iconSize="sm"
-                          ref={scheduleActionsTriggerRef}
-                          aria-label="More schedule options"
-                        />
-                      }
-                    />
-                  ) : null}
-                </div>
-              </div>
-              {selectedSchedule && scheduleOccurrences.length > 0 ? (
-                <p className="mt-2 px-1 text-sm text-gray-400" aria-live="polite">
-                  {formatSchedulePeriodName(selectedSchedule.startDate || periodRange.start, selectedSchedule.endDate || periodRange.end)}
-                  {" · "}{scheduleOccurrences.length} {scheduleOccurrences.length === 1 ? "service" : "services"}
-                  {" · "}{selectedSchedule.scheduleId.startsWith("virtual:") && ensuringScheduleId === selectedSchedule.scheduleId
-                    ? "Starting schedule…"
-                    : selectedSchedule.scheduleId.startsWith("virtual:")
-                    ? "Staffing not started"
-                    : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`}
-                </p>
-              ) : null}
+          {scheduleReturnTo ? (
+            <TeamsReturnBackButton
+              returnTo={scheduleReturnTo}
+              onClick={() => returnFromSchedule()}
+            />
+          ) : null}
+          <header className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div role="group" aria-label="Team schedule identity" className="min-w-0">
+              <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100">
+                <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
+                <span className="truncate">Team schedule</span>
+              </h1>
+            </div>
+            {scheduleWorkflowActions}
+          </header>
+
+          <section className={cn(panelShellClassName, "w-full shrink-0 px-3 py-3")}>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
+              <Select
+                className="w-full sm:min-w-40 sm:w-auto"
+                label="Team"
+                value={workspaceTeamId}
+                onChange={updateScheduleTeamFilter}
+                options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
+                disabled={!activeTeams.length}
+              />
+              <RangeSelector
+                preset={periodPreset}
+                range={periodRange}
+                summary={scheduleRangeSummary}
+                onPresetChange={selectPeriodPreset}
+                onCustomRangeChange={(range) => {
+                  hasExplicitPeriodSelectionRef.current = true;
+                  selectCustomRange(range);
+                  setViewingSavedSchedule(false);
+                }}
+                onNavigate={shiftPeriod}
+                className="min-w-0 flex-1 sm:min-w-0"
+              />
             </div>
           </section>
 
@@ -5094,24 +5139,6 @@ const ScheduleTab = ({
             >
               <div className="shrink-0">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <div
-                    role="group"
-                    aria-label="Team schedule identity"
-                    className="flex min-w-0 flex-1 items-center gap-2"
-                  >
-                    <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
-                      <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
-                      <span className="truncate">Team schedule</span>
-                    </h2>
-                    {/* The picker shows only the schedule name, and teams reuse the
-                        same names — name the team the grid belongs to. */}
-                    {selectedTeam ? (
-                      <span className="flex min-w-0 shrink items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
-                        <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        <span className="truncate">{selectedTeam.name}</span>
-                      </span>
-                    ) : null}
-                  </div>
                   <div
                     role="group"
                     aria-label="Team schedule controls"
@@ -5149,8 +5176,8 @@ const ScheduleTab = ({
                     {!isNarrowViewport ? (
                       <>
                         {scheduleHasMultipleServices ? (
-                          <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
-                            <span className="px-0.5 text-xs font-semibold text-gray-300">
+                          <div className="flex flex-col gap-1">
+                            <span className="px-0.5 text-xs font-semibold text-gray-400">
                               Organize
                             </span>
                             <SegmentedControl
@@ -5162,8 +5189,8 @@ const ScheduleTab = ({
                             />
                           </div>
                         ) : null}
-                        <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
-                          <span className="px-0.5 text-xs font-semibold text-gray-300">
+                        <div className="flex flex-col gap-1">
+                          <span className="px-0.5 text-xs font-semibold text-gray-400">
                             Layout
                           </span>
                           <SegmentedControl
@@ -5417,7 +5444,7 @@ const ScheduleTab = ({
                   </div>
                 </div>
                 <p className="mt-1 text-sm text-gray-400">
-                  Select a date to view and copy that service&apos;s assignments.
+                  Select a service to manage or copy assignments.
                 </p>
               </div>
 
@@ -5989,9 +6016,22 @@ const ScheduleTab = ({
         // Opens already narrowed to the team the picker is showing.
         initialTeamId={workspaceTeamId}
         onSelectSchedule={(scheduleId) => {
+          const selectedHistorySchedule = schedules.find(
+            (schedule) => schedule.scheduleId === scheduleId,
+          );
           setViewingSavedSchedule(true);
+          if (selectedHistorySchedule?.startDate && selectedHistorySchedule.endDate) {
+            setPeriodSelection(
+              "custom",
+              {
+                start: selectedHistorySchedule.startDate,
+                end: selectedHistorySchedule.endDate,
+              },
+              { persist: false },
+            );
+          }
           setSelectedScheduleId(scheduleId, true);
-          setShowForm(false);
+          setFormState(null);
         }}
       />
       <Modal

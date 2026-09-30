@@ -1,5 +1,38 @@
 import { bibleStructure } from "../../utils/bibleStructure";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
+import type { ServicePlanImportAmbiguity } from "../../types/servicePlan";
+
+export const SERVICE_PLANNING_EMPTY_TITLE_REASON = "The source title is empty.";
+
+/** Reasons that explain an import condition without asking the operator to choose an interpretation. */
+export const servicePlanningReasonRequiresReview = (reason: string): boolean =>
+  reason !== SERVICE_PLANNING_EMPTY_TITLE_REASON;
+
+export const servicePlanningReasonsRequireReview = (reasons: string[]): boolean =>
+  reasons.some(servicePlanningReasonRequiresReview);
+
+/** Shared review predicate for importer output, refreshes, and row indicators. */
+export const servicePlanImportAmbiguityNeedsReview = (
+  ambiguity: Pick<
+    ServicePlanImportAmbiguity,
+    "authorizationPending" | "status" | "parts" | "songMappings" | "reasons"
+  >,
+): boolean => Boolean(
+  ambiguity.authorizationPending ||
+  (ambiguity.status !== "confirmed" &&
+    ambiguity.status !== "acknowledged" &&
+    (ambiguity.parts.length > 0 ||
+      Boolean(ambiguity.songMappings?.length) ||
+      servicePlanningReasonsRequireReview(ambiguity.reasons))),
+);
+
+/** A deferred item remains visible to the row, but is not re-opened by the next refresh. */
+export const servicePlanImportAmbiguityShouldQueue = (
+  ambiguity: Pick<
+    ServicePlanImportAmbiguity,
+    "authorizationPending" | "status" | "parts" | "songMappings" | "reasons"
+  >,
+): boolean => ambiguity.status !== "deferred" && servicePlanImportAmbiguityNeedsReview(ambiguity);
 
 export type ServicePlanningTitlePart = {
   kind: "scripture" | "url" | "person" | "description";
@@ -151,7 +184,7 @@ export const classifyServicePlanningTitle = ({
   let remaining = title.trim();
   const parts: ServicePlanningTitlePart[] = [];
   const reasons: string[] = [];
-  if (!remaining) reasons.push("The source title is empty.");
+  if (!remaining) reasons.push(SERVICE_PLANNING_EMPTY_TITLE_REASON);
   const scripture = extractScripture(remaining);
   if (scripture) {
     parts.push({ kind: "scripture", value: scripture.text, destination: "scripture" });

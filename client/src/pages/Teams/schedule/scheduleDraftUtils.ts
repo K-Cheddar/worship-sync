@@ -10,6 +10,13 @@ import type {
 import { clampPlainDateToMin } from "@/utils/plainDate";
 import { getDefaultScheduleRange } from "@/utils/teamScheduleOccurrences";
 
+export type ScheduleFormMode = "edit" | "create-custom" | "copy";
+
+export const CUSTOM_SCHEDULE_DRAFT_KEY = "new:custom";
+
+export const getScheduleCopyDraftKey = (sourceScheduleId: string) =>
+  `new:copy:${sourceScheduleId}`;
+
 type BuildScheduleDraftArgs = {
   persistedDraft?: TeamSchedulePayload;
   selectedSchedule?: TeamSchedule | null;
@@ -278,6 +285,13 @@ export const buildScheduleCopyDraft = ({
   occurrences,
   assignments: source.assignments || {},
   guests: source.guests || [],
+  ...(source.microphoneAssignments
+    ? { microphoneAssignments: source.microphoneAssignments }
+    : {}),
+  ...(source.iemAssignments ? { iemAssignments: source.iemAssignments } : {}),
+  ...(source.additionalPositionSlots
+    ? { additionalPositionSlots: source.additionalPositionSlots }
+    : {}),
 });
 
 const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>
@@ -405,9 +419,11 @@ export const rekeyScheduleOccurrenceRowsByServiceDate = <T,>({
 };
 
 export type ScheduleEditFormProps = {
+  mode: ScheduleFormMode;
   draftKey: string;
   persistedDraft?: TeamSchedulePayload;
   selectedSchedule: TeamSchedule | null;
+  copySourceSchedule?: TeamSchedule | null;
   defaultTeamId: string;
   defaultServiceIds: string[];
   defaultRange: { startDate: string; endDate: string };

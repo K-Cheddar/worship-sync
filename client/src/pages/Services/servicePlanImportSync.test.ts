@@ -39,6 +39,26 @@ const section = (
 ): ServicePlanSection => ({ id, name, elements, sourcePlanningManaged });
 
 describe("getNewServicePlanImportAmbiguityIds", () => {
+  it("does not queue an empty-title-only ambiguity", () => {
+    const informational = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "",
+      sourceLedBy: "",
+      parts: [],
+      reasons: ["The source title is empty."],
+      status: "unresolved" as const,
+      sourceFingerprint: "empty-title",
+    };
+    const current = [section("s1", "Worship", [element("e1", "Untitled", { importAmbiguity: informational })])];
+    const next = [section("s1", "Worship", [element("e1", "Untitled", {
+      importAmbiguity: { ...informational, status: "confirmed" },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
+
   it("does not repeat an unchanged review after source rows move", () => {
     const current = [section("section", "Worship", [element("same-id", "Skit", {
       importAmbiguity: {
@@ -2220,7 +2240,7 @@ describe("refresh source snapshots and field selections", () => {
 
 describe("refreshing reviewed source-owned occurrences", () => {
   const managedAssigneeElement = (
-    people: Array<{ id: string; name: string; sourceId: string; microphoneIds?: string[]; iemIds?: string[] }>,
+    people: Array<{ id: string; name: string; sourceId: string; memberId?: string; microphoneIds?: string[]; iemIds?: string[] }>,
     ledBy: string,
   ) => element("source-row", "Prayer", {
     sourcePlanningManaged: true,
@@ -2287,6 +2307,140 @@ describe("refreshing reviewed source-owned occurrences", () => {
       { id: "one", name: "Jamie", iemIds: ["iem-1"] },
       { id: "two", name: "Riley", microphoneIds: ["mic-2"], iemIds: ["iem-2"] },
     ]);
+  });
+
+  const blankEquipmentElement = (
+    assignees: NonNullable<ServicePlanElement["assignees"]>,
+  ) => element("source-row", "Prayer", {
+    sourcePlanningManaged: true,
+    sourceLedByRaw: "",
+    assignees,
+    servicePlanningImport: {
+      observed: { elementType: "Prayer", title: "Prayer", ledBy: "", note: "" },
+      applied: { elementType: "Prayer", title: "Prayer", ledBy: "", note: "" },
+      pendingFields: [],
+    },
+  });
+
+  it("gives one imported person the first existing unassigned microphone slot", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", microphoneIds: ["mic-spare"] },
+      { id: "slot-3", microphoneIds: ["mic-lapel"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", microphoneIds: ["mic-spare"] },
+      { id: "slot-3", microphoneIds: ["mic-lapel"] },
+    ]);
+  });
+
+  it("assigns multiple imported people to mixed equipment slots in stable order", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", iemIds: ["iem-vocal"] },
+      { id: "slot-3", microphoneIds: ["mic-band"], iemIds: ["iem-band"] },
+    ]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence", memberId: "unverified-member" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", name: "Jordan Smith", iemIds: ["iem-vocal"] },
+      { id: "slot-3", microphoneIds: ["mic-band"], iemIds: ["iem-band"] },
+    ]);
+  });
+
+  it("appends only the people who exceed available equipment slots", () => {
+    const current = blankEquipmentElement([{ id: "slot-1", microphoneIds: ["mic-lead"] }]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "fresh-2", name: "Jordan Smith" },
+    ]);
+  });
+
+  it("does not displace a manually assigned person and does not claim that row", () => {
+    const current = blankEquipmentElement([
+      { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-manual"] },
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-manual"] },
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+    ]);
+    expect(refreshed.elements[0].servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: "slot-1", ledByIdentity: "clarence" }),
+    ]);
+  });
+
+  it("reuses a same-name operator row without assigning it source ownership", () => {
+    const current = blankEquipmentElement([
+      { id: "manual", name: "Clarence Jones", memberId: "member-clarence", microphoneIds: ["mic-manual"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "manual", name: "Clarence Jones", memberId: "member-clarence", microphoneIds: ["mic-manual"] },
+    ]);
+    expect(refreshed.elements[0].servicePlanningImport?.managedAssignees).toBeUndefined();
+  });
+
+  it("lets a source identity match win over a blank-slot fallback", () => {
+    const current = managedAssigneeElement([
+      { id: "managed", name: "Clarence Jones", sourceId: "clarence", microphoneIds: ["mic-lead"] },
+    ], "Clarence Jones");
+    current.assignees = [
+      ...(current.assignees || []),
+      { id: "slot-1", microphoneIds: ["mic-spare"] },
+    ];
+    const incoming = managedAssigneeElement([
+      { id: "fresh", name: "Clarence Jones", sourceId: "clarence" },
+    ], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "managed", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-1", microphoneIds: ["mic-spare"] },
+    ]);
+  });
+
+  it("keeps the fallback result stable across repeated serialized refreshes", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", iemIds: ["iem-vocal"] },
+    ]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [once] = managedRefresh(current, incoming);
+    const serialized = JSON.parse(JSON.stringify(once.elements[0])) as ServicePlanElement;
+    const [twice] = managedRefresh(serialized, incoming);
+
+    expect(twice).toEqual(once);
   });
 
   const source = (title: string, ledBy: string) => ({

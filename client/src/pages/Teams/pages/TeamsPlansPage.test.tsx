@@ -2,7 +2,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ContextType } from "react";
-import TeamsPlansPage, { rangeFromPreset } from "./TeamsPlansPage";
+import TeamsPlansPage from "./TeamsPlansPage";
+import { resolveRangePreset } from "../rangeSelection";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
@@ -10,9 +11,12 @@ import {
   getServicePlan,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
+  getServiceEquipment,
   listServicePlanTemplates,
   listServicePlans,
   saveServicePlan,
+  updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
 import type { TeamService } from "../../../api/authTypes";
 import { formatPlainDate } from "../../../utils/plainDate";
@@ -36,6 +40,9 @@ jest.mock("../../../api/auth", () => ({
     microphones: [],
     audiences: [],
   })),
+  getServiceEquipment: jest.fn(async () => ({ success: true, equipment: [] })),
+  updateTeamScheduleAssignmentMicrophones: jest.fn(),
+  updateTeamScheduleAssignmentIems: jest.fn(),
   publishServicePlan: jest.fn(),
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
@@ -85,12 +92,17 @@ const oneTimeOccurrenceId = `easter@${oneTimeStartsAt}`;
 
 const mockUseTeamsPage = jest.fn();
 const mockHydrateSchedules = jest.fn();
+const mockUpsertData = jest.fn();
+const mockTrackTeamsSave = jest.fn(<T,>(promise: Promise<T>) => promise);
 jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => mockUseTeamsPage(),
 }));
 
 const mockGetServicePlan = jest.mocked(getServicePlan);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
+const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
+const mockUpdateTeamScheduleAssignmentMicrophones = jest.mocked(updateTeamScheduleAssignmentMicrophones);
+const mockUpdateTeamScheduleAssignmentIems = jest.mocked(updateTeamScheduleAssignmentIems);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockListServicePlans = jest.mocked(listServicePlans);
@@ -161,6 +173,8 @@ describe("TeamsPlansPage", () => {
       canEditTeams: true,
       hydrateSchedules: mockHydrateSchedules,
       hydratingScheduleIds: [],
+      upsertData: mockUpsertData,
+      trackTeamsSave: mockTrackTeamsSave,
     });
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
     mockListServicePlanTemplates.mockResolvedValue({
@@ -173,24 +187,27 @@ describe("TeamsPlansPage", () => {
       success: true,
       servicePlan: {} as never,
     });
+    mockGetServiceEquipment.mockResolvedValue({ success: true, equipment: [] });
+    mockUpdateTeamScheduleAssignmentMicrophones.mockReset();
+    mockUpdateTeamScheduleAssignmentIems.mockReset();
   });
 
   it("uses complete calendar months and quarters for range presets", () => {
     const lateQuarterDate = new Date("2026-09-28T12:00:00");
 
-    expect(rangeFromPreset("thisMonth", lateQuarterDate)).toEqual({
+    expect(resolveRangePreset("thisMonth", lateQuarterDate)).toEqual({
       start: "2026-09-01",
       end: "2026-09-30",
     });
-    expect(rangeFromPreset("nextMonth", lateQuarterDate)).toEqual({
+    expect(resolveRangePreset("nextMonth", lateQuarterDate)).toEqual({
       start: "2026-10-01",
       end: "2026-10-31",
     });
-    expect(rangeFromPreset("thisQuarter", lateQuarterDate)).toEqual({
+    expect(resolveRangePreset("thisQuarter", lateQuarterDate)).toEqual({
       start: "2026-07-01",
       end: "2026-09-30",
     });
-    expect(rangeFromPreset("nextQuarter", lateQuarterDate)).toEqual({
+    expect(resolveRangePreset("nextQuarter", lateQuarterDate)).toEqual({
       start: "2026-10-01",
       end: "2026-12-31",
     });
@@ -697,6 +714,99 @@ describe("TeamsPlansPage", () => {
         name: /Avery Stone on Vocal/i,
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the newer IEM response from being overwritten by an older mic response", async () => {
+    const user = userEvent.setup();
+    let resolveMicrophone!: (value: { success: boolean; schedule: Record<string, unknown> }) => void;
+    let resolveIem!: (value: { success: boolean; schedule: Record<string, unknown> }) => void;
+    const microphoneResponse = new Promise<{ success: boolean; schedule: Record<string, unknown> }>((resolve) => {
+      resolveMicrophone = resolve;
+    });
+    const iemResponse = new Promise<{ success: boolean; schedule: Record<string, unknown> }>((resolve) => {
+      resolveIem = resolve;
+    });
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [{ id: "mic-orange", name: "Orange", type: "Handheld", color: "#f97316" }],
+      audiences: [],
+    });
+    mockGetServiceEquipment.mockResolvedValue({
+      success: true,
+      equipment: [{ id: "iem-black", category: "iem", name: "Black", subtype: "wireless-beltpack" }],
+    });
+    mockUpdateTeamScheduleAssignmentMicrophones.mockReturnValue(microphoneResponse as never);
+    mockUpdateTeamScheduleAssignmentIems.mockReturnValue(iemResponse as never);
+
+    const occurrenceId = oneTimeOccurrenceId;
+    const baseSchedule = {
+      scheduleId: "schedule-1",
+      churchId: "church-1",
+      name: "August",
+      teamId: "team-1",
+      serviceIds: ["easter"],
+      occurrences: [{ occurrenceId, serviceId: "easter", name: "Easter Sunday", startsAt: oneTimeStartsAt }],
+      assignments: { [occurrenceId]: { "position-vocal::0": { primaryMemberId: "member-1" } } },
+      microphoneAssignments: {},
+      iemAssignments: {},
+    };
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [{ ...easterOneTime, positionRequirements: [{ positionId: "position-vocal", count: 1 }] }],
+        positions: [{ positionId: "position-vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+        teams: [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [], usesMicrophoneAssignments: true, usesIemAssignments: true }],
+        members: [{ memberId: "member-1", churchId: "church-1", firstName: "Avery", lastName: "Stone", positionIds: [], blockoutDates: [] }],
+        schedules: [baseSchedule],
+      },
+      canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
+      upsertData: mockUpsertData,
+      trackTeamsSave: mockTrackTeamsSave,
+    });
+
+    renderPage();
+    await user.click((await screen.findAllByRole("button", { name: /Add plan for /i }))[0]);
+    await user.click(await screen.findByRole("tab", { name: /Equipment assignments/i }));
+
+    await user.click(await screen.findByRole("combobox", { name: /Microphone for Avery Stone \(Vocal\)$/i }));
+    await user.click(await screen.findByRole("option", { name: /Orange/i }));
+    await user.click(await screen.findByRole("combobox", { name: /Microphone for Avery Stone \(Vocal\) IEM/i }));
+    await user.click(await screen.findByRole("option", { name: /Black/i }));
+
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamScheduleAssignmentIems).not.toHaveBeenCalled();
+    resolveMicrophone({
+      success: true,
+      schedule: { ...baseSchedule, microphoneAssignments: { [occurrenceId]: { "position-vocal::0": ["mic-orange"] } } },
+    });
+    await Promise.resolve();
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledTimes(1));
+    resolveIem({
+      success: true,
+      schedule: {
+        ...baseSchedule,
+        microphoneAssignments: { [occurrenceId]: { "position-vocal::0": ["mic-orange"] } },
+        iemAssignments: { [occurrenceId]: { "position-vocal::0": ["iem-black"] } },
+      },
+    });
+    await Promise.resolve();
+
+    expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledWith(
+      "church-1",
+      "schedule-1",
+      { serviceId: occurrenceId, positionSlotKey: "position-vocal::0", microphoneIds: ["mic-orange"] },
+    );
+    expect(mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledWith(
+      "church-1",
+      "schedule-1",
+      { serviceId: occurrenceId, positionSlotKey: "position-vocal::0", iemIds: ["iem-black"] },
+    );
+    await waitFor(() => expect(mockUpsertData).toHaveBeenCalledTimes(2));
+    expect(mockUpsertData).toHaveBeenCalledWith("schedules", "scheduleId", expect.objectContaining({
+      microphoneAssignments: { [occurrenceId]: { "position-vocal::0": ["mic-orange"] } },
+      iemAssignments: { [occurrenceId]: { "position-vocal::0": ["iem-black"] } },
+    }));
   });
 
   it("lists the positions the service needs when no schedule covers the date", async () => {

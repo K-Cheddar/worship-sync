@@ -22,9 +22,9 @@ import { isMemberAvailableOnDate } from "../memberPreferences";
 import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
-import ScheduleMicrophoneSelect, {
-  type ScheduleMicrophoneHolder,
-} from "./ScheduleMicrophoneSelect";
+import ScheduleEquipmentSelect, {
+  type ScheduleEquipmentHolder,
+} from "./ScheduleEquipmentSelect";
 import {
   scheduleCellPaddingClassName,
   scheduleGridLeftBorderClassName,
@@ -56,14 +56,14 @@ type ScheduleGridCellProps = {
   canEdit: boolean;
   microphones?: ServicePlanMicrophone[];
   microphoneIds?: string[];
-  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphoneHolders?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   microphonesLoading?: boolean;
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
   iems?: ServiceEquipment[];
   iemIds?: string[];
-  iemHoldersByIem?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   savingIem?: boolean;
   onIemChange?: (iemIds: string[]) => void;
   iemLoading?: boolean;
@@ -248,7 +248,7 @@ const ScheduleGridCell = memo(({
           ) : null}
         </div>
         {(microphones && microphoneHolders && onMicrophoneChange) || (iems && onIemChange) ? (
-          <ScheduleMicrophoneSelect
+          <ScheduleEquipmentSelect
             microphoneIds={microphoneIds}
             microphones={microphones || []}
             holdersByMicrophone={microphoneHolders || new Map()}

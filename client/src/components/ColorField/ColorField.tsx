@@ -158,6 +158,7 @@ type BrandAwareColorPickerProps = {
   onChange: (value: string) => void;
   colors: ChurchBrandColor[];
   alpha?: boolean;
+  hexInputLabel?: string;
 };
 
 export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
@@ -165,6 +166,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
   onChange,
   colors,
   alpha = false,
+  hexInputLabel,
 }) => {
   const PickerComponent = alpha ? HexAlphaColorPicker : HexColorPicker;
   const inputProps = alpha ? { alpha: true } : {};
@@ -238,6 +240,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
             onChange={handlePickerChange}
             className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
+            aria-label={hexInputLabel}
           />
         </div>
         {colors.length > 0 && (
@@ -257,6 +260,64 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
         />
       </div>
     </div>
+  );
+};
+
+type CompactColorPickerProps = {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  alpha?: boolean;
+  /** Show a rainbow trigger when the caller has no explicit color override. */
+  showUnset?: boolean;
+  className?: string;
+};
+
+export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
+  label,
+  value,
+  onChange,
+  alpha = false,
+  showUnset = false,
+  className,
+}) => {
+  const globalInfo = useContext(GlobalInfoContext);
+  const brandColors = globalInfo?.churchBranding.colors || [];
+  const contrastColor = getContrastingTextColor(value);
+
+  return (
+    <PopOver
+      align="start"
+      contentClassName="w-[min(28rem,calc(100vw-2rem))]"
+      bodyClassName="px-3 pb-3"
+      TriggeringButton={
+        <Button
+          type="button"
+          variant="tertiary"
+          aria-label={label}
+          title={label}
+          padding="p-0"
+          className={cn(
+            "size-7 min-h-0 shrink-0 rounded-full border-2",
+            className,
+          )}
+          style={showUnset
+            ? {
+              backgroundImage: "conic-gradient(from 45deg, #ef4444, #eab308, #22c55e, #3b82f6, #8b5cf6, #ec4899, #ef4444)",
+              borderColor: "#d1d5db",
+            }
+            : { backgroundColor: value, borderColor: contrastColor }}
+        />
+      }
+    >
+      <BrandAwareColorPicker
+        color={value}
+        onChange={onChange}
+        colors={brandColors}
+        alpha={alpha}
+        hexInputLabel={`${label} hex`}
+      />
+    </PopOver>
   );
 };
 

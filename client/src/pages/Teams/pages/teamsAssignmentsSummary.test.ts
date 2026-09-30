@@ -10,6 +10,7 @@ import {
   getOccurrenceAssignmentSummary,
   getScheduledEquipmentHolders,
   getScheduledMicrophoneHolders,
+  getTeamEquipmentRows,
   getTeamMicrophoneRows,
   groupAssignmentSummaryByTeam,
   summarizeNeededPositions,
@@ -557,6 +558,37 @@ describe("getTeamMicrophoneRows", () => {
     // team-2 has no schedule for this date, so its required Front of House
     // slot has no cell to write a microphone to.
     const rows = getTeamMicrophoneRows(summaryFor([]), microphoneTeams);
+
+    expect(rows).toEqual([]);
+  });
+});
+
+describe("getTeamEquipmentRows", () => {
+  it("includes scheduled rows for microphone-only, IEM-only, and combined teams", () => {
+    const rows = summaryFor([
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+          "position-keys::0": { primaryMemberId: "member-1" },
+        },
+      }),
+    ]);
+    const equipmentRows = getTeamEquipmentRows(rows, [
+      { ...teams[0], usesMicrophoneAssignments: true },
+      { ...teams[1], usesIemAssignments: true },
+    ]);
+
+    expect(equipmentRows.map((row) => row.slotLabel)).toEqual([
+      "Vocal 1",
+      "Vocal 2",
+      "Keys",
+    ]);
+  });
+
+  it("does not include required slots without a schedule to mutate", () => {
+    const rows = getTeamEquipmentRows(summaryFor([]), [
+      { ...teams[0], usesIemAssignments: true },
+    ]);
 
     expect(rows).toEqual([]);
   });

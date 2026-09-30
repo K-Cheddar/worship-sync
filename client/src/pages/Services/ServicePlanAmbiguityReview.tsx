@@ -74,7 +74,7 @@ const ServicePlanAmbiguityReview = ({
   if (showPrompt) {
     return (
       <FloatingWindow {...floatingWindowProps}>
-        <div className="flex h-full flex-col justify-center gap-4 p-6">
+        <div className="flex h-full flex-col justify-start gap-4 p-6">
           <div className="max-w-xl">
             <p className="text-base font-medium text-gray-100">{elementIds.length} imported {elementIds.length === 1 ? "item needs" : "items need"} a quick interpretation review.</p>
             <p className="mt-1 text-sm text-gray-400">Review each item in order. You can leave any item for later.</p>

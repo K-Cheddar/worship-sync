@@ -2,6 +2,7 @@ import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText
 import {
   getServicePlanElementAssignees,
   getServicePlanElementSongRefs,
+  isUnassignedServicePlanAssignee,
 } from "../../types/servicePlan";
 import generateRandomId from "../../utils/generateRandomId";
 import type {
@@ -14,6 +15,9 @@ import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlace
 import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
 import { copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
+import {
+  servicePlanImportAmbiguityShouldQueue,
+} from "./servicePlanningTitleClassifier";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -48,7 +52,7 @@ const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["i
     })),
   });
 
-/** Return only unresolved imports that are new or materially changed in the
+/** Return only reviewable imports that are new or materially changed in the
  * refreshed plan. Element IDs come from reconciliation, so inserting another
  * source row does not make an unchanged ambiguity look new. */
 export const getNewServicePlanImportAmbiguityIds = (
@@ -58,14 +62,15 @@ export const getNewServicePlanImportAmbiguityIds = (
   const currentFingerprintById = new Map(
     currentSections.flatMap((section) => section.elements.flatMap((element) => {
       const ambiguity = element.importAmbiguity;
-      return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
+      return ambiguity &&
+        (ambiguity.status === "deferred" || servicePlanImportAmbiguityShouldQueue(ambiguity))
         ? [[element.id, ambiguityReviewFingerprint(ambiguity)] as const]
         : [];
     })),
   );
   return nextSections.flatMap((section) => section.elements.flatMap((element) => {
     const ambiguity = element.importAmbiguity;
-    return ambiguity?.status === "unresolved" &&
+    return ambiguity && servicePlanImportAmbiguityShouldQueue(ambiguity) &&
       currentFingerprintById.get(element.id) !== ambiguityReviewFingerprint(ambiguity)
       ? [element.id]
       : [];
@@ -488,6 +493,7 @@ const reconcileImportedSourceAssignees = (
     : [];
   const ownedOld = new Set<number>();
   const currentByIncoming = new Map<number, number>();
+  const operatorOwnedMatches = new Set<number>();
   const used = new Set<number>();
   const normalizedName = (name: string | undefined) => normalized(name || "");
 
@@ -534,6 +540,24 @@ const reconcileImportedSourceAssignees = (
     }
   });
 
+  // Reuse a same-name operator-owned row without making the source
+  // responsible for its future changes.
+  incomingLedBy.forEach((incomingAssignee, incomingIndex) => {
+    if (currentByIncoming.has(incomingIndex)) return;
+    const candidates = existing.flatMap((assignee, index) => {
+      const ownership = existingOwnership.find((item) => item.id === assignee.id);
+      return !used.has(index) && !ownedOld.has(index) && !ownership &&
+        normalizedName(assignee.name) === normalizedName(incomingAssignee.assignee.name)
+        ? [index]
+        : [];
+    });
+    if (candidates.length !== 1) return;
+    const match = candidates[0];
+    used.add(match);
+    currentByIncoming.set(incomingIndex, match);
+    operatorOwnedMatches.add(match);
+  });
+
   const remainingOld = [...ownedOld].filter((index) => !used.has(index));
   const remainingIncoming = incomingLedBy.map((_, index) => index).filter((index) => !currentByIncoming.has(index));
   if (remainingOld.length === remainingIncoming.length) {
@@ -544,6 +568,23 @@ const reconcileImportedSourceAssignees = (
     });
   }
 
+  // Template equipment is represented by blank assignee rows. After identity
+  // and name matches have first refusal, hand out remaining equipment slots in
+  // their existing order. An unmatched source-owned row with equipment is
+  // also safe to reuse because its old source person is being removed.
+  const fallbackIncoming = incomingLedBy.map((_, index) => index).filter((index) => !currentByIncoming.has(index));
+  const fallbackSlots = existing.flatMap((assignee, index) =>
+    !used.has(index) && hasServicePlanAssigneeEquipment(assignee) &&
+      (isUnassignedServicePlanAssignee(assignee) || ownedOld.has(index))
+      ? [index]
+      : [],
+  );
+  fallbackIncoming.slice(0, fallbackSlots.length).forEach((incomingIndex, index) => {
+    const slot = fallbackSlots[index];
+    used.add(slot);
+    currentByIncoming.set(incomingIndex, slot);
+  });
+
   const reconciledLedBy = incomingLedBy.map((incomingAssignee, index) => {
     const previous = currentByIncoming.get(index) === undefined ? undefined : existing[currentByIncoming.get(index)!];
     const identity = incomingAssignee.ownership.ledByIdentity;
@@ -551,11 +592,13 @@ const reconcileImportedSourceAssignees = (
     const isSamePerson = previous && (identity && previousIdentity
       ? identity === previousIdentity
       : normalizedName(previous.name) === normalizedName(incomingAssignee.assignee.name));
-    const assignee = copyServicePlanAssigneeEquipment({
+    const importedIdentity = {
       ...incomingAssignee.assignee,
       id: previous?.id || incomingAssignee.assignee.id,
       ...(isSamePerson && previous?.memberId ? { memberId: previous.memberId } : {}),
-    }, previous);
+    };
+    if (!isSamePerson) delete importedIdentity.memberId;
+    const assignee = copyServicePlanAssigneeEquipment(importedIdentity, previous);
     return {
       assignee,
       ownership: {
@@ -569,12 +612,12 @@ const reconcileImportedSourceAssignees = (
   const ownershipById = new Map<string, NonNullable<NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"]>[number]>();
   const emitted = new Set<number>();
   const result = existing.flatMap((assignee, index) => {
-    if (!ownedOld.has(index)) return [assignee];
     const matchedIncoming = [...currentByIncoming.entries()].find(([, currentIndex]) => currentIndex === index)?.[0];
-    if (matchedIncoming !== undefined) {
+    if (matchedIncoming !== undefined && !operatorOwnedMatches.has(index)) {
       emitted.add(matchedIncoming);
       return [reconciledLedBy[matchedIncoming].assignee];
     }
+    if (!ownedOld.has(index)) return [assignee];
     const ownership = existingOwnership.find((item) => item.id === assignee.id);
     if (ownership?.fields.includes("title") && ownership.fingerprint === assigneeFingerprint(assignee)) {
       const titleOwnership = { ...ownership, fields: ["title" as const] };
@@ -589,7 +632,11 @@ const reconcileImportedSourceAssignees = (
     const assignee = result.find((item) => item.id === ownership.id);
     if (assignee && ownership.fingerprint === assigneeFingerprint(assignee) && !ownershipById.has(ownership.id)) ownershipById.set(ownership.id, ownership);
   });
-  reconciledLedBy.forEach((item) => ownershipById.set(item.assignee.id, item.ownership));
+  reconciledLedBy.forEach((item, index) => {
+    const currentIndex = currentByIncoming.get(index);
+    if (currentIndex !== undefined && operatorOwnedMatches.has(currentIndex)) return;
+    ownershipById.set(item.assignee.id, item.ownership);
+  });
   [...reconciledLedBy.filter((_, index) => !emitted.has(index)), ...incomingTitle].forEach((incomingItem) => {
     const incomingAssignee = incomingItem.assignee;
     const duplicate = result.find((assignee) => normalizedName(assignee.name) === normalizedName(incomingAssignee.name));

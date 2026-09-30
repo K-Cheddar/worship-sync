@@ -516,7 +516,7 @@ const PresentationPreview = ({
             )}
             <div
               className={cn(
-                "relative @container/preview",
+                "relative isolate @container/preview",
                 centerPreview && "flex w-full min-w-0 justify-center",
                 info.displayType === "stream" && "bg-gray-500/35",
               )}
@@ -533,7 +533,7 @@ const PresentationPreview = ({
                         aria-describedby={contentHiddenDescriptionId}
                         data-testid="content-hidden-preview-badge"
                         className={cn(
-                          "absolute right-1 top-1 z-[60] inline-flex items-center rounded p-1.5 text-amber-100 shadow-sm ring-1 transition-colors hover:bg-amber-900/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
+                          "absolute right-1 top-1 z-10 inline-flex items-center rounded p-1.5 text-amber-100 shadow-sm ring-1 transition-colors hover:bg-amber-900/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
                           contentHiddenUnconfirmed
                             ? "border border-dashed border-amber-300/60 bg-amber-950/75 ring-transparent"
                             : "bg-amber-950/95 ring-amber-300/40",

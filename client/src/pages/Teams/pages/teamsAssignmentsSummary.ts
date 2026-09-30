@@ -417,8 +417,11 @@ export const getOccurrenceAssignmentSummary = ({
  * Identifies one scheduled slot's microphone allocation across the surfaces
  * that save it — used to show a save in progress on that slot alone.
  */
-export const teamMicrophoneSlotKey = (row: TeamsAssignmentSummaryRow) =>
+export const teamEquipmentSlotKey = (row: TeamsAssignmentSummaryRow) =>
   `${row.scheduleId}:${row.occurrenceId}:${row.columnKey}`;
+
+/** Compatibility name for callers that only deal with microphones. */
+export const teamMicrophoneSlotKey = teamEquipmentSlotKey;
 
 /**
  * The rows that can hold a church microphone for the day: scheduled slots on
@@ -436,6 +439,25 @@ export const getTeamMicrophoneRows = (
   );
   return rows.filter(
     (row) => row.scheduleId && microphoneTeamIds.has(row.teamId),
+  );
+};
+
+/**
+ * Scheduled slots that can hold either kind of service-level equipment. The
+ * schedule must exist because these rows are written back to its assignment
+ * maps; unscheduled service requirements have no durable target yet.
+ */
+export const getTeamEquipmentRows = (
+  rows: TeamsAssignmentSummaryRow[],
+  teams: TeamRecord[],
+): TeamsAssignmentSummaryRow[] => {
+  const equipmentTeamIds = new Set(
+    teams
+      .filter((team) => team.usesMicrophoneAssignments || team.usesIemAssignments)
+      .map((team) => team.teamId),
+  );
+  return rows.filter(
+    (row) => Boolean(row.scheduleId) && equipmentTeamIds.has(row.teamId),
   );
 };
 

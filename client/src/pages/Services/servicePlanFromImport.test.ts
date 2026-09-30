@@ -69,7 +69,7 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(sections[1].elements).toHaveLength(1);
   });
 
-  it("retains an empty external Title as a reviewable source ambiguity", () => {
+  it("retains an empty external Title as informational import provenance", () => {
     const [section] = buildServicePlanSectionsFromImport({
       planLabel: "Sunday Service",
       sections: [{
@@ -83,7 +83,7 @@ describe("buildServicePlanSectionsFromImport", () => {
       sourceTitle: "",
       sourceElementType: "Special Feature",
       sourceNote: "Original note",
-      status: "unresolved",
+      status: "confirmed",
       reasons: ["The source title is empty."],
       parts: [],
     });

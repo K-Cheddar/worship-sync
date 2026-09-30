@@ -416,6 +416,15 @@ describe("buildScheduleCopyDraft", () => {
       "s1@2026-01-04T10:00:00.000Z": { keys: cell("m1") },
     },
     guests: [{ guestId: "scheduleGuest_1", name: "Alex Rivera" }],
+    microphoneAssignments: {
+      "s1@2026-01-04T10:00:00.000Z": { "position-keys::0": ["mic-1"] },
+    },
+    iemAssignments: {
+      "s1@2026-01-04T10:00:00.000Z": { "position-keys::0": ["iem-1"] },
+    },
+    additionalPositionSlots: {
+      "s1@2026-01-04T10:00:00.000Z": ["position-keys::1"],
+    },
   };
 
   it("prefixes the name and carries team, services, dates, and assignments", () => {
@@ -431,6 +440,9 @@ describe("buildScheduleCopyDraft", () => {
     expect(draft.endDate).toBe("2026-01-31");
     expect(draft.assignments).toEqual(source.assignments);
     expect(draft.guests).toEqual(source.guests);
+    expect(draft.microphoneAssignments).toEqual(source.microphoneAssignments);
+    expect(draft.iemAssignments).toEqual(source.iemAssignments);
+    expect(draft.additionalPositionSlots).toEqual(source.additionalPositionSlots);
     expect(draft).not.toHaveProperty("source");
     expect(draft).not.toHaveProperty("generatedPeriodKey");
   });

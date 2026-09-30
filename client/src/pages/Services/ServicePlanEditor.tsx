@@ -101,9 +101,9 @@ import {
   isOccurrenceOnCalendarDay,
 } from "../../utils/teamScheduleOccurrences";
 import { memberName } from "../Teams/teamsUtils";
-import TeamMicrophonesPanel from "../Teams/pages/TeamMicrophonesPanel";
+import TeamEquipmentPanel from "../Teams/pages/TeamEquipmentPanel";
 import {
-  getTeamMicrophoneRows,
+  getTeamEquipmentRows,
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
 import {
@@ -143,6 +143,7 @@ import {
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
+import { servicePlanImportAmbiguityShouldQueue } from "./servicePlanningTitleClassifier";
 import ServicePlanSectionList, {
   servicePlanSectionDomId,
   type ServicePlanSelection,
@@ -321,7 +322,7 @@ type ServicePlanImportPreview = {
   summary: ServicePlanImportSummary;
 };
 
-type ServicePlanEditorTab = "plan" | "setlist" | "microphones" | "serving";
+type ServicePlanEditorTab = "plan" | "setlist" | "equipment" | "serving";
 
 const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
   new Intl.DateTimeFormat("en-US", {
@@ -403,7 +404,7 @@ type ServicePlanEditorProps = {
   /** Roles available for role-specific operational notes. */
   positions?: TeamPosition[];
   teams?: TeamRecord[];
-  /** Scheduled team holders for church microphones on this occurrence. */
+  /** Scheduled team holders for church equipment on this occurrence. */
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   /** Whether projected holders reflect the loaded schedule data. */
   scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
@@ -411,13 +412,12 @@ type ServicePlanEditorProps = {
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /**
-   * Day-level microphone allocation for this occurrence's scheduled roles.
-   * When the occurrence has slots on a team that uses microphone assignments,
-   * the plan gains a Microphones tab beside the order of service — allocation
-   * belongs to the plan, but not in the middle of the running order.
+   * Day-level microphone/IEM allocation for this occurrence's scheduled roles.
+   * The schedule remains authoritative; this is only the editor's equipment
+   * view of those existing assignment maps.
    */
-  teamMicrophones?: {
-    /** Every assignment row for this occurrence; filtered here to mic teams. */
+  teamEquipment?: {
+    /** Every assignment row for this occurrence; filtered here by capability. */
     rows: TeamsAssignmentSummaryRow[];
     /**
      * Whether `rows` is the whole picture. Schedules outside the bootstrap's
@@ -426,11 +426,13 @@ type ServicePlanEditorProps = {
      */
     assignmentsStatus?: "ready" | "loading" | "unavailable";
     /** Slot key (`scheduleId:occurrenceId:columnKey`) currently saving. */
-    savingSlot?: string | null;
-    onChange: (
+    savingMicrophoneSlot?: string | null;
+    savingIemSlot?: string | null;
+    onMicrophoneChange: (
       row: TeamsAssignmentSummaryRow,
       microphoneIds: string[],
     ) => void;
+    onIemChange: (row: TeamsAssignmentSummaryRow, iemIds: string[]) => void;
   };
   canEdit: boolean;
   /** Current-service controller surfaces already show live status elsewhere. */
@@ -491,7 +493,7 @@ const ServicePlanEditor = ({
   scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
-  teamMicrophones,
+  teamEquipment,
   canEdit,
   showSummary = true,
   onBack,
@@ -669,7 +671,7 @@ const ServicePlanEditor = ({
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(initialEditing);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
-  // Microphones live beside the running order rather than inside it.
+  // Service-level equipment lives beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
   const servicePlanScrollRef = useRef<HTMLDivElement | null>(null);
   const planTabPlanKeyRef = useRef(planKey);
@@ -1676,7 +1678,10 @@ const ServicePlanEditor = ({
         currentSections: sections,
         sections: nextSections,
         sourceImport: nextSourceImport,
-        summary: summarizeServicePlanImport(sections, nextSections),
+        summary: summarizeServicePlanImport(sections, nextSections, {
+          microphones,
+          iemEquipment,
+        }),
       });
       setShowImport(false);
       return;
@@ -1687,7 +1692,7 @@ const ServicePlanEditor = ({
       sourceImport: nextSourceImport,
     });
     const newAmbiguities = nextSections.flatMap((section) =>
-      section.elements.filter((element) => element.importAmbiguity?.status === "unresolved").map((element) => element.id),
+      section.elements.filter((element) => element.importAmbiguity && servicePlanImportAmbiguityShouldQueue(element.importAmbiguity)).map((element) => element.id),
     );
     if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
     setShowImport(false);
@@ -2073,19 +2078,19 @@ const ServicePlanEditor = ({
     () => collectServicePlanTeamNoteLabels(sections, microphoneAudiences),
     [microphoneAudiences, sections],
   );
-  /** Scheduled slots on teams that use microphone assignments, if any. */
-  const microphoneRows = useMemo(
+  /** Scheduled slots on teams that use either kind of equipment, if any. */
+  const equipmentRows = useMemo(
     () =>
-      teamMicrophones ? getTeamMicrophoneRows(teamMicrophones.rows, teams) : [],
-    [teamMicrophones, teams],
+      teamEquipment ? getTeamEquipmentRows(teamEquipment.rows, teams) : [],
+    [teamEquipment, teams],
   );
-  // Keep the workspace stable at three desktop tabs (four on mobile). The mic
-  // panel already explains an empty catalog or a service with no eligible
+  // Keep the workspace stable at three desktop tabs (four on mobile). The
+  // equipment panel explains an empty catalog or a service with no eligible
   // scheduled roles, which is more useful than making the tab disappear.
-  const showMicrophoneTab = Boolean(teamMicrophones);
+  const showEquipmentTab = Boolean(teamEquipment);
   const showServingTab = Boolean(mobileServingContent);
   const activeTab: ServicePlanEditorTab =
-    (planTab === "microphones" && !showMicrophoneTab) ||
+    (planTab === "equipment" && !showEquipmentTab) ||
       (planTab === "serving" && !showServingTab)
       ? "plan"
       : planTab;
@@ -2094,17 +2099,26 @@ const ServicePlanEditor = ({
     [scheduledAssignmentRows],
   );
   const filledScheduledRows = scheduledRows.filter((row) => Boolean(row.memberName));
-  const micCoveredRows = scheduledRows.filter(
-    (row) => Boolean(row.memberName) && row.microphoneIds.length > 0,
+  const teamById = useMemo(() => new Map(teams.map((team) => [team.teamId, team])), [teams]);
+  const microphoneRows = equipmentRows.filter(
+    (row) => teamById.get(row.teamId)?.usesMicrophoneAssignments,
   );
+  const iemRows = equipmentRows.filter(
+    (row) => teamById.get(row.teamId)?.usesIemAssignments,
+  );
+  const filledMicrophoneRows = microphoneRows.filter((row) => Boolean(row.memberName));
+  const filledIemRows = iemRows.filter((row) => Boolean(row.memberName));
+  const micCoveredRows = filledMicrophoneRows.filter((row) => row.microphoneIds.length > 0);
+  const iemCoveredRows = filledIemRows.filter((row) => (row.iemIds || []).length > 0);
   const respondedRows = filledScheduledRows.filter((row) => (row.response || "pending") !== "pending");
   // Empty 0/0 fill/response/mic counts are noise — only surface the summary when
   // there is at least one scheduled slot (or mic coverage) worth scanning.
   const hasFillStats = scheduledRows.length > 0;
   const hasResponseStats = filledScheduledRows.length > 0;
-  const hasMicStats = Boolean(teamMicrophones) && filledScheduledRows.length > 0;
-  const hasUsefulSummary = hasFillStats || hasMicStats;
-  const hasSummaryDetails = hasMicStats;
+  const hasMicStats = micCoveredRows.length > 0 || filledMicrophoneRows.length > 0;
+  const hasIemStats = iemCoveredRows.length > 0 || filledIemRows.length > 0;
+  const hasUsefulSummary = hasFillStats || hasMicStats || hasIemStats;
+  const hasSummaryDetails = hasMicStats || hasIemStats;
   const workspaceSummary = hasUsefulSummary ? (
     <div className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
       <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
@@ -2129,7 +2143,10 @@ const ServicePlanEditor = ({
       {summaryExpanded && hasSummaryDetails ? (
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-700/70 pt-1 text-gray-400">
           {hasMicStats ? (
-            <span>Mics: {micCoveredRows.length}/{filledScheduledRows.length} covered</span>
+            <span>Mics: {micCoveredRows.length}/{filledMicrophoneRows.length} assigned</span>
+          ) : null}
+          {hasIemStats ? (
+            <span>IEMs: {iemCoveredRows.length}/{filledIemRows.length} assigned</span>
           ) : null}
         </div>
       ) : null}
@@ -2964,6 +2981,8 @@ const ServicePlanEditor = ({
               onSelectionChange={setSelectedPlanTarget}
               scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
               scrollContainerRef={servicePlanScrollRef}
+              reviewingElementId={ambiguityDialog?.elementIds[0] ?? null}
+              isFollowingLive={isFollowingLive}
               header={
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-gray-100">
@@ -3304,13 +3323,13 @@ const ServicePlanEditor = ({
             >
               Setlist
             </TabsTrigger>
-            {showMicrophoneTab ? (
+            {showEquipmentTab ? (
               <TabsTrigger
-                value="microphones"
+                value="equipment"
                 className={lineTabsTriggerSmClassName}
-                aria-label="Mic Assignments"
+                aria-label="Equipment assignments"
               >
-                Mics
+                Equipment
               </TabsTrigger>
             ) : null}
             {showServingTab ? (
@@ -3349,19 +3368,25 @@ const ServicePlanEditor = ({
               }
             />
           </TabsContent>
-          {showMicrophoneTab ? (
+          {showEquipmentTab ? (
             <TabsContent
-              value="microphones"
+              value="equipment"
               className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
             >
-              <TeamMicrophonesPanel
-                rows={microphoneRows}
+              <TeamEquipmentPanel
+                rows={equipmentRows}
                 microphones={microphones}
+                iems={iemEquipment}
+                teams={teams}
                 canEdit={canEdit}
-                assignmentsStatus={teamMicrophones?.assignmentsStatus}
-                savingSlot={teamMicrophones?.savingSlot}
-                onChange={(row, microphoneIds) =>
-                  teamMicrophones?.onChange(row, microphoneIds)
+                assignmentsStatus={teamEquipment?.assignmentsStatus}
+                savingMicrophoneSlot={teamEquipment?.savingMicrophoneSlot}
+                savingIemSlot={teamEquipment?.savingIemSlot}
+                onMicrophoneChange={(row, microphoneIds) =>
+                  teamEquipment?.onMicrophoneChange(row, microphoneIds)
+                }
+                onIemChange={(row, iemIds) =>
+                  teamEquipment?.onIemChange(row, iemIds)
                 }
               />
             </TabsContent>

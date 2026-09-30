@@ -592,7 +592,10 @@ const ServicePlanAssigneeList = ({
 
               {assigneeIems.map((iem) => (
                 <span key={iem.id} className="inline-flex items-center gap-0.5">
-                  <ServiceEquipmentChip equipment={iem} className="gap-1 rounded-full px-2 py-1">
+                  <ServiceEquipmentChip
+                    equipment={iem}
+                    className="gap-1 rounded-full border-fuchsia-700/60 bg-fuchsia-950/50 px-2 py-1 text-fuchsia-100"
+                  >
                     {allowEdit ? (
                       <Button
                         type="button"
@@ -634,46 +637,6 @@ const ServicePlanAssigneeList = ({
                   ) : null}
                 </span>
               ))}
-
-              {allowEdit && availableIems.length ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={Plus}
-                      iconSize="xs"
-                      padding="px-1 py-0.5"
-                      className="h-7 max-md:min-h-[2rem] max-md:px-2 border border-dashed border-cyan-500/40 text-xs text-cyan-200"
-                      aria-label={`Add IEM for ${label}`}
-                    >IEM</Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-40">
-                    {scheduleAvailabilityHint ? (
-                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-amber-200">
-                        {scheduleAvailabilityHint}
-                      </DropdownMenuLabel>
-                    ) : null}
-                    {availableIems.map((iem) => {
-                      const scheduledHolders = scheduledEquipmentHolders?.get(iem.id) || [];
-                      return (
-                      <DropdownMenuItem
-                        key={iem.id}
-                        onSelect={() => updateAssignee(assignee.id, {
-                          iemIds: [...(assignee.iemIds || []), iem.id],
-                        })}
-                      >
-                        <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
-                        <span className="truncate">{iem.name}</span>
-                        <span className={cn("ml-auto shrink-0 text-xs", scheduledHolders.length ? "text-amber-300" : "text-gray-400")}>
-                          {scheduledHolders.length ? `Assigned: ${scheduledHolders.join(", ")}` : getServiceEquipmentSubtypeLabel(iem.subtype)}
-                        </span>
-                      </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
 
               {allowEdit && availableMicrophones.length > 0 ? (
                 // Default modal menu + inner scroller: wheel works under Sheet
@@ -740,6 +703,46 @@ const ServicePlanAssigneeList = ({
                         );
                       })}
                     </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+
+              {allowEdit && availableIems.length ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Plus}
+                      iconSize="xs"
+                      padding="px-1 py-0.5"
+                      className="h-7 max-md:min-h-[2rem] max-md:px-2 border border-dashed border-fuchsia-500/40 text-xs text-fuchsia-200"
+                      aria-label={`Add IEM for ${label}`}
+                    >IEM</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-40">
+                    {scheduleAvailabilityHint ? (
+                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-amber-200">
+                        {scheduleAvailabilityHint}
+                      </DropdownMenuLabel>
+                    ) : null}
+                    {availableIems.map((iem) => {
+                      const scheduledHolders = scheduledEquipmentHolders?.get(iem.id) || [];
+                      return (
+                        <DropdownMenuItem
+                          key={iem.id}
+                          onSelect={() => updateAssignee(assignee.id, {
+                            iemIds: [...(assignee.iemIds || []), iem.id],
+                          })}
+                        >
+                          <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
+                          <span className="truncate">{iem.name}</span>
+                          <span className={cn("ml-auto shrink-0 text-xs", scheduledHolders.length ? "text-amber-300" : "text-gray-400")}>
+                            {scheduledHolders.length ? `Assigned: ${scheduledHolders.join(", ")}` : getServiceEquipmentSubtypeLabel(iem.subtype)}
+                          </span>
+                        </DropdownMenuItem>
+                      );
+                    })}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}

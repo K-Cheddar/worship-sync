@@ -123,16 +123,32 @@ export const getLucidePositionIconCatalog = (): IconCatalogEntry[] => {
   return lucideCatalog;
 };
 
+const createTablerPositionIconCatalog = (
+  tablerIcons: Record<string, unknown>,
+): IconCatalogEntry[] => Object.keys(tablerIcons)
+  .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
+  .map((exportName) => {
+    const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    return { ref: { source: "tabler", name } as const, label: name, searchTerms: [name] };
+  });
+
+let tablerCatalogPromise: Promise<IconCatalogEntry[]> | null = null;
+export const loadTablerPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
+  if (!tablerCatalogPromise) {
+    const request = loadTablerIcons().then(createTablerPositionIconCatalog);
+    const retryableRequest = request.catch((error: unknown) => {
+      if (tablerCatalogPromise === retryableRequest) tablerCatalogPromise = null;
+      throw error;
+    });
+    tablerCatalogPromise = retryableRequest;
+  }
+  return tablerCatalogPromise;
+};
+
 let catalogPromise: Promise<IconCatalogEntry[]> | null = null;
 export const loadPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
   if (!catalogPromise) {
-    const request = loadTablerIcons().then((tablerIcons) => {
-      const tablerEntries = Object.keys(tablerIcons)
-        .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
-        .map((exportName) => {
-          const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-          return { ref: { source: "tabler", name } as const, label: name, searchTerms: [name] };
-        });
+    const request = loadTablerPositionIconCatalog().then((tablerEntries) => {
       return [...getLucidePositionIconCatalog(), ...tablerEntries];
     });
     const retryableRequest = request.catch((error: unknown) => {

@@ -15,6 +15,7 @@ import type {
 import { ToastProvider } from "../../../context/toastContext";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import ScheduleEditForm from "./ScheduleEditForm";
+import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
 
 jest.mock("../../../api/auth", () => ({
   archiveTeamSchedule: jest.fn(),
@@ -99,6 +100,7 @@ describe("ScheduleEditForm", () => {
         <TeamsNavigationGuardProvider>
           <ToastProvider>
             <ScheduleEditForm
+              mode="edit"
               draftKey={schedule.scheduleId}
               selectedSchedule={schedule}
               defaultTeamId={team.teamId}
@@ -195,6 +197,7 @@ describe("ScheduleEditForm", () => {
         <TeamsNavigationGuardProvider>
           <ToastProvider>
             <ScheduleEditForm
+              mode="edit"
               draftKey={schedule.scheduleId}
               selectedSchedule={schedule}
               defaultTeamId={team.teamId}
@@ -238,7 +241,7 @@ describe("ScheduleEditForm", () => {
     }));
   });
 
-  it("fills the name from dates on create and clears the new draft", async () => {
+  it("opens explicit custom create mode even when a period schedule is active", async () => {
     const user = userEvent.setup();
     const service: TeamService = {
       id: "service-sunday",
@@ -267,6 +270,18 @@ describe("ScheduleEditForm", () => {
       occurrences: [],
       assignments: {},
     };
+    const activePeriodSchedule: TeamSchedule = {
+      ...created,
+      scheduleId: "generated_period-key",
+      name: "Generated period",
+      source: "generated-period",
+      generatedPeriodKey: "period-key",
+      assignments: {
+        "service-sunday@2026-10-04T10:00:00.000Z": {
+          "position-keys::0": { primaryMemberId: "member-1" },
+        },
+      },
+    };
     jest.mocked(createTeamSchedule).mockResolvedValue({
       success: true,
       schedule: created,
@@ -280,15 +295,16 @@ describe("ScheduleEditForm", () => {
         <TeamsNavigationGuardProvider>
           <ToastProvider>
             <ScheduleEditForm
-              draftKey="new"
-              selectedSchedule={null}
+              mode="create-custom"
+              draftKey="new:custom"
+              selectedSchedule={activePeriodSchedule}
               defaultTeamId={team.teamId}
               defaultServiceIds={[service.serviceId]}
               defaultRange={{ startDate: "2026-10-01", endDate: "2026-10-31" }}
               services={[service]}
               activeTeams={[team]}
-              schedules={[]}
-              seedSchedules={[]}
+              schedules={[activePeriodSchedule]}
+              seedSchedules={[activePeriodSchedule]}
               churchId="church-1"
               canEdit
               onDraftChange={jest.fn()}
@@ -304,6 +320,11 @@ describe("ScheduleEditForm", () => {
       </MemoryRouter>,
     );
 
+    expect(screen.getByRole("heading", { name: "New custom schedule" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Team/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Start date/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/End date/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Services" })).toBeInTheDocument();
     expect(
       screen.getByText(/Saved as “October 2026” unless you enter a name/i),
     ).toBeInTheDocument();
@@ -311,9 +332,10 @@ describe("ScheduleEditForm", () => {
 
     await waitFor(() => expect(createTeamSchedule).toHaveBeenCalledTimes(1));
     expect(jest.mocked(createTeamSchedule).mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({ name: "October 2026" }),
+      expect.objectContaining({ name: "October 2026", assignments: {} }),
     );
-    expect(onDraftClear).toHaveBeenCalledWith("new");
+    expect(jest.mocked(updateTeamSchedule)).not.toHaveBeenCalled();
+    expect(onDraftClear).toHaveBeenCalledWith("new:custom");
     expect(setSelectedScheduleId).toHaveBeenCalledWith(created.scheduleId);
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -335,7 +357,8 @@ describe("ScheduleEditForm", () => {
         <TeamsNavigationGuardProvider>
           <ToastProvider>
             <ScheduleEditForm
-              draftKey="new"
+              mode="create-custom"
+              draftKey="new:custom"
               selectedSchedule={null}
               defaultTeamId=""
               defaultServiceIds={[service.serviceId]}
@@ -363,5 +386,117 @@ describe("ScheduleEditForm", () => {
     expect(
       screen.getByRole("link", { name: /Create a team/i }),
     ).toHaveAttribute("href", "/teams-and-services/groups");
+  });
+
+  it("resets drafts when switching between custom, copy, and edit intents", async () => {
+    const user = userEvent.setup();
+    const occurrence = {
+      occurrenceId: "service-sunday@2026-10-04T10:00:00.000Z",
+      serviceId: "service-sunday",
+      name: "Sunday",
+      startsAt: "2026-10-04T10:00:00.000Z",
+    };
+    const service: TeamService = {
+      id: "service-sunday",
+      serviceId: "service-sunday",
+      churchId: "church-1",
+      name: "Sunday",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+    };
+    const team: TeamRecord = {
+      teamId: "team-main",
+      churchId: "church-1",
+      name: "Main Team",
+      memberIds: [],
+    };
+    const source: TeamSchedule = {
+      scheduleId: "schedule-source",
+      churchId: "church-1",
+      name: "Source schedule",
+      teamId: team.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [service.serviceId],
+      occurrences: [occurrence],
+      assignments: {
+        [occurrence.occurrenceId]: {
+          "position-keys::0": { primaryMemberId: "member-1" },
+        },
+      },
+    };
+    const copyDraft = buildScheduleCopyDraft({ source, occurrences: [occurrence] });
+    const commonProps = {
+      defaultTeamId: team.teamId,
+      defaultServiceIds: [service.serviceId],
+      defaultRange: { startDate: "2026-10-01", endDate: "2026-10-31" },
+      services: [service],
+      activeTeams: [team],
+      schedules: [source],
+      seedSchedules: [source],
+      churchId: "church-1",
+      canEdit: true,
+      onDraftChange: jest.fn(),
+      onDraftFlush: jest.fn(),
+      onDraftClear: jest.fn(),
+      onScheduleSaved: jest.fn(),
+      onScheduleRemoved: jest.fn(),
+      setSelectedScheduleId: jest.fn(),
+      onCancel: jest.fn(),
+    };
+
+    const view = render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              {...commonProps}
+              mode="create-custom"
+              draftKey="new:custom"
+              selectedSchedule={source}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    const nameInput = screen.getByRole("textbox", { name: /^Name:?$/i });
+    await user.type(nameInput, "Custom draft");
+    view.rerender(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              {...commonProps}
+              mode="copy"
+              draftKey="new:copy:schedule-source"
+              persistedDraft={copyDraft}
+              selectedSchedule={null}
+              copySourceSchedule={source}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Copy of Source schedule"));
+
+    view.rerender(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              {...commonProps}
+              mode="edit"
+              draftKey={source.scheduleId}
+              selectedSchedule={source}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Source schedule"));
+    expect(screen.getByRole("heading", { name: "Edit schedule" })).toBeInTheDocument();
   });
 });

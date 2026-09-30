@@ -11,7 +11,8 @@ export type PlansRangePreset =
 export type PlansFilterPreferences = {
   serviceIds: string[];
   organizeMode: OccurrenceOrganizeMode;
-  rangePreset: PlansRangePreset;
+  /** Legacy Range fields remain readable while Range owns new persistence. */
+  rangePreset?: PlansRangePreset;
   customStartDate?: string;
   customEndDate?: string;
 };

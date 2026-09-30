@@ -1,56 +1,14 @@
 import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
+import {
+  RANGE_PRESET_OPTIONS,
+  resolveRangePreset,
+  type RangePreset,
+} from "../rangeSelection";
 
-export type SchedulePeriodPreset =
-  | "upcoming"
-  | "thisMonth"
-  | "nextMonth"
-  | "thisQuarter"
-  | "nextQuarter"
-  | "custom";
-
-export const SCHEDULE_PERIOD_OPTIONS: { value: SchedulePeriodPreset; label: string }[] = [
-  { value: "upcoming", label: "Upcoming" },
-  { value: "thisMonth", label: "This month" },
-  { value: "nextMonth", label: "Next month" },
-  { value: "thisQuarter", label: "This quarter" },
-  { value: "nextQuarter", label: "Next quarter" },
-  { value: "custom", label: "Custom" },
-];
-
-export const rangeFromPreset = (
-  preset: Exclude<SchedulePeriodPreset, "custom">,
-  now = new Date(),
-) => {
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const quarterStartMonth = Math.floor(month / 3) * 3;
-  let start: Date;
-  let end: Date;
-  switch (preset) {
-    case "upcoming":
-      start = new Date(year, month, now.getDate());
-      end = new Date(year, month + 2, 0);
-      break;
-    case "thisMonth":
-      start = new Date(year, month, 1);
-      end = new Date(year, month + 1, 0);
-      break;
-    case "nextMonth":
-      start = new Date(year, month + 1, 1);
-      end = new Date(year, month + 2, 0);
-      break;
-    case "thisQuarter":
-      start = new Date(year, quarterStartMonth, 1);
-      end = new Date(year, quarterStartMonth + 3, 0);
-      break;
-    case "nextQuarter":
-      start = new Date(year, quarterStartMonth + 3, 1);
-      end = new Date(year, quarterStartMonth + 6, 0);
-      break;
-  }
-  return { start: formatPlainDate(start), end: formatPlainDate(end) };
-};
+export type SchedulePeriodPreset = RangePreset;
+export const SCHEDULE_PERIOD_OPTIONS = RANGE_PRESET_OPTIONS;
+export const rangeFromPreset = resolveRangePreset;
 
 /**
  * Upcoming is a moving display window; generated schedules use calendar-aligned

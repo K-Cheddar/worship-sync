@@ -25,6 +25,7 @@ import ServicePlanContentPanel from "./ServicePlanContentPanel";
 import ServicePlanSongDetailsPanel from "./ServicePlanSongDetailsPanel";
 import ServicePlanElementRow, {
   elementDndId,
+  servicePlanElementDomId,
   ServicePlanElementColumnHeader,
   SERVICE_PLAN_INLINE_INPUT_CLASS,
   SERVICE_PLAN_COL,
@@ -167,6 +168,8 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
     songRef: ServicePlanSongReference,
   ) => void;
   onReviewImportAmbiguity?: (elementId: string) => void;
+  /** Transient imported-item review focus; never persisted or reused as selection. */
+  reviewingElementId?: string | null;
   /** When an item is dragging, section cards must not also translate — the preview array is the layout. */
   lockSortableLayout?: boolean;
 };
@@ -220,6 +223,7 @@ const SortableSectionCard = ({
   onOpenContent,
   onOpenSongDetails,
   onReviewImportAmbiguity,
+  reviewingElementId = null,
   lockSortableLayout = false,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
@@ -373,6 +377,7 @@ const SortableSectionCard = ({
                   onOpenContent={(trigger) => onOpenContent(element.id, trigger)}
                   onOpenSongDetails={(songRef) => onOpenSongDetails(element.id, songRef)}
                   onReviewImportAmbiguity={onReviewImportAmbiguity ? () => onReviewImportAmbiguity(element.id) : undefined}
+                  isReviewing={reviewingElementId === element.id}
                 />
               ))}
             </div>
@@ -439,6 +444,10 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   onOpenContent?: (elementId: string, trigger?: HTMLElement) => void;
   allSongDocs?: DBItem[];
   onReviewImportAmbiguity?: (elementId: string) => void;
+  /** Transient imported-item review focus; never persisted or reused as selection. */
+  reviewingElementId?: string | null;
+  /** Prevent review focus from competing with the live-follow scroll owner. */
+  isFollowingLive?: boolean;
 };
 
 /**
@@ -487,6 +496,8 @@ const ServicePlanSectionList = ({
   onOpenAssignment: onOpenAssignmentProp,
   onOpenContent: onOpenContentProp,
   onReviewImportAmbiguity,
+  reviewingElementId = null,
+  isFollowingLive = false,
   allSongDocs = [],
   ...liveRowState
 }: ServicePlanSectionListProps) => {
@@ -510,6 +521,18 @@ const ServicePlanSectionList = ({
   const songDetailsElementId = songDetailsRef?.elementId;
   const elementPlacementRef = useRef<ServicePlanElementPlacement | null>(null);
   const planListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!reviewingElementId || isFollowingLive) return;
+    const container = planListRef.current;
+    const row = document.getElementById(servicePlanElementDomId(reviewingElementId));
+    if (!container || !row || !container.contains(row)) return;
+    const containerRect = container.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < containerRect.top || rowRect.bottom > containerRect.bottom) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [isFollowingLive, reviewingElementId]);
   const setDragElementPlacement = (
     next: ServicePlanElementPlacement | null,
   ) => {
@@ -1005,6 +1028,7 @@ const ServicePlanSectionList = ({
                   setSongDetailsRef({ elementId, songRef });
                 }}
                 onReviewImportAmbiguity={onReviewImportAmbiguity}
+                reviewingElementId={reviewingElementId}
                 {...liveRowState}
               />
               ))}

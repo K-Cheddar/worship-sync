@@ -207,6 +207,7 @@ const renderRow = (
     scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
     structureOnly?: boolean;
     onReviewImportAmbiguity?: jest.Mock;
+    isReviewing?: boolean;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
@@ -240,6 +241,7 @@ const renderRow = (
           onViewSongLyrics={overrides.onViewSongLyrics}
           onOpenContent={overrides.onOpenContent}
           onReviewImportAmbiguity={overrides.onReviewImportAmbiguity}
+          isReviewing={overrides.isReviewing}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
@@ -254,6 +256,12 @@ const renderRow = (
 };
 
 describe("import ambiguity indicator", () => {
+  it("marks the active review row without changing selection", () => {
+    renderRow({ isReviewing: true });
+
+    expect(screen.getByTestId("service-plan-element-el-1")).toHaveAttribute("data-reviewing", "true");
+  });
+
   it("opens review from an accessible row action and remains visible when deferred", async () => {
     const user = userEvent.setup();
     const onReviewImportAmbiguity = jest.fn();
@@ -299,6 +307,28 @@ describe("import ambiguity indicator", () => {
     });
 
     expect(screen.getByRole("button", { name: "Review import interpretation for Pastoral Greetings" })).toBeInTheDocument();
+  });
+
+  it("does not show a review warning for an empty-title-only import condition", () => {
+    renderRow({
+      element: {
+        ...baseElement,
+        importAmbiguity: {
+          source: "servicePlanning",
+          sourceKey: "Worship:0",
+          sourceElementType: "Special Feature",
+          sourceTitle: "",
+          sourceLedBy: "",
+          parts: [],
+          reasons: ["The source title is empty."],
+          status: "confirmed",
+          sourceFingerprint: "empty-title",
+        },
+      },
+      onReviewImportAmbiguity: jest.fn(),
+    });
+
+    expect(screen.queryByRole("button", { name: "Review import interpretation for Pastoral Greetings" })).not.toBeInTheDocument();
   });
 });
 
@@ -1722,6 +1752,27 @@ describe("assignees and their microphones", () => {
     const lapelOption = screen.getByRole("menuitem", { name: /Lapel 1/i });
     expect(within(lapelOption).queryByText(/Assigned:/i)).not.toBeInTheDocument();
     expect(within(lapelOption).getByText("Lapel")).toBeInTheDocument();
+  });
+
+  it("places microphone controls before IEM controls and uses the equipment accent", async () => {
+    const user = userEvent.setup();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      microphones: [orange],
+      iemEquipment: [iem],
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail" }] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
+
+    const equipmentButtons = within(
+      screen.getByRole("group", { name: "Assignees for Pastoral Greetings" }),
+    ).getAllByRole("button", { name: /Add (microphone|IEM) for Abigail/i });
+    expect(equipmentButtons).toHaveLength(2);
+    expect(equipmentButtons[0]).toHaveAccessibleName(/Add microphone for Abigail/i);
+    expect(equipmentButtons[1]).toHaveAccessibleName(/Add IEM for Abigail/i);
+    const addIem = equipmentButtons[1];
+    expect(addIem).toHaveClass("border-fuchsia-500/40", "text-fuchsia-200");
   });
 
   it("shows schedule holders and conflict details for IEM assignments", async () => {

@@ -40,9 +40,16 @@ describe("summarizeServicePlanImport", () => {
     const next = [section([element("equipment", "Prayer updated", {
       assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"] }],
     })])];
-    const summary = summarizeServicePlanImport(current, next);
+    const summary = summarizeServicePlanImport(current, next, {
+      microphones: [{ id: "mic-1", name: "Lead", type: "Handheld" }],
+      iemEquipment: [{ id: "iem-1", name: "IEM 3", subtype: "wireless-beltpack" }],
+    });
     expect(summary.changes[0].fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: "Assignments and equipment", before: expect.stringContaining("Mic mic-1"), after: expect.stringContaining("IEM iem-1") }),
+      expect.objectContaining({
+        label: "Assignments and equipment",
+        before: expect.stringContaining("Lead · Handheld"),
+        after: expect.stringContaining("IEM 3 · wireless-beltpack"),
+      }),
     ]));
     const applied = applySelectedServicePlanImportChanges(current, next, summary, new Set(["updated:equipment"]));
     expect(applied[0].elements[0].assignees).toEqual(next[0].elements[0].assignees);
@@ -56,6 +63,44 @@ describe("summarizeServicePlanImport", () => {
       assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1", "iem-2"] }],
     })])];
     expect(summarizeServicePlanImport(current, next).changes).toEqual([]);
+  });
+
+  it("uses safe generic labels when an equipment ID is unknown", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", microphoneIds: ["missing-mic"], iemIds: ["missing-iem"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", name: "Clarence Jones", microphoneIds: ["missing-mic"], iemIds: ["missing-iem"] }],
+    })])];
+
+    const field = summarizeServicePlanImport(current, next).changes[0].fields[0];
+
+    expect(field).toMatchObject({
+      label: "Assignments and equipment",
+      before: "Unassigned slot (IEM, Microphone)",
+      after: "Clarence Jones (IEM, Microphone)",
+    });
+    expect(field.before).not.toContain("missing-mic");
+    expect(field.before).not.toContain("missing-iem");
+  });
+
+  it("keeps a person-only equipment-slot change readable", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", microphoneIds: ["mic-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", name: "Clarence Jones", microphoneIds: ["mic-1"] }],
+    })])];
+
+    const summary = summarizeServicePlanImport(current, next, {
+      microphones: [{ id: "mic-1", name: "Lead", type: "Handheld" }],
+    });
+
+    expect(summary.changes[0].fields).toContainEqual({
+      label: "Assignments and equipment",
+      before: "Unassigned slot (Lead · Handheld)",
+      after: "Clarence Jones (Lead · Handheld)",
+    });
   });
   it("keeps changes in the order of items on the service", () => {
     const current = [section([

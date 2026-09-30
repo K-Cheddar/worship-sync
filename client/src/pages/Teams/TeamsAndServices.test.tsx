@@ -42,6 +42,7 @@ import type {
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
+import { rangeSelectionStorageKey } from "./rangeSelection";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -740,6 +741,34 @@ describe("Teams", () => {
       mockAddTeamSchedulePositionSlot.mock.invocationCallOrder[0],
     );
     expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe("generated-period-2026-11-01");
+  });
+
+  it("defaults Schedules to Upcoming and restores its own saved Range", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = makeMatchMedia(true);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    const view = renderTeams();
+    await waitForTeamsBootstrap();
+    expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await user.click(screen.getByRole("button", { name: "This quarter" }));
+    view.unmount();
+
+    expect(
+      localStorage.getItem(rangeSelectionStorageKey("schedules", "church-1")),
+    ).toContain("thisQuarter");
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    expect(screen.getByRole("button", { name: "This quarter" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("keeps an October 3 assignment visible after reopening Upcoming on September 30", async () => {
@@ -1533,16 +1562,17 @@ describe("Teams", () => {
 
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
     await user.click(screen.getByRole("button", { name: /Icon picker/i }));
-    await user.type(screen.getByPlaceholderText("Search all icons…"), "video");
+    await user.click(screen.getByRole("tab", { name: /^Tabler$/i }));
     await user.click(await screen.findByRole("button", { name: /^tabler: video$/i }));
-    await user.click(screen.getByRole("button", { name: "Icon color #22d3ee" }));
+    await user.click(screen.getByRole("button", { name: "Choose custom icon color" }));
+    await user.click(screen.getByRole("button", { name: "Color #22C55E" }));
     await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
 
     await waitFor(() => {
       expect(mockCreateTeamPosition).toHaveBeenCalledWith("church-1", {
         name: "Vocal",
         description: "",
-        icon: { source: "tabler", name: "video", color: "#22d3ee" },
+        icon: { source: "tabler", name: "video", color: "#22C55E" },
         teamId: "team-main",
       });
     });
@@ -2561,12 +2591,12 @@ describe("Teams", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "All schedules" })).not.toBeInTheDocument());
     await waitForScheduleGrid();
 
-    const scheduleCell = await screen.findByRole("button", { name: /Sunday Vocal/i });
+    await screen.findByRole("button", { name: /Sunday Vocal/i });
     expect(screen.queryByRole("heading", { name: "Schedule messages" })).not.toBeInTheDocument();
     const identity = screen.getByRole("group", { name: "Team schedule identity" });
     const controls = screen.getByRole("group", { name: "Team schedule controls" });
     expect(within(identity).getByRole("heading", { name: "Team schedule" })).toBeInTheDocument();
-    expect(within(identity).getByText("Main Team")).toBeInTheDocument();
+    expect(screen.getByText("Main Team")).toBeInTheDocument();
     expect(within(identity).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
     expect(within(controls).getByRole("button", { name: "Members" })).toHaveAttribute("aria-expanded", "false");
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
@@ -2587,8 +2617,6 @@ describe("Teams", () => {
     expect(within(membersDrawer).getByPlaceholderText("Search members…")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Schedule messages" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
-    expect(scheduleCell).toBeInTheDocument();
-
     await user.type(within(membersDrawer).getByPlaceholderText("Search members…"), "Morgan");
     expect(within(membersDrawer).getByRole("button", { name: /Highlight Morgan on the grid/i })).toBeInTheDocument();
     expect(within(membersDrawer).queryByRole("button", { name: /Highlight Avery on the grid/i })).not.toBeInTheDocument();
@@ -2611,7 +2639,7 @@ describe("Teams", () => {
     const identity = screen.getByRole("group", { name: "Team schedule identity" });
     const controls = screen.getByRole("group", { name: "Team schedule controls" });
     expect(within(identity).getByRole("heading", { name: "Team schedule" })).toBeInTheDocument();
-    expect(within(identity).getByText("Main Team")).toBeInTheDocument();
+    expect(screen.getByText("Main Team")).toBeInTheDocument();
     expect(within(identity).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
     expect(within(controls).queryByRole("button", { name: "Members" })).not.toBeInTheDocument();
     const inlinePanel = screen.getByRole("complementary", { name: "Members" });
@@ -2641,7 +2669,15 @@ describe("Teams", () => {
     expect(mockSendTeamSchedule).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: /Create custom schedule/i }));
+    expect(await screen.findByRole("heading", { name: "New custom schedule" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Start date/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/End date/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Services" })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: /^Name:?$/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitForScheduleGrid();
+    expect(screen.getByRole("button", { name: /Sunday Vocal/i })).toBeInTheDocument();
+    expect(screen.getByText("Main Team")).toBeInTheDocument();
   });
 
   it("opens Members in assignment mode when a schedule slot is active", async () => {
@@ -2733,6 +2769,7 @@ describe("Teams", () => {
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <ScheduleEditForm
+              mode="edit"
               draftKey="schedule-july"
               persistedDraft={{
                 name: "",

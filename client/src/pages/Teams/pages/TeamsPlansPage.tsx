@@ -24,6 +24,7 @@ import {
   listServicePlanTemplates,
   listServicePlans,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { formatPlainDate } from "../../../utils/plainDate";
@@ -53,7 +54,7 @@ import {
   getScheduledEquipmentHolders,
   getUnhydratedOccurrenceScheduleIds,
   groupAssignmentSummaryByTeam,
-  teamMicrophoneSlotKey,
+  teamEquipmentSlotKey,
   type TeamsAssignmentSummaryRow,
 } from "./teamsAssignmentsSummary";
 import WhosServingPanel from "./WhosServingPanel";
@@ -73,9 +74,13 @@ import {
 } from "../schedule/scheduleUtils";
 import {
   rangeFromPreset,
-  type SchedulePeriodPreset,
 } from "../schedule/schedulePeriodUtils";
-import PeriodRangeFilter from "../schedule/PeriodRangeFilter";
+import RangeSelector from "../components/RangeSelector";
+import {
+  formatResolvedDateRange,
+  rangeSelectionStorageKey,
+  useRangeSelection,
+} from "../rangeSelection";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamScheduleOccurrence,
@@ -86,18 +91,9 @@ import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
-type RangePreset = SchedulePeriodPreset;
-
-export { rangeFromPreset };
+export { rangeFromPreset } from "../schedule/schedulePeriodUtils";
 
 const defaultRange = () => rangeFromPreset("upcoming");
-
-const formatRangeDate = (value: string) =>
-  new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 
 /**
  * Plain date `days` away from `date`. Noon keeps the shift clear of DST edges.
@@ -336,10 +332,23 @@ const TeamsPlansPage = () => {
   } = useTeamsPage();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const initialRange = useMemo(() => defaultRange(), []);
-  const [windowStart, setWindowStart] = useState(initialRange.start);
-  const [windowEnd, setWindowEnd] = useState(initialRange.end);
-  const [rangePreset, setRangePreset] = useState<RangePreset>("upcoming");
+  const initialRange = useMemo(defaultRange, []);
+  const rangePersistence = useMemo(
+    () => ({
+      key: churchId ? rangeSelectionStorageKey("services", churchId) : null,
+      legacyKeys: churchId ? [`worshipSync:teamsPlansFilters:${churchId}`] : [],
+    }),
+    [churchId],
+  );
+  const {
+    preset: rangePreset,
+    range: selectedRange,
+    selectPreset: selectRangePreset,
+    selectCustomRange: setCustomRange,
+    setSelection: setRangeSelection,
+  } = useRangeSelection({ initialRange, persistence: rangePersistence });
+  const windowStart = selectedRange.start;
+  const windowEnd = selectedRange.end;
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
@@ -359,6 +368,10 @@ const TeamsPlansPage = () => {
   const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(null);
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
+  const microphoneMutationSeqRef = useRef(0);
+  const iemMutationSeqRef = useRef(0);
+  const equipmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const planStatusChurchIdRef = useRef<string | null>(null);
   const [selection, setSelection] = useState<{
     service: TeamService;
@@ -376,24 +389,21 @@ const TeamsPlansPage = () => {
     if (preferences) {
       setSelectedServiceIds(preferences.serviceIds);
       setOrganizeMode(preferences.organizeMode);
-      setRangePreset(preferences.rangePreset);
-      if (preferences.rangePreset === "custom") {
-        setWindowStart(preferences.customStartDate || initialRange.start);
-        setWindowEnd(preferences.customEndDate || initialRange.end);
-      } else {
-        const restoredRange = rangeFromPreset(preferences.rangePreset);
-        setWindowStart(restoredRange.start);
-        setWindowEnd(restoredRange.end);
-      }
     } else {
       setSelectedServiceIds([]);
       setOrganizeMode(readPlansOrganizeMode());
-      setRangePreset("upcoming");
-      setWindowStart(initialRange.start);
-      setWindowEnd(initialRange.end);
     }
     setFiltersHydratedForChurchId(churchId);
-  }, [churchId, filtersHydratedForChurchId, initialRange.end, initialRange.start]);
+  }, [churchId, filtersHydratedForChurchId]);
+
+  const enqueueEquipmentSave = <T,>(task: () => Promise<T>) => {
+    const run = equipmentSaveQueueRef.current.then(task, task);
+    equipmentSaveQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return trackTeamsSave(run);
+  };
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -421,13 +431,16 @@ const TeamsPlansPage = () => {
     microphoneIds: string[],
   ) => {
     if (!churchId || !row.scheduleId) return;
-    setSavingMicrophoneSlot(teamMicrophoneSlotKey(row));
+    const scheduleId = row.scheduleId;
+    const slotKey = teamEquipmentSlotKey(row);
+    const mutationSeq = ++microphoneMutationSeqRef.current;
+    setSavingMicrophoneSlot(slotKey);
     try {
       // Success feedback is the toolbar Syncing → Synced chip via trackTeamsSave.
-      const result = await trackTeamsSave(
+      const result = await enqueueEquipmentSave(() =>
         updateTeamScheduleAssignmentMicrophones(
           churchId,
-          row.scheduleId,
+          scheduleId,
           {
             serviceId: row.occurrenceId,
             positionSlotKey: row.columnKey,
@@ -439,7 +452,40 @@ const TeamsPlansPage = () => {
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update team microphones.");
     } finally {
-      setSavingMicrophoneSlot(null);
+      if (microphoneMutationSeqRef.current === mutationSeq) {
+        setSavingMicrophoneSlot(null);
+      }
+    }
+  };
+
+  const saveScheduledIems = async (
+    row: TeamsAssignmentSummaryRow,
+    iemIds: string[],
+  ) => {
+    if (!churchId || !row.scheduleId) return;
+    const scheduleId = row.scheduleId;
+    const slotKey = teamEquipmentSlotKey(row);
+    const mutationSeq = ++iemMutationSeqRef.current;
+    setSavingIemSlot(slotKey);
+    try {
+      const result = await enqueueEquipmentSave(() =>
+        updateTeamScheduleAssignmentIems(
+          churchId,
+          scheduleId,
+          {
+            serviceId: row.occurrenceId,
+            positionSlotKey: row.columnKey,
+            iemIds,
+          },
+        ),
+      );
+      upsertData("schedules", "scheduleId", result.schedule);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not update team IEM assignments.");
+    } finally {
+      if (iemMutationSeqRef.current === mutationSeq) {
+        setSavingIemSlot(null);
+      }
     }
   };
 
@@ -466,14 +512,12 @@ const TeamsPlansPage = () => {
     setSelection({ service, occurrence: match });
     // Keep the list behind the editor showing this plan once the user backs out.
     if (date < windowStart) {
-      setWindowStart(date);
-      setRangePreset("custom");
+      setRangeSelection("custom", { start: date, end: windowEnd });
     }
     if (date > windowEnd) {
-      setWindowEnd(date);
-      setRangePreset("custom");
+      setRangeSelection("custom", { start: windowStart, end: date });
     }
-  }, [pendingPlanRestore, pageData.services, windowStart, windowEnd]);
+  }, [pendingPlanRestore, pageData.services, setRangeSelection, windowStart, windowEnd]);
 
   useEffect(() => {
     if (!churchId) {
@@ -530,20 +574,13 @@ const TeamsPlansPage = () => {
     writePlansFilterPreferences(churchId, {
       serviceIds: selectedServiceIds,
       organizeMode,
-      rangePreset,
-      ...(rangePreset === "custom"
-        ? { customStartDate: windowStart, customEndDate: windowEnd }
-        : {}),
     });
   }, [
     activeServices,
     churchId,
     filtersHydratedForChurchId,
     organizeMode,
-    rangePreset,
     selectedServiceIds,
-    windowEnd,
-    windowStart,
   ]);
 
   const groups: ServiceGroup[] = useMemo(() => {
@@ -733,12 +770,12 @@ const TeamsPlansPage = () => {
             ? occurrence.serviceId
             : serviceIds[0] || occurrence.serviceId;
           return {
-          serviceId,
-          serviceIds,
-          ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
-          occurrenceId: occurrence.occurrenceId,
-          startsAt: occurrence.startsAt,
-          date: getOccurrenceDate(occurrence),
+            serviceId,
+            serviceIds,
+            ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
+            occurrenceId: occurrence.occurrenceId,
+            startsAt: occurrence.startsAt,
+            date: getOccurrenceDate(occurrence),
           };
         });
       const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
@@ -796,33 +833,6 @@ const TeamsPlansPage = () => {
     }
     return `${selectedServiceIds.length} services selected`;
   }, [selectedServiceIds, serviceFilterOptions]);
-
-  const applyPreset = (preset: Exclude<RangePreset, "custom">) => {
-    const next = rangeFromPreset(preset);
-    setWindowStart(next.start);
-    setWindowEnd(next.end);
-    setRangePreset(preset);
-  };
-
-  const selectRangePreset = (preset: RangePreset) => {
-    if (preset === "custom") {
-      setRangePreset("custom");
-      return;
-    }
-    applyPreset(preset);
-  };
-
-  const setCustomRange = ({
-    startDate,
-    endDate,
-  }: {
-    startDate: string;
-    endDate: string;
-  }) => {
-    setWindowStart(startDate);
-    setWindowEnd(endDate);
-    setRangePreset("custom");
-  };
 
   /**
    * Open the schedule behind this plan, focused on one slot when given. The
@@ -1029,12 +1039,16 @@ const TeamsPlansPage = () => {
                   slot: { occurrenceId: row.occurrenceId, columnKey: row.columnKey },
                 });
               }}
-              teamMicrophones={{
+              teamEquipment={{
                 rows: assignments,
                 assignmentsStatus,
-                savingSlot: savingMicrophoneSlot,
-                onChange: (row, microphoneIds) => {
+                savingMicrophoneSlot,
+                savingIemSlot,
+                onMicrophoneChange: (row, microphoneIds) => {
                   void saveScheduledMicrophones(row, microphoneIds);
+                },
+                onIemChange: (row, iemIds) => {
+                  void saveScheduledIems(row, iemIds);
                 },
               }}
               canEdit={canEditPlan}
@@ -1179,7 +1193,7 @@ const TeamsPlansPage = () => {
               "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5",
               !showOrganizeToggle && "max-md:col-span-2",
             )}>
-              <PeriodRangeFilter
+              <RangeSelector
                 preset={rangePreset}
                 range={{ start: windowStart, end: windowEnd }}
                 onPresetChange={selectRangePreset}
@@ -1492,13 +1506,14 @@ const TeamsPlansPage = () => {
       >
         <div className="space-y-4">
           <Checkbox
-            label="Apply each service’s default template"
+            label="Apply each service's default template"
             checked={bulkUseDefaults}
             onCheckedChange={() => setBulkUseDefaults((current) => !current)}
           />
           {!bulkUseDefaults ? (
             <Select
               label="Template"
+              labelClassName="text-gray-100"
               value={bulkTemplateId}
               options={bulkTemplates.map((template) => ({ label: template.name, value: template.templateId }))}
               onChange={setBulkTemplateId}
@@ -1527,7 +1542,7 @@ const TeamsPlansPage = () => {
               {bulkServiceIds.length
                 ? activeServices.filter((service) => bulkServiceIds.includes(service.serviceId)).map((service) => service.name).join(", ")
                 : "No services selected"}
-              {" · "}{formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
+              {" · "}{formatResolvedDateRange({ start: windowStart, end: windowEnd })}
             </p>
             <p className="mt-2 text-sm text-gray-200">
               {planStatusLoading
