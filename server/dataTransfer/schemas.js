@@ -147,8 +147,11 @@ export const parsePortablePositionIcon = (value) => {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("not an icon object");
     }
-    if (!["lucide", "tabler", "worshipsync"].includes(parsed.source)
-      || typeof parsed.name !== "string" || !parsed.name.trim()) {
+    const isLegacyCustom = parsed.source === "custom"
+      && typeof parsed.id === "string" && parsed.id.trim();
+    const isSupportedReference = ["lucide", "tabler", "worshipsync"].includes(parsed.source)
+      && typeof parsed.name === "string" && parsed.name.trim();
+    if (!isLegacyCustom && !isSupportedReference) {
       throw new Error("unsupported icon reference");
     }
     return parsed;

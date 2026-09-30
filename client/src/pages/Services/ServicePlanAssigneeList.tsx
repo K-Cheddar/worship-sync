@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
 import {
@@ -27,6 +28,7 @@ import {
   type ServicePlanMicrophone,
   type ServiceEquipment,
 } from "../../types/servicePlan";
+import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
 
 export const createServicePlanAssignee = (
   overrides: Partial<ServicePlanAssignee> = {},
@@ -178,6 +180,13 @@ export const addMicrophoneSlot = (
 ): ServicePlanAssignee[] =>
   addServicePlanAssignee(assignees, { microphoneIds: [microphoneId] });
 
+/** Add an IEM as an unclaimed equipment slot on the service-plan item. */
+export const addIemSlot = (
+  assignees: ServicePlanAssignee[],
+  iemId: string,
+): ServicePlanAssignee[] =>
+  addServicePlanAssignee(assignees, { iemIds: [iemId] });
+
 /** Promote a named person without moving unnamed microphone slots. */
 export const promoteServicePlanAssignee = (
   assignees: ServicePlanAssignee[],
@@ -215,6 +224,7 @@ type ServicePlanAssigneeListProps = {
   structureOnly?: boolean;
   /** Scheduled holders for the plan date, keyed by church microphone id. */
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   onEdit?: () => void;
   onChange: (next: ServicePlanAssignee[], coalesceKey?: string) => void;
 };
@@ -291,6 +301,7 @@ const ServicePlanAssigneeList = ({
   itemLabel,
   structureOnly = false,
   scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   onEdit,
   onChange,
 }: ServicePlanAssigneeListProps) => {
@@ -305,9 +316,12 @@ const ServicePlanAssigneeList = ({
   );
   const iems = iemEquipment.filter((item) => item.category === "iem");
   const iemsById = new Map(iems.map((item) => [item.id, item]));
-  const itemHasMicrophones = assignees.some(
-    (assignee) => (assignee.microphoneIds || []).length > 0,
-  );
+  const itemHasEquipment = assignees.some(hasServicePlanAssigneeEquipment);
+  const scheduleAvailabilityHint = scheduledEquipmentStatus === "loading"
+    ? "Checking schedule…"
+    : scheduledEquipmentStatus === "unavailable"
+      ? "Schedule availability couldn't be confirmed"
+      : null;
 
   const updateAssignee = (
     assigneeId: string,
@@ -334,7 +348,7 @@ const ServicePlanAssigneeList = ({
       }}
       aria-label={
         structureOnly
-          ? `Microphone plan for ${itemLabel}`
+          ? `Equipment plan for ${itemLabel}`
           : `Assignees for ${itemLabel}`
       }
     >
@@ -343,7 +357,7 @@ const ServicePlanAssigneeList = ({
         <div className="flex shrink-0 items-center gap-1.5">
           <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
           <span className="shrink-0 text-xs font-medium text-white">
-            {structureOnly ? "Microphone plan" : "Assignees"}
+            {structureOnly ? "Equipment plan" : "Assignees"}
           </span>
         </div>
         {assignees.map((assignee, assigneeIndex) => {
@@ -378,13 +392,13 @@ const ServicePlanAssigneeList = ({
             .slice(0, assigneeIndex + 1)
             .filter((candidate) => !isUnassignedServicePlanAssignee(candidate)).length - 1;
           const isLead = namedAssigneeIndex === 0 && !isUnassigned;
-          // Quiet, not an alarm: plenty of people never need a microphone. It
-          // only says anything on an item that has a microphone plan at all.
-          const showMissingMicrophoneHint =
+          // Quiet, not an alarm: only say something when this item already has
+          // an equipment plan for the other assignees.
+          const showMissingEquipmentHint =
             !structureOnly
             && !isUnassigned
-            && itemHasMicrophones
-            && !(assignee.microphoneIds || []).length;
+            && itemHasEquipment
+            && !hasServicePlanAssigneeEquipment(assignee);
 
           return (
             <div
@@ -454,9 +468,9 @@ const ServicePlanAssigneeList = ({
                 </Button>
               ) : null}
 
-              {showMissingMicrophoneHint ? (
+              {showMissingEquipmentHint ? (
                 <span className="shrink-0 text-[10px] text-gray-400">
-                  No mic
+                  No equipment
                 </span>
               ) : null}
 
@@ -511,6 +525,11 @@ const ServicePlanAssigneeList = ({
                           </span>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
+                          {scheduleAvailabilityHint ? (
+                            <DropdownMenuLabel className="whitespace-normal px-3 text-xs font-normal text-amber-200">
+                              {scheduleAvailabilityHint}
+                            </DropdownMenuLabel>
+                          ) : null}
                           <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                             {replaceableMicrophones.map((candidate) => {
                               const candidateHolders = scheduledEquipmentHolders?.get(candidate.id) || [];
@@ -630,6 +649,11 @@ const ServicePlanAssigneeList = ({
                     >IEM</Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="min-w-40">
+                    {scheduleAvailabilityHint ? (
+                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-amber-200">
+                        {scheduleAvailabilityHint}
+                      </DropdownMenuLabel>
+                    ) : null}
                     {availableIems.map((iem) => {
                       const scheduledHolders = scheduledEquipmentHolders?.get(iem.id) || [];
                       return (
@@ -673,6 +697,11 @@ const ServicePlanAssigneeList = ({
                     align="start"
                     className="min-w-52 overflow-hidden p-0"
                   >
+                    {scheduleAvailabilityHint ? (
+                      <DropdownMenuLabel className="whitespace-normal px-3 text-xs font-normal text-amber-200">
+                        {scheduleAvailabilityHint}
+                      </DropdownMenuLabel>
+                    ) : null}
                     <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                       {availableMicrophones.map((microphone) => {
                         const scheduledHolders =
@@ -726,7 +755,7 @@ const ServicePlanAssigneeList = ({
                   aria-label={
                     isUnassigned
                       ? `Remove ${label} from ${itemLabel}`
-                      : `Remove ${label} from ${itemLabel}, keeping their microphones`
+                      : `Remove ${label} from ${itemLabel}, keeping their equipment`
                   }
                   onClick={(event) => {
                     event.stopPropagation();

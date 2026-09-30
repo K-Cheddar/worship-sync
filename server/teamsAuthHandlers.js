@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { emitTeamsEvent } from "./teamsSse.js";
 import {
   addServiceFlowSseClient,
@@ -67,6 +68,7 @@ import {
   portableServiceMatches,
 } from "./dataTransfer/matching.js";
 import { createZip } from "./dataTransfer/zip.js";
+import { persistPortableCreate } from "./dataTransfer/portableCreatePersister.js";
 import {
   isValidPortablePlainDate,
   isValidPortableTimeZone,
@@ -202,6 +204,19 @@ export const createTeamsAuthHandlers = ({
   // transactions. Serialize writes to one schedule so they retain the same
   // no-lost-update guarantee as Firestore transactions.
   const inMemoryScheduleSaveQueues = new Map();
+  const portableCreateQueues = new Map();
+  const enqueuePortableCreate = (key, task) => {
+    const previous = portableCreateQueues.get(key) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    portableCreateQueues.set(key, settled);
+    void settled.finally(() => {
+      if (portableCreateQueues.get(key) === settled) {
+        portableCreateQueues.delete(key);
+      }
+    });
+    return run;
+  };
   const enqueueInMemoryScheduleSave = (scheduleId, task) => {
     const previous =
       inMemoryScheduleSaveQueues.get(scheduleId) || Promise.resolve();
@@ -3847,7 +3862,7 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  const validatePositionIcon = (value) => {
+  const validatePositionIcon = (value, existingIcon) => {
     if (value === undefined) return undefined;
     if (value === null || value === "") return "";
     if (typeof value === "string") {
@@ -3857,6 +3872,10 @@ export const createTeamsAuthHandlers = ({
       throw httpError(400, "Position icon is invalid.");
     }
     const source = normalizeShortText(value.source, { max: 20 });
+    if (source === "custom") {
+      if (isDeepStrictEqual(value, existingIcon)) return value;
+      throw httpError(400, "Custom position icons are not supported yet.");
+    }
     const color =
       value.color === undefined
         ? undefined
@@ -3868,8 +3887,6 @@ export const createTeamsAuthHandlers = ({
       );
     }
     const colorField = color ? { color: color.toLowerCase() } : {};
-    if (source === "custom")
-      throw httpError(400, "Custom position icons are not supported yet.");
     if (
       source !== "lucide" &&
       source !== "tabler" &&
@@ -3882,7 +3899,7 @@ export const createTeamsAuthHandlers = ({
     return { source, name, ...colorField };
   };
 
-  const validateTeamPositionPayload = async (body, churchId) => {
+  const validateTeamPositionPayload = async (body, churchId, existingPosition = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Position name is required.");
@@ -3957,7 +3974,7 @@ export const createTeamsAuthHandlers = ({
           "Default IEM is not in this church's equipment list.",
         );
     }
-    const icon = validatePositionIcon(body?.icon);
+    const icon = validatePositionIcon(body?.icon, existingPosition?.icon);
     return {
       name,
       description: normalizeLongText(body?.description),
@@ -4295,10 +4312,13 @@ export const createTeamsAuthHandlers = ({
     id,
     payload,
     adminUserId,
+    portableCreateKey,
   }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const now = nowIso();
-    const nextId = id || createId(config.idPrefix);
+    const nextId = id || (portableCreateKey
+      ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
+      : createId(config.idPrefix));
     if (id) {
       await assertTeamEntityInChurch(kind, id, churchId, {
         active: false,
@@ -4319,6 +4339,32 @@ export const createTeamsAuthHandlers = ({
             createdByUid: adminUserId,
           }),
     };
+    if (!id && portableCreateKey) {
+      const ledgerId = crypto.createHash("sha256")
+        .update(`${churchId}\u0000${kind}\u0000${portableCreateKey}`)
+        .digest("hex");
+      const ledger = {
+        churchId,
+        kind,
+        entityId: nextId,
+        entityCollection: config.collection,
+        createKey: portableCreateKey,
+      };
+      const saved = await persistPortableCreate({
+        db: requireFirestore(),
+        entityCollection: config.collection,
+        entityId: nextId,
+        entity: doc,
+        ledgerCollection: COLLECTIONS.portableImportCreates,
+        ledgerId,
+        ledger,
+        enqueue: enqueuePortableCreate,
+        getDoc,
+        setDoc,
+        conflict: () => httpError(409, "This import row could not be safely retried. Preview the file again."),
+      });
+      return { [config.idField]: nextId, ...saved };
+    }
     await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
     return {
       [config.idField]: nextId,
@@ -6454,6 +6500,9 @@ export const createTeamsAuthHandlers = ({
     memberIds,
     targetCellKey,
     targetOccurrenceId,
+    targetCellKeysByOccurrence,
+    targetOccurrenceIds,
+    targetMemberIdsByOccurrence,
   }) => {
     const memberIdSet = memberIds?.size
       ? memberIds
@@ -6468,7 +6517,9 @@ export const createTeamsAuthHandlers = ({
 
     const occurrences = getScheduleOccurrencesForConflict(schedule).filter(
       (occurrence) =>
-        !targetOccurrenceId || occurrence.occurrenceId === targetOccurrenceId,
+        targetOccurrenceIds?.length
+          ? targetOccurrenceIds.includes(occurrence.occurrenceId)
+          : !targetOccurrenceId || occurrence.occurrenceId === targetOccurrenceId,
     );
     const conflicts = [];
     for (const currentOccurrence of occurrences) {
@@ -6476,9 +6527,10 @@ export const createTeamsAuthHandlers = ({
       const rowMemberIds = new Set(
         Object.values(row).flatMap(getScheduleAssignmentCellMemberIds),
       );
-      const targetMemberIds = [...rowMemberIds].filter((memberId) =>
-        memberIdSet.has(memberId),
-      );
+      const occurrenceMemberIds = targetMemberIdsByOccurrence?.[currentOccurrence.occurrenceId]
+        ? new Set(targetMemberIdsByOccurrence[currentOccurrence.occurrenceId])
+        : memberIdSet;
+      const targetMemberIds = [...rowMemberIds].filter((memberId) => occurrenceMemberIds.has(memberId));
       if (targetMemberIds.length === 0) continue;
 
       for (const otherSchedule of schedules || []) {
@@ -6486,7 +6538,11 @@ export const createTeamsAuthHandlers = ({
         // Bulk validation does not know which cell is being edited and keeps
         // the historical cross-team-only behavior. Direct assignment writes
         // provide the target cell, allowing same-schedule role conflicts too.
-        if (otherSchedule.scheduleId === schedule.scheduleId && !targetCellKey)
+        if (
+          otherSchedule.scheduleId === schedule.scheduleId &&
+          !targetCellKey &&
+          !targetCellKeysByOccurrence
+        )
           continue;
         const otherOccurrences = getScheduleOccurrencesForConflict(otherSchedule)
           .filter((candidate) => scheduleOccurrencesConflict(currentOccurrence, candidate, {
@@ -6496,9 +6552,15 @@ export const createTeamsAuthHandlers = ({
           const otherRow = otherSchedule.scheduleId === schedule.scheduleId
             ? assignments?.[otherOccurrence.occurrenceId] || {}
             : otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
+          const isExcludedTargetCell = (cellKey) =>
+            otherSchedule.scheduleId === schedule.scheduleId && (
+              cellKey === targetCellKey ||
+              (otherOccurrence.occurrenceId === currentOccurrence.occurrenceId &&
+                (targetCellKeysByOccurrence?.[otherOccurrence.occurrenceId] || []).includes(cellKey))
+            );
           const otherMemberIds = new Set(
             Object.entries(otherRow)
-              .filter(([cellKey]) => !(otherSchedule.scheduleId === schedule.scheduleId && cellKey === targetCellKey))
+              .filter(([cellKey]) => !isExcludedTargetCell(cellKey))
               .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
           );
           targetMemberIds.forEach((memberId) => {
@@ -6511,7 +6573,8 @@ export const createTeamsAuthHandlers = ({
                 occurrenceId: currentOccurrence.occurrenceId,
                 conflictingOccurrenceId: otherOccurrence.occurrenceId,
                 cellKeys: Object.keys(otherRow).filter((cellKey) =>
-                  cellKey !== targetCellKey && getScheduleAssignmentCellMemberIds(otherRow[cellKey]).includes(memberId),
+                  !isExcludedTargetCell(cellKey) &&
+                  getScheduleAssignmentCellMemberIds(otherRow[cellKey]).includes(memberId),
                 ),
               });
             }
@@ -6530,6 +6593,9 @@ export const createTeamsAuthHandlers = ({
     confirmedFingerprint,
     targetCellKey,
     targetOccurrenceId,
+    targetCellKeysByOccurrence,
+    targetOccurrenceIds,
+    targetMemberIdsByOccurrence,
   }) => {
     const conflicts = findCrossTeamScheduleAssignmentConflicts({
       schedule,
@@ -6538,6 +6604,9 @@ export const createTeamsAuthHandlers = ({
       memberIds,
       targetCellKey,
       targetOccurrenceId,
+      targetCellKeysByOccurrence,
+      targetOccurrenceIds,
+      targetMemberIdsByOccurrence,
     });
     const canonicalConflicts = [...new Map(conflicts.map((conflict) => [
       JSON.stringify(conflict), conflict,
@@ -6549,6 +6618,9 @@ export const createTeamsAuthHandlers = ({
       scheduleId: schedule.scheduleId,
       targetOccurrenceId: targetOccurrenceId || "",
       targetCellKey: targetCellKey || "",
+      targetOccurrenceIds: targetOccurrenceIds || [],
+      targetCellKeysByOccurrence: targetCellKeysByOccurrence || {},
+      targetMemberIdsByOccurrence: targetMemberIdsByOccurrence || {},
       memberIds: [...(memberIds || [])].sort(),
       conflicts: canonicalConflicts,
     }));
@@ -7210,14 +7282,27 @@ export const createTeamsAuthHandlers = ({
     return { startDate, endDate };
   };
 
+  const getScheduleConflictDateRangeForOccurrences = (schedule, occurrenceIds) => {
+    const ranges = [...new Set(occurrenceIds)].map((occurrenceId) =>
+      getScheduleConflictDateRange(schedule, occurrenceId),
+    );
+    return {
+      startDate: ranges.map((range) => range.startDate).sort()[0],
+      endDate: ranges.map((range) => range.endDate).sort().at(-1),
+    };
+  };
+
   const listScheduleConflictCandidates = async ({
     churchId,
     schedule,
     occurrenceId,
     transaction,
     db,
+    occurrenceIds,
   }) => {
-    const { startDate, endDate } = getScheduleConflictDateRange(schedule, occurrenceId);
+    const { startDate, endDate } = occurrenceIds?.length
+      ? getScheduleConflictDateRangeForOccurrences(schedule, occurrenceIds)
+      : getScheduleConflictDateRange(schedule, occurrenceId);
     const matchesRange = (candidate) => {
       if (!candidate || candidate.churchId !== churchId) return false;
       const candidateStart = candidate.startDate || candidate.endDate || "";
@@ -7444,6 +7529,166 @@ export const createTeamsAuthHandlers = ({
       // cleared/moved cell keys we deleted and resurrect old assignments.
       transaction.update(scheduleRef, update);
       return { ...schedule, ...update };
+    });
+  };
+
+  const updateTeamScheduleAssignmentsBatchInStore = async ({
+    churchId,
+    scheduleId,
+    changes,
+    confirmedFingerprint,
+    skipChangedCells,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const applyBatch = async (schedule, team, candidateSchedules) => {
+      const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
+      const accepted = [];
+      const skipped = [];
+      const targetCellKeysByOccurrence = {};
+      const targetOccurrenceIds = [...new Set(changes.map((change) => change.serviceId))];
+      const introducedMemberIds = new Set();
+      const targetMemberIdsByOccurrence = {};
+
+      for (const change of changes) {
+        const occurrence = getScheduleOccurrencesForConflict(schedule).find(
+          (item) => item.occurrenceId === change.serviceId,
+        );
+        if (!occurrence) throw httpError(400, "That service is not on this schedule.");
+        const slot = await assertSchedulePositionSlotExists({
+          churchId,
+          schedule,
+          occurrenceId: change.serviceId,
+          positionSlotKey: change.positionSlotKey,
+        });
+        const position = await assertTeamEntityInChurch("position", slot.slot.positionId, churchId, { label: "Position" });
+        if (position.teamId !== team.teamId) throw httpError(400, "That position is not part of this team.");
+
+        const row = { ...(assignments[change.serviceId] || {}) };
+        const currentCell = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(row[change.positionSlotKey]),
+        ) || "";
+        const expectedCell = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(change.expectedCell),
+        ) || "";
+        if (currentCell !== expectedCell) {
+          if (skipChangedCells) {
+            skipped.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
+            continue;
+          }
+          throw httpError(409, "This schedule changed while the assignments were being prepared. Reload and try again.");
+        }
+
+        const desired = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(change.assignment),
+        ) || "";
+        const currentMemberIds = new Set(getScheduleAssignmentCellMemberIds(currentCell));
+        const desiredMemberIds = getScheduleAssignmentCellMemberIds(desired);
+        desiredMemberIds.forEach((memberId) => {
+          if (!currentMemberIds.has(memberId)) {
+            introducedMemberIds.add(memberId);
+            targetMemberIdsByOccurrence[change.serviceId] ||= new Set();
+            targetMemberIdsByOccurrence[change.serviceId].add(memberId);
+          }
+        });
+
+        const serviceDate = String(change.serviceDate || occurrence.startsAt || "").slice(0, 10);
+        const normalized = normalizeScheduleAssignmentCell(desired);
+        for (const memberId of desiredMemberIds) {
+          const member = await assertTeamEntityInChurch("member", memberId, churchId, { label: "Member" });
+          if (!(team.memberIds || []).includes(memberId)) throw httpError(400, "That member is not part of this team.");
+          if (normalized.primaryMemberId === memberId && !(member.positionIds || []).includes(slot.slot.positionId)) {
+            throw httpError(400, "That member cannot serve in this position.");
+          }
+          if (isMemberBlockedOutForService(member, { date: serviceDate }) || !isMemberAvailableDuringServiceWeek(member, { date: serviceDate })) {
+            throw httpError(400, "That member is unavailable for this service.");
+          }
+        }
+
+        if (desired) row[change.positionSlotKey] = desired;
+        else delete row[change.positionSlotKey];
+        if (Object.keys(row).length) assignments[change.serviceId] = row;
+        else delete assignments[change.serviceId];
+        targetCellKeysByOccurrence[change.serviceId] ||= [];
+        targetCellKeysByOccurrence[change.serviceId].push(change.positionSlotKey);
+        accepted.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
+      }
+
+      for (const occurrenceId of targetOccurrenceIds) {
+        assertNoDuplicateScheduleMembersForService(assignments[occurrenceId] || {});
+      }
+
+      if (introducedMemberIds.size) {
+        assertNoCrossTeamScheduleAssignmentConflicts({
+          schedule,
+          assignments,
+          schedules: candidateSchedules,
+          memberIds: introducedMemberIds,
+          confirmedFingerprint,
+          targetCellKeysByOccurrence,
+          targetOccurrenceIds,
+          targetMemberIdsByOccurrence: Object.fromEntries(
+            Object.entries(targetMemberIdsByOccurrence).map(([id, memberIds]) => [id, [...memberIds]]),
+          ),
+        });
+      } else if (confirmedFingerprint) {
+        assertNoCrossTeamScheduleAssignmentConflicts({
+          schedule,
+          assignments,
+          schedules: candidateSchedules,
+          memberIds: new Set(),
+          confirmedFingerprint,
+          targetCellKeysByOccurrence,
+          targetOccurrenceIds,
+          targetMemberIdsByOccurrence: {},
+        });
+      }
+
+      return { assignments, accepted, skipped };
+    };
+
+    if (!db) {
+      return enqueueInMemoryScheduleSave(scheduleId, async () => {
+        const schedule = await assertTeamEntityInChurch("schedule", scheduleId, churchId, { label: "Schedule", active: false });
+        const team = await assertTeamEntityInChurch("team", schedule.teamId, churchId, { label: "Team" });
+        const candidateSchedules = await listScheduleConflictCandidates({ churchId, schedule, occurrenceIds: [...new Set(changes.map((change) => change.serviceId))] });
+        const result = await applyBatch(schedule, team, candidateSchedules);
+        const update = {
+          assignments: result.assignments,
+          responses: prunedResponsesForAssignments(schedule.responses, result.assignments),
+          updatedAt: nowIso(),
+          updatedByUid: adminUserId,
+        };
+        const nextSchedule = { ...schedule, ...update };
+        await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        return { schedule: nextSchedule, accepted: result.accepted, skipped: result.skipped };
+      });
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const scheduleSnap = await transaction.get(scheduleRef);
+      const schedule = readTransactionTeamEntity(scheduleSnap, "scheduleId", "Schedule", { active: false });
+      if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      const teamSnap = await transaction.get(db.collection(COLLECTIONS.teams).doc(schedule.teamId));
+      const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
+      if (team.churchId !== churchId) throw httpError(404, "Team not found.");
+      const candidateSchedules = await listScheduleConflictCandidates({
+        transaction,
+        db,
+        churchId,
+        schedule,
+        occurrenceIds: [...new Set(changes.map((change) => change.serviceId))],
+      });
+      const result = await applyBatch(schedule, team, candidateSchedules);
+      const update = {
+        assignments: result.assignments,
+        responses: prunedResponsesForAssignments(schedule.responses, result.assignments),
+        updatedAt: nowIso(),
+        updatedByUid: adminUserId,
+      };
+      transaction.update(scheduleRef, update);
+      return { schedule: { ...schedule, ...update }, accepted: result.accepted, skipped: result.skipped };
     });
   };
 
@@ -9440,9 +9685,36 @@ export const createTeamsAuthHandlers = ({
         const createBatchIdentity = crypto.createHash("sha256")
           .update(JSON.stringify(stablePortableValue([churchId, type, approvedRows])))
           .digest("hex");
-        const portableCreateKey = (approved) => crypto.createHash("sha256")
-          .update(`${createBatchIdentity}:${approved.row}`)
-          .digest("hex");
+        const portableCreateKey = (approved) => {
+          const record = approved.record && typeof approved.record === "object"
+            ? approved.record
+            : {};
+          let identity;
+          if (type === "teams") {
+            identity = ["team", normalizePortableMatchValue(record.name)];
+          } else if (type === "positions") {
+            identity = [
+              "position",
+              String(record.teamId || approved.resolutions?.teamId || "").trim() || normalizePortableMatchValue(record.team),
+              normalizePortableMatchValue(record.name),
+            ];
+          } else if (type === "members") {
+            // Only identical imported member rows coalesce. Names and emails
+            // alone are not global identity keys; shared email is supported.
+            const hasContact = Boolean(
+              normalizePortableMatchValue(record.email)
+              || String(record.phone || "").replace(/\D/g, ""),
+            );
+            identity = hasContact
+              ? ["member", stablePortableValue(record), stablePortableValue(approved.resolutions || {})]
+              : ["member-row", Number(approved.row)];
+          } else {
+            identity = [type, Number(approved.row)];
+          }
+          return crypto.createHash("sha256")
+            .update(`${createBatchIdentity}:${JSON.stringify(identity)}`)
+            .digest("hex");
+        };
         const data = await readPortableDatasets(churchId);
         const results = [];
         const replaceDatasetEntity = (key, idField, saved) => {
@@ -10494,7 +10766,7 @@ export const createTeamsAuthHandlers = ({
             if (requestedAction !== "create" && requestedAction !== "update")
               throw httpError(400, "Choose create or update for this row.");
             if (type === "teams") {
-              const id = String(approved.recordId || "").trim();
+              const id = String(approved.recordId || record.teamId || "").trim();
               const byId = id
                 ? data.teams.find((item) => item.teamId === id)
                 : null;
@@ -10503,7 +10775,10 @@ export const createTeamsAuthHandlers = ({
                   && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
                 : [];
               const idempotentMatch = importKey && data.teams.find((item) => item._portableCreateKey === importKey);
-              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              if (requestedAction === "create" && createMatches.length && !idempotentMatch) {
+                throw httpError(409, "A team with this name changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
               const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
@@ -10540,6 +10815,7 @@ export const createTeamsAuthHandlers = ({
                 id: existing?.teamId,
                 payload,
                 adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
               });
               replaceDatasetEntity("teams", "teamId", saved);
               results.push({
@@ -10576,7 +10852,9 @@ export const createTeamsAuthHandlers = ({
                   409,
                   `The selected team "${record.team || ""}" is no longer active. Preview the file again.`,
                 );
-              const id = String(approved.recordId || "").trim();
+              // Position previews may use matchedId for their referenced team;
+              // the portable position ID is the entity identity for updates.
+              const id = String(record.positionId || approved.recordId || "").trim();
               const byId = id
                 ? data.positions.find(
                     (item) =>
@@ -10589,7 +10867,10 @@ export const createTeamsAuthHandlers = ({
                   && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
                 : [];
               const idempotentMatch = importKey && data.positions.find((item) => item._portableCreateKey === importKey);
-              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              if (requestedAction === "create" && createMatches.length && !idempotentMatch) {
+                throw httpError(409, "A position with this name changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
               const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
@@ -10616,6 +10897,7 @@ export const createTeamsAuthHandlers = ({
                     : {}),
                 },
                 churchId,
+                existing,
               );
               if (importKey) payload._portableCreateKey = importKey;
               const saved = await upsertTeamEntity({
@@ -10624,6 +10906,7 @@ export const createTeamsAuthHandlers = ({
                 id: existing?.positionId,
                 payload,
                 adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
               });
               replaceDatasetEntity("positions", "positionId", saved);
               results.push({
@@ -10634,7 +10917,7 @@ export const createTeamsAuthHandlers = ({
               continue;
             }
             if (type === "members") {
-              const id = String(approved.recordId || "").trim();
+              const id = String(approved.recordId || record.memberId || "").trim();
               const byId = id
                 ? data.members.find((item) => item.memberId === id)
                 : null;
@@ -10649,7 +10932,16 @@ export const createTeamsAuthHandlers = ({
                   && (!importedPhone || String(item.phoneNumber || "").replace(/\D/g, "") === importedPhone))
                 : [];
               const idempotentMatch = importKey && data.members.find((item) => item._portableCreateKey === importKey);
-              const existing = byId || idempotentMatch || (requestedAction === "create" && createMatches.length === 1 ? createMatches[0] : null);
+              const exactImportMatches = createMatches.filter((item) =>
+                ["title", "email", "phoneNumber", "notes", "servingFrequency"].every((field) => {
+                  const importedField = field === "phoneNumber" ? record.phone : record[field];
+                  return importedField === undefined || String(item[field] || "") === String(importedField || "");
+                }),
+              );
+              if (requestedAction === "create" && exactImportMatches.length && !idempotentMatch) {
+                throw httpError(409, "A matching member changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
               const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
               if (id && (!existing || existing.archivedAt))
                 throw httpError(
@@ -10767,6 +11059,7 @@ export const createTeamsAuthHandlers = ({
                 id: existing?.memberId,
                 payload,
                 adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
               });
               const reconciled = await syncMemberTeamMembership({
                 req,
@@ -12825,14 +13118,22 @@ export const createTeamsAuthHandlers = ({
     async updateTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          churchId,
+          { active: false, label: "Position" },
+        );
         const position = await upsertTeamEntity({
           kind: "position",
-          churchId: req.params.churchId,
+          churchId,
           id: req.params.positionId,
           payload: await validateTeamPositionPayload(
             req.body,
-            req.params.churchId,
+            churchId,
+            existing,
           ),
           adminUserId: admin.user.uid,
         });
@@ -16229,6 +16530,53 @@ export const createTeamsAuthHandlers = ({
           error,
           "Could not remove this position.",
         );
+      }
+    },
+
+    async updateTeamScheduleAssignmentsBatch(req, res) {
+      try {
+        await assertCsrf(req);
+        const existing = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          req.params.churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(req, req.params.churchId, existing.teamId);
+        const rawChanges = req.body?.changes;
+        if (!Array.isArray(rawChanges) || rawChanges.length === 0 || rawChanges.length > 250) {
+          throw httpError(400, "Assignment changes must contain between 1 and 250 cells.");
+        }
+        const seen = new Set();
+        const changes = rawChanges.map((raw) => {
+          const serviceId = normalizeShortText(raw?.serviceId, { max: 260 });
+          const positionSlotKey = normalizeShortText(raw?.positionSlotKey, { max: 260 });
+          if (!serviceId || !positionSlotKey || !parseScheduleSlotKey(positionSlotKey)) {
+            throw httpError(400, "An assignment cell is invalid.");
+          }
+          const key = `${serviceId}\u0000${positionSlotKey}`;
+          if (seen.has(key)) throw httpError(400, "An assignment cell was included more than once.");
+          seen.add(key);
+          return {
+            serviceId,
+            positionSlotKey,
+            serviceDate: normalizeOptionalPlainDate(raw?.serviceDate, "Service date"),
+            expectedCell: raw?.expectedCell || "",
+            assignment: raw?.assignment || "",
+          };
+        });
+        const result = await updateTeamScheduleAssignmentsBatchInStore({
+          churchId: req.params.churchId,
+          scheduleId: req.params.scheduleId,
+          changes,
+          confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
+          skipChangedCells: req.body?.skipChangedCells === true,
+          adminUserId: admin.user.uid,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not update these assignments.");
       }
     },
 

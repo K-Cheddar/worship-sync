@@ -1223,6 +1223,9 @@ const CurrentServiceWorkspace = () => {
       scheduledEquipmentHolders={
         canLoadRoleData ? scheduledEquipmentHolders : undefined
       }
+      scheduledEquipmentStatus={
+        canLoadRoleData ? assignmentsStatus : "unavailable"
+      }
       teamMicrophones={
         canLoadRoleData
           ? {

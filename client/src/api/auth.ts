@@ -68,6 +68,7 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleAssignments,
+  TeamScheduleCellAssignment,
   TeamScheduleGuest,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
@@ -2157,6 +2158,31 @@ export const updateTeamScheduleAssignment = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const updateTeamScheduleAssignmentsBatch = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    changes: Array<{
+      serviceId: string;
+      positionSlotKey: string;
+      serviceDate: string;
+      expectedCell: TeamScheduleCellAssignment | "";
+      assignment: TeamScheduleCellAssignment | "";
+    }>;
+    skipChangedCells?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
+  },
+) =>
+  apiFetch<{
+    success: boolean;
+    schedule: TeamSchedule;
+    accepted: Array<{ serviceId: string; positionSlotKey: string }>;
+    skipped: Array<{ serviceId: string; positionSlotKey: string }>;
+  }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignments/batch`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const updateTeamScheduleAssignmentMicrophones = async (

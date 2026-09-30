@@ -1,6 +1,7 @@
 import {
   createResourceGovernorSample,
   createResourceGovernorState,
+  registerResourceGovernorSubscriber,
   subscribeResourceGovernorToPreparedMetrics,
   RESOURCE_GOVERNOR_THRESHOLDS,
   RESOURCE_GOVERNOR_TIMING,
@@ -28,6 +29,33 @@ const updateAt = (
 }, timestamp);
 
 describe("runtime resource governor", () => {
+  it("sends the current snapshot to every new subscriber, including after a full unsubscribe", () => {
+    const subscribers = new Map<number, { id: number; isDestroyed: () => boolean; send: jest.Mock }>();
+    const policy = createResourceGovernorState("efficiency").policy;
+    const first = { id: 1, isDestroyed: () => false, send: jest.fn() };
+    const second = { id: 2, isDestroyed: () => false, send: jest.fn() };
+
+    registerResourceGovernorSubscriber(subscribers, first, policy);
+    registerResourceGovernorSubscriber(subscribers, second, policy);
+    expect(first.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(second.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(subscribers.size).toBe(2);
+
+    subscribers.clear(); // mirrors the main process after the last renderer leaves
+    const remounted = { id: 3, isDestroyed: () => false, send: jest.fn() };
+    registerResourceGovernorSubscriber(subscribers, remounted, policy);
+
+    expect(remounted.send).toHaveBeenCalledTimes(1);
+    expect(remounted.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(subscribers.get(3)).toBe(remounted);
+  });
+
+  it("does not send a snapshot to a renderer already destroyed", () => {
+    const sender = { id: 4, isDestroyed: () => true, send: jest.fn() };
+    registerResourceGovernorSubscriber(new Map(), sender, createResourceGovernorState().policy);
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+
   it("starts healthy in Auto and leaves audience playback protected", () => {
     const state = createResourceGovernorState();
     expect(state.policy).toMatchObject({

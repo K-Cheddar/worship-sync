@@ -100,10 +100,40 @@ describe("bootstrap module recovery", () => {
       },
     });
 
-    expect(result).toMatchObject({ status: "failed", stage: "post-reload failure" });
+    expect(result).toMatchObject({
+      status: "failed",
+      stage: "post-reload retry failure",
+    });
     expect(load).toHaveBeenCalledTimes(2);
     expect(reload).not.toHaveBeenCalled();
-    expect(failures).toEqual(["post-reload failure", "post-reload failure"]);
+    expect(failures).toEqual([
+      "post-reload failure",
+      "post-reload retry failure",
+    ]);
+  });
+
+  it("provides both errors when a retry failure requires reload", async () => {
+    const firstError = new Error("Importing a module script failed.");
+    const retryError = new Error("Failed to load module script");
+    const load = jest
+      .fn()
+      .mockRejectedValueOnce(firstError)
+      .mockRejectedValueOnce(retryError);
+    const failures: Array<[string, unknown, unknown?]> = [];
+
+    await loadBootstrapModule(load, {
+      reload,
+      storage,
+      wait: noWait,
+      onFailure: (stage, error, previousError) => {
+        failures.push([stage, error, previousError]);
+      },
+    });
+
+    expect(failures).toEqual([
+      ["first failure", firstError, undefined],
+      ["retry failure", retryError, firstError],
+    ]);
   });
 
   it("does not retry or reload for a non-module startup error", async () => {
@@ -172,6 +202,14 @@ describe("bootstrap module recovery", () => {
       .toBe("/a/:token");
     expect(normalizeBootstrapPathname("/sms-opt-in/private-church-id"))
       .toBe("/sms-opt-in/:churchId");
+    expect(normalizeBootstrapPathname("/boards/controller"))
+      .toBe("/boards/controller");
+    expect(normalizeBootstrapPathname("/boards/display"))
+      .toBe("/boards/display");
+    expect(normalizeBootstrapPathname("/boards/example-alias"))
+      .toBe("/boards/:aliasId");
+    expect(normalizeBootstrapPathname("/boards/present/example-alias"))
+      .toBe("/boards/present/:aliasId");
     expect(normalizeBootstrapPathname("/controller"))
       .toBe("/controller");
   });

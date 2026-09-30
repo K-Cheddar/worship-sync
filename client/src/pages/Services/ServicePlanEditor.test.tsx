@@ -391,6 +391,7 @@ describe("ServicePlanEditor", () => {
     sessionStorage.clear();
     for (const key of Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))) {
       if (key?.startsWith("worship-sync:service-plan-draft:")) localStorage.removeItem(key);
+      if (key?.startsWith("worshipsyncServicePlanLastUsedTemplates:")) localStorage.removeItem(key);
     }
     localStorage.removeItem("worshipsyncServicePlanImportSource");
     localStorage.removeItem("worshipsyncServicePublicNotesTeam");
@@ -1273,11 +1274,17 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(
-      await screen.findByRole("button", { name: /Apply a template/i }),
+      await screen.findByRole("button", { name: "Choose a template" }),
     );
     await user.click(
       await screen.findByRole("button", { name: /Apply template Standard Sabbath/i }),
     );
+
+    expect(
+      JSON.parse(
+        localStorage.getItem("worshipsyncServicePlanLastUsedTemplates:church-1") || "{}",
+      ),
+    ).toEqual({ "service-1": "tpl-1" });
 
     expect(await screen.findByLabelText(/^Title/i)).toHaveValue(
       "Call to Worship",
@@ -1374,6 +1381,90 @@ describe("ServicePlanEditor", () => {
       "reader",
     ]);
     expect(body.sections[0].elements[0].id).not.toBe("tpl-reading");
+  });
+
+  it("shows the resolved template name and truncates long names accessibly", async () => {
+    const longName = "A very long saved template name for the Saturday service outline";
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [{
+        templateId: "tpl-long",
+        churchId: "church-1",
+        name: longName,
+        serviceId: "service-1",
+        sections: [],
+      }],
+    });
+
+    renderEditor();
+
+    const button = await screen.findByRole("button", {
+      name: `Apply ${longName}`,
+    });
+    expect(button).toHaveAttribute("title", `Apply ${longName}`);
+    expect(within(button).getByText(`Apply ${longName}`)).toHaveClass("truncate");
+  });
+
+  it("uses the persisted last-used template when no default is configured", async () => {
+    localStorage.setItem(
+      "worshipsyncServicePlanLastUsedTemplates:church-1",
+      JSON.stringify({ "service-1": "tpl-last" }),
+    );
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [
+        {
+          templateId: "tpl-first",
+          churchId: "church-1",
+          name: "First",
+          sections: [],
+        },
+        {
+          templateId: "tpl-last",
+          churchId: "church-1",
+          name: "Last used",
+          sections: [],
+        },
+      ],
+    });
+
+    renderEditor();
+
+    expect(
+      await screen.findByRole("button", { name: "Apply Last used" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the picker from the main side when no primary template resolves", async () => {
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [
+        {
+          templateId: "tpl-one",
+          churchId: "church-1",
+          name: "First",
+          sections: [],
+        },
+        {
+          templateId: "tpl-two",
+          churchId: "church-1",
+          name: "Second",
+          sections: [],
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    const chooseButtons = await screen.findAllByRole("button", {
+      name: "Choose a template",
+    });
+    await user.click(chooseButtons[0]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Apply a template" }),
+    ).toBeInTheDocument();
   });
 
   it("saves the current plan's structure as a template without its week-specific picks", async () => {
@@ -2172,8 +2263,8 @@ Opening Song to begin the worship experience.
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Apply a template/i }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: /Choose a template/i }),
+    ).toHaveLength(2);
     expect(screen.queryByLabelText(/Plan name/i)).not.toBeInTheDocument();
   });
 

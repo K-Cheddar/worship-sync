@@ -13,6 +13,7 @@ Do not use it to turn a one-line copy, class-name, or isolated presentational ed
 - `$schedule-mutation-safety` for schedule assignment and slot mutations.
 - `$react-state-performance` for high-frequency, broad-fan-out, persisted/synchronized, preview, display, media, or suspected-performance work.
 - `$display-window` for projector, monitor, stream, preview, media, overlay, timer, or cross-window rendering.
+- `$floating-window-ui` for `FloatingWindow` descendants, shared portal primitives, overlay ownership, focus/dismissal, or multi-window stacking.
 
 ## WorshipSync baseline
 

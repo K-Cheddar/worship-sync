@@ -6,10 +6,13 @@ import reportWebVitals from "./reportWebVitals";
 import * as Sentry from "@sentry/react";
 import { initConsoleLogForwarder } from "./utils/consoleLogForwarder";
 import { isPublicSharePathname } from "./utils/publicSharePathRedirect";
+import BootstrapLoadingScreen from "./components/BootstrapLoadingScreen";
 import BootstrapRecoveryScreen from "./components/BootstrapRecoveryScreen";
 import {
+  isModuleLoadError,
   loadSelectedBootstrapModule,
   normalizeBootstrapPathname,
+  type BootstrapFailureStage,
 } from "./utils/bootstrapRecovery";
 
 initConsoleLogForwarder();
@@ -49,15 +52,6 @@ const renderBootstrapRecovery = () =>
     <BootstrapRecoveryScreen onReload={() => window.location.reload()} />,
   );
 
-const BootstrapLoadingScreen = () => (
-  <div
-    className="flex min-h-dvh items-center justify-center bg-neutral-950 text-sm text-neutral-300"
-    aria-busy="true"
-  >
-    Loading…
-  </div>
-);
-
 type ServiceWorkerDiagnostic = {
   available: boolean;
   active: string | null;
@@ -87,9 +81,10 @@ const getServiceWorkerDiagnostic = async (): Promise<ServiceWorkerDiagnostic> =>
 };
 
 const captureBootstrapFailure = async (
-  stage: "first failure" | "retry failure" | "post-reload failure",
+  stage: BootstrapFailureStage,
   error: unknown,
   isPublic: boolean,
+  previousError?: unknown,
 ) => {
   const serviceWorker = await getServiceWorkerDiagnostic();
   const reloadAttempted = (() => {
@@ -100,18 +95,47 @@ const captureBootstrapFailure = async (
     }
   })();
 
+  const context = {
+    pathname: normalizeBootstrapPathname(window.location.pathname),
+    bootstrap: isPublic ? "public" : "operator",
+    stage,
+    online: navigator.onLine,
+    user_agent: navigator.userAgent,
+    service_worker_controller: Boolean(navigator.serviceWorker?.controller),
+    service_worker_registration: serviceWorker,
+    reload_attempted: reloadAttempted,
+    recovery_outcome:
+      stage === "retry failure" && isModuleLoadError(error)
+        ? "reload_required"
+        : stage === "post-reload retry failure"
+          ? "exhausted"
+          : "terminal_failure",
+    previous_error:
+      previousError instanceof Error
+        ? { name: previousError.name, message: previousError.message }
+        : previousError === undefined
+          ? null
+          : { message: String(previousError) },
+  };
+  const isTransientModuleFailure =
+    (stage === "first failure" || stage === "post-reload failure") &&
+    isModuleLoadError(error);
+
+  if (isTransientModuleFailure) {
+    Sentry.addBreadcrumb({
+      category: "bootstrap.recovery",
+      message: "Bootstrap module load failed; retrying",
+      level: "warning",
+      data: context,
+    });
+    return;
+  }
+
   Sentry.withScope((scope) => {
     scope.setTag("failure_type", "bootstrap_import_failure");
-    scope.setContext("bootstrap_recovery", {
-      pathname: normalizeBootstrapPathname(window.location.pathname),
-      bootstrap: isPublic ? "public" : "operator",
-      stage,
-      online: navigator.onLine,
-      user_agent: navigator.userAgent,
-      service_worker_controller: Boolean(navigator.serviceWorker?.controller),
-      service_worker_registration: serviceWorker,
-      reload_attempted: reloadAttempted,
-    });
+    scope.setTag("recovery_stage", stage);
+    scope.setTag("recovery_outcome", context.recovery_outcome);
+    scope.setContext("bootstrap_recovery", context);
     Sentry.captureException(error);
   });
 };
@@ -126,7 +150,8 @@ const boot = async () => {
       operator: () => import("./App"),
     },
     {
-      onFailure: (stage, error) => captureBootstrapFailure(stage, error, isPublic),
+      onFailure: (stage, error, previousError) =>
+        captureBootstrapFailure(stage, error, isPublic, previousError),
     },
   );
 

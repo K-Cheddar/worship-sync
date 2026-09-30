@@ -64,6 +64,23 @@ export type ResourceGovernorState = {
   policy: ResourcePolicy;
 };
 
+export type ResourceGovernorSubscriber = {
+  id: number;
+  isDestroyed: () => boolean;
+  send: (channel: string, policy: ResourcePolicy) => void;
+};
+
+/** Registers one renderer and immediately delivers the authoritative snapshot. */
+export const registerResourceGovernorSubscriber = (
+  subscribers: Map<number, ResourceGovernorSubscriber>,
+  sender: ResourceGovernorSubscriber,
+  policy: ResourcePolicy,
+): void => {
+  if (sender.isDestroyed()) return;
+  subscribers.set(sender.id, sender);
+  sender.send("resource-governor-policy", policy);
+};
+
 export type ResourceGovernorTiming = {
   pressureConfirmationMs: number;
   recoveryConfirmationMs: number;

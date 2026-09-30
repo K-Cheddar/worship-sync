@@ -1,11 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
-import { createServicePlanTextResource } from "./servicePlanResources";
-import { applyReviewedServicePlanParts, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { createServicePlanTextResource, getServicePlanResourceText } from "./servicePlanResources";
+import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
 import { DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, refreshServicePlanFromImport } from "./servicePlanImportSync";
 import { applySelectedServicePlanImportChanges, servicePlanImportChangeKey, summarizeServicePlanImport } from "./servicePlanImportSummary";
@@ -50,9 +50,11 @@ describe("ServicePlanAmbiguityReview", () => {
     render(<ServicePlanAmbiguityReview sections={sections} elementIds={["element-1"]} prompt onLater={jest.fn()} onResolve={onResolve} />);
     await user.click(screen.getByRole("button", { name: "Review items" }));
 
+    expect(screen.getByText("Item 1 of 1")).toBeInTheDocument();
+    expect(screen.getByText("Review imported items")).toBeInTheDocument();
     expect(screen.getByText("Psalms 97 Jasmine Williams")).toBeInTheDocument();
     expect(screen.getByText("Jeriyah Brown")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm & finish" }));
 
     expect(onResolve).toHaveBeenCalledWith("element-1", expect.objectContaining({
       importAmbiguity: expect.objectContaining({ status: "confirmed", reasons: [] }),
@@ -63,6 +65,83 @@ describe("ServicePlanAmbiguityReview", () => {
       type: "text",
       title: "Imported description",
     });
+  });
+
+  it("lets an ambiguous description title become an assignee and removes its source content", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const managed = createServicePlanTextResource({
+      title: "Imported description",
+      text: plainTextToRichText("Samar"),
+    });
+    const element: ServicePlanElement = {
+      ...sections[0].elements[0],
+      title: plainTextToRichText("Call to Praise"),
+      resources: [managed],
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        sourceTitle: "Samar",
+        parts: [{
+          kind: "description",
+          value: "Samar",
+          destination: "content",
+          sourceField: "title",
+          managed: {
+            kind: "resource",
+            id: managed.id,
+            fingerprint: servicePlanResourceFingerprint(managed),
+          },
+        }],
+        reasons: ["The title could be descriptive content or an assignee."],
+      },
+    };
+    render(<ServicePlanAmbiguityReview sections={[{ ...sections[0], elements: [element] }]} elementIds={[element.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    expect(screen.getByText("Ambiguous title")).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: /Destination for ambiguous title 1/ }));
+    expect(screen.getByRole("option", { name: "Assignee" })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "Assignee" }));
+    await user.click(screen.getByRole("button", { name: "Confirm & finish" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(changes.assignees).toEqual([expect.objectContaining({ name: "Samar" })]);
+    expect(changes.resources).toBeUndefined();
+    expect(changes.importAmbiguity).toMatchObject({ status: "confirmed", reasons: [] });
+  });
+
+  it("keeps no-parts items simple and acknowledges the imported content as-is", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const element = {
+      ...sections[0].elements[0],
+      title: plainTextToRichText("Untitled"),
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        sourceTitle: "",
+        parts: [],
+        reasons: ["The source title is empty."],
+      },
+    };
+    render(<ServicePlanAmbiguityReview sections={[{ ...sections[0], elements: [element] }]} elementIds={[element.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    expect(screen.getByText("The source title is empty.")).toBeInTheDocument();
+    expect(screen.getByText("No mapping is needed for this item.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keep as imported" }));
+
+    expect(onResolve).toHaveBeenCalledWith(element.id, {
+      importAmbiguity: expect.objectContaining({ status: "acknowledged" }),
+    });
+  });
+
+  it("keeps review dropdown options inside the floating window", async () => {
+    const user = userEvent.setup();
+    render(<ServicePlanAmbiguityReview sections={sections} elementIds={["element-1"]} prompt={false} onLater={jest.fn()} onResolve={jest.fn()} />);
+
+    await user.click(screen.getByRole("combobox", { name: /Destination for description 1/ }));
+
+    const overlayHost = within(screen.getByTestId("floating-window-overlay-host"));
+    expect(overlayHost.getByRole("option", { name: "Content attachment" })).toBeInTheDocument();
   });
 
   it("acknowledges without applying any suggested field changes", async () => {
@@ -143,7 +222,7 @@ describe("ServicePlanAmbiguityReview", () => {
 
     await user.click(screen.getByRole("combobox", { name: /Song mapping for Same Song/ }));
     await user.click(screen.getByRole("option", { name: "Same Song · C" }));
-    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm & finish" }));
 
     const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
     expect(changes.songRefs).toEqual([
@@ -181,7 +260,7 @@ describe("ServicePlanAmbiguityReview", () => {
     expect(second).toHaveTextContent("Keep existing linked songs");
     await user.click(second);
     await user.click(screen.getByRole("option", { name: "Same Song · G" }));
-    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm & finish" }));
 
     const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
     expect(changes.songRefs).toEqual([
@@ -238,7 +317,7 @@ describe("ServicePlanAmbiguityReview", () => {
 
     await user.click(screen.getByRole("combobox", { name: /Song mapping for Same Song/ }));
     await user.click(screen.getByRole("option", { name: "Same Song · C" }));
-    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm & finish" }));
 
     expect(savedSections[0].elements[0].songRefs).toEqual([
       { id: "selected-occurrence", kind: "pending", title: "Same Song", lyricsText: "" },
@@ -266,23 +345,34 @@ describe("ServicePlanAmbiguityReview", () => {
     }];
     const ReviewQueue = () => {
       const [elementIds, setElementIds] = useState(["element-1", "element-2"]);
+      const [completedCount, setCompletedCount] = useState(0);
       return (
         <ServicePlanAmbiguityReview
           sections={reviewSections}
           elementIds={elementIds}
+          batchTotal={2}
+          completedCount={completedCount}
           prompt={false}
           onLater={jest.fn()}
-          onResolve={(elementId) => setElementIds((current) => current.filter((id) => id !== elementId))}
+          onResolve={(elementId) => {
+            setElementIds((current) => current.filter((id) => id !== elementId));
+            setCompletedCount((current) => current + 1);
+          }}
         />
       );
     };
     render(<ReviewQueue />);
 
     expect(screen.getByText("Psalms 97 Jasmine Williams")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirm interpretation" }));
+    expect(screen.getByText("Item 1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("1 remaining")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm & next" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm & next" }));
 
     expect(screen.getByText("Unknown second title")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm interpretation" })).toBeInTheDocument();
+    expect(screen.getByText("Item 2 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "2");
+    expect(screen.getByRole("button", { name: "Confirm & finish" })).toBeInTheDocument();
   });
 
   it("moves a source-managed description from content to notes and keeps unrelated resources", () => {
@@ -317,6 +407,102 @@ describe("ServicePlanAmbiguityReview", () => {
     expect(reconciled.element.resources).toEqual([manual]);
     expect(richTextToPlainText(reconciled.element.notes)).toContain("Behind the pulpit");
     expect(reconciled.parts[0].managed?.kind).toBe("note");
+  });
+
+  it("switches a source-managed ambiguous title between content and assignee without duplicates", () => {
+    const managed = createServicePlanTextResource({
+      title: "Imported description",
+      text: plainTextToRichText("Samar"),
+    });
+    const contentPart = {
+      kind: "description" as const,
+      value: "Samar",
+      destination: "content" as const,
+      sourceField: "title" as const,
+      managed: {
+        kind: "resource" as const,
+        id: managed.id,
+        fingerprint: servicePlanResourceFingerprint(managed),
+      },
+    };
+    const contentElement: ServicePlanElement = {
+      ...sections[0].elements[0],
+      resources: [managed],
+      importAmbiguity: { ...sections[0].elements[0].importAmbiguity!, parts: [contentPart] },
+    };
+
+    const asAssignee = applyReviewedServicePlanParts(contentElement, [{ ...contentPart, destination: "assignee" }]);
+    expect(asAssignee.element.resources).toBeUndefined();
+    expect(asAssignee.element.assignees).toEqual([expect.objectContaining({ name: "Samar" })]);
+    expect(asAssignee.parts[0].managed?.kind).toBe("assignee");
+
+    const assigneeElement = {
+      ...asAssignee.element,
+      importAmbiguity: { ...contentElement.importAmbiguity!, parts: asAssignee.parts },
+    };
+    const backToContent = applyReviewedServicePlanParts(assigneeElement, [{ ...asAssignee.parts[0], destination: "content" }]);
+    expect(backToContent.element.assignees).toBeUndefined();
+    expect(backToContent.element.resources).toHaveLength(1);
+    expect(richTextToPlainText(getServicePlanResourceText(backToContent.element.resources![0]))).toBe("Samar");
+  });
+
+  it("does not promote an ordinary description to a person without an explicit assignee destination", () => {
+    const element: ServicePlanElement = {
+      ...sections[0].elements[0],
+      importAmbiguity: {
+        ...sections[0].elements[0].importAmbiguity!,
+        parts: [{
+          kind: "description",
+          value: "Behind the pulpit",
+          destination: "content",
+          sourceField: "title",
+        }],
+      },
+    };
+    const reviewed = applyReviewedServicePlanParts(element, element.importAmbiguity!.parts);
+
+    expect(reviewed.element.assignees).toBeUndefined();
+    expect(reviewed.element.resources).toEqual([expect.objectContaining({ title: "Imported description" })]);
+  });
+
+  it("installs an explicitly reviewed description assignee during a source refresh", () => {
+    const managed = createServicePlanTextResource({
+      title: "Imported description",
+      text: plainTextToRichText("Samar"),
+    });
+    const oldPart = {
+      kind: "description" as const,
+      value: "Samar",
+      destination: "content" as const,
+      sourceField: "title" as const,
+      managed: {
+        kind: "resource" as const,
+        id: managed.id,
+        fingerprint: servicePlanResourceFingerprint(managed),
+      },
+    };
+    const current: ServicePlanElement = {
+      ...sections[0].elements[0],
+      resources: [managed],
+      importAmbiguity: { ...sections[0].elements[0].importAmbiguity!, parts: [oldPart] },
+    };
+    const incoming: ServicePlanElement = {
+      ...current,
+      resources: undefined,
+      importAmbiguity: {
+        ...current.importAmbiguity!,
+        parts: [{ ...oldPart, destination: "assignee" }],
+      },
+    };
+
+    const refreshed = reconcileReviewedServicePlanParts(current, incoming, new Set(["title"]));
+
+    expect(refreshed.element.resources).toBeUndefined();
+    expect(refreshed.element.assignees).toEqual([expect.objectContaining({ name: "Samar" })]);
+    expect(refreshed.ambiguity?.parts[0]).toMatchObject({
+      destination: "assignee",
+      managed: expect.objectContaining({ kind: "assignee" }),
+    });
   });
 
   it("removes only the source-derived name and retains Led By and its microphone", () => {

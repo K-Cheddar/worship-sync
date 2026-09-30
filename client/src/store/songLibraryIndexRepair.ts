@@ -71,10 +71,9 @@ export const createSongLibraryIndexRepairMiddleware = () => {
         );
         for (const item of previousState.allItems.list) {
           if (item.type === "song" && !incomingSongIds.has(item._id)) {
-            const staleDoc = state.allDocs.allSongDocs.find((doc) => doc._id === item._id);
-            if (staleDoc) {
-              deletedSongIds.add(item._id);
-            }
+            // The remote index is authoritative even if durable docs have not
+            // hydrated yet. A later stale docs snapshot must not restore it.
+            deletedSongIds.add(item._id);
           }
         }
         for (const id of incomingSongIds) {

@@ -1,10 +1,13 @@
+import { getPublicBoardRouteKind } from "./publicSharePathRedirect";
+
 export const BOOTSTRAP_RELOAD_FLAG = "worshipsync:bootstrap-chunk-reload";
 export const BOOTSTRAP_RETRY_DELAY_MS = 300;
 
 export type BootstrapFailureStage =
   | "first failure"
   | "retry failure"
-  | "post-reload failure";
+  | "post-reload failure"
+  | "post-reload retry failure";
 
 type BootstrapModule<T> = { default: T };
 type BootstrapLoadResult<T> =
@@ -21,7 +24,11 @@ type LoadBootstrapOptions = {
   reload?: () => void;
   storage?: BootstrapStorage;
   wait?: (ms: number) => Promise<void>;
-  onFailure?: (stage: BootstrapFailureStage, error: unknown) => void | Promise<void>;
+  onFailure?: (
+    stage: BootstrapFailureStage,
+    error: unknown,
+    previousError?: unknown,
+  ) => void | Promise<void>;
   retryDelayMs?: number;
 };
 
@@ -78,9 +85,11 @@ export const normalizeBootstrapPathname = (pathname: string): string => {
     [/^\/services\/[^/]+\/?$/, "/services/:shareId"],
     [/^\/schedule-response\/[^/]+\/?$/, "/schedule-response/:token"],
     [/^\/a\/[^/]+\/?$/, "/a/:token"],
-    [/^\/boards\/present\/[^/]+\/?$/, "/boards/present/:aliasId"],
-    [/^\/boards\/[^/]+\/?$/, "/boards/:aliasId"],
   ];
+
+  const boardRouteKind = getPublicBoardRouteKind(pathname);
+  if (boardRouteKind === "present") return "/boards/present/:aliasId";
+  if (boardRouteKind === "board") return "/boards/:aliasId";
 
   return (
     publicPathPatterns.find(([pattern]) => pattern.test(pathname))?.[1] ??
@@ -98,19 +107,22 @@ export const loadBootstrapModule = async <T>(
   const reportFailure = async (
     stage: BootstrapFailureStage,
     error: unknown,
+    previousError?: unknown,
   ) => {
     try {
-      await options.onFailure?.(stage, error);
+      await options.onFailure?.(stage, error, previousError);
     } catch {
       // Diagnostics must never prevent the visible bootstrap recovery path.
     }
   };
 
+  let firstError: unknown;
   try {
     const module = await load();
     clearReloadMarker(storage);
     return { status: "loaded", module };
   } catch (error) {
+    firstError = error;
     const firstStage = reloadAlreadyAttempted
       ? "post-reload failure"
       : "first failure";
@@ -128,9 +140,9 @@ export const loadBootstrapModule = async <T>(
     return { status: "loaded", module };
   } catch (error) {
     const retryStage = reloadAlreadyAttempted
-      ? "post-reload failure"
+      ? "post-reload retry failure"
       : "retry failure";
-    await reportFailure(retryStage, error);
+    await reportFailure(retryStage, error, firstError);
     if (
       !isModuleLoadError(error) ||
       reloadAlreadyAttempted !== false ||

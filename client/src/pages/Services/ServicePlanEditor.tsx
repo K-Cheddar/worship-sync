@@ -185,9 +185,12 @@ import {
 import {
   readServicePlanHideNotes,
   readServicePlanImportSource,
+  readServicePlanTemplateHistory,
+  rememberServicePlanTemplate,
   writeServicePlanHideNotes,
   writeServicePlanImportSource,
 } from "./servicePlanViewPreferences";
+import { resolvePrimaryServicePlanTemplate } from "./servicePlanTemplateResolution";
 import type {
   TeamRosterMember,
   TeamPosition,
@@ -402,6 +405,8 @@ type ServicePlanEditorProps = {
   teams?: TeamRecord[];
   /** Scheduled team holders for church microphones on this occurrence. */
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  /** Whether projected holders reflect the loaded schedule data. */
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   /** Schedule-derived rows shown under linked plan items. */
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
@@ -483,6 +488,7 @@ const ServicePlanEditor = ({
   positions = [],
   teams = [],
   scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   teamMicrophones,
@@ -598,6 +604,9 @@ const ServicePlanEditor = ({
   const [loading, setLoading] = useState(Boolean(churchId && planKey));
   const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
   const [planTemplatesLoading, setPlanTemplatesLoading] = useState(false);
+  const [lastUsedTemplateIds, setLastUsedTemplateIds] = useState<Record<string, string>>(
+    () => readServicePlanTemplateHistory(churchId),
+  );
   const [showImport, setShowImport] = useState(false);
   const [importSource, setImportSource] = useState<ServicePlanImportSource>(
     readServicePlanImportSource,
@@ -608,7 +617,20 @@ const ServicePlanEditor = ({
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
-  const [ambiguityDialog, setAmbiguityDialog] = useState<{ prompt: boolean; elementIds?: string[] } | null>(null);
+  const [ambiguityDialog, setAmbiguityDialog] = useState<{
+    prompt: boolean;
+    elementIds: string[];
+    batchTotal: number;
+    completedCount: number;
+  } | null>(null);
+  const openAmbiguityDialog = (elementIds: string[], prompt: boolean) => {
+    setAmbiguityDialog({
+      prompt,
+      elementIds,
+      batchTotal: elementIds.length,
+      completedCount: 0,
+    });
+  };
   const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
     DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   );
@@ -767,6 +789,10 @@ const ServicePlanEditor = ({
       cancelled = true;
     };
   }, [canEdit, churchId, showToast]);
+
+  useEffect(() => {
+    setLastUsedTemplateIds(readServicePlanTemplateHistory(churchId));
+  }, [churchId]);
 
   useEffect(() => {
     mergeApplyAttemptRef.current += 1;
@@ -1502,6 +1528,17 @@ const ServicePlanEditor = ({
         : { planName: occurrence.name || service.name || "" }),
     });
     setIsEditing(true);
+    setPlanTemplates((current) =>
+      current.some((item) => item.templateId === template.templateId)
+        ? current
+        : [...current, template],
+    );
+    const nextHistory = rememberServicePlanTemplate(
+      churchId,
+      service.serviceId,
+      template.templateId,
+    );
+    setLastUsedTemplateIds((current) => ({ ...current, ...nextHistory }));
     showToast(`Applied "${template.name}".`, "success");
   };
 
@@ -1652,7 +1689,7 @@ const ServicePlanEditor = ({
     const newAmbiguities = nextSections.flatMap((section) =>
       section.elements.filter((element) => element.importAmbiguity?.status === "unresolved").map((element) => element.id),
     );
-    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
+    if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
     setShowImport(false);
     setImportUrl("");
     setIsEditing(true);
@@ -1759,7 +1796,7 @@ const ServicePlanEditor = ({
       importPreview.currentSections,
       selectedSections,
     );
-    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
+    if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
     setImportPreview(null);
     setImportUrl("");
     setIsEditing(true);
@@ -2013,11 +2050,19 @@ const ServicePlanEditor = ({
   // empty section, so it does not bounce back into this empty state.
   const defaultPlanTemplate =
     planTemplates.find(
-      (template) => template.templateId === defaultPlanTemplateId,
+      (template) =>
+        template.templateId === defaultPlanTemplateId &&
+        (!template.serviceId || template.serviceId === service.serviceId),
     ) || null;
   const defaultPlanTemplateMissing = Boolean(
     defaultPlanTemplateId && !planTemplatesLoading && !defaultPlanTemplate,
   );
+  const primaryTemplate = resolvePrimaryServicePlanTemplate({
+    templates: planTemplates,
+    serviceId: service.serviceId,
+    defaultTemplateId: defaultPlanTemplateId,
+    lastUsedTemplateId: lastUsedTemplateIds[service.serviceId],
+  });
   const loadingInitialContent = loading;
   const hasSections = Boolean(sections && sections.length > 0);
   /** Whether the draft holds anything an import would have to reconcile. */
@@ -2803,19 +2848,26 @@ const ServicePlanEditor = ({
               <Button
                 type="button"
                 variant="primary"
-                className="rounded-r-none border-r-0"
+                className="min-w-0 max-w-[min(28rem,calc(100vw-2rem))] rounded-r-none border-r-0"
                 disabled={planTemplatesLoading}
                 onClick={() => {
-                  if (defaultPlanTemplate) {
-                    applySavedTemplate(defaultPlanTemplate);
+                  if (primaryTemplate) {
+                    applySavedTemplate(primaryTemplate);
                     return;
                   }
                   setTemplateModal("apply");
                 }}
+                title={
+                  primaryTemplate
+                    ? `Apply ${primaryTemplate.name}`
+                    : "Choose a template"
+                }
               >
-                {defaultPlanTemplate
-                  ? `Apply ${defaultPlanTemplate.name}`
-                  : "Apply a template"}
+                <span className="min-w-0 truncate">
+                  {primaryTemplate
+                    ? `Apply ${primaryTemplate.name}`
+                    : "Choose a template"}
+                </span>
               </Button>
               <Button
                 type="button"
@@ -2934,6 +2986,7 @@ const ServicePlanEditor = ({
               iemEquipment={iemEquipment}
               microphoneAudiences={microphoneAudiences}
               scheduledEquipmentHolders={scheduledEquipmentHolders}
+              scheduledEquipmentStatus={scheduledEquipmentStatus}
               scheduledAssignmentRows={scheduledAssignmentRows}
               onOpenScheduledAssignment={onOpenScheduledAssignment}
               isServiceDay={isServiceDay}
@@ -2954,7 +3007,7 @@ const ServicePlanEditor = ({
               resolvedSongRefs={resolvedSongRefs}
               onReviewImportAmbiguity={(elementId) => {
                 setIsEditing(true);
-                setAmbiguityDialog({ prompt: false, elementIds: [elementId] });
+                openAmbiguityDialog([elementId], false);
               }}
               followLiveControl={
                 liveElementId && !isEditing && activeTab === "plan" && !isFollowingLive ? (
@@ -3509,11 +3562,13 @@ const ServicePlanEditor = ({
       {ambiguityDialog ? (
         <ServicePlanAmbiguityReview
           sections={sections || []}
-          elementIds={ambiguityDialog.elementIds || []}
+          elementIds={ambiguityDialog.elementIds}
+          batchTotal={ambiguityDialog.batchTotal}
+          completedCount={ambiguityDialog.completedCount}
           prompt={ambiguityDialog.prompt}
           onLater={() => {
             if (!sections) { setAmbiguityDialog(null); return; }
-            const ids = new Set(ambiguityDialog.elementIds || []);
+            const ids = new Set(ambiguityDialog.elementIds);
             updateDraftSections(sections.map((section) => ({
               ...section,
               elements: section.elements.map((element) => ids.has(element.id) && element.importAmbiguity
@@ -3530,8 +3585,15 @@ const ServicePlanEditor = ({
             })));
             setAmbiguityDialog((current) => {
               if (!current) return null;
-              const remainingIds = (current.elementIds || []).filter((id) => id !== elementId);
-              return remainingIds.length ? { prompt: false, elementIds: remainingIds } : null;
+              const remainingIds = current.elementIds.filter((id) => id !== elementId);
+              return remainingIds.length
+                ? {
+                    ...current,
+                    prompt: false,
+                    elementIds: remainingIds,
+                    completedCount: Math.min(current.completedCount + 1, current.batchTotal),
+                  }
+                : null;
             });
           }}
         />
@@ -3545,15 +3607,7 @@ const ServicePlanEditor = ({
           serviceName={service.name}
           sections={sections || []}
           onClose={() => setTemplateModal(null)}
-          onApply={(templateSections) => {
-            updateDraft({
-              sections: templateSections,
-              ...(planName
-                ? {}
-                : { planName: occurrence.name || service.name || "" }),
-            });
-            setIsEditing(true);
-          }}
+          onApply={applySavedTemplate}
         />
       ) : null}
 

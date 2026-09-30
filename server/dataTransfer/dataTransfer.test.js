@@ -33,11 +33,13 @@ test("CSV serializer quotes values and protects formula injection", () => {
 });
 
 test("formula protection round-trips WorshipSync values without changing third-party apostrophes", () => {
-  const values = ["=1+1", "+value", "-value", "@value", " =with leading space", "'intended", "normal text", "'\\=literal"];
+  const values = ["=1+1", "+value", "-value", "@value", " =with leading space", "\t=control prefix", "'intended", "normal text", "'\\=literal", "'\\ =marker with space", "=quoted, value\nand another line"];
   const csv = encodeCsv(["Value"], values.map((value) => [value]));
   const parsed = parseCsv(csv);
   assert.deepEqual(parsed.rows.map(({ values: row }) => row.Value), values);
+  assert.match(csv, /'\\=1\+1/);
   assert.equal(parseCsv("Value\n'=1+1\n").rows[0].values.Value, "'=1+1");
+  assert.equal(parseCsv("Value\n'\\=literal\n").rows[0].values.Value, "'\\=literal");
 });
 
 test("plain date validation follows the Gregorian calendar", () => {
@@ -157,7 +159,7 @@ test("position CSV preserves legacy names and structured icon references", () =>
   assert.deepEqual(parsePortablePositionIcon(exported[1].at(-1)), icon);
   assert.equal(serializePortablePositionIcon(undefined), "");
   assert.throws(() => parsePortablePositionIcon("{invalid"), { statusCode: 400 });
-  assert.throws(() => parsePortablePositionIcon('{"source":"custom","id":"church-icon"}'), { statusCode: 400 });
+  assert.deepEqual(parsePortablePositionIcon('{"source":"custom","id":"church-icon"}'), { source: "custom", id: "church-icon" });
   for (const iconRef of [
     { source: "lucide", name: "MicVocal" },
     { source: "tabler", name: "camera" },

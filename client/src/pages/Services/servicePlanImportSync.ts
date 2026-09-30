@@ -1136,25 +1136,115 @@ export const refreshServicePlanFromImport = (
   // prove that an unfamiliar incoming section is a renamed existing section:
   // a newly-added late-service section would otherwise consume the first
   // unmatched section and inherit its position and local content.
-  const sectionPairs = pairByLabelThenOrder(
+  // A durable external row identity is plan-wide. Re-home a uniquely
+  // identified source-owned element into its new section before the ordinary
+  // section-local title/order reconciliation runs. Duplicate external IDs are
+  // deliberately excluded from reconciliation: neither row can safely claim
+  // the local state belonging to the other.
+  const importedIdentityCounts = new Map<string, number>();
+  importedSections.forEach((section) => section.elements.forEach((element) => {
+    const identity = element.sourceOccurrenceId?.trim();
+    if (identity) importedIdentityCounts.set(identity, (importedIdentityCounts.get(identity) || 0) + 1);
+  }));
+  const currentIdentityElements = new Map<string, Array<{ sectionIndex: number; elementIndex: number; element: ServicePlanElement }>>();
+  currentSections.forEach((section, sectionIndex) => section.elements.forEach((element, elementIndex) => {
+    if (!element.sourcePlanningManaged) return;
+    const identity = element.sourceOccurrenceId?.trim();
+    if (!identity) return;
+    const matches = currentIdentityElements.get(identity) || [];
+    matches.push({ sectionIndex, elementIndex, element });
+    currentIdentityElements.set(identity, matches);
+  }));
+  const ambiguousIdentities = new Set<string>();
+  importedIdentityCounts.forEach((count, identity) => {
+    if (count > 1 || (currentIdentityElements.get(identity)?.length || 0) > 1) {
+      ambiguousIdentities.add(identity);
+    }
+  });
+  const safeImportedSections = importedSections.map((section) => ({
+    ...section,
+    elements: section.elements.filter((element) =>
+      !element.sourceOccurrenceId?.trim() ||
+      !ambiguousIdentities.has(element.sourceOccurrenceId.trim()),
+    ),
+  }));
+  const importedSectionPairs = pairByLabelThenOrder(
     currentSections,
-    importedSections,
+    safeImportedSections,
+    (section) => section.name,
+    canPairByLabel,
+    () => false,
+  );
+  const currentSectionByImportedIndex = new Map(
+    importedSectionPairs.map(([current, imported]) => [imported.index, current.index]),
+  );
+  const movedElementsBySection = new Map<number, ServicePlanElement[]>();
+  const movedElementKeys = new Set<string>();
+  safeImportedSections.forEach((section, importedSectionIndex) => {
+    section.elements.forEach((importedElement) => {
+      const identity = importedElement.sourceOccurrenceId?.trim();
+      if (!identity || ambiguousIdentities.has(identity) || importedIdentityCounts.get(identity) !== 1) return;
+      const existingMatches = currentIdentityElements.get(identity) || [];
+      if (existingMatches.length !== 1) return;
+      const existing = existingMatches[0];
+      const destinationIndex = currentSectionByImportedIndex.get(importedSectionIndex);
+      if (destinationIndex === existing.sectionIndex) return;
+      movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
+      const moved = movedElementsBySection.get(importedSectionIndex) || [];
+      moved.push(existing.element);
+      movedElementsBySection.set(importedSectionIndex, moved);
+    });
+  });
+  const currentWithMovedElements = currentSections.map((section, sectionIndex) => ({
+    ...section,
+    elements: section.elements.filter((_, elementIndex) =>
+      !movedElementKeys.has(`${sectionIndex}:${elementIndex}`),
+    ),
+  }));
+  safeImportedSections.forEach((section, importedSectionIndex) => {
+    const moved = movedElementsBySection.get(importedSectionIndex);
+    if (!moved?.length) return;
+    const targetIndex = currentSectionByImportedIndex.get(importedSectionIndex);
+    if (targetIndex !== undefined) {
+      currentWithMovedElements[targetIndex] = {
+        ...currentWithMovedElements[targetIndex],
+        elements: [...currentWithMovedElements[targetIndex].elements, ...moved],
+      };
+      return;
+    }
+    // Keep a moved row even when its destination section is new. The source
+    // section ID is only used as a stable initial container ID; later refreshes
+    // pair that section by name as usual.
+    currentWithMovedElements.push({
+      id: section.id,
+      sourcePlanningManaged: true,
+      name: section.name,
+      elements: moved,
+    });
+  });
+
+  const safeSectionPairs = pairByLabelThenOrder(
+    currentWithMovedElements,
+    safeImportedSections,
     (section) => section.name,
     canPairByLabel,
     () => false,
   );
   const importedByCurrentIndex = new Map(
-    sectionPairs.map(([current, imported]) => [current.index, imported]),
+    safeSectionPairs.map(([current, imported]) => [current.index, imported]),
   );
   const pairedImportedSections = new Set(
-    sectionPairs.map(([, imported]) => imported.index),
+    safeSectionPairs.map(([, imported]) => imported.index),
   );
 
-  const refreshed = currentSections.flatMap(
+  const isAmbiguousCurrentElement = (element: ServicePlanElement): boolean =>
+    Boolean(element.sourceOccurrenceId?.trim() && ambiguousIdentities.has(element.sourceOccurrenceId.trim()));
+  const refreshed = currentWithMovedElements.flatMap(
     (currentSection, currentSectionIndex) => {
       const importedSection = importedByCurrentIndex.get(currentSectionIndex);
       if (!importedSection) {
-        return options.removeMissing && currentSection.sourcePlanningManaged
+        return options.removeMissing && currentSection.sourcePlanningManaged &&
+          !currentSection.elements.some(isAmbiguousCurrentElement)
           ? []
           : [currentSection];
       }
@@ -1168,9 +1258,11 @@ export const refreshServicePlanFromImport = (
           element.sourceElementTypeRaw || "",
           element.sourceContentTitleRaw || "",
         ],
-        canPairByLabel,
-        isSourceOwned,
-        (element) => element.sourceOccurrenceId,
+        (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element),
+        (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element),
+        (element) => element.sourcePlanningManaged && !isAmbiguousCurrentElement(element)
+          ? element.sourceOccurrenceId?.trim()
+          : undefined,
       );
       const importedByCurrentElementIndex = new Map(
         elementPairs.map(([current, imported]) => [current.index, imported]),
@@ -1203,7 +1295,8 @@ export const refreshServicePlanFromImport = (
       if (
         options.removeMissing &&
         currentSection.sourcePlanningManaged &&
-        elements.length === 0
+        elements.length === 0 &&
+        sourceSection.elements.length > 0
       ) {
         return [];
       }
@@ -1220,13 +1313,13 @@ export const refreshServicePlanFromImport = (
 
   if (options.addMissing) {
     const currentSectionIdByImportedIndex = new Map(
-      sectionPairs.map(([current, imported]) => [
+      safeSectionPairs.map(([current, imported]) => [
         imported.index,
         current.value.id,
       ]),
     );
     const newSectionByImportedIndex = new Map(
-      importedSections.flatMap((section, index) =>
+      safeImportedSections.flatMap((section, index) =>
         pairedImportedSections.has(index)
           ? []
           : [[index, managedImportedSection(section)] as const],
@@ -1234,7 +1327,7 @@ export const refreshServicePlanFromImport = (
     );
     return insertNewServicePlanSectionRuns(
       refreshed,
-      importedSections.length,
+      safeImportedSections.length,
       newSectionByImportedIndex,
       currentSectionIdByImportedIndex,
     );

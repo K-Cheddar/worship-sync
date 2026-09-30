@@ -37,7 +37,6 @@ import { cn } from "@/utils/cnHelper";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   formatServiceTiming,
-  getCellMemberIds,
   isActive,
   scheduleDraftsMatch,
 } from "../teamsUtils";
@@ -51,10 +50,6 @@ import {
   SCHEDULE_DRAFT_PERSIST_DELAY_MS,
   type ScheduleEditFormProps,
 } from "./scheduleDraftUtils";
-import {
-  findCrossTeamScheduleOccurrenceConflicts,
-  formatCrossTeamScheduleConflictWarning,
-} from "./scheduleConflicts";
 import {
   formatSuggestedScheduleName,
   getCreateScheduleDefaultRange,
@@ -76,7 +71,6 @@ const ScheduleEditForm = ({
   defaultRange,
   services,
   activeTeams,
-  schedules,
   seedSchedules,
   churchId,
   canEdit,
@@ -101,7 +95,10 @@ const ScheduleEditForm = ({
   const [saving, setSaving] = useState(false);
   const [deletingSchedule, setDeletingSchedule] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [scheduleConflictWarning, setScheduleConflictWarning] = useState("");
+  const [scheduleConflictWarning, setScheduleConflictWarning] = useState<{
+    fingerprint: string;
+    conflicts: Array<{ teamId?: string; scheduleName?: string; conflictingOccurrenceId?: string; occurrenceId: string }>;
+  } | null>(null);
   const draftRef = useRef(draft);
   const skipNextPersistRef = useRef(false);
   // After a successful create we clear the `"new"` draft; skip the unmount flush
@@ -257,43 +254,7 @@ const ScheduleEditForm = ({
     }));
   }, [draft.endDate, draft.startDate, services]);
 
-  const getScheduleSaveConflictWarning = (payload: TeamSchedulePayload) => {
-    if (!payload.assignments || Object.keys(payload.assignments).length === 0) {
-      return "";
-    }
-    const scheduleForConflict: TeamSchedule = {
-      churchId,
-      scheduleId: selectedSchedule?.scheduleId || "draft-schedule",
-      name: payload.name,
-      description: payload.description || "",
-      teamId: payload.teamId,
-      startDate: payload.startDate,
-      endDate: payload.endDate,
-      serviceIds: payload.serviceIds,
-      occurrences: payload.occurrences || [],
-      assignments: payload.assignments,
-      archivedAt: selectedSchedule?.archivedAt || null,
-    };
-    const conflicts = Object.entries(payload.assignments).flatMap(
-      ([occurrenceId, row]) => {
-        const memberIds = new Set(
-          Object.values(row || {}).flatMap(getCellMemberIds),
-        );
-        return [...memberIds].flatMap((memberId) =>
-          findCrossTeamScheduleOccurrenceConflicts({
-            schedule: scheduleForConflict,
-            occurrenceId,
-            memberId,
-            schedules,
-            teams: activeTeams,
-          }),
-        );
-      },
-    );
-    return formatCrossTeamScheduleConflictWarning(conflicts);
-  };
-
-  const saveSchedule = async (allowCrossTeamConflict = false) => {
+  const saveSchedule = async (confirmedOccurrenceConflictFingerprint?: string) => {
     if (!canEdit) return;
     const currentDraft = draftRef.current;
     const resolvedName = resolveScheduleNameForSave({
@@ -376,13 +337,10 @@ const ScheduleEditForm = ({
             }),
           }
           : {}),
-        ...(allowCrossTeamConflict ? { allowCrossTeamConflict: true } : {}),
+        ...(confirmedOccurrenceConflictFingerprint
+          ? { confirmedOccurrenceConflictFingerprint }
+          : {}),
       };
-      const conflictWarning = getScheduleSaveConflictWarning(payload);
-      if (conflictWarning && !allowCrossTeamConflict) {
-        setScheduleConflictWarning(conflictWarning);
-        return;
-      }
       const saveToastMessage = formatScheduleSaveToast(selectedSchedule, payload, {
         teamNameById: new Map(
           activeTeams.map((team) => [team.teamId, team.name]),
@@ -432,8 +390,21 @@ const ScheduleEditForm = ({
       setSelectedScheduleId(response.schedule.scheduleId);
       if (saveToastMessage) showToast(saveToastMessage, "success");
       saveFeedback.recordSuccess(response.schedule.scheduleId, selectedSchedule ? "update" : "create");
-      setScheduleConflictWarning("");
+      setScheduleConflictWarning(null);
     } catch (error) {
+      const details = (error as { details?: unknown } | null)?.details;
+      if (details && typeof details === "object") {
+        const conflict = details as { conflictFingerprint?: unknown; occurrenceConflicts?: unknown };
+        if (typeof conflict.conflictFingerprint === "string" && Array.isArray(conflict.occurrenceConflicts)) {
+          setScheduleConflictWarning({
+            fingerprint: conflict.conflictFingerprint,
+            conflicts: conflict.occurrenceConflicts as Array<{ teamId?: string; scheduleName?: string; conflictingOccurrenceId?: string; occurrenceId: string }>,
+          });
+          if (selectedSchedule) onScheduleSaved(selectedSchedule);
+          return;
+        }
+      }
+      if (selectedSchedule) onScheduleSaved(selectedSchedule);
       showApiErrorToast(showToast, error, "Could not save this schedule.");
     } finally {
       setSaving(false);
@@ -642,20 +613,28 @@ const ScheduleEditForm = ({
       />
       <Modal
         isOpen={Boolean(scheduleConflictWarning)}
-        onClose={() => setScheduleConflictWarning("")}
+        onClose={() => setScheduleConflictWarning(null)}
         title="Schedule conflict"
         size="sm"
         description="Confirm whether to save this schedule despite a team conflict."
       >
         <div className="space-y-4">
-          <p className="text-sm text-gray-200">
-            This schedule includes someone who is{" "}
-            {scheduleConflictWarning
-              ? scheduleConflictWarning.charAt(0).toLowerCase() +
-              scheduleConflictWarning.slice(1)
-              : "already scheduled on another team"}{" "}
-            for the same service.
-          </p>
+          {scheduleConflictWarning?.conflicts.length ? (
+            <ul className="max-h-48 space-y-2 overflow-y-auto rounded border border-gray-700 p-3 text-sm text-gray-300">
+              {scheduleConflictWarning.conflicts.map((conflict, index) => {
+                const teamName = activeTeams.find((team) => team.teamId === conflict.teamId)?.name;
+                return (
+                  <li key={`${conflict.teamId || "team"}:${conflict.conflictingOccurrenceId || conflict.occurrenceId}:${index}`}>
+                    {teamName || conflict.teamId || "Another team"}
+                    {conflict.scheduleName ? ` · ${conflict.scheduleName}` : ""}
+                    {conflict.conflictingOccurrenceId ? ` · ${conflict.conflictingOccurrenceId}` : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-amber-300">The conflict set changed. There are no current overlaps; confirm again to continue.</p>
+          )}
           <p className="text-sm text-gray-400">
             Confirm if this is intentional.
           </p>
@@ -663,7 +642,7 @@ const ScheduleEditForm = ({
             <Button
               type="button"
               variant="tertiary"
-              onClick={() => setScheduleConflictWarning("")}
+              onClick={() => setScheduleConflictWarning(null)}
             >
               Cancel
             </Button>
@@ -671,8 +650,9 @@ const ScheduleEditForm = ({
               type="button"
               variant="primary"
               onClick={() => {
-                setScheduleConflictWarning("");
-                void saveSchedule(true);
+                const pending = scheduleConflictWarning;
+                setScheduleConflictWarning(null);
+                if (pending) void saveSchedule(pending.fingerprint);
               }}
             >
               Save anyway

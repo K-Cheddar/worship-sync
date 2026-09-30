@@ -24,6 +24,7 @@ import type {
 
 type HiddenStrategy = "opacity" | "offscreen";
 type SurfaceControl = { play: () => void; reset: () => void; dispose: () => void };
+type CancellableWait = { promise: Promise<void>; cancel: (reason?: Error) => void };
 type SurfaceMetric = {
   mediaKey: string;
   source: string;
@@ -35,42 +36,89 @@ type SurfaceMetric = {
 };
 type PreparationStage = PreparedVideoSurfacePreparationStage;
 
-const waitForEvent = (video: HTMLVideoElement, event: "loadedmetadata" | "seeked") =>
-  new Promise<void>((resolve, reject) => {
-    const done = () => { cleanup(); resolve(); };
-    const failed = () => { cleanup(); reject(new Error("video element error")); };
+export const waitForEvent = (
+  video: HTMLVideoElement,
+  event: "loadedmetadata" | "seeked",
+): CancellableWait => {
+  let cancelWait: (reason?: Error) => void = () => undefined;
+  const promise = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timeoutId = window.setTimeout(() => finish(new Error(`${event} timeout`)), 5_000);
     const cleanup = () => {
+      window.clearTimeout(timeoutId);
       video.removeEventListener(event, done);
       video.removeEventListener("error", failed);
     };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const done = () => finish();
+    const failed = () => finish(new Error("video element error"));
+    cancelWait = (reason = new Error(`${event} wait cancelled`)) => finish(reason);
     video.addEventListener(event, done, { once: true });
     video.addEventListener("error", failed, { once: true });
   });
+  return { promise, cancel: (reason) => cancelWait(reason) };
+};
 
 /** Same quality bar as HLSVideoPlayer: a presented frame, not loadeddata alone. */
-const waitForPresentedFrame = (video: HTMLVideoElement) =>
-  new Promise<void>((resolve, reject) => {
+export const waitForPresentedFrame = (video: HTMLVideoElement): CancellableWait => {
+  const frameVideo = video as HTMLVideoElement & {
+    requestVideoFrameCallback?: (callback: () => void) => number;
+    cancelVideoFrameCallback?: (handle: number) => void;
+  };
+  let frameRequest: number | undefined;
+  let animationFrames: number[] = [];
+  let cancelWait: (reason?: Error) => void = () => undefined;
+  const promise = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      if (frameRequest != null) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+      frameRequest = undefined;
+      animationFrames.forEach((id) => window.cancelAnimationFrame(id));
+      animationFrames = [];
+      window.clearTimeout(timeoutId);
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
     const timeoutId = window.setTimeout(
-      () => reject(new Error("presented-frame timeout")),
+      () => finish(new Error("presented-frame timeout")),
       5_000,
     );
-    const frameVideo = video as HTMLVideoElement & {
-      requestVideoFrameCallback?: (callback: () => void) => number;
-    };
+    cancelWait = (reason = new Error("presented-frame wait cancelled")) => finish(reason);
     if (frameVideo.requestVideoFrameCallback) {
-      frameVideo.requestVideoFrameCallback(() => {
-        window.clearTimeout(timeoutId);
-        resolve();
-      });
+      frameRequest = frameVideo.requestVideoFrameCallback(() => finish());
       return;
     }
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      window.clearTimeout(timeoutId);
-      resolve();
-    }));
+    let presentedFallbackStarted = false;
+    const requestNext = () => {
+      const id = window.requestAnimationFrame(() => {
+        animationFrames = animationFrames.filter((frameId) => frameId !== id);
+        if (settled) return;
+        if (!presentedFallbackStarted) {
+          presentedFallbackStarted = true;
+          requestNext();
+        } else {
+          finish();
+        }
+      });
+      animationFrames.push(id);
+    };
+    requestNext();
   });
+  return { promise, cancel: (reason) => cancelWait(reason) };
+};
 
-const PreparedSurface = ({
+export const PreparedSurface = ({
   mediaKey,
   source,
   strategy,
@@ -85,6 +133,7 @@ const PreparedSurface = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(initialPreparedVideoSurfaceState);
+  const pendingWaitRef = useRef<CancellableWait | null>(null);
   const onControlRef = useRef(onControl);
   const onMetricRef = useRef(onMetric);
   onControlRef.current = onControl;
@@ -97,10 +146,23 @@ const PreparedSurface = ({
   const publish = useCallback((extra: Partial<SurfaceMetric> = {}) => {
     onMetricRef.current({ mediaKey, source, phase: stateRef.current.phase, ...extra });
   }, [mediaKey, source]);
+  const cancelPendingWait = useCallback(() => {
+    pendingWaitRef.current?.cancel();
+    pendingWaitRef.current = null;
+  }, []);
+  const awaitOwnedWait = useCallback(async (wait: CancellableWait) => {
+    pendingWaitRef.current = wait;
+    try {
+      await wait.promise;
+    } finally {
+      if (pendingWaitRef.current === wait) pendingWaitRef.current = null;
+    }
+  }, []);
 
   const prepare = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
+    cancelPendingWait();
     const loading = beginPreparedVideoSurface(stateRef.current);
     update(loading);
     publish();
@@ -111,29 +173,33 @@ const PreparedSurface = ({
       video.currentTime = 0;
       video.src = source;
       video.load();
-      await waitForEvent(video, "loadedmetadata");
+      await awaitOwnedWait(waitForEvent(video, "loadedmetadata"));
       if (stateRef.current.generation !== loading.generation) return;
       update(advancePreparedVideoSurface(loading, loading.generation, "preparing"));
       publish();
       const metadataMs = performance.now() - startedAt;
       if (video.currentTime !== 0) {
         video.currentTime = 0;
-        await waitForEvent(video, "seeked");
+        await awaitOwnedWait(waitForEvent(video, "seeked"));
+        if (stateRef.current.generation !== loading.generation) return;
       }
       stage = "playback";
       await video.play();
+      if (stateRef.current.generation !== loading.generation) return;
       stage = "presented-frame";
-      await waitForPresentedFrame(video);
+      await awaitOwnedWait(waitForPresentedFrame(video));
       if (stateRef.current.generation !== loading.generation) return;
       video.pause();
       update(advancePreparedVideoSurface(stateRef.current, loading.generation, "ready"));
       publish({ metadataMs, firstFrameMs: performance.now() - startedAt });
     } catch (error) {
+      if (stateRef.current.generation !== loading.generation) return;
+      video.pause();
       const errorMessage = getPreparedVideoSurfaceErrorMessage(stage, error);
       update(advancePreparedVideoSurface(stateRef.current, loading.generation, "error", errorMessage));
       publish({ error: errorMessage });
     }
-  }, [publish, source, update]);
+  }, [awaitOwnedWait, cancelPendingWait, publish, source, update]);
 
   const play = useCallback(async () => {
     const video = videoRef.current;
@@ -144,23 +210,27 @@ const PreparedSurface = ({
     publish();
     try {
       await video.play();
-      await waitForPresentedFrame(video);
+      if (stateRef.current.generation !== generation) return;
+      await awaitOwnedWait(waitForPresentedFrame(video));
       if (stateRef.current.generation === generation) {
         publish({ playToPresentedFrameMs: performance.now() - startedAt });
       }
     } catch (error) {
+      if (stateRef.current.generation !== generation) return;
+      video.pause();
       const errorMessage = getPreparedVideoSurfaceErrorMessage("playback", error);
       update(advancePreparedVideoSurface(stateRef.current, generation, "error", errorMessage));
       publish({ error: errorMessage });
     }
-  }, [publish, update]);
+  }, [awaitOwnedWait, publish, update]);
 
   const dispose = useCallback(() => {
     const video = videoRef.current;
     update(disposePreparedVideoSurface(stateRef.current));
+    cancelPendingWait();
     if (video) { video.pause(); video.removeAttribute("src"); video.load(); }
     publish();
-  }, [publish, update]);
+  }, [cancelPendingWait, publish, update]);
 
   useEffect(() => {
     if (!isInstantVideoSource(source)) return;

@@ -1,4 +1,6 @@
 const FORMULA_PREFIX = /^[\s\u0000-\u001f]*[=+@-]/;
+const WORSHIPSYNC_ENCODING_HEADER = "__worshipsync_csv_encoding_v1";
+const WORSHIPSYNC_ENCODING_VALUE = "spreadsheet-safe";
 
 export const decodeSpreadsheetFormula = (value) => {
   const text = value == null ? "" : String(value);
@@ -11,13 +13,14 @@ export const decodeSpreadsheetFormula = (value) => {
 
 export const protectSpreadsheetFormula = (value) => {
   const text = value == null ? "" : String(value);
-  if (/^'\\[=+@-]/.test(text)) return `'${text}`;
+  if (/^'\\[\s\u0000-\u001f]*[=+@-]/.test(text)) return `'${text}`;
   return FORMULA_PREFIX.test(text) ? `'\\${text}` : text;
 };
 
 export const encodeCsv = (headers, rows) => {
-  const cells = [headers, ...rows].map((row) =>
-    headers.map((_, index) => {
+  const exportHeaders = [...headers, WORSHIPSYNC_ENCODING_HEADER];
+  const cells = [exportHeaders, ...rows.map((row) => [...row, WORSHIPSYNC_ENCODING_VALUE])].map((row) =>
+    exportHeaders.map((_, index) => {
       const value = protectSpreadsheetFormula(row[index]);
       return /[",\r\n]/.test(value)
         ? `"${value.replaceAll('"', '""')}"`
@@ -89,7 +92,12 @@ export const parseCsv = (input) => {
   else if (field.length || row.length || afterQuote) finishRow();
   while (records.length && records.at(-1).row.every((cell) => cell === "")) records.pop();
 
-  const headers = (records.shift()?.row || []).map((header) => header.trim());
+  const rawHeaders = (records.shift()?.row || []).map((header) => header.trim());
+  const markerIndex = rawHeaders.indexOf(WORSHIPSYNC_ENCODING_HEADER);
+  const isWorshipSyncExport = markerIndex === rawHeaders.length - 1 && records.every(
+    ({ row: values }) => values[markerIndex] === WORSHIPSYNC_ENCODING_VALUE,
+  );
+  const headers = rawHeaders.filter((_, index) => !isWorshipSyncExport || index !== markerIndex);
   const totalRows = Math.max(records.length, ...issues.filter((issue) => issue.row > 1).map((issue) => issue.row - 1), 0);
   if (!headers.length) issues.push({ row: 1, code: "missing_header", message: "Add a header row before importing data." });
   const normalizedHeaders = new Set();
@@ -101,11 +109,17 @@ export const parseCsv = (input) => {
   });
   const rows = [];
   records.forEach(({ row: values, rowNumber: sourceRow }) => {
-    if (values.length !== headers.length) {
-      issues.push({ row: sourceRow, code: "column_count_mismatch", message: `Expected ${headers.length} columns but found ${values.length}.` });
+    if (values.length !== rawHeaders.length) {
+      issues.push({ row: sourceRow, code: "column_count_mismatch", message: `Expected ${rawHeaders.length} columns but found ${values.length}.` });
       return;
     }
-    rows.push({ rowNumber: sourceRow, values: Object.fromEntries(headers.map((header, index) => [header, decodeSpreadsheetFormula(values[index])])) });
+    rows.push({
+      rowNumber: sourceRow,
+      values: Object.fromEntries(headers.map((header, index) => [
+        header,
+        isWorshipSyncExport ? decodeSpreadsheetFormula(values[index]) : values[index],
+      ])),
+    });
   });
   issues.sort((left, right) => left.row - right.row);
   return { headers, rows, totalRows, issues };

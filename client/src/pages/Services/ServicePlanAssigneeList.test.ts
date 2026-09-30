@@ -1,4 +1,5 @@
 import {
+  addIemSlot,
   addMicrophoneSlot,
   applyAssigneeChanges,
   hasUnclaimedMicrophoneSlot,
@@ -109,5 +110,14 @@ describe("addMicrophoneSlot", () => {
     expect(next[0]).toMatchObject({ name: "Pastor John" });
     expect(next[1].name).toBeUndefined();
     expect(next[1].microphoneIds).toEqual(["mic-stand"]);
+  });
+});
+
+describe("addIemSlot", () => {
+  it("gives each IEM its own unclaimed template slot", () => {
+    const next = addIemSlot([{ id: "person", name: "Jordan" }], "iem-one");
+
+    expect(next).toHaveLength(2);
+    expect(next[1]).toEqual({ id: expect.any(String), iemIds: ["iem-one"] });
   });
 });

@@ -1020,6 +1020,7 @@ const TeamsPlansPage = () => {
               positions={pageData.positions}
               teams={pageData.teams}
               scheduledEquipmentHolders={scheduledEquipmentHolders}
+              scheduledEquipmentStatus={assignmentsStatus}
               scheduledAssignmentRows={assignments}
               onOpenScheduledAssignment={(row) => {
                 if (!row.scheduleId) return;

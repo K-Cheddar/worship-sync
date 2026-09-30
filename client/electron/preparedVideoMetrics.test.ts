@@ -174,5 +174,11 @@ describe("prepared video metrics normalization", () => {
     expect(stopTimer).toHaveBeenCalledTimes(1);
     tick?.();
     expect(sample).toHaveBeenCalledTimes(3);
+
+    const unsubscribeAfterRemount = sampler.subscribe(jest.fn());
+    expect(startTimer).toHaveBeenCalledTimes(2);
+    expect(sample).toHaveBeenCalledTimes(4);
+    unsubscribeAfterRemount();
+    expect(stopTimer).toHaveBeenCalledTimes(2);
   });
 });

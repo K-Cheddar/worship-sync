@@ -85,6 +85,7 @@ import {
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentsBatch,
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
@@ -238,9 +239,8 @@ import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
 import {
   cellsMatch,
-  diffCellToVerbs,
-  type ScheduleAssignmentVerb,
   type ScheduleCellChange,
+  type ScheduleCellState,
   type ScheduleUndoEntry,
 } from "./scheduleUndo";
 import { useScheduleUndoStack } from "./useScheduleUndoStack";
@@ -1207,6 +1207,8 @@ const ScheduleTab = ({
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const [pendingCellAssignment, setPendingCellAssignment] =
     useState<PendingCellAssignment | null>(null);
+  const [pendingMoveAssignment, setPendingMoveAssignment] =
+    useState<PendingCellAssignment | null>(null);
   const pendingCellAssignmentRef = useRef<PendingCellAssignment | null>(null);
   const [pendingCrossTeamConflict, setPendingCrossTeamConflict] =
     useState<PendingCrossTeamConflict | null>(null);
@@ -1255,6 +1257,9 @@ const ScheduleTab = ({
 
   useEffect(() => {
     setPendingCellAssignment(null);
+    setPendingMoveAssignment((pending) =>
+      pending?.scheduleId === selectedScheduleId ? pending : null,
+    );
     setDetailOccurrenceId(null);
     setHighlightedMemberIds([]);
     setMemberPositionFilterIds([]);
@@ -1386,24 +1391,26 @@ const ScheduleTab = ({
     [recordUndoEntry, selectedSchedule],
   );
 
-  // Re-apply one side of an undo entry against the live grid. Each cell is guarded
-  // against concurrent edits: if a teammate changed a cell since the entry was
-  // recorded, that cell is skipped rather than clobbered. Returns whether any cell
-  // was applied (false ⇒ the entry is stale, deferred for confirmation, or discarded).
+  // Re-apply an undo/redo entry as one atomic server mutation. The server compares
+  // the captured expected values again so a concurrent edit is skipped safely.
   const applyUndoEntry = useCallback(
-    (
-      entry: ScheduleUndoEntry,
-      direction: "undo" | "redo",
-      allowCrossTeamConflict = false,
-    ) => {
-      if (!canEdit || !selectedSchedule) return false;
-      if (selectedSchedule.scheduleId !== entry.scheduleId) return false;
+    (entry: ScheduleUndoEntry, direction: "undo" | "redo") => {
+      if (!canEdit || !selectedSchedule || selectedSchedule.scheduleId !== entry.scheduleId) {
+        if (direction === "undo") pushUndo(entry);
+        else pushRedo(entry);
+        return;
+      }
       const previousSchedule = selectedSchedule;
       let nextAssignments: TeamScheduleAssignments = {
         ...(selectedSchedule.assignments || {}),
       };
-      const verbs: ScheduleAssignmentVerb[] = [];
-      let applied = 0;
+      const changes: Array<{
+        serviceId: string;
+        positionSlotKey: string;
+        serviceDate: string;
+        expectedCell: ScheduleCellState;
+        assignment: ScheduleCellState;
+      }> = [];
       let skipped = 0;
       // Undo restores each cell's "before"; redo re-applies its "after". Process
       // undo in reverse so a member is cleared from a slot before being restored
@@ -1434,14 +1441,13 @@ const ScheduleTab = ({
           delete trimmed[change.occurrenceId];
           nextAssignments = trimmed;
         }
-        verbs.push(
-          ...diffCellToVerbs(liveCell, desired, {
-            serviceId: change.occurrenceId,
-            positionSlotKey: change.cellKey,
-            serviceDate: change.serviceDate,
-          }),
-        );
-        applied += 1;
+        changes.push({
+          serviceId: change.occurrenceId,
+          positionSlotKey: change.cellKey,
+          serviceDate: change.serviceDate,
+          expectedCell: liveCell,
+          assignment: serialized || "",
+        });
       }
       if (skipped > 0) {
         showToast(
@@ -1449,66 +1455,71 @@ const ScheduleTab = ({
           "neutral",
         );
       }
-      if (applied === 0) return false;
-
-      // Preflight cross-team conflicts before any write so a mid-batch 409 cannot
-      // leave earlier verbs persisted while the optimistic grid rolls back.
-      if (!allowCrossTeamConflict) {
-        for (const verb of verbs) {
-          if (!verb.memberId || verb.shadowAction === "remove") continue;
-          const warning = getCrossTeamConflictWarning(
-            verb.memberId,
-            verb.serviceId,
-          );
-          if (!warning) continue;
-          requestCrossTeamConflictConfirmation({
-            memberId: verb.memberId,
-            warning,
-            onConfirm: () => {
-              if (applyUndoEntry(entry, direction, true)) {
-                if (direction === "undo") pushRedo(entry);
-                else pushUndo(entry);
-              }
-            },
-            onCancel: () => {
-              if (direction === "undo") pushUndo(entry);
-              else pushRedo(entry);
-            },
-          });
-          return false;
-        }
+      if (changes.length === 0) {
+        if (direction === "undo") pushUndo(entry);
+        else pushRedo(entry);
+        return;
       }
 
       const mutationSeq = ++scheduleMutationSeqRef.current;
-      onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+      const optimisticSchedule = { ...selectedSchedule, assignments: nextAssignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       clearActiveSlot();
-      void enqueueAssignmentSave(async () => {
+      const persist = async (fingerprint?: string): Promise<void> => {
         try {
-          for (const verb of verbs) {
-            await updateTeamScheduleAssignment(
-              churchId,
-              previousSchedule.scheduleId,
-              {
-                ...verb,
-                ...assignmentConflictPayload(allowCrossTeamConflict),
-              },
-            );
-          }
-        } catch (error) {
+          const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+            churchId,
+            previousSchedule.scheduleId,
+            {
+              changes,
+              skipChangedCells: true,
+              ...assignmentConflictPayload(fingerprint),
+            },
+          ));
           if (scheduleMutationSeqRef.current === mutationSeq) {
+            latestScheduleRef.current = response.schedule;
+            onScheduleSaved(response.schedule);
+          }
+          if (response.skipped.length) {
+            showToast("Some changes were edited by someone else and were left as they are.", "neutral");
+          }
+          if (direction === "undo") pushRedo(entry);
+          else pushUndo(entry);
+        } catch (error) {
+          const conflictDetails = getOccurrenceConflictDetails(error);
+          if (scheduleMutationSeqRef.current === mutationSeq) {
+            latestScheduleRef.current = previousSchedule;
             onScheduleSaved(previousSchedule);
           }
+          if (conflictDetails) {
+            requestCrossTeamConflictConfirmation({
+              memberId: conflictDetails.conflicts[0]?.memberId || "",
+              warning: "already scheduled in an overlapping service",
+              ...conflictDetails,
+              onConfirm: () => {
+                if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
+                void persist(conflictDetails.fingerprint);
+              },
+              onCancel: () => {
+                if (direction === "undo") pushUndo(entry);
+                else pushRedo(entry);
+              },
+            });
+            return;
+          }
+          if (direction === "undo") pushUndo(entry);
+          else pushRedo(entry);
           showApiErrorToast(showToast, error, "Could not undo that change.");
         }
-      });
-      return true;
+      };
+      void persist();
     },
     [
       canEdit,
       churchId,
       clearActiveSlot,
       enqueueAssignmentSave,
-      getCrossTeamConflictWarning,
       onScheduleSaved,
       pushRedo,
       pushUndo,
@@ -1525,15 +1536,15 @@ const ScheduleTab = ({
     if (autoFilling) return;
     const entry = takeUndo();
     if (!entry) return;
-    if (applyUndoEntry(entry, "undo")) pushRedo(entry);
-  }, [applyUndoEntry, autoFilling, pushRedo, takeUndo]);
+    applyUndoEntry(entry, "undo");
+  }, [applyUndoEntry, autoFilling, takeUndo]);
 
   const handleRedo = useCallback(() => {
     if (autoFilling) return;
     const entry = takeRedo();
     if (!entry) return;
-    if (applyUndoEntry(entry, "redo")) pushUndo(entry);
-  }, [applyUndoEntry, autoFilling, pushUndo, takeRedo]);
+    applyUndoEntry(entry, "redo");
+  }, [applyUndoEntry, autoFilling, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -1960,7 +1971,6 @@ const ScheduleTab = ({
     sourcePositionSlotKey,
     allowBlockout = false,
     allowRecurringAvailability = false,
-    skipClientConflictWarning = false,
     confirmedOccurrenceConflictFingerprint,
   }: {
     serviceId: string;
@@ -1971,7 +1981,6 @@ const ScheduleTab = ({
     sourcePositionSlotKey?: string;
     allowBlockout?: boolean;
     allowRecurringAvailability?: boolean;
-    skipClientConflictWarning?: boolean;
     confirmedOccurrenceConflictFingerprint?: string;
   }) => {
     if (!canEdit) return;
@@ -2032,27 +2041,6 @@ const ScheduleTab = ({
           : issue;
       if (blockingIssue) {
         showToast(blockingIssue, "neutral");
-        return;
-      }
-      const hydratedConflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
-      if (hydratedConflictWarning && !skipClientConflictWarning) {
-        requestCrossTeamConflictConfirmation({
-          memberId,
-          warning: hydratedConflictWarning,
-          isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
-          onConfirm: () =>
-            void commitAssignment({
-              serviceId,
-              cellKey,
-              basePositionId,
-              memberId,
-              sourceServiceId,
-              sourcePositionSlotKey,
-              allowBlockout,
-              allowRecurringAvailability,
-              skipClientConflictWarning: true,
-            }),
-        });
         return;
       }
     }
@@ -2290,6 +2278,7 @@ const ScheduleTab = ({
     if (memberId === currentPrimaryMemberId) return;
     if (currentPrimaryMemberId) {
       const nextPending: PendingCellAssignment = {
+        scheduleId: selectedSchedule?.scheduleId,
         serviceId,
         cellKey,
         basePositionId,
@@ -2299,6 +2288,18 @@ const ScheduleTab = ({
       };
       pendingCellAssignmentRef.current = nextPending;
       setPendingCellAssignment(nextPending);
+      return;
+    }
+    if (sourceServiceId && sourcePositionSlotKey) {
+      setPendingMoveAssignment({
+        scheduleId: selectedSchedule?.scheduleId,
+        serviceId,
+        cellKey,
+        basePositionId,
+        memberId,
+        sourceServiceId,
+        sourcePositionSlotKey,
+      });
       return;
     }
     void commitAssignment({
@@ -2316,6 +2317,29 @@ const ScheduleTab = ({
     const pending = pendingCellAssignmentRef.current;
     if (!pending) return;
     setPendingCellAssignment(null);
+    if (pending.sourceServiceId && pending.sourcePositionSlotKey) {
+      setPendingMoveAssignment(pending);
+      return;
+    }
+    void commitAssignment({
+      serviceId: pending.serviceId,
+      cellKey: pending.cellKey,
+      basePositionId: pending.basePositionId,
+      memberId: pending.memberId,
+      sourceServiceId: pending.sourceServiceId,
+      sourcePositionSlotKey: pending.sourcePositionSlotKey,
+    });
+  };
+
+  const confirmPendingMove = () => {
+    if (!canEdit || !pendingMoveAssignment) return;
+    const pending = pendingMoveAssignment;
+    if (!selectedSchedule || pending.scheduleId !== selectedSchedule.scheduleId) {
+      setPendingMoveAssignment(null);
+      showToast("The schedule changed. Choose this move again.", "neutral");
+      return;
+    }
+    setPendingMoveAssignment(null);
     void commitAssignment({
       serviceId: pending.serviceId,
       cellKey: pending.cellKey,
@@ -2595,7 +2619,7 @@ const ScheduleTab = ({
   const commitRowAssignments = async (
     occurrenceId: string,
     entries: RowPasteApplyEntry[],
-    allowCrossTeamConflict = false,
+    confirmedOccurrenceConflictFingerprint?: string,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
     let previousSchedule = selectedSchedule;
@@ -2626,22 +2650,6 @@ const ScheduleTab = ({
       return;
     }
 
-    // Confirm every cross-team conflict before writing so a mid-batch 409 cannot
-    // leave earlier cells persisted while the optimistic row rolls back.
-    if (!allowCrossTeamConflict) {
-      for (const entry of applied) {
-        const warning = getCrossTeamConflictWarning(entry.memberId, occurrenceId);
-        if (!warning) continue;
-        requestCrossTeamConflictConfirmation({
-          memberId: entry.memberId,
-          warning,
-          onConfirm: () =>
-            void commitRowAssignments(occurrenceId, entries, true),
-        });
-        return;
-      }
-    }
-
     try {
       previousSchedule = await ensureActiveSchedule();
       nextAssignments = { ...(previousSchedule.assignments || {}) };
@@ -2662,31 +2670,62 @@ const ScheduleTab = ({
       delete nextAssignments[occurrenceId];
     }
 
+    const changes = applied.map((entry) => ({
+      serviceId: occurrenceId,
+      positionSlotKey: entry.columnKey,
+      serviceDate,
+      expectedCell: previousSchedule.assignments?.[occurrenceId]?.[entry.columnKey] || "" as const,
+      assignment: nextAssignments[occurrenceId]?.[entry.columnKey] || "" as const,
+    }));
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
+    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
+    latestScheduleRef.current = optimisticSchedule;
+    onScheduleSaved(optimisticSchedule);
+    recordAssignmentChange(`paste ${applied.length} assignments`, changes.map((change) => ({
+      occurrenceId: change.serviceId,
+      cellKey: change.positionSlotKey,
+      serviceDate: change.serviceDate,
+      before: change.expectedCell,
+      after: change.assignment,
+    })));
 
-    await enqueueAssignmentSave(async () => {
+    const save = async (fingerprint?: string): Promise<void> => {
       try {
-        for (const entry of applied) {
-          await updateTeamScheduleAssignment(churchId, previousSchedule.scheduleId, {
-            serviceId: occurrenceId,
-            positionSlotKey: entry.columnKey,
-            memberId: entry.memberId,
-            serviceDate,
-            ...assignmentConflictPayload(allowCrossTeamConflict),
-          });
+        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+          churchId,
+          previousSchedule.scheduleId,
+          { changes, ...assignmentConflictPayload(fingerprint) },
+        ));
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
         }
         showToast(
           `Assigned ${applied.length} ${applied.length === 1 ? "person" : "people"} from your pasted row.`,
           "success",
         );
       } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || applied[0].memberId,
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () => {
+              if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
+              void save(conflictDetails.fingerprint);
+            },
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not paste this row.");
       }
-    });
+    };
+    await save(confirmedOccurrenceConflictFingerprint);
   };
 
   // Writes an auto-fill plan's entries the same way commitRowAssignments does,
@@ -6016,6 +6055,31 @@ const ScheduleTab = ({
                 </div>
               </div>
             )}
+          </div>
+        ) : null}
+      </Modal>
+      <Modal
+        isOpen={Boolean(pendingMoveAssignment)}
+        onClose={() => setPendingMoveAssignment(null)}
+        title="Move assignment"
+        size="sm"
+        description="Confirm the volunteer's new position in this service."
+      >
+        {pendingMoveAssignment ? (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-200">
+              Move {describeMemberName(pendingMoveAssignment.memberId)} from{" "}
+              {positionNameById.get(pendingMoveAssignment.sourcePositionSlotKey?.split("::")[0] || "") || "their current position"}{" "}
+              to {positionNameById.get(pendingMoveAssignment.basePositionId) || "this position"}?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="tertiary" onClick={() => setPendingMoveAssignment(null)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="primary" onClick={confirmPendingMove}>
+                Move anyway
+              </Button>
+            </div>
           </div>
         ) : null}
       </Modal>

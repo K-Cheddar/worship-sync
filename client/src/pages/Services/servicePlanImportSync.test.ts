@@ -247,6 +247,135 @@ describe("stable external row identity", () => {
     const repeated = refreshServicePlanFromImport(saved, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     expect(repeated).toEqual(saved);
   });
+
+  it.each([false, true])("moves a source row across sections and keeps its local state (removeMissing=%s)", (removeMissing) => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "pc-123",
+      sourceElementType: "Moment",
+      sourceTitle: "Prayer",
+      sourceLedBy: "Jamie Lee",
+      parts: [{ kind: "person" as const, value: "Jamie Lee", destination: "assignee" as const }],
+      reasons: ["Review the imported assignment."],
+      status: "confirmed" as const,
+      sourceFingerprint: "reviewed-prayer",
+    };
+    const existing = element("worshipsync-prayer-id", "Prayer", {
+      sourceOccurrenceId: "pc-123",
+      sourcePlanningManaged: true,
+      sourceElementTypeRaw: "Moment",
+      sourceContentTitleRaw: "Prayer",
+      sourceLedByRaw: "Jamie Lee",
+      notes: plainTextToRichText("Local note"),
+      teamNotes: [{ id: "team-note", scope: "role", positionId: "worship-lead", label: "Worship · Lead", note: plainTextToRichText("Local team note") }],
+      assignees: [{ id: "jamie-slot", name: "Jamie Lee", memberId: "member-jamie", microphoneIds: ["mic-orange"], iemIds: ["iem-one"] }],
+      servicePlanningImport: {
+        observed: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+        applied: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+        pendingFields: [],
+        managedAssignees: [{ id: "jamie-slot", fields: ["ledBy"], ledByIdentity: "jamie-source-id", fingerprint: JSON.stringify({ name: "Jamie Lee" }) }],
+      },
+      importAmbiguity: ambiguity,
+      pushedOutlineListId: "outline-list",
+      pushedOutlineListIds: ["outline-list", "outline-prayer"],
+    });
+    const current = [
+      section("opening", "Opening", [existing]),
+      section("worship", "Worship", [element("song", "Song", { sourcePlanningManaged: true })]),
+    ];
+    const incoming = [
+      section("incoming-opening", "Opening", []),
+      section("incoming-worship", "Worship", [
+        element("new-prayer-id", "Prayer", {
+          sourceOccurrenceId: "pc-123",
+          sourcePlanningManaged: true,
+          sourceElementTypeRaw: "Moment",
+          sourceContentTitleRaw: "Prayer",
+          sourceLedByRaw: "Jamie Lee",
+          assignees: [{ id: "imported-jamie", name: "Jamie Lee" }],
+          servicePlanningImport: {
+            observed: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+            applied: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+            pendingFields: [],
+            managedAssignees: [{ id: "imported-jamie", fields: ["ledBy"], ledByIdentity: "jamie-source-id", fingerprint: JSON.stringify({ name: "Jamie Lee" }) }],
+          },
+        }),
+        element("incoming-song", "Song", { sourcePlanningManaged: true }),
+      ]),
+    ];
+    const options = { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, removeMissing };
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, options);
+    const oldSection = refreshed.find((candidate) => candidate.name === "Opening");
+    const newSection = refreshed.find((candidate) => candidate.name === "Worship");
+    const moved = newSection?.elements.filter((candidate) => candidate.sourceOccurrenceId === "pc-123") || [];
+
+    expect(oldSection?.elements.some((candidate) => candidate.sourceOccurrenceId === "pc-123")).toBeFalsy();
+    expect(moved).toHaveLength(1);
+    expect(moved[0]).toMatchObject({
+      id: "worshipsync-prayer-id",
+      sourceOccurrenceId: "pc-123",
+      pushedOutlineListId: "outline-list",
+      pushedOutlineListIds: ["outline-list", "outline-prayer"],
+      importAmbiguity: ambiguity,
+    });
+    expect(richTextToPlainText(moved[0].notes)).toBe("Local note");
+    expect(richTextToPlainText(moved[0].teamNotes?.[0].note)).toBe("Local team note");
+    expect(moved[0].assignees?.[0]).toMatchObject({
+      memberId: "member-jamie",
+      microphoneIds: ["mic-orange"],
+      iemIds: ["iem-one"],
+    });
+
+    const reloaded = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    expect(refreshServicePlanFromImport(reloaded, incoming, options)).toEqual(reloaded);
+  });
+
+  it("keeps duplicate-title moved rows attached to their own durable identities", () => {
+    const current = [
+      section("a", "Section A", [
+        element("prayer-one", "Prayer", { sourceOccurrenceId: "pc-prayer-1", sourcePlanningManaged: true, notes: plainTextToRichText("one") }),
+        element("prayer-two", "Prayer", { sourceOccurrenceId: "pc-prayer-2", sourcePlanningManaged: true, notes: plainTextToRichText("two") }),
+        element("local-prayer", "Prayer", { notes: plainTextToRichText("operator row") }),
+      ]),
+      section("b", "Section B", []),
+    ];
+    const incoming = [
+      section("new-a", "Section A", []),
+      section("new-b", "Section B", [
+        element("new-two", "Prayer", { sourceOccurrenceId: "pc-prayer-2", sourcePlanningManaged: true }),
+        element("new-one", "Prayer", { sourceOccurrenceId: "pc-prayer-1", sourcePlanningManaged: true }),
+      ]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const movedRows = refreshed.find((candidate) => candidate.name === "Section B")?.elements || [];
+
+    expect(movedRows.map(({ id, sourceOccurrenceId }) => [id, sourceOccurrenceId])).toEqual([
+      ["prayer-two", "pc-prayer-2"],
+      ["prayer-one", "pc-prayer-1"],
+    ]);
+    expect(movedRows.map((candidate) => richTextToPlainText(candidate.notes))).toEqual(["two", "one"]);
+    expect(refreshed.flatMap((candidate) => candidate.elements).find(({ id }) => id === "local-prayer")).toBeDefined();
+  });
+
+  it("fails safe when Planning Center returns duplicate occurrence IDs", () => {
+    const current = [section("a", "Section A", [
+      element("original", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true, notes: plainTextToRichText("Keep local state") }),
+    ])];
+    const incoming = [section("b", "Section B", [
+      element("incoming-one", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      removeMissing: true,
+    });
+
+    expect(refreshed.flatMap((candidate) => candidate.elements)).toEqual(current.flatMap((candidate) => candidate.elements));
+    expect(richTextToPlainText(refreshed[0].elements[0].notes)).toBe("Keep local state");
+  });
 });
 
 describe("remaining Service Planning import reconciliation defects", () => {

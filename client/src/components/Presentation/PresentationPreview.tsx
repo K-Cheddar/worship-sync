@@ -14,6 +14,11 @@ import Button from "../Button/Button";
 import cn from "classnames";
 import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 import PopOver from "../PopOver/PopOver";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../ui/Popover";
 
 const COMPACT_QUICK_LINK_COLUMNS = 1;
 const COMPACT_QUICK_LINK_GAP = 4;
@@ -323,7 +328,9 @@ const PresentationPreview = ({
     nextBoxes: info.nextSlide?.boxes ?? [],
     prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: info.bibleInfoBox,
-    ...(fillWidth || !hideQuickLinks ? {} : { width: previewWidthVw }),
+    ...(fillWidth || (!hideQuickLinks && !centerPreview)
+      ? {}
+      : { width: previewWidthVw }),
     ...(centerPreview ? { className: "max-w-full" } : {}),
     showBorder,
     // Without this the preview resolves the built-in output's settings, so a
@@ -447,19 +454,6 @@ const PresentationPreview = ({
                 )}
               </h2>
             )}
-            {info.displayType === "stream" &&
-              streamItemContentBlocked &&
-              showContentHiddenIndicator && (
-                <p
-                  aria-hidden="true"
-                  data-testid="content-hidden-preview-header-hint"
-                  className="block truncate border-b border-amber-300/20 bg-amber-950/35 px-2 py-1 text-center text-[10px] font-semibold text-amber-200 @sm/preview:hidden"
-                >
-                  {contentHiddenUnconfirmed
-                    ? `Content Hidden · ${contentHiddenUnconfirmedLabel} · ${name}`
-                    : `Content Hidden · ${name}`}
-                </p>
-              )}
             {!hideHeader && !minimalHeader && (
               <>
                 <div
@@ -531,30 +525,38 @@ const PresentationPreview = ({
               {info.displayType === "stream" &&
                 streamItemContentBlocked &&
                 showContentHiddenIndicator && (
-                  <div
-                    role="status"
-                    aria-label={`Content Hidden on ${name}`}
-                    aria-describedby={contentHiddenDescriptionId}
-                    data-testid="content-hidden-preview-badge"
-                    className={cn(
-                      "pointer-events-none absolute right-1 top-1 z-[60] inline-flex max-w-[calc(100%-0.5rem)] items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold leading-none text-amber-100 shadow-sm ring-1",
-                      contentHiddenUnconfirmed
-                        ? "border border-dashed border-amber-300/60 bg-amber-950/75 ring-transparent"
-                        : "bg-amber-950/95 ring-amber-300/40",
-                    )}
-                  >
-                    <EyeOff aria-hidden="true" className="h-3 w-3 shrink-0" />
-                    <span className="hidden truncate @sm/preview:inline">
-                      {contentHiddenUnconfirmed
-                        ? `Content Hidden · ${contentHiddenUnconfirmedLabel}`
-                        : "Content Hidden"}
-                    </span>
-                    <span id={contentHiddenDescriptionId} className="sr-only">
-                      {contentHiddenUnconfirmed
-                        ? `Last known hidden state for ${name}; the remote stream state is unconfirmed while ${contentHiddenUnconfirmedLabel.toLowerCase()}.`
-                        : `Confirmed active Hide Content state for ${name}.`}
-                    </span>
-                  </div>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`Content hidden on ${name}`}
+                        aria-describedby={contentHiddenDescriptionId}
+                        data-testid="content-hidden-preview-badge"
+                        className={cn(
+                          "absolute right-1 top-1 z-[60] inline-flex items-center rounded p-1.5 text-amber-100 shadow-sm ring-1 transition-colors hover:bg-amber-900/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
+                          contentHiddenUnconfirmed
+                            ? "border border-dashed border-amber-300/60 bg-amber-950/75 ring-transparent"
+                            : "bg-amber-950/95 ring-amber-300/40",
+                        )}
+                      >
+                        <EyeOff aria-hidden="true" className="h-3 w-3 shrink-0" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      data-testid="content-hidden-preview-popover"
+                      side="bottom"
+                      align="end"
+                      sideOffset={4}
+                      className="w-auto border-0 bg-gray-800 px-3 py-2 text-xs font-semibold text-amber-100 shadow-md"
+                    >
+                      Content hidden
+                      <span id={contentHiddenDescriptionId} className="sr-only">
+                        {contentHiddenUnconfirmed
+                          ? `Last known hidden state for ${name}; the remote stream state is unconfirmed while ${contentHiddenUnconfirmedLabel.toLowerCase()}.`
+                          : `Confirmed active Hide Content state for ${name}.`}
+                      </span>
+                    </PopoverContent>
+                  </Popover>
                 )}
               {/* Keep the DisplayWindow mounted so its current slide and
                   controls stay current while preview-only media is suspended. */}

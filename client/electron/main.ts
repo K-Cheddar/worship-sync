@@ -44,6 +44,7 @@ import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
 import {
   getDisplayWindow,
   setDisplayWindow,
+  requestDisplayWindowClose,
   clearDisplayWindowIfMatches,
   hasDisplayWindow,
   listDisplayWindowKeys,
@@ -86,6 +87,7 @@ import {
 } from "./preparedVideoMetrics";
 import {
   createResourceGovernorState,
+  registerResourceGovernorSubscriber,
   subscribeResourceGovernorToPreparedMetrics,
 } from "./resourceGovernor";
 
@@ -1283,10 +1285,13 @@ ipcMain.handle("unsubscribe-prepared-video-metrics", (event) => {
 ipcMain.handle("subscribe-resource-governor-policy", (event) => {
   assertMediaCacheIpcSender(event.sender);
   const sender = event.sender;
-  const runtimeAlreadyRunning = Boolean(preparedVideoMetricsRuntimeUnsubscribe);
-  resourceGovernorSubscribers.set(sender.id, sender);
+  ensurePreparedVideoMetricsRuntime();
+  registerResourceGovernorSubscriber(
+    resourceGovernorSubscribers,
+    sender,
+    resourceGovernorState.policy,
+  );
   registerPreparedVideoMetricSender(sender);
-  if (runtimeAlreadyRunning && !sender.isDestroyed()) sender.send("resource-governor-policy", resourceGovernorState.policy);
   return true;
 });
 
@@ -1483,13 +1488,7 @@ const createWindowByType = (
 
 // Generic window management functions
 const closeWindowByType = (windowType: WindowType): boolean => {
-  const window = getWindowByType(windowType);
-  if (window && !window.isDestroyed()) {
-    window.close();
-    setDisplayWindow(windowType, null);
-    return true;
-  }
-  return false;
+  return requestDisplayWindowClose(windowType);
 };
 
 const toggleFullscreen = (window: BrowserWindow | null): boolean => {

@@ -33,6 +33,7 @@ The canonical repository skills are in `.agents/skills/`. Skills own detailed pr
 - `$react-quality`: substantive React or TypeScript implementation and review.
 - `$react-state-performance`: high-frequency, broad-fan-out, synchronized, preview, media, or suspected performance work.
 - `$display-window`: projector, monitor, stream, preview, crossfade, media, video, overlay, timer, or display-layer work.
+- `$floating-window-ui`: FloatingWindow descendants, owner-aware overlay portals, popovers, selects, menus, dialogs, sheets, context menus, and related lifecycle or focus behavior.
 - `/overlay`: overlay state-machine, timing, and Firebase synchronization work.
 - `$persisted-mutation-safety` and `$schedule-mutation-safety`: overlapping persisted writes and schedule mutations.
 - `$reliable-state-mutations`: async ownership boundaries, durable retry points, and interrupted stateful workflows.

@@ -876,7 +876,6 @@ const ServicePlanningSyncFloatingWindow = ({
             </button>
           </PopoverTrigger>
           <PopoverContent
-            portal={false}
             align="start"
             data-testid="service-plan-picker-content"
             className="flex max-h-[min(var(--radix-popper-available-height),65vh,24rem)] w-(--radix-popover-trigger-width) flex-col overflow-hidden border-zinc-700 bg-gray-800 p-2 text-white"
@@ -1092,11 +1091,10 @@ const ServicePlanningSyncFloatingWindow = ({
           <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
             <PopoverAnchor asChild>
               <div className="w-full">
-                <ActionBar items={actionBarItemDefs} className="mt-2" disablePortal />
+                <ActionBar items={actionBarItemDefs} className="mt-2" />
               </div>
             </PopoverAnchor>
             <PopoverContent
-              portal={false}
               align="start"
               className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
             >

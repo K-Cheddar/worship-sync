@@ -1,12 +1,21 @@
+import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
+
 type BootstrapRecoveryScreenProps = {
   onReload: () => void;
 };
 
 const BootstrapRecoveryScreen = ({ onReload }: BootstrapRecoveryScreenProps) => (
   <main
-    className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-neutral-950 px-6 text-center text-neutral-100"
+    className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-homepage-canvas px-6 text-center text-white"
     role="alert"
   >
+    <img
+      src={WorshipSyncIcon}
+      alt="WorshipSync"
+      className="h-28 w-28"
+      width={112}
+      height={112}
+    />
     <h1 className="text-lg font-semibold">WorshipSync couldn’t finish loading.</h1>
     <p className="text-sm text-neutral-300">Check your connection and try again.</p>
     <button

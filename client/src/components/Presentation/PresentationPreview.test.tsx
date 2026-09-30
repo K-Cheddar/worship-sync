@@ -159,6 +159,31 @@ describe("PresentationPreview", () => {
     );
   });
 
+  it("keeps the centered preview width when quick links are hidden", () => {
+    render(
+      <PresentationPreview
+        name="Stream"
+        outputId="stream"
+        info={{ ...basePresentation, displayType: "stream" }}
+        prevInfo={{ ...basePresentation, displayType: "stream" }}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+        hideQuickLinks
+        centerPreview
+        previewScale={1.875}
+      />,
+    );
+
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        width: 26.25,
+        className: "max-w-full",
+      }),
+    );
+  });
+
   it("keeps Clear labeled before Live when space is limited", async () => {
     headerWidth = 220;
 
@@ -183,7 +208,8 @@ describe("PresentationPreview", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the manual Content Hidden badge only on a confirmed hidden stream preview", () => {
+  it("shows only the eye control and reveals Content hidden from its popover", async () => {
+    const user = userEvent.setup();
     const { rerender } = render(
       <PresentationPreview
         name="Lobby Stream"
@@ -203,24 +229,19 @@ describe("PresentationPreview", () => {
       />,
     );
 
-    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    const badge = screen.getByRole("button", { name: "Content hidden on Lobby Stream" });
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveAttribute(
       "aria-describedby",
       expect.any(String),
     );
-    expect(screen.getByText("Confirmed active Hide Content state for Lobby Stream.")).toBeInTheDocument();
-    expect(badge).toHaveClass("pointer-events-none", "max-w-[calc(100%-0.5rem)]");
-    expect(badge).not.toHaveAttribute("tabindex");
-    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
-      "Content Hidden · Lobby Stream",
-    );
-    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveClass(
-      "block",
-      "@sm/preview:hidden",
-    );
+    expect(screen.queryByText(/Content Hidden.*Lobby Stream/)).not.toBeInTheDocument();
     expect(screen.getByTestId("content-hidden-preview-stage")).toHaveClass("@container/preview");
-    expect(screen.getByText("Content Hidden")).toHaveClass("hidden", "@sm/preview:inline");
+
+    await user.click(badge);
+    expect(screen.getByText("Content hidden")).toBeInTheDocument();
+    expect(screen.getByText("Confirmed active Hide Content state for Lobby Stream.")).toBeInTheDocument();
+    expect(screen.getByTestId("content-hidden-preview-popover")).toHaveClass("border-0");
 
     rerender(
       <PresentationPreview
@@ -236,10 +257,10 @@ describe("PresentationPreview", () => {
         showContentHiddenIndicator
       />,
     );
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Content hidden on Lobby Stream" })).not.toBeInTheDocument();
   });
 
-  it("keeps a compact accessible badge when hidden state is unconfirmed", () => {
+  it("keeps a compact accessible badge when hidden state is unconfirmed", async () => {
     render(
       <PresentationPreview
         name="Lobby Stream"
@@ -256,26 +277,22 @@ describe("PresentationPreview", () => {
       />,
     );
 
-    const badge = screen.getByRole("status", { name: "Content Hidden on Lobby Stream" });
+    const badge = screen.getByRole("button", { name: "Content hidden on Lobby Stream" });
     expect(badge).toHaveAttribute("aria-describedby", expect.any(String));
+    expect(badge).toHaveClass("border-dashed");
+    expect(screen.getByTestId("content-hidden-preview-badge")).toBeInTheDocument();
+    expect(screen.queryByText(/Content Hidden.*Offline.*Lobby Stream/)).not.toBeInTheDocument();
+
+    await userEvent.setup().click(badge);
     expect(
       screen.getByText(
         "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while offline.",
       ),
     ).toBeInTheDocument();
-    expect(badge).toHaveClass("border-dashed");
-    expect(screen.getByTestId("content-hidden-preview-badge")).toBeInTheDocument();
-    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
-      "Content Hidden · Offline · Lobby Stream",
-    );
-    expect(screen.getByText("Content Hidden · Offline")).toHaveClass(
-      "hidden",
-      "truncate",
-      "@sm/preview:inline",
-    );
   });
 
-  it("explains a reconnection sync state in the compact header", () => {
+  it("keeps the reconnection sync explanation discoverable from the eye control", async () => {
+    const user = userEvent.setup();
     render(
       <PresentationPreview
         name="Lobby Stream"
@@ -293,10 +310,8 @@ describe("PresentationPreview", () => {
       />,
     );
 
-    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
-      "Content Hidden · Syncing · Lobby Stream",
-    );
-    expect(screen.getByRole("status")).toHaveAccessibleDescription(
+    await user.click(screen.getByRole("button", { name: "Content hidden on Lobby Stream" }));
+    expect(screen.getByRole("button", { name: "Content hidden on Lobby Stream" })).toHaveAccessibleDescription(
       "Last known hidden state for Lobby Stream; the remote stream state is unconfirmed while syncing.",
     );
   });
@@ -320,9 +335,7 @@ describe("PresentationPreview", () => {
       />,
     );
 
-    expect(screen.getByTestId("content-hidden-preview-header-hint")).toHaveTextContent(
-      "Content Hidden · Syncing · Lobby Stream",
-    );
+    expect(screen.queryByText(/Content Hidden.*Syncing.*Lobby Stream/)).not.toBeInTheDocument();
   });
 
   it("does not show the badge for overlay-only hiding or non-stream displays", () => {

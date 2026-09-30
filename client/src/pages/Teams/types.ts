@@ -51,6 +51,8 @@ export type TeamsTab =
   | "intake";
 
 export type PendingCellAssignment = {
+  /** Schedule identity captured when the operator opened the confirmation. */
+  scheduleId?: string;
   serviceId: string;
   /** Target slot storage key (makeSlotKey(positionId, slot)). */
   cellKey: string;

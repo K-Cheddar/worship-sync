@@ -50,8 +50,6 @@ export type ActionBarProps = {
   gap?: number;
   overflowMenuAlign?: "start" | "end" | "center";
   overflowMenuClassName?: string;
-  /** Set to true when rendered inside a stacking context (e.g. a FloatingWindow) to prevent the overflow menu from portalling behind it. */
-  disablePortal?: boolean;
 };
 
 /**
@@ -67,7 +65,6 @@ const ActionBar = ({
   gap = 4,
   overflowMenuAlign = "end",
   overflowMenuClassName,
-  disablePortal = false,
 }: ActionBarProps) => {
   const rowRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -155,7 +152,6 @@ const ActionBar = ({
             <DropdownMenuContent
               align={overflowMenuAlign}
               className={cn("min-w-40 text-xs", overflowMenuClassName)}
-              portal={!disablePortal}
             >
               {overflowItems.map((item) => (
                 <DropdownMenuItem

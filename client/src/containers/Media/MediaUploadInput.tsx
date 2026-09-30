@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import { Cloud, Upload, Minimize2 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Modal from "../../components/Modal/Modal";
+import { useOverlayPortalContainer } from "../../components/FloatingWindow/FloatingWindowPortalContext";
 import Toggle from "../../components/Toggle/Toggle";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -70,6 +71,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       useContext(GlobalInfoContext) || {};
     const { isGuestSession = false } = useContext(ControllerInfoContext) || {};
     const transferContext = useOptionalTransfers();
+    const overlayPortalContainer = useOverlayPortalContainer();
     const updateUploadTransfer = transferContext?.updateUploadTransfer;
     const resolvedUploadPreset = contextUploadPreset || uploadPreset;
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -649,7 +651,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             onRestore={() => { setIsMinimized(false); setIsMinimizedToButton(false); }}
             onMinimize={() => { setIsMinimizedToButton(true); setIsMinimized(false); }}
           />,
-          getControllerElement(),
+          overlayPortalContainer ?? getControllerElement(),
         )}
         {showButton && (
           <Button

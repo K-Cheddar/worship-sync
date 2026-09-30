@@ -77,19 +77,22 @@ const candidatePriority = (
   currentMediaKey: string | undefined,
   currentItemId: string | undefined,
   currentItemIndex: number | undefined,
+  prioritizedMediaKeys: ReadonlyMap<string, number>,
 ): [number, number, number] => {
   if (candidate.mediaKey === currentMediaKey) return [0, 0, 0];
+  const preferredIndex = prioritizedMediaKeys.get(candidate.mediaKey);
+  if (preferredIndex != null) return [1, preferredIndex, 0];
   if (candidate.itemId && candidate.itemId === currentItemId) {
-    return [1, 0, finiteItemIndex(candidate.itemIndex)];
+    return [2, 0, finiteItemIndex(candidate.itemIndex)];
   }
   if (currentItemIndex != null && candidate.itemIndex != null) {
     return [
-      2,
+      3,
       Math.abs(candidate.itemIndex - currentItemIndex),
       candidate.itemIndex,
     ];
   }
-  return [3, 0, finiteItemIndex(candidate.itemIndex)];
+  return [4, 0, finiteItemIndex(candidate.itemIndex)];
 };
 
 /**
@@ -102,6 +105,7 @@ export const selectElectronMediaSurfaceCandidates = ({
   currentMediaKey,
   currentItemId,
   protectedMediaKeys = [],
+  prioritizedMediaKeys = [],
   maxSurfaces,
   performanceClass = "normal",
 }: {
@@ -109,6 +113,8 @@ export const selectElectronMediaSurfaceCandidates = ({
   currentMediaKey?: string;
   currentItemId?: string;
   protectedMediaKeys?: string[];
+  /** Optional candidates ordered ahead of other current-item media. */
+  prioritizedMediaKeys?: string[];
   /** Legacy name retained for callers; treated as a soft budget override. */
   maxSurfaces?: number;
   performanceClass?: ElectronMediaSurfacePerformanceClass;
@@ -129,18 +135,23 @@ export const selectElectronMediaSurfaceCandidates = ({
   const currentItemIndex = candidates.find(
     (candidate) => candidate.itemId === currentItemId,
   )?.itemIndex;
+  const prioritizedKeyOrder = new Map(
+    prioritizedMediaKeys.map((mediaKey, index) => [mediaKey, index]),
+  );
   const prioritized = [...unique.values()].sort((left, right) => {
     const leftPriority = candidatePriority(
       left,
       currentMediaKey,
       currentItemId,
       currentItemIndex,
+      prioritizedKeyOrder,
     );
     const rightPriority = candidatePriority(
       right,
       currentMediaKey,
       currentItemId,
       currentItemIndex,
+      prioritizedKeyOrder,
     );
     for (let index = 0; index < leftPriority.length; index += 1) {
       if (leftPriority[index] !== rightPriority[index]) {
@@ -170,7 +181,7 @@ export const selectElectronMediaSurfaceCandidates = ({
   }));
 };
 
-/** Applies optional-work pressure only to distant candidates, retaining live and next-likely media. */
+/** Applies optional-work pressure while keeping transition-owned media exempt from the soft budget. */
 export const selectElectronMediaCandidatesForResourcePolicy = ({
   candidates,
   currentMediaKey,
@@ -189,10 +200,26 @@ export const selectElectronMediaCandidatesForResourcePolicy = ({
   performanceClass?: ElectronMediaSurfacePerformanceClass;
 }): ElectronMediaSurfaceCandidate[] => {
   const currentItemIndex = candidates.find((candidate) => candidate.itemId === currentItemId)?.itemIndex;
-  const nearbyKeys = candidates
-    .filter((candidate) => currentItemIndex != null && candidate.itemIndex != null && Math.abs(candidate.itemIndex - currentItemIndex) <= 1)
-    .map((candidate) => candidate.mediaKey);
-  const protectedKeys = [...new Set([...protectedMediaKeys, ...nearbyKeys])];
+  const nextLikelyMediaKeys =
+    aggressiveness === "normal" ||
+    aggressiveness === "paused" ||
+    currentItemIndex == null
+    ? []
+    : candidates
+      .filter((candidate) =>
+        candidate.itemIndex === currentItemIndex + 1 ||
+        candidate.itemIndex === currentItemIndex - 1,
+      )
+      .sort((left, right) => {
+        const leftDistance = Math.abs((left.itemIndex ?? 0) - currentItemIndex);
+        const rightDistance = Math.abs((right.itemIndex ?? 0) - currentItemIndex);
+        if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+        if (left.itemIndex !== right.itemIndex) {
+          return (right.itemIndex ?? 0) - (left.itemIndex ?? 0);
+        }
+        return left.mediaKey.localeCompare(right.mediaKey);
+      })
+      .map((candidate) => candidate.mediaKey);
   const budget = aggressiveness === "paused"
     ? 0
     : aggressiveness === "minimal"
@@ -204,7 +231,8 @@ export const selectElectronMediaCandidatesForResourcePolicy = ({
     candidates,
     currentMediaKey,
     currentItemId,
-    protectedMediaKeys: protectedKeys,
+    protectedMediaKeys,
+    prioritizedMediaKeys: nextLikelyMediaKeys,
     maxSurfaces: budget,
     performanceClass,
   });

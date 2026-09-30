@@ -35,10 +35,12 @@ import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentP
 import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
-  addMicrophoneSlot,
   addServicePlanAssignee,
+  addIemSlot,
+  addMicrophoneSlot,
   DebouncedAssigneeNameField,
 } from "./ServicePlanAssigneeList";
+import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -425,6 +427,7 @@ type ItemActionsMenuProps = {
   onAddTeamNote: (teamId: string) => void;
   onAddRoleNote: (positionId: string) => void;
   onAddMicrophone: (microphoneId: string) => void;
+  onAddIem: (iemId: string) => void;
   onRemove: () => void;
 };
 
@@ -833,6 +836,7 @@ const ItemActionsMenu = ({
   canEdit,
   structureOnly,
   microphones,
+  iemEquipment = [],
   assignees,
   canAddNote,
   canAddContent,
@@ -849,6 +853,7 @@ const ItemActionsMenu = ({
   onAddTeamNote,
   onAddRoleNote,
   onAddMicrophone,
+  onAddIem,
   onRemove,
 }: ItemActionsMenuProps) => {
   const [open, setOpen] = useState(false);
@@ -927,6 +932,17 @@ const ItemActionsMenu = ({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ) : null}
+        {structureOnly
+          ? iemEquipment
+            .filter((item) => item.category === "iem")
+            .filter((item) => !assignees.some((assignee) => (assignee.iemIds || []).includes(item.id)))
+            .map((iem) => (
+              <DropdownMenuItem key={iem.id} onSelect={() => onAddIem(iem.id)}>
+                <UserRound className="size-4" aria-hidden />
+                {iem.name}
+              </DropdownMenuItem>
+            ))
+          : null}
         {canAddTeamNote ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
@@ -1100,6 +1116,7 @@ type ServicePlanElementRowProps = {
   /** Church-wide roles that see every assigned microphone. */
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   /** Schedule-derived people; never persisted as plan assignees. */
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
@@ -1182,6 +1199,7 @@ const ServicePlanElementRow = ({
   iemEquipment = [],
   microphoneAudiences,
   scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows = [],
   onOpenScheduledAssignment,
   isEditing = false,
@@ -1381,23 +1399,21 @@ const ServicePlanElementRow = ({
         }]),
       ).values(),
     );
-  const hasAssignedMicrophone = assignees.some(
-    (assignee) => (assignee.microphoneIds || []).length > 0,
-  );
-  const hasMicrophoneConflict = assignees.some((assignee) =>
-    (assignee.microphoneIds || []).some(
-      (microphoneId) => (scheduledEquipmentHolders?.get(microphoneId) || []).length > 0,
+  const hasAssignedEquipment = assignees.some(hasServicePlanAssigneeEquipment);
+  const hasEquipmentConflict = assignees.some((assignee) =>
+    [...(assignee.microphoneIds || []), ...(assignee.iemIds || [])].some(
+      (equipmentId) => (scheduledEquipmentHolders?.get(equipmentId) || []).length > 0,
     ),
   );
-  const hasMissingMicrophone = hasAssignedMicrophone && assignees.some(
-    (assignee) => Boolean(assignee.name?.trim()) && !(assignee.microphoneIds || []).length,
+  const hasMissingExpectedEquipment = hasAssignedEquipment && assignees.some(
+    (assignee) => Boolean(assignee.name?.trim()) && !hasServicePlanAssigneeEquipment(assignee),
   );
   const shouldShowAssigneesBlock = structureOnly
     ? assignees.length > 0
     : namedAssignees.length > 1
-    || hasAssignedMicrophone
-    || hasMicrophoneConflict
-    || hasMissingMicrophone
+    || hasAssignedEquipment
+    || hasEquipmentConflict
+    || hasMissingExpectedEquipment
     || scheduledPositionIds.length > 0
     || scheduledRows.length > 0;
   const openAssignment = (trigger?: HTMLElement) => {
@@ -1453,9 +1469,10 @@ const ServicePlanElementRow = ({
       itemLabel={itemLabel}
       structureOnly={structureOnly}
       scheduledEquipmentHolders={scheduledEquipmentHolders}
+      scheduledEquipmentStatus={scheduledEquipmentStatus}
       onChange={() => undefined}
     />
-  ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
+  ) : <p className="px-1 text-xs text-gray-400">No people or equipment assigned.</p>;
   const leadSummaryControl = !structureOnly ? (
     <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 max-w-full items-center overflow-visible bg-transparent")}>
       {allowEdit ? (
@@ -1501,7 +1518,7 @@ const ServicePlanElementRow = ({
             className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 justify-center gap-1 rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
             aria-label={participantDetailsLabel
               ? participantDetailsLabel
-              : `${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
+              : `${shouldShowAssigneesBlock ? "Add people and equipment" : "Assignees"} for ${itemLabel}`}
             aria-expanded={usesAssignmentPanel ? undefined : assignmentSheetOpen}
             onClick={(event) => {
               event.stopPropagation();
@@ -1535,7 +1552,7 @@ const ServicePlanElementRow = ({
                 className="h-full max-h-full min-h-0 min-w-10 max-md:min-h-0! max-md:h-[2rem]! max-md:max-h-[2rem]! flex-none shrink-0 gap-1 px-1.5 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400 [&_svg]:size-4"
                 aria-label={participantDetailsLabel
                   ? participantDetailsLabel
-                  : `View people and microphones for ${itemLabel}`}
+                  : `View people and equipment for ${itemLabel}`}
                 aria-expanded={leadPopoverOpen}
               >
                 {participantCount > 0 ? participantCount : null}
@@ -1689,6 +1706,7 @@ const ServicePlanElementRow = ({
       canEdit={allowEdit}
       structureOnly={structureOnly}
       microphones={microphones}
+      iemEquipment={iemEquipment}
       assignees={assignees}
       canAddNote={canAddNote}
       canAddContent={canAddContent}
@@ -1712,6 +1730,9 @@ const ServicePlanElementRow = ({
       onAddRoleNote={handleCreateRoleNote}
       onAddMicrophone={(microphoneId) =>
         onUpdate({ assignees: addMicrophoneSlot(assignees, microphoneId) })
+      }
+      onAddIem={(iemId) =>
+        onUpdate({ assignees: addIemSlot(assignees, iemId) })
       }
       onRemove={onRemove}
     />
@@ -2527,6 +2548,7 @@ const ServicePlanElementRow = ({
       itemLabel={itemLabel}
       structureOnly={structureOnly}
       scheduledEquipmentHolders={scheduledEquipmentHolders}
+      scheduledEquipmentStatus={scheduledEquipmentStatus}
       onChange={(nextAssignees, coalesceKey) =>
         onUpdate({ assignees: nextAssignees }, coalesceKey)
       }
@@ -2544,6 +2566,7 @@ const ServicePlanElementRow = ({
       itemLabel={itemLabel}
       structureOnly={structureOnly}
       scheduledEquipmentHolders={scheduledEquipmentHolders}
+      scheduledEquipmentStatus={scheduledEquipmentStatus}
       onEdit={() => openAssignment()}
       onChange={() => undefined}
     />
@@ -2814,7 +2837,7 @@ const ServicePlanElementRow = ({
               aria-label={`Assignees for ${itemLabel}`}
               onClick={() => openAssignment()}
             >
-              {structureOnly ? "Add microphones" : "Assign people & mics"}
+              {structureOnly ? "Add equipment" : "Assign people & equipment"}
             </Button>
           ) : null}
         </div>
@@ -2854,12 +2877,12 @@ const ServicePlanElementRow = ({
             className="w-full max-w-md gap-0 p-0"
           >
             <SheetDescription className="sr-only">
-              Edit people and microphones for {itemLabel}.
+              Edit people and equipment for {itemLabel}.
             </SheetDescription>
             <div className="flex items-start gap-2 border-b border-gray-800 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <SheetTitle className="truncate text-sm font-semibold text-gray-100">
-                  {allowEdit ? "Edit people and microphones" : "People and microphones"}
+                  {allowEdit ? "Edit people and equipment" : "People and equipment"}
                 </SheetTitle>
                 <p className="truncate text-xs text-gray-400">{itemLabel}</p>
               </div>

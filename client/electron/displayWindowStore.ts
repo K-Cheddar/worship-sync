@@ -19,6 +19,17 @@ export function setDisplayWindow(
   }
 }
 
+/** Requests closure without changing ownership; the owner's `closed` callback clears it. */
+export function requestDisplayWindowClose(displayType: string): boolean {
+  const window = getDisplayWindow(displayType) as {
+    isDestroyed: () => boolean;
+    close: () => void;
+  } | null;
+  if (!window || window.isDestroyed()) return false;
+  window.close();
+  return true;
+}
+
 /** Clears a registration only when the callback still belongs to its owner. */
 export function clearDisplayWindowIfMatches(
   displayType: string,

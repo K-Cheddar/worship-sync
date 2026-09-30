@@ -50,7 +50,6 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
-import ContentHiddenStatus from "./ContentHiddenStatus";
 
 type sections =
   | "configurations"
@@ -468,7 +467,6 @@ const Toolbar = ({
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderPrimaryToolbarTabs()}
               </div>
-              <ContentHiddenStatus />
             </div>
             {mode === "edit" && (
               <>
@@ -507,7 +505,6 @@ const Toolbar = ({
                   onQuickLinksOpenChange={setQuickLinksDrawerOpen}
                 />
               </div>
-              <ContentHiddenStatus />
             </div>
             {mode === "edit" && (
               <>

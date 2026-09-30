@@ -9,6 +9,7 @@ describe("BootstrapRecoveryScreen", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "WorshipSync couldn’t finish loading.",
     );
+    expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
     expect(screen.getByText("Check your connection and try again.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
     expect(onReload).toHaveBeenCalledTimes(1);

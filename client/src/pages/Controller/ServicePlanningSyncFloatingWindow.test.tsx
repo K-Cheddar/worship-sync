@@ -327,20 +327,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     await user.click(
       screen.getByRole("button", { name: /Select service plan:/i }),
     );
+    // The overlay must live in this floating window's owner host. jsdom does
+    // not model stacking contexts, so host ownership is the useful contract.
+    const overlayHost = within(
+      screen.getByTestId("floating-window-overlay-host"),
+    );
     expect(
-      await screen.findByRole("option", { name: /Test 2/ }),
+      await overlayHost.findByRole("option", { name: /Test 2/ }),
     ).toBeInTheDocument();
 
-    // The assertion that matters: the menu must live *inside* the floating
-    // window. jsdom doesn't model stacking contexts, so a portaled menu still
-    // renders (into document.body) and a plain screen query passes either way —
-    // containment is what actually distinguishes the broken version.
-    const floatingWindow = within(screen.getByTestId("floating-window"));
-    expect(
-      floatingWindow.getByRole("option", { name: /Test 2/ }),
-    ).toBeInTheDocument();
-
-    await user.click(floatingWindow.getByRole("option", { name: /Test 2/ }));
+    await user.click(overlayHost.getByRole("option", { name: /Test 2/ }));
     expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
       "service-2@2026-08-06",
     );
@@ -509,21 +505,23 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     await user.click(
       screen.getByRole("button", { name: /Select service plan:/i }),
     );
-    const floatingWindow = within(screen.getByTestId("floating-window"));
-    expect(floatingWindow.getByText("Upcoming")).toBeInTheDocument();
-    expect(floatingWindow.getByText("Recent", { selector: "p" })).toBeInTheDocument();
+    const overlayHost = within(
+      screen.getByTestId("floating-window-overlay-host"),
+    );
+    expect(overlayHost.getByText("Upcoming")).toBeInTheDocument();
+    expect(overlayHost.getByText("Recent", { selector: "p" })).toBeInTheDocument();
     expect(
-      floatingWindow.getByRole("option", { name: /^Upcoming 1 ·/ }),
+      overlayHost.getByRole("option", { name: /^Upcoming 1 ·/ }),
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      floatingWindow.queryByRole("option", { name: /^Recent 1 ·/ }),
+      overlayHost.queryByRole("option", { name: /^Recent 1 ·/ }),
     ).not.toBeInTheDocument();
 
     await user.type(
-      floatingWindow.getByRole("combobox", { name: "Search all saved plans" }),
+      overlayHost.getByRole("combobox", { name: "Search all saved plans" }),
       "Recent 1",
     );
-    const extraPlan = await floatingWindow.findByRole("option", {
+    const extraPlan = await overlayHost.findByRole("option", {
       name: /^Recent 1 ·/,
     });
     await user.click(extraPlan);

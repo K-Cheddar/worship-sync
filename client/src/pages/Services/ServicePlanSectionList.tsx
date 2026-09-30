@@ -139,6 +139,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /** Local view preference: hide shared and team notes on every element. */
@@ -194,6 +195,7 @@ const SortableSectionCard = ({
   iemEquipment = [],
   microphoneAudiences,
   scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   isServiceDay = false,
@@ -359,6 +361,7 @@ const SortableSectionCard = ({
                   iemEquipment={iemEquipment}
                   microphoneAudiences={microphoneAudiences}
                   scheduledEquipmentHolders={scheduledEquipmentHolders}
+                  scheduledEquipmentStatus={scheduledEquipmentStatus}
                   scheduledAssignmentRows={scheduledAssignmentRows}
                   onOpenScheduledAssignment={onOpenScheduledAssignment}
                   onViewSongLyrics={onViewSongLyrics}
@@ -402,6 +405,7 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   hideNotes?: boolean;
@@ -462,6 +466,7 @@ const ServicePlanSectionList = ({
   iemEquipment = [],
   microphoneAudiences,
   scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   hideNotes = false,
@@ -872,6 +877,7 @@ const ServicePlanSectionList = ({
           itemLabel={richTextToPlainText(assignmentPanelElement.title).trim() || "Untitled item"}
           structureOnly={structureOnly}
           scheduledEquipmentHolders={scheduledEquipmentHolders}
+          scheduledEquipmentStatus={scheduledEquipmentStatus}
           onChange={updatePanelAssignees}
         />
       ) : null}
@@ -973,6 +979,7 @@ const ServicePlanSectionList = ({
                 microphones={microphones}
                 microphoneAudiences={microphoneAudiences}
                 scheduledEquipmentHolders={scheduledEquipmentHolders}
+                scheduledEquipmentStatus={scheduledEquipmentStatus}
                 scheduledAssignmentRows={scheduledAssignmentRows}
                 onOpenScheduledAssignment={onOpenScheduledAssignment}
                 hideNotes={hideNotes}

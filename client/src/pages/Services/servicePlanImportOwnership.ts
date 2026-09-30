@@ -279,7 +279,9 @@ export const reconcileReviewedServicePlanParts = (
       delete next.scriptureRef;
       return { ...part, managed: { kind: "scripture" as const, id, fingerprint: scriptureFingerprint(reference) } };
     }
-    if (part.kind === "person" && part.destination === "assignee") {
+    // A free-text title may be promoted to an assignee only after the
+    // operator explicitly chooses that destination during ambiguity review.
+    if ((part.kind === "person" || part.kind === "description") && part.destination === "assignee") {
       const existing = part.managed?.kind === "assignee"
         ? getServicePlanElementAssignees(next).find((person) => person.id === part.managed!.id)
         : undefined;

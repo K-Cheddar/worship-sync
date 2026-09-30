@@ -612,7 +612,6 @@ const ChatWindow = () => {
           open={menuOpen}
           onOpenChange={setMenuOpen}
           align="end"
-          disablePortal
           contentClassName="w-64"
           bodyClassName="px-3 pb-3 pt-0"
           headerRowClassName="pr-1 pt-1"

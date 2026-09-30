@@ -26,6 +26,7 @@ import {
 
 const {
   authHandlers,
+  COLLECTIONS,
   canSeedHumanBearerAuthForServerTests,
   getDoc,
   seedActiveHumanBearerForServerTests,
@@ -1079,6 +1080,73 @@ test("team position icon refs persist while legacy values and older omitted save
   assert.equal(invalid.statusCode, 400);
 });
 
+test("unrelated position edits preserve legacy custom icons while supported changes and clearing work", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("legacy_custom_position_icon");
+  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Production" } });
+  const icon = { source: "custom", id: "church-icon" };
+  const positionId = "legacy_custom_position";
+  await setDoc(COLLECTIONS.teamPositions, positionId, {
+    positionId,
+    churchId: context.churchId,
+    teamId: team.payload.team.teamId,
+    name: "Camera",
+    description: "Original description",
+    icon,
+    archivedAt: null,
+  });
+
+  const renamed = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId },
+    body: { name: "Video Camera", teamId: team.payload.team.teamId, description: "Original description", icon },
+  });
+  assert.equal(renamed.statusCode, 200);
+  assert.deepEqual(renamed.payload.position.icon, icon);
+  const described = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId },
+    body: { name: "Video Camera", teamId: team.payload.team.teamId, description: "Updated description", icon },
+  });
+  assert.equal(described.statusCode, 200);
+  assert.deepEqual(described.payload.position.icon, icon);
+
+  const changed = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId },
+    body: { name: "Video Camera", teamId: team.payload.team.teamId, icon: { source: "lucide", name: "Camera" } },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.deepEqual(changed.payload.position.icon, { source: "lucide", name: "Camera" });
+  const cleared = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId },
+    body: { name: "Video Camera", teamId: team.payload.team.teamId, icon: "" },
+  });
+  assert.equal(cleared.statusCode, 200);
+  assert.equal(cleared.payload.position.icon, "");
+
+  await setDoc(COLLECTIONS.teamPositions, positionId, { ...cleared.payload.position, icon }, { merge: false });
+  const exported = await callHandler(authHandlers.exportPortableData, { context, params: { type: "positions" } });
+  const csv = String(exported.body);
+  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "positions", csv } });
+  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "positions", csv, mapping: inspected.payload.mapping } });
+  assert.equal(preview.payload.rows[0].action, "update", JSON.stringify(preview.payload.rows[0]));
+  const roundTrip = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "positions", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId, record })) },
+  });
+  assert.equal(roundTrip.payload.summary.updated, 1, JSON.stringify({ row: preview.payload.rows[0], result: roundTrip.payload }));
+  const persisted = await getDoc(COLLECTIONS.teamPositions, positionId);
+  assert.deepEqual(persisted.icon, icon);
+
+  const rejectedCreate = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "New Custom", team: "Production", teamId: team.payload.team.teamId, icon: JSON.stringify(icon) } }] },
+  });
+  assert.equal(rejectedCreate.payload.summary.failed, 1);
+});
+
 test("new schedules seed microphone defaults from their positions", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("position_microphone_defaults");
@@ -1824,6 +1892,149 @@ test("schedule assignments block duplicate positions and unavailable members", a
     ),
     unavailableId,
   );
+});
+
+test("atomic assignment batches reject a row as a whole and require the current conflict fingerprint", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("atomic_assignment_batch");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }, { name: "Keys" }, { name: "Drums" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal"] },
+      { firstName: "Blair", lastName: "Reed", positions: ["Keys"] },
+      { firstName: "Casey", lastName: "Lee", positions: ["Drums"] },
+    ],
+  });
+  const production = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production", memberIds: [] },
+  });
+  const productionTeamId = production.payload.team.teamId;
+  const camera = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera", teamId: productionTeamId },
+  });
+  const cameraId = camera.payload.position.positionId;
+  const caseyId = worship.memberIds.Casey;
+  await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: caseyId },
+    body: {
+      firstName: "Casey",
+      lastName: "Lee",
+      positionIds: [worship.positionIds.Drums, cameraId],
+      blockoutDates: [],
+    },
+  });
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: productionTeamId },
+    body: { name: "Production", memberIds: [caseyId] },
+  });
+
+  const occurrenceId = "svc@2026-07-05T10:00:00.000Z";
+  const occurrence = {
+    occurrenceId,
+    serviceId: "svc",
+    name: "Sunday",
+    startsAt: "2026-07-05T10:00:00.000Z",
+    positionRequirements: Object.values(worship.positionIds).map((positionId) => ({ positionId, count: 1 })),
+  };
+  const target = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Worship July",
+      teamId: worship.teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [occurrence],
+    },
+  });
+  const otherOccurrence = { ...occurrence, positionRequirements: [{ positionId: cameraId, count: 1 }] };
+  const other = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Production July",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [otherOccurrence],
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: other.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::0`,
+      memberId: caseyId,
+      serviceDate: "2026-07-05",
+    },
+  });
+
+  const changes = [
+    [worship.positionIds.Vocal, worship.memberIds.Avery],
+    [worship.positionIds.Keys, worship.memberIds.Blair],
+    [worship.positionIds.Drums, caseyId],
+  ].map(([positionId, memberId]) => ({
+    serviceId: occurrenceId,
+    positionSlotKey: `${positionId}::0`,
+    serviceDate: "2026-07-05",
+    expectedCell: "",
+    assignment: { primaryMemberId: memberId },
+  }));
+  const blocked = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId: target.payload.schedule.scheduleId },
+    body: { changes },
+  });
+  assert.equal(blocked.statusCode, 409);
+  assert.ok(blocked.payload.conflictFingerprint);
+  assert.equal(blocked.payload.occurrenceConflicts.length, 1);
+  assert.deepEqual((await getDoc("teamSchedules", target.payload.schedule.scheduleId)).assignments, {});
+
+  const otherSchedule = await getDoc("teamSchedules", other.payload.schedule.scheduleId);
+  await setDoc("teamSchedules", other.payload.schedule.scheduleId, {
+    ...otherSchedule,
+    occurrences: [
+      ...otherSchedule.occurrences,
+      { ...otherOccurrence, occurrenceId: "svc-joined@2026-07-05T10:00:00.000Z", serviceIds: ["svc", "svc-joined"] },
+    ],
+    serviceIds: ["svc", "svc-joined"],
+    assignments: {
+      ...otherSchedule.assignments,
+      "svc-joined@2026-07-05T10:00:00.000Z": { [`${cameraId}::0`]: { primaryMemberId: caseyId } },
+    },
+  });
+  const stale = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId: target.payload.schedule.scheduleId },
+    body: {
+      changes,
+      confirmedOccurrenceConflictFingerprint: blocked.payload.conflictFingerprint,
+    },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(stale.payload.occurrenceConflicts.length, 2);
+  assert.notEqual(stale.payload.conflictFingerprint, blocked.payload.conflictFingerprint);
+  assert.deepEqual((await getDoc("teamSchedules", target.payload.schedule.scheduleId)).assignments, {});
+
+  const confirmed = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId: target.payload.schedule.scheduleId },
+    body: {
+      changes,
+      confirmedOccurrenceConflictFingerprint: stale.payload.conflictFingerprint,
+    },
+  });
+  assert.equal(confirmed.statusCode, 200);
+  assert.equal(confirmed.payload.accepted.length, 3);
+  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Vocal}::0`]), worship.memberIds.Avery);
+  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Keys}::0`]), worship.memberIds.Blair);
+  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Drums}::0`]), caseyId);
 });
 
 test("schedule assignments fall back to one slot when occurrence requirements are missing", async (t) => {
@@ -10007,6 +10218,7 @@ test("portable create commits deduplicate safe entity identities across rows and
   assert.equal(teamCommit.payload.summary.created, 2);
   const retry = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: teamRows } });
   assert.equal(retry.payload.summary.created, 2);
+  assert.deepEqual(retry.payload.results.map(({ id }) => id), teamCommit.payload.results.map(({ id }) => id));
   const teamsAfter = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(teamsAfter.payload.teams.filter((team) => team.name === "Import Team").length, 1);
 
@@ -10014,8 +10226,9 @@ test("portable create commits deduplicate safe entity identities across rows and
   const unsupportedCustomIcon = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Unsupported Icon", teamId, icon: { source: "custom", id: "church-icon" } } });
   assert.equal(unsupportedCustomIcon.statusCode, 400);
   const positionRows = [1, 2].map((row) => ({ row, action: "create", record: { name: "Imported Role", team: "Import Team", teamId } }));
-  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
-  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
+  const firstPositionCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
+  const retriedPositionCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
+  assert.deepEqual(retriedPositionCommit.payload.results.map(({ id }) => id), firstPositionCommit.payload.results.map(({ id }) => id));
   const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(afterPositions.payload.positions.filter((position) => position.name === "Imported Role").length, 1);
 
@@ -10026,8 +10239,9 @@ test("portable create commits deduplicate safe entity identities across rows and
     { row: 5, action: "create", record: { firstName: "Alex", lastName: "Same" } },
     { row: 6, action: "create", record: { firstName: "Alex", lastName: "Same" } },
   ];
-  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
-  await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
+  const firstMemberCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
+  const retriedMemberCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
+  assert.deepEqual(retriedMemberCommit.payload.results.map(({ id }) => id), firstMemberCommit.payload.results.map(({ id }) => id));
   const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(afterMembers.payload.members.filter((member) => member.firstName === "Alex" && member.lastName === "Same").length, 4);
   assert.equal(afterMembers.payload.members.filter((member) => member.email === "alex@example.com").length, 1);
@@ -10036,6 +10250,83 @@ test("portable create commits deduplicate safe entity identities across rows and
   const update = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: [{ row: 2, action: "update", recordId: existing.memberId, record: { firstName: "Alex Updated", lastName: "Same", email: "alex@example.com" } }] } });
   assert.equal(update.payload.summary.updated, 1);
   assert.equal((await callHandler(authHandlers.getTeamsBootstrap, { context })).payload.members.find((member) => member.memberId === existing.memberId).firstName, "Alex Updated");
+});
+
+test("portable create claims serialize concurrent retries and stay church-scoped", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const churchA = await createAdminContext("portable_claim_church_a");
+  const churchB = await createAdminContext("portable_claim_church_b");
+  const createTeamRows = [{ row: 2, action: "create", record: { name: "Concurrent Team" } }];
+  const teamBody = { type: "teams", approvedRows: createTeamRows };
+  const [teamA1, teamA2] = await Promise.all([
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody }),
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody }),
+  ]);
+  assert.equal(teamA1.payload.summary.created, 1);
+  assert.equal(teamA2.payload.summary.created, 1);
+  // Retrying after the first response has been discarded resolves through the
+  // persisted claim to the same entity.
+  await callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody });
+  const teamB = await callHandler(authHandlers.commitPortableImport, { context: churchB, body: teamBody });
+  assert.equal(teamB.payload.summary.created, 1);
+
+  const bootA = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
+  const bootB = await callHandler(authHandlers.getTeamsBootstrap, { context: churchB });
+  const aTeam = bootA.payload.teams.find((item) => item.name === "Concurrent Team");
+  const bTeam = bootB.payload.teams.find((item) => item.name === "Concurrent Team");
+  assert.ok(aTeam && bTeam);
+  assert.notEqual(aTeam.teamId, bTeam.teamId);
+  assert.equal(bootA.payload.teams.filter((item) => item.name === "Concurrent Team").length, 1);
+  assert.equal(bootB.payload.teams.filter((item) => item.name === "Concurrent Team").length, 1);
+  const churchAClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchA.churchId }], { limit: 0 });
+  const churchBClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchB.churchId }], { limit: 0 });
+  assert.equal(churchAClaims.length, 1);
+  assert.equal(churchBClaims.length, 1);
+
+  const positionRows = [{ row: 2, action: "create", record: { name: "Concurrent Role", team: "Concurrent Team", teamId: aTeam.teamId } }];
+  await Promise.all([
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "positions", approvedRows: positionRows } }),
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "positions", approvedRows: positionRows } }),
+  ]);
+  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
+  assert.equal(afterPositions.payload.positions.filter((item) => item.name === "Concurrent Role").length, 1);
+
+  const memberRows = [{ row: 2, action: "create", record: { firstName: "Casey", lastName: "Concurrent", email: "shared-concurrent@example.com" } }];
+  await Promise.all([
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "members", approvedRows: memberRows } }),
+    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "members", approvedRows: memberRows } }),
+  ]);
+  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
+  assert.equal(afterMembers.payload.members.filter((item) => item.email === "shared-concurrent@example.com").length, 1);
+  const allClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchA.churchId }], { limit: 0 });
+  assert.deepEqual(allClaims.map((claim) => claim.kind).sort(), ["member", "position", "team"]);
+});
+
+test("portable create rows with stale natural matches require a fresh preview", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("portable_stale_create_preview");
+  const teamRow = { row: 2, action: "create", record: { name: "Media" } };
+  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Media", description: "Do not overwrite" } });
+  const teamImport = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: [teamRow] } });
+  assert.equal(teamImport.payload.summary.failed, 1);
+  assert.match(teamImport.payload.results[0].message, /preview/i);
+  assert.equal((await getDoc(COLLECTIONS.teams, team.payload.team.teamId)).description, "Do not overwrite");
+
+  const position = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Camera", teamId: team.payload.team.teamId, description: "Keep this" } });
+  const positionImport = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Camera", team: "Media", teamId: team.payload.team.teamId, description: "Overwrite attempt" } }] },
+  });
+  assert.equal(positionImport.payload.summary.failed, 1);
+  assert.equal((await getDoc(COLLECTIONS.teamPositions, position.payload.position.positionId)).description, "Keep this");
+
+  const member = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Taylor", lastName: "Member", email: "taylor@example.com", notes: "Keep this" } });
+  const memberImport = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", approvedRows: [{ row: 2, action: "create", record: { firstName: "Taylor", lastName: "Member", email: "taylor@example.com", notes: "Keep this" } }] },
+  });
+  assert.equal(memberImport.payload.summary.failed, 1);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId)).notes, "Keep this");
 });
 
 test("portable service preview and commit validate actual calendar dates", async (t) => {

@@ -3,6 +3,7 @@ import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const mockState = {
   presentation: fromLegacyPresentationShape({
@@ -143,5 +144,59 @@ describe("TransmitHandler surface previews", () => {
     expect(lastPreviewProps?.info).toEqual(
       mockState.presentation.outputs.stream.info,
     );
+    expect(lastPreviewProps?.centerPreview).toBe(true);
+  });
+
+  it("uses the current toggle while Firebase confirmation is stale", () => {
+    mockState.presentation.outputs.stream.itemContentBlocked = false;
+
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          {
+            contentHiddenByOutput: {
+              stream: { hidden: true, confirmed: true },
+            },
+            realtimeConnected: true,
+          } as never
+        }
+      >
+        <StreamPresentationPreview
+          quickLinks={[]}
+          toggleIsTransmitting={toggle}
+          variant="overlayStreamFocus"
+          showFocusedStreamControls
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(lastPreviewProps?.streamItemContentBlocked).toBe(false);
+    expect(lastPreviewProps?.showContentHiddenIndicator).toBe(false);
+  });
+
+  it("keeps content hidden while Firebase still reports it as visible", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          {
+            contentHiddenByOutput: {
+              stream: { hidden: false, confirmed: true },
+            },
+            realtimeConnected: true,
+          } as never
+        }
+      >
+        <StreamPresentationPreview
+          quickLinks={[]}
+          toggleIsTransmitting={toggle}
+          variant="overlayStreamFocus"
+          showFocusedStreamControls
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(lastPreviewProps?.streamItemContentBlocked).toBe(true);
+    expect(lastPreviewProps?.showContentHiddenIndicator).toBe(true);
+    expect(lastPreviewProps?.contentHiddenUnconfirmed).toBe(true);
   });
 });

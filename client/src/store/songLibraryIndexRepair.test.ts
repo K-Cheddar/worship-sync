@@ -120,6 +120,41 @@ describe("library index repair middleware", () => {
     ]);
   });
 
+  it("suppresses a song removed before its durable document snapshot arrives", () => {
+    const store = createStore();
+    const remoteSong: ServiceItem = {
+      _id: "song-doc-arrives-late",
+      name: "Late Song",
+      type: "song",
+      listId: "song-doc-arrives-late",
+      background: "",
+    };
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([remoteSong]));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([]));
+    store.dispatch(allItemsSlice.actions.updateAllItemsListFromRemote([]));
+
+    const staleDoc = songDoc("song-doc-arrives-late", "Late Song");
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([staleDoc]));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([staleDoc]));
+    expect(store.getState().allItems.list).toEqual([]);
+
+    // A durable refresh that confirms deletion clears suppression without
+    // restoring the index row. A later durable recreation is then repairable.
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([]));
+    expect(store.getState().allItems.list).toEqual([]);
+    store.dispatch(
+      allDocsSlice.actions.updateAllSongDocs([
+        songDoc("song-doc-arrives-late", "Recreated Song"),
+      ]),
+    );
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({
+        _id: "song-doc-arrives-late",
+        name: "Recreated Song",
+      }),
+    ]);
+  });
+
 
   it("recovers Welcome Slides from its durable custom document", () => {
     const store = createStore();
