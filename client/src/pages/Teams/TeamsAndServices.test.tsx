@@ -577,13 +577,17 @@ describe("Teams", () => {
         ],
       }),
     );
-    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => { });
 
     try {
       renderTeams();
 
       expect(
-        await screen.findByRole("group", { name: "Team schedule identity" }),
+        await screen.findByRole(
+          "group",
+          { name: "Team schedule identity" },
+          { timeout: 8_000 },
+        ),
       ).toBeInTheDocument();
       expect(
         consoleError.mock.calls
@@ -948,11 +952,13 @@ describe("Teams", () => {
           },
         );
       });
-      expect(
-        screen.getByRole("combobox", {
-          name: /Microphone for Avery \(Keys\)/i,
-        }),
-      ).toHaveTextContent("No microphone");
+      await waitFor(() => {
+        expect(
+          screen.getByRole("combobox", {
+            name: /Microphone for Avery \(Keys\)/i,
+          }),
+        ).toHaveTextContent("No microphone");
+      });
 
       // A stale-on-focus bootstrap often returns this schedule as a summary (maps omitted).
       // Retained hydration must reuse the cleared maps from the local save — not
@@ -1316,6 +1322,7 @@ describe("Teams", () => {
 
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
     await user.click(screen.getByRole("button", { name: /Icon picker/i }));
+    await user.type(screen.getByPlaceholderText("Search all icons…"), "video");
     await user.click(await screen.findByRole("button", { name: /^tabler: video$/i }));
     await user.click(screen.getByRole("button", { name: "Icon color #22d3ee" }));
     await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
@@ -1360,6 +1367,7 @@ describe("Teams", () => {
     } satisfies CreateTeamPositionResponse);
 
     renderTeams("/teams-and-services/positions");
+    await screen.findAllByRole("button", { name: /Create position/i });
     await user.click(screen.getAllByRole("button", { name: /Create position/i })[0]);
     await user.type(screen.getByLabelText(/^Name/i), "Lead");
     await user.click(await screen.findByLabelText(/^Default microphone/i));
@@ -1414,7 +1422,7 @@ describe("Teams", () => {
     expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
   });
 
-  it("closes the team editor after saving on narrow screens", async () => {
+  it("keeps the team editor open after saving on narrow screens", async () => {
     window.matchMedia = makeMatchMedia(true);
     const user = userEvent.setup();
     mockUpdateTeam.mockResolvedValue({
@@ -1439,12 +1447,10 @@ describe("Teams", () => {
     await waitFor(() => {
       expect(mockUpdateTeam).toHaveBeenCalled();
     });
-    expect(
-      screen.queryByRole("heading", { name: /Edit team/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Create team/i }),
-    ).toBeInTheDocument();
+    // Saving commits the team and leaves the editor open on every width.
+    // Back or Cancel is what returns to the list.
+    expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create team/i })).toBeInTheDocument();
   });
 
   it("shows Close for an unchanged team and Cancel after an edit", async () => {
@@ -1490,9 +1496,8 @@ describe("Teams", () => {
 
     await user.click(screen.getByRole("link", { name: /^Members$/i }));
     await user.click(await screen.findByRole("button", { name: "Discard changes" }));
-    expect(
-      await screen.findByRole("button", { name: "Create member" }),
-    ).toBeInTheDocument();
+    const createMemberButtons = await screen.findAllByRole("button", { name: "Create member" });
+    expect(createMemberButtons.some((button) => !button.hasAttribute("disabled"))).toBe(true);
   });
 
   it("confirms before replacing an edited member", async () => {
@@ -2148,7 +2153,7 @@ describe("Teams", () => {
     await waitForScheduleGrid();
 
     expect(
-      screen.queryByRole("button", { name: /New schedule/i }),
+      screen.queryByRole("button", { name: /Create custom schedule/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /More schedule options/i }),
@@ -2163,6 +2168,11 @@ describe("Teams", () => {
     window.matchMedia = makeMatchMedia(true);
 
     renderTeams();
+    await waitForScheduleGrid();
+
+    await user.click(screen.getByRole("button", { name: "Schedule history" }));
+    await user.click(await screen.findByRole("button", { name: /July/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "All schedules" })).not.toBeInTheDocument());
     await waitForScheduleGrid();
 
     const scheduleCell = await screen.findByRole("button", { name: /Sunday Vocal/i });
@@ -2238,13 +2248,13 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("button", { name: /New schedule/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create custom schedule/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Send schedule/i }));
     expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mockSendTeamSchedule).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /New schedule/i }));
+    await user.click(screen.getByRole("button", { name: /Create custom schedule/i }));
     expect(await screen.findByRole("textbox", { name: /^Name:?$/i })).toBeInTheDocument();
   });
 

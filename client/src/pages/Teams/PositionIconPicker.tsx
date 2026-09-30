@@ -27,28 +27,27 @@ const LEGACY_TEAM_ICONS = [
 ].map((name) => ({ source: "lucide", name }) as IconRef);
 const RECOMMENDED_GROUPS: Array<{ label: string; icons: IconRef[] }> = [
   { label: "Audio", icons: [
-    { source: "tabler", name: "microphone" }, { source: "lucide", name: "MicVocal" },
-    { source: "tabler", name: "headphones" }, { source: "tabler", name: "speakerphone" },
-    { source: "tabler", name: "wave-sine" }, { source: "tabler", name: "adjustments-horizontal" },
-    { source: "tabler", name: "radio" },
+    { source: "lucide", name: "MicVocal" }, { source: "lucide", name: "Headphones" },
+    { source: "lucide", name: "Volume2" }, { source: "lucide", name: "AudioWaveform" },
+    { source: "lucide", name: "SlidersHorizontal" }, { source: "lucide", name: "Radio" },
   ] },
   { label: "Video", icons: [
-    { source: "tabler", name: "video" }, { source: "tabler", name: "camera" },
-    { source: "tabler", name: "broadcast" }, { source: "tabler", name: "device-tv" },
-    { source: "tabler", name: "presentation" },
+    { source: "lucide", name: "Video" }, { source: "lucide", name: "Camera" },
+    { source: "lucide", name: "Radio" }, { source: "lucide", name: "Tv" },
+    { source: "lucide", name: "Presentation" },
   ] },
   { label: "Lighting", icons: [
-    { source: "tabler", name: "bulb" }, { source: "tabler", name: "adjustments-horizontal" },
+    { source: "lucide", name: "Lightbulb" }, { source: "lucide", name: "Sparkles" },
   ] },
   { label: "Music", icons: [
-    { source: "tabler", name: "guitar-pick" }, { source: "tabler", name: "piano" },
-    { source: "tabler", name: "music" },
+    { source: "lucide", name: "Guitar" }, { source: "lucide", name: "Piano" },
+    { source: "lucide", name: "Music" }, { source: "lucide", name: "Drum" },
   ] },
   { label: "Ministry", icons: [
-    { source: "tabler", name: "user" }, { source: "tabler", name: "users" },
-    { source: "tabler", name: "book-2" }, { source: "tabler", name: "building-church" },
-    { source: "tabler", name: "hand" }, { source: "tabler", name: "heart" },
-    { source: "tabler", name: "cross" },
+    { source: "lucide", name: "User" }, { source: "lucide", name: "Users" },
+    { source: "lucide", name: "BookOpen" }, { source: "lucide", name: "Church" },
+    { source: "lucide", name: "Hand" }, { source: "lucide", name: "Heart" },
+    { source: "lucide", name: "Cross" },
   ] },
 ];
 
@@ -95,6 +94,7 @@ const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChang
   const [catalog, setCatalog] = useState<IconCatalogEntry[] | null>(null);
   const [catalogError, setCatalogError] = useState(false);
   const current = normalizePositionIcon(value);
+  const shouldLoadCatalog = legacyOnly || Boolean(query.trim()) || source !== "recommended";
 
   useEffect(() => {
     if (!open || catalog) return;
@@ -102,6 +102,7 @@ const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChang
       setCatalog(getLucidePositionIconCatalog());
       return;
     }
+    if (!shouldLoadCatalog) return;
     let active = true;
     const loadCatalog = () => {
       setCatalogError(false);
@@ -116,7 +117,7 @@ const PositionIconPicker = ({ label = "Icon", legacyOnly = false, value, onChang
       active = false;
       window.removeEventListener("online", loadCatalog);
     };
-  }, [catalog, legacyOnly, open]);
+  }, [catalog, legacyOnly, open, shouldLoadCatalog]);
 
   const searchResults = useMemo(() => {
     if (!catalog || !query.trim()) return [];

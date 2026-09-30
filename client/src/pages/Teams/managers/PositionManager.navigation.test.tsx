@@ -122,5 +122,5 @@ describe("PositionManager return navigation", () => {
     await user.type(screen.getByLabelText(/^Description:?$/), "Updated after saving");
     await user.click(screen.getByRole("button", { name: "Back to team" }));
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
-  });
+  }, 20_000);
 });

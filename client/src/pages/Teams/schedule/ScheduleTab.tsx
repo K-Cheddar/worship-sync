@@ -425,11 +425,16 @@ const ScheduleTab = ({
   const hasExplicitPeriodSelectionRef = useRef(false);
   const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>(initialTeamPeriodResult.preset);
   const [periodRange, setPeriodRange] = useState(initialPeriodRange);
+  const periodTeamIdRef = useRef(workspaceTeamId);
   useEffect(() => {
+    if (periodTeamIdRef.current !== workspaceTeamId) {
+      periodTeamIdRef.current = workspaceTeamId;
+      hasExplicitPeriodSelectionRef.current = false;
+    }
     if (hasExplicitPeriodSelectionRef.current) return;
     setPeriodPreset(initialTeamPeriodResult.preset);
     setPeriodRange(initialPeriodRange);
-  }, [initialPeriodRange, initialTeamPeriodResult.preset]);
+  }, [initialPeriodRange, initialTeamPeriodResult.preset, workspaceTeamId]);
   const initialTeamPeriod = initialTeamPeriodResult;
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule

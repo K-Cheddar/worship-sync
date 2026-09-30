@@ -10,6 +10,7 @@ import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import { generateScheduleOccurrences, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
 import { parseSlotKey, resolveOccurrenceRequirements } from "./scheduleRequirements";
 import { isHydratedSchedule } from "../../../api/authTypes";
+import { rangeFromPreset } from "./schedulePeriodUtils";
 
 export type TeamSchedulePeriod = {
   occurrences: TeamScheduleOccurrence[];
@@ -78,7 +79,7 @@ export const buildTeamSchedulePeriod = ({
   };
 };
 
-/** Pick the calendar month containing the first relevant occurrence on/after today. */
+/** Pick an upcoming window that starts today and includes the next team occurrence. */
 export const findInitialTeamSchedulePeriod = ({
   services,
   positions,
@@ -94,7 +95,7 @@ export const findInitialTeamSchedulePeriod = ({
 }): {
   start: string;
   end: string;
-  preset: "thisMonth" | "nextMonth" | "custom";
+  preset: "upcoming";
   period: TeamSchedulePeriod;
   nextOccurrence: TeamScheduleOccurrence | null;
 } => {
@@ -121,31 +122,27 @@ export const findInitialTeamSchedulePeriod = ({
     ),
   );
   if (!hasConfiguredTeamNeed && !hasExistingTeamSlot) {
-    const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    const startDate = formatPlainDate(start);
-    const endDate = formatPlainDate(monthEnd);
+    const { start, end } = rangeFromPreset("upcoming", today);
     return {
-      start: startDate,
-      end: endDate,
-      preset: "thisMonth",
+      start,
+      end,
+      preset: "upcoming",
       period: { occurrences: [], allOccurrences: [], serviceIds: [], requirementsByOccurrence: new Map() },
       nextOccurrence: null,
     };
   }
-  const end = new Date(today.getFullYear() + 2, today.getMonth(), today.getDate());
+  const scanEnd = new Date(today.getFullYear() + 2, today.getMonth(), today.getDate());
   services.forEach((service) => {
     [service.dateTimeISO, service.startDateISO, service.endDateISO].forEach((value) => {
       if (!value) return;
       const date = parsePlainDate(value.slice(0, 10));
-      if (date && date > end) end.setTime(date.getTime());
+      if (date && date > scanEnd) scanEnd.setTime(date.getTime());
     });
   });
   const todayPlainDate = formatPlainDate(today);
   let target = today;
-  let initialPeriod: TeamSchedulePeriod | null = null;
   let nextOccurrence: TeamScheduleOccurrence | null = null;
-  for (const cursor = new Date(today.getFullYear(), today.getMonth(), 1); cursor <= end; cursor.setMonth(cursor.getMonth() + 1)) {
+  for (const cursor = new Date(today.getFullYear(), today.getMonth(), 1); cursor <= scanEnd; cursor.setMonth(cursor.getMonth() + 1)) {
     const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
     const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
     const monthStartDate = formatPlainDate(start);
@@ -173,28 +170,39 @@ export const findInitialTeamSchedulePeriod = ({
       endDate: monthEndDate,
       additionalPositionSlots,
     });
-    if (!initialPeriod) initialPeriod = period;
     const next = period.occurrences.find((occurrence) => getOccurrenceDate(occurrence) >= todayPlainDate);
     if (next) {
       nextOccurrence = next;
       target = parsePlainDate(getOccurrenceDate(next)) || today;
-      initialPeriod = period;
       break;
     }
   }
-  const start = new Date(target.getFullYear(), target.getMonth(), 1);
-  const monthEnd = new Date(target.getFullYear(), target.getMonth() + 1, 0);
-  const monthOffset = (start.getFullYear() - today.getFullYear()) * 12 + start.getMonth() - today.getMonth();
+  const defaultRange = rangeFromPreset("upcoming", today);
+  const periodEnd = nextOccurrence
+    ? formatPlainDate(new Date(target.getFullYear(), target.getMonth() + 1, 0))
+    : defaultRange.end;
+  const startDate = todayPlainDate;
+  const additionalPositionSlots = schedules
+    .filter((schedule): schedule is TeamSchedule =>
+      schedule.teamId === teamId && !schedule.archivedAt && isHydratedSchedule(schedule),
+    )
+    .reduce<Record<string, string[]>>((slots, schedule) => {
+      Object.entries(schedule.additionalPositionSlots || {}).forEach(([occurrenceId, keys]) => {
+        slots[occurrenceId] = [...(slots[occurrenceId] || []), ...keys];
+      });
+      return slots;
+    }, {});
   return {
-    start: formatPlainDate(start),
-    end: formatPlainDate(monthEnd),
-    preset: monthOffset === 0 ? "thisMonth" : monthOffset === 1 ? "nextMonth" : "custom",
-    period: initialPeriod || buildTeamSchedulePeriod({
+    start: startDate,
+    end: periodEnd,
+    preset: "upcoming",
+    period: buildTeamSchedulePeriod({
       services,
       positions,
       teamId,
-      startDate: formatPlainDate(start),
-      endDate: formatPlainDate(monthEnd),
+      startDate,
+      endDate: periodEnd,
+      additionalPositionSlots,
     }),
     nextOccurrence,
   };

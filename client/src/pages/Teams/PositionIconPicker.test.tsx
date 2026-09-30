@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import PositionIconPicker from "./PositionIconPicker";
 import type { PositionIcon } from "../../components/icons/iconTypes";
 
-const mockTablerImportState = { failuresRemaining: 0 };
+const mockTablerImportState = { failuresRemaining: 0, requests: 0 };
 
 jest.mock("@tabler/icons-react", () => {
+  mockTablerImportState.requests += 1;
   if (mockTablerImportState.failuresRemaining > 0) {
     mockTablerImportState.failuresRemaining -= 1;
     throw new Error("Temporary Tabler import failure");
@@ -42,12 +43,15 @@ describe("PositionIconPicker", () => {
   it("stays open after selecting an icon so color can be chosen and clearing still works", async () => {
     const user = userEvent.setup();
     mockTablerImportState.failuresRemaining = 1;
+    mockTablerImportState.requests = 0;
     const PickerHarness = () => {
       const [value, setValue] = useState<PositionIcon | "">("");
       return <PositionIconPicker value={value} onChange={setValue} />;
     };
     render(<PickerHarness />);
     await user.click(screen.getByRole("button", { name: "Icon picker" }));
+    expect(mockTablerImportState.requests).toBe(0);
+    expect(screen.getByRole("button", { name: "lucide: MicVocal" })).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText("Search all icons…"), "camera");
     expect(await screen.findByText("Icon catalog is unavailable.")).toBeInTheDocument();
     window.dispatchEvent(new Event("online"));
@@ -57,7 +61,7 @@ describe("PositionIconPicker", () => {
 
     await user.click(screen.getByRole("button", { name: "Icon color #60a5fa" }));
     expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "true");
-    await user.click(screen.getByRole("button", { name: "tabler: microphone" }));
+    await user.click(screen.getByRole("button", { name: "lucide: MicVocal" }));
     expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "Default" }));
     expect(screen.getByRole("button", { name: "Icon color #60a5fa" })).toHaveAttribute("aria-pressed", "false");

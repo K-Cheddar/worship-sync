@@ -61,7 +61,7 @@ describe("TeamsSidebarNav", () => {
     const onNavigate = jest.fn();
     renderSidebar("/teams-and-services/schedules", false, onNavigate);
 
-    await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
+    await user.click(screen.getByRole("link", { name: /^Equipment$/i }));
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 });

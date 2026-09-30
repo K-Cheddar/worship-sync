@@ -3,6 +3,7 @@ import {
   buildTeamSchedulePeriod,
   findInitialTeamSchedulePeriod,
 } from "./teamSchedulePeriod";
+import { rangeFromPreset } from "./schedulePeriodUtils";
 
 const service = (changes: Partial<TeamService>): TeamService => ({
   id: changes.serviceId || "service",
@@ -103,7 +104,7 @@ describe("buildTeamSchedulePeriod", () => {
 describe("findInitialTeamSchedulePeriod", () => {
   const now = new Date("2026-09-29T12:00:00.000Z");
 
-  it("chooses the current month when a relevant upcoming occurrence remains", () => {
+  it("starts today and includes the next relevant service in the upcoming window", () => {
     const result = findInitialTeamSchedulePeriod({
       services: [service({
         serviceId: "september",
@@ -115,11 +116,11 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result).toMatchObject({ start: "2026-09-01", end: "2026-09-30", preset: "thisMonth" });
+    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-09-30", preset: "upcoming" });
     expect(result.nextOccurrence?.serviceId).toBe("september");
   });
 
-  it("chooses next month when the relevant service is the first upcoming occurrence", () => {
+  it("starts today and includes the next month's relevant service", () => {
     const result = findInitialTeamSchedulePeriod({
       services: [
         service({
@@ -138,7 +139,7 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result).toMatchObject({ start: "2026-10-01", end: "2026-10-31", preset: "nextMonth" });
+    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-10-31", preset: "upcoming" });
     expect(result.nextOccurrence?.serviceId).toBe("october");
   });
 
@@ -154,8 +155,8 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result.preset).toBe("thisMonth");
-    expect(result.start).toBe("2026-09-01");
+    expect(result.preset).toBe("upcoming");
+    expect(result.start).toBe("2026-09-29");
     expect(result.nextOccurrence?.serviceId).toBe("today");
   });
 
@@ -172,5 +173,51 @@ describe("findInitialTeamSchedulePeriod", () => {
     });
 
     expect(result.nextOccurrence).toBeNull();
+    expect(result.start).toBe("2026-09-29");
+    expect(result.period.occurrences).toEqual([]);
+  });
+
+  it("omits earlier services from today's window while keeping the next relevant service", () => {
+    const result = findInitialTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "past-september",
+          dateTimeISO: "2026-09-06T10:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "upcoming-september",
+          dateTimeISO: "2026-09-20T10:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+      ],
+      positions,
+      teamId: "media",
+      now: new Date("2026-09-10T12:00:00.000Z"),
+    });
+
+    expect(result.start).toBe("2026-09-10");
+    expect(result.period.occurrences.map((item) => item.serviceId)).toEqual(["upcoming-september"]);
+    expect(result.nextOccurrence?.serviceId).toBe("upcoming-september");
+  });
+
+  it("does not let another team's unrelated services move the empty upcoming window", () => {
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({
+        serviceId: "worship-only",
+        dateTimeISO: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: "keys", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      now,
+    });
+
+    expect(result).toMatchObject({ start: "2026-09-29", preset: "upcoming", nextOccurrence: null });
+    expect(result.period.occurrences).toEqual([]);
+  });
+
+  it("keeps explicit This month selection on its full calendar range", () => {
+    expect(rangeFromPreset("thisMonth", now)).toEqual({ start: "2026-09-01", end: "2026-09-30" });
   });
 });

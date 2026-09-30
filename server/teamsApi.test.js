@@ -1496,7 +1496,6 @@ test("deleting a position scrubs it from teams, members, and assignments", async
       serviceDate: "2026-07-05",
     },
   });
-
   const deleted = await callHandler(authHandlers.deleteTeamPosition, {
     context,
     params: { positionId: vocalId },
@@ -3406,6 +3405,20 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
       serviceDate: "2026-06-06",
     },
   });
+  const persistedSchedule = await getDoc("teamSchedules", scheduleId);
+  await setDoc("teamSchedules", scheduleId, {
+    source: "generated-period",
+    occurrences: [
+      ...persistedSchedule.occurrences,
+      {
+        occurrenceId: "unrelated-service@2026-06-20T10:00:00.000Z",
+        serviceId: "unrelated-service",
+        name: "Unrelated service",
+        startsAt: "2026-06-20T10:00:00.000Z",
+        positionRequirements: [{ positionId: "another-team-position", count: 1 }],
+      },
+    ],
+  }, { merge: true });
 
   // Admin mints the public link (idempotent: same token on repeat).
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
@@ -3433,6 +3446,10 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
   await authHandlers.getPublicTeamSchedule(publicReq, publicRes);
   assert.equal(publicRes.statusCode, 200);
   assert.equal(publicRes.payload.schedule.name, "June 2026");
+  assert.deepEqual(
+    publicRes.payload.schedule.occurrences.map((occurrence) => occurrence.occurrenceId),
+    [occurrenceId],
+  );
   assert.equal(publicRes.payload.teamName, "Production");
   assert.equal(
     publicRes.payload.schedule.assignments[occurrenceId][`${directorId}::0`]
@@ -9438,6 +9455,48 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
   const final = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
   assert.deepEqual(final.payload.schedule.microphoneAssignments[occurrenceId][slotKey], ["iem-1"]);
   assert.deepEqual(final.payload.schedule.iemAssignments[occurrenceId][slotKey], ["iem-1"]);
+
+  const saveEquipment = (kind, ids) => callHandler(
+    kind === "microphone"
+      ? authHandlers.updateTeamScheduleAssignmentMicrophones
+      : authHandlers.updateTeamScheduleAssignmentIems,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: slotKey,
+        [kind === "microphone" ? "microphoneIds" : "iemIds"]: ids,
+      },
+    },
+  );
+  for (const kind of ["microphone", "iem"]) {
+    const unknown = await saveEquipment(kind, ["deleted-equipment"]);
+    assert.equal(unknown.statusCode, 409);
+    const mixed = await saveEquipment(kind, ["iem-1", "deleted-equipment"]);
+    assert.equal(mixed.statusCode, 409);
+    const unchanged = await callHandler(authHandlers.getTeamScheduleDetail, {
+      context,
+      params: { scheduleId },
+    });
+    const assignmentMap = kind === "microphone"
+      ? unchanged.payload.schedule.microphoneAssignments
+      : unchanged.payload.schedule.iemAssignments;
+    assert.deepEqual(assignmentMap[occurrenceId][slotKey], ["iem-1"]);
+    const cleared = await saveEquipment(kind, []);
+    assert.equal(cleared.statusCode, 200);
+    const afterClear = kind === "microphone"
+      ? cleared.payload.schedule.microphoneAssignments
+      : cleared.payload.schedule.iemAssignments;
+    assert.equal(afterClear[occurrenceId]?.[slotKey], undefined);
+    assert.equal((await saveEquipment(kind, ["iem-1"])).statusCode, 200);
+  }
+
+  await setDoc("churches", context.churchId, {
+    serviceEquipment: [{ id: "not-an-iem", category: "speaker", name: "Speaker" }],
+  }, { merge: true });
+  const arbitraryEquipment = await saveEquipment("iem", ["not-an-iem"]);
+  assert.equal(arbitraryEquipment.statusCode, 409);
 });
 
 test("schedule assignment paths share requirement and implicit slot validation", async (t) => {
@@ -9602,6 +9661,28 @@ test("schedule assignment paths share requirement and implicit slot validation",
   });
   assert.equal(addTwoExtra.statusCode, 200);
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, true);
+
+  // Race both equipment writers with removal after the slot has been created.
+  // Whichever write reaches the in-memory save queue first, no equipment map
+  // may retain an assignment for the removed slot.
+  const racedSlotKey = `${positionIds.Lead}::2`;
+  const raced = await Promise.all([
+    saveForPath("microphone", occurrenceIds.two, racedSlotKey, ["mic-1"]),
+    saveForPath("iem", occurrenceIds.two, racedSlotKey, ["iem-1"]),
+    callHandler(authHandlers.removeTeamSchedulePositionSlot, {
+      context,
+      params: { scheduleId },
+      body: { serviceId: occurrenceIds.two, positionSlotKey: racedSlotKey },
+    }),
+  ]);
+  assert.equal(raced[2].statusCode, 200);
+  const afterRemovalRace = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(Boolean(afterRemovalRace.payload.schedule.additionalPositionSlots?.[occurrenceIds.two]?.includes(racedSlotKey)), false);
+  assert.equal(afterRemovalRace.payload.schedule.microphoneAssignments?.[occurrenceIds.two]?.[racedSlotKey], undefined);
+  assert.equal(afterRemovalRace.payload.schedule.iemAssignments?.[occurrenceIds.two]?.[racedSlotKey], undefined);
 
   // The fallback does not bypass team ownership or position existence checks.
   for (const [kind, value] of paths) {
@@ -9947,6 +10028,92 @@ test("portable member import resolves repeated team and position references inde
   const importedMedia = await getDoc("teams", mediaB.payload.team.teamId);
   assert.equal(importedPraise.memberIds.includes(imported.memberId), true);
   assert.equal(importedMedia.memberIds.includes(imported.memberId), true);
+});
+
+test("portable member imports preserve unmapped positions and clear mapped blank positions and teams", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_member_blank_fields");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const firstPosition = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera", teamId: team.payload.team.teamId },
+  });
+  const secondPosition = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Sound", teamId: team.payload.team.teamId },
+  });
+  const memberResult = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Jane",
+      lastName: "Doe",
+      teamIds: [team.payload.team.teamId],
+      positionIds: [firstPosition.payload.position.positionId],
+    },
+  });
+  const memberId = memberResult.payload.member.memberId;
+
+  const updateFromCsv = async (csv) => {
+    const inspected = await callHandler(authHandlers.inspectPortableImport, {
+      context,
+      body: { type: "members", csv },
+    });
+    const preview = await callHandler(authHandlers.previewPortableImport, {
+      context,
+      body: { type: "members", csv, mapping: inspected.payload.mapping },
+    });
+    assert.equal(preview.payload.rows[0].matchedId, memberId);
+    const committed = await callHandler(authHandlers.commitPortableImport, {
+      context,
+      body: {
+        type: "members",
+        approvedRows: [{
+          row: preview.payload.rows[0].row,
+          action: "update",
+          recordId: memberId,
+          record: preview.payload.rows[0].record,
+        }],
+      },
+    });
+    assert.equal(committed.payload.summary.updated, 1, JSON.stringify(committed.payload.results));
+    return getDoc("teamRosterMembers", memberId);
+  };
+
+  let saved = await updateFromCsv(`First Name,Last Name,WorshipSync Member ID\nJane,Doe,${memberId}\n`);
+  assert.deepEqual(saved.positionIds, [firstPosition.payload.position.positionId]);
+
+  saved = await updateFromCsv(`First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,,${memberId}\n`);
+  assert.deepEqual(saved.positionIds, []);
+
+  saved = await updateFromCsv(`First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,Sound,${memberId}\n`);
+  assert.deepEqual(saved.positionIds, [secondPosition.payload.position.positionId]);
+
+  saved = await updateFromCsv(`First Name,Last Name,Teams,Positions,WorshipSync Member ID\nJane,Doe,,,${memberId}\n`);
+  assert.deepEqual(saved.positionIds, []);
+  const clearedTeam = await getDoc("teams", team.payload.team.teamId);
+  assert.equal(clearedTeam.memberIds.includes(memberId), false);
+  const createCsv = "First Name,Last Name,Positions\nNew,Member,\n";
+  const createInspection = await callHandler(authHandlers.inspectPortableImport, {
+    context,
+    body: { type: "members", csv: createCsv },
+  });
+  const createPreview = await callHandler(authHandlers.previewPortableImport, {
+    context,
+    body: { type: "members", csv: createCsv, mapping: createInspection.payload.mapping },
+  });
+  const created = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "members",
+      approvedRows: [{ row: createPreview.payload.rows[0].row, action: "create", record: createPreview.payload.rows[0].record }],
+    },
+  });
+  assert.equal(created.payload.summary.created, 1);
+  const createdMember = await getDoc("teamRosterMembers", created.payload.results[0].id);
+  assert.deepEqual(createdMember.positionIds, []);
 });
 
 test("portable schedule import can resolve foreign service and member references with local candidates", async (t) => {

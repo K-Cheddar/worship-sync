@@ -210,19 +210,14 @@ describe("getOccurrenceAssignmentSummary", () => {
     ).toBeNull();
   });
 
-  it("falls back to one slot per team position when nothing is required", () => {
-    // The service's requirements are all team-1 positions, so for team-2's
-    // schedule they scope out and every team position gets a single slot.
+  it("does not add positions from teams excluded by the service requirements", () => {
+    // The service requires only team-1 positions; this team's unrelated slot
+    // must not appear as a scheduling need for the service.
     const rows = summaryFor([
       schedule({}, { scheduleId: "schedule-2", teamId: "team-2" }),
     ]).filter((row) => row.teamId === "team-2");
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      teamName: "Technical",
-      slotLabel: "Front of House Audio",
-      memberName: null,
-    });
+    expect(rows).toEqual([]);
   });
 
   it("ignores the assignments of a schedule that does not cover this occurrence", () => {
