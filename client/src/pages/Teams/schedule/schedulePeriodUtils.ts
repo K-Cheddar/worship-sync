@@ -1,5 +1,6 @@
 import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
+import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
 import {
   RANGE_PRESET_OPTIONS,
   resolveRangePreset,
@@ -55,75 +56,59 @@ export const findReusablePeriodSchedule = ({
   schedules,
   churchId,
   teamId,
-  startDate,
-  endDate,
-  serviceIds,
   occurrences,
-  visibleStartDate = startDate,
-  visibleEndDate = endDate,
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
   teamId: string;
-  startDate: string;
-  endDate: string;
-  serviceIds: string[];
+  // Retained as accepted context for existing callers; occurrence identity and
+  // occurrence-date coverage determine compatibility.
+  startDate?: string;
+  endDate?: string;
+  serviceIds?: string[];
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
 }) => {
   const visibleOccurrenceIds = occurrences.map((occurrence) => occurrence.occurrenceId);
   if (visibleOccurrenceIds.length === 0) return { schedule: null, ambiguous: false };
-  const sameSet = (left: string[] | undefined, right: string[]) => {
-    if (!left || left.length !== right.length) return false;
-    const sortedLeft = [...left].sort();
-    const sortedRight = [...right].sort();
-    return sortedLeft.every((value, index) => value === sortedRight[index]);
-  };
-  const sameVisiblePeriod = schedules.filter((schedule) => {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const visibleDates = occurrences
+    .map((occurrence) => calendarDateInTimeZone(new Date(occurrence.startsAt), timeZone))
+    .sort();
+  const firstVisibleDate = visibleDates[0];
+  const lastVisibleDate = visibleDates[visibleDates.length - 1];
+  const compatible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
-      schedule.startDate > visibleStartDate || schedule.endDate < visibleEndDate
+      schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
     ) return false;
     const storedOccurrenceIds = schedule.occurrences?.map((occurrence) => occurrence.occurrenceId) || [];
     return visibleOccurrenceIds.every((id) => storedOccurrenceIds.includes(id));
   });
-  // Generated records outrank legacy records. The client cannot synchronously
-  // hash the current identity, so validate the stored key/ID pair and the
-  // church/team/date identity; this also admits records written with the old
-  // key that omitted churchId. Multiple generated matches are corrupt/ambiguous.
-  const generated = sameVisiblePeriod.filter((schedule) =>
-    schedule.source === "generated-period" &&
-    Boolean(schedule.generatedPeriodKey) &&
-    schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
-  );
-  if (generated.length > 0) {
-    const populated = generated.filter(hasScheduleData);
-    if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
-    if (populated.length > 1) return { schedule: null, ambiguous: true };
-    const exact = generated.filter((schedule) => schedule.startDate === startDate && schedule.endDate === endDate);
-    const preferred = exact.length ? exact : generated;
-    return preferred.length === 1
-      ? { schedule: preferred[0], ambiguous: false }
-      : { schedule: null, ambiguous: true };
-  }
-  const legacy = schedules.filter((schedule) =>
-    !schedule.archivedAt && schedule.churchId === churchId && schedule.teamId === teamId &&
-    schedule.source == null &&
-    schedule.startDate === startDate && schedule.endDate === endDate &&
-    sameSet(schedule.serviceIds, serviceIds) &&
-    sameSet(
-      schedule.occurrences?.map((occurrence) => occurrence.occurrenceId),
-      occurrences.map((occurrence) => occurrence.occurrenceId),
-    ),
-  );
-  if (legacy.length === 1) return { schedule: legacy[0], ambiguous: false };
-  const populated = legacy.filter(hasScheduleData);
-  return populated.length === 1
-    ? { schedule: populated[0], ambiguous: false }
-    : { schedule: null, ambiguous: legacy.length > 0 };
+  const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);
+  // A valid generated identity has always outranked its source-less legacy
+  // copy. Custom schedules remain peers so real conflicting staffing is not
+  // hidden by generated identity alone.
+  const resolutionCandidates = canonicalGenerated.length > 0
+    ? compatible.filter((schedule) => schedule.source != null || isCanonicalGeneratedSchedule(schedule))
+    : compatible;
+  const populated = resolutionCandidates.filter(hasScheduleData);
+  if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
+  if (populated.length > 1) return { schedule: null, ambiguous: true };
+
+  if (canonicalGenerated.length === 1) return { schedule: canonicalGenerated[0], ambiguous: false };
+  if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) return { schedule: null, ambiguous: true };
+  return resolutionCandidates.length === 1
+    ? { schedule: resolutionCandidates[0], ambiguous: false }
+    : { schedule: null, ambiguous: false };
 };
+
+const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
+  schedule.source === "generated-period" &&
+  Boolean(schedule.generatedPeriodKey) &&
+  schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`;
 
 const hasScheduleData = (schedule: TeamScheduleSummary) => {
   if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;
