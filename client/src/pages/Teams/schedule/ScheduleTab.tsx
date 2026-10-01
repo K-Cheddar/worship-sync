@@ -2860,9 +2860,20 @@ const ScheduleTab = ({
     // whole batch as one step, independent of how the reveal below is paced.
     const finalAssignments = { ...(previousSchedule.assignments || {}) };
     const undoChanges: ScheduleCellChange[] = [];
+    const batchChanges: Array<{
+      serviceId: string;
+      positionSlotKey: string;
+      serviceDate: string;
+      expectedCell: ScheduleCellState;
+      assignment: ScheduleCellState;
+    }> = [];
     entries.forEach((entry) => {
       const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
-      const before = previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey] ?? "";
+      const before = serializeAssignmentCell(
+        normalizeAssignmentCell(
+          previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey],
+        ),
+      ) || "";
       const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
       const nextCell = serializeAssignmentCell({
         primaryMemberId: entry.memberId,
@@ -2879,6 +2890,13 @@ const ScheduleTab = ({
         before,
         after: finalAssignments[entry.occurrenceId]?.[entry.columnKey] ?? "",
       });
+      batchChanges.push({
+        serviceId: entry.occurrenceId,
+        positionSlotKey: entry.columnKey,
+        serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+        expectedCell: before,
+        assignment: nextCell || "",
+      });
     });
     recordAssignmentChange(
       `auto-fill ${entries.length} ${entries.length === 1 ? "slot" : "slots"}`,
@@ -2891,29 +2909,16 @@ const ScheduleTab = ({
       ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
       } a person you'll have to assign manually.`
       : "";
-    // Persist the completed plan as one schedule update. Sending each entry one
-    // at a time made a large auto-fill slow and left it vulnerable to a page
-    // change midway through. Start saving before the local reveal so the two
-    // can run together, then keep autoFilling true until this request settles.
+    // Persist the completed plan as one targeted assignment batch. This keeps
+    // the save independent of filtered occurrence lists and unrelated schedule
+    // state. Start saving before the local reveal so both run together, then
+    // keep autoFilling true until this request settles.
     let saveFailed = false;
-    const autoFillPayload = {
-      name: previousSchedule.name,
-      description: previousSchedule.description || "",
-      teamId: previousSchedule.teamId,
-      startDate: previousSchedule.startDate || "",
-      endDate: previousSchedule.endDate || "",
-      serviceIds: previousSchedule.serviceIds || [],
-      occurrences: scheduleOccurrences,
-      assignments: finalAssignments,
-      microphoneAssignments: previousSchedule.microphoneAssignments,
-      iemAssignments: previousSchedule.iemAssignments,
-      additionalPositionSlots: previousSchedule.additionalPositionSlots,
-    };
     const saveWithConflictConfirmation = async (fingerprint?: string): Promise<void> => {
       try {
         const response = await enqueueAssignmentSave(() =>
-          updateTeamSchedule(churchId, previousSchedule.scheduleId, {
-            ...autoFillPayload,
+          updateTeamScheduleAssignmentsBatch(churchId, previousSchedule.scheduleId, {
+            changes: batchChanges,
             ...assignmentConflictPayload(fingerprint),
           }),
         );
@@ -2937,7 +2942,9 @@ const ScheduleTab = ({
             warning: "already scheduled in an overlapping service",
             ...conflictDetails,
             onConfirm: () => {
-              onScheduleSaved({ ...previousSchedule, assignments: finalAssignments });
+              if (scheduleMutationSeqRef.current === mutationSeq) {
+                onScheduleSaved({ ...previousSchedule, assignments: finalAssignments });
+              }
               void saveWithConflictConfirmation(conflictDetails.fingerprint);
             },
           });

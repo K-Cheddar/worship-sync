@@ -254,9 +254,15 @@ describe("ServiceManager combined services", () => {
       id: "first",
       name: "First Service",
       timerType: "countdown",
-      reccurence: "weekly",
-      dayOfWeek: 0,
-      time: "09:00",
+      reccurence: "multi_weekly",
+      daysOfWeek: [
+        { day: 0, time: "09:00" },
+        { day: 3, time: "18:00" },
+      ],
+      positionRequirements: [
+        { positionId: "lead", count: 1 },
+        { positionId: "assistant", count: 2 },
+      ],
     };
     const adaptedService = toPersistedTeamService(persistedService);
     const { rerender } = renderManager([
@@ -266,7 +272,7 @@ describe("ServiceManager combined services", () => {
     ]);
 
     await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
-    await user.click(screen.getByRole("combobox", { name: "Time" }));
+    await user.click(screen.getAllByRole("combobox", { name: "Time" })[0]);
     await user.click(
       within(screen.getByRole("listbox", { name: "Select hour" })).getByRole(
         "option",
@@ -289,9 +295,25 @@ describe("ServiceManager combined services", () => {
     const changes = (findActions(mockDispatch.mock.calls, "serviceTimes/updateService")[0].payload as {
       changes: Partial<ServiceTime>;
     }).changes;
-    expect(changes.time).not.toBe(persistedService.time);
+    expect(changes.daysOfWeek?.[0].time).not.toBe(persistedService.daysOfWeek?.[0].time);
+    expect(changes.positionRequirements).toHaveLength(2);
+    expect(Object.keys(changes.positionRequirements?.[0] || {})).toEqual([
+      "positionId",
+      "count",
+    ]);
     mockSelectorState = { autosaveIndicator: { debouncedSaveDepth: {} } };
-    const savedService = toPersistedTeamService({ ...persistedService, ...changes });
+    const savedService = toPersistedTeamService({
+      ...persistedService,
+      ...changes,
+      positionRequirements: changes.positionRequirements?.map((requirement) => ({
+        count: requirement.count,
+        positionId: requirement.positionId,
+      })),
+    });
+    expect(Object.keys(savedService.positionRequirements?.[0] || {})).toEqual([
+      "count",
+      "positionId",
+    ]);
     rerender(managerElement([
       savedService,
       toPersistedTeamService(sundayLate),

@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import _ from "lodash";
 import { Minus, Plus } from "lucide-react";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
@@ -298,21 +299,36 @@ const ServiceManager = ({
     }
     if (serviceTimesSavePending !== false && serviceTimesSavePending !== null) return;
 
-    // The Firebase writer converts undefined optional fields to null before persisting.
-    const comparableValue = (value: unknown) =>
-      JSON.stringify(value, (_key, nestedValue: unknown) =>
-        nestedValue === undefined ? null : nestedValue,
-      );
+    // Match Firebase's undefined-to-null persistence normalization before comparing values.
+    const normalizePersistedValue = (value: unknown): unknown => {
+      if (value === undefined) return null;
+      if (Array.isArray(value)) return value.map(normalizePersistedValue);
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value).map(([key, nestedValue]) => [
+            key,
+            normalizePersistedValue(nestedValue),
+          ]),
+        );
+      }
+      return value;
+    };
     const matchesExpectedService = (actual: ServiceTime | undefined, expected: ServiceTime) =>
       Boolean(actual) && Object.entries(expected).every(([key, value]) =>
-        key === "updatedAt" || comparableValue(actual?.[key as keyof ServiceTime]) === comparableValue(value),
+        key === "updatedAt" || _.isEqual(
+          normalizePersistedValue(actual?.[key as keyof ServiceTime]),
+          normalizePersistedValue(value),
+        ),
       );
     const completedKeys: string[] = [];
     pendingSaves.forEach((pending, key) => {
       const actual = services.find((service) => service.serviceId === key);
       const partnersCommitted = pending.partnerUpdates.every((update) => {
         const partner = services.find((service) => service.id === update.id);
-        return partner && comparableValue(partner.serviceGroupId ?? null) === comparableValue(update.serviceGroupId ?? null);
+        return partner && _.isEqual(
+          normalizePersistedValue(partner.serviceGroupId ?? null),
+          normalizePersistedValue(update.serviceGroupId ?? null),
+        );
       });
       const saveCommitted = serviceTimesSavePending === null ||
         (matchesExpectedService(actual, pending.expectedService) && partnersCommitted);

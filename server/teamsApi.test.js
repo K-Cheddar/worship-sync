@@ -272,7 +272,10 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
     teamName: "Media",
     positions: [{ name: "Camera" }],
-    members: [{ firstName: "Alex", lastName: "Rivera", positions: ["Camera"] }],
+    members: [
+      { firstName: "Alex", lastName: "Rivera", positions: ["Camera"] },
+      { firstName: "Blair", lastName: "Rivera", positions: ["Camera"] },
+    ],
   });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
@@ -394,6 +397,76 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
     metadataUpdate.payload.schedule.generatedPeriodKey,
     first.payload.schedule.generatedPeriodKey,
   );
+
+  const hiddenOccurrence = {
+    occurrenceId: "hidden-sabbath@2026-10-10T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Hidden Sabbath Service",
+    startsAt: "2026-10-10T10:00:00.000Z",
+    positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+  };
+  const persistedBeforeBatch = await getDoc(
+    "teamSchedules",
+    metadataUpdate.payload.schedule.scheduleId,
+  );
+  const preservedMicrophoneAssignments = {
+    [body.occurrences[0].occurrenceId]: {
+      [`${positionIds.Camera}::0`]: ["microphone-existing"],
+    },
+  };
+  const preservedIemAssignments = {
+    [body.occurrences[0].occurrenceId]: {
+      [`${positionIds.Camera}::0`]: ["iem-existing"],
+    },
+  };
+  const preservedAdditionalSlots = {
+    [body.occurrences[0].occurrenceId]: [`${positionIds.Camera}::2`],
+  };
+  await setDoc("teamSchedules", metadataUpdate.payload.schedule.scheduleId, {
+    occurrences: [...persistedBeforeBatch.occurrences, hiddenOccurrence],
+    assignments: {
+      ...persistedBeforeBatch.assignments,
+      [hiddenOccurrence.occurrenceId]: {
+        [`${positionIds.Camera}::0`]: { primaryMemberId: memberIds.Alex },
+      },
+    },
+    microphoneAssignments: preservedMicrophoneAssignments,
+    iemAssignments: preservedIemAssignments,
+    additionalPositionSlots: preservedAdditionalSlots,
+  }, { merge: true });
+
+  const batchAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentsBatch,
+    {
+      context,
+      params: { scheduleId: metadataUpdate.payload.schedule.scheduleId },
+      body: {
+        changes: [{
+          serviceId: body.occurrences[0].occurrenceId,
+          positionSlotKey: `${positionIds.Camera}::1`,
+          serviceDate: "2026-10-03",
+          expectedCell: "",
+          assignment: { primaryMemberId: memberIds.Blair },
+        }],
+      },
+    },
+  );
+  assert.equal(batchAssignment.statusCode, 200);
+  assert.deepEqual(
+    batchAssignment.payload.schedule.occurrences.map((item) => item.occurrenceId),
+    [body.occurrences[0].occurrenceId, hiddenOccurrence.occurrenceId],
+  );
+  assert.deepEqual(
+    batchAssignment.payload.schedule.assignments[hiddenOccurrence.occurrenceId],
+    { [`${positionIds.Camera}::0`]: { primaryMemberId: memberIds.Alex } },
+  );
+  assert.equal(
+    batchAssignment.payload.schedule.assignments[body.occurrences[0].occurrenceId][`${positionIds.Camera}::1`].primaryMemberId,
+    memberIds.Blair,
+  );
+  assert.deepEqual(batchAssignment.payload.schedule.microphoneAssignments, preservedMicrophoneAssignments);
+  assert.deepEqual(batchAssignment.payload.schedule.iemAssignments, preservedIemAssignments);
+  assert.deepEqual(batchAssignment.payload.schedule.additionalPositionSlots, preservedAdditionalSlots);
 
   const generatedSchedule = metadataUpdate.payload.schedule;
   const updateBody = {

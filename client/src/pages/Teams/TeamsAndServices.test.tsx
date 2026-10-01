@@ -179,7 +179,9 @@ type UpdateTeamScheduleAssignmentMicrophonesResponse = Awaited<
 type UpdateTeamScheduleAssignmentIemsResponse = Awaited<
   ReturnType<typeof updateTeamScheduleAssignmentIems>
 >;
-type UpdateTeamScheduleResponse = Awaited<ReturnType<typeof updateTeamSchedule>>;
+type UpdateTeamScheduleAssignmentsBatchResponse = Awaited<
+  ReturnType<typeof updateTeamScheduleAssignmentsBatch>
+>;
 type UpdateTeamScheduleAssignmentSwapResponse = Awaited<
   ReturnType<typeof updateTeamScheduleAssignmentSwap>
 >;
@@ -1301,7 +1303,7 @@ describe("Teams", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves auto-fill as one protected schedule update", async () => {
+  it("saves custom-schedule auto-fill as one targeted assignment batch", async () => {
     const user = userEvent.setup();
     const autoFillSchedule: TeamSchedule = {
       ...scheduleBootstrap.schedules[0],
@@ -1319,7 +1321,7 @@ describe("Teams", () => {
         },
       ],
     };
-    let resolveSave: (value: UpdateTeamScheduleResponse) => void = () => undefined;
+    let resolveSave: (value: UpdateTeamScheduleAssignmentsBatchResponse) => void = () => undefined;
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse({
         ...scheduleBootstrap,
@@ -1330,9 +1332,9 @@ describe("Teams", () => {
         schedules: [autoFillSchedule],
       }),
     );
-    mockUpdateTeamSchedule.mockImplementationOnce(
+    mockUpdateTeamScheduleAssignmentsBatch.mockImplementationOnce(
       () =>
-        new Promise<UpdateTeamScheduleResponse>((resolve) => {
+        new Promise<UpdateTeamScheduleAssignmentsBatchResponse>((resolve) => {
           resolveSave = resolve;
         }),
     );
@@ -1344,14 +1346,28 @@ describe("Teams", () => {
     await user.click(await screen.findByRole("button", { name: /^Continue$/i }));
 
     await waitFor(() => {
-      expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1);
+      expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledTimes(1);
     });
     expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
-    expect(mockUpdateTeamSchedule).toHaveBeenCalledWith(
+    expect(mockUpdateTeamSchedule).not.toHaveBeenCalled();
+    expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledWith(
       "church-1",
       "schedule-july",
       expect.objectContaining({
-        assignments: expect.objectContaining({ [sundayOccurrenceId]: expect.any(Object) }),
+        changes: expect.arrayContaining([
+          expect.objectContaining({
+            serviceId: sundayOccurrenceId,
+            positionSlotKey: "position-vocal::0",
+            expectedCell: "",
+            assignment: { primaryMemberId: expect.any(String) },
+          }),
+          expect.objectContaining({
+            serviceId: sundayOccurrenceId,
+            positionSlotKey: "position-keys::0",
+            expectedCell: "",
+            assignment: { primaryMemberId: expect.any(String) },
+          }),
+        ]),
       }),
     );
 
@@ -1364,13 +1380,237 @@ describe("Teams", () => {
       success: true,
       schedule: {
         ...autoFillSchedule,
-        assignments:
-          mockUpdateTeamSchedule.mock.calls[0]?.[2]?.assignments ?? {},
+        assignments: {
+          [sundayOccurrenceId]: Object.fromEntries(
+            mockUpdateTeamScheduleAssignmentsBatch.mock.calls[0][2].changes.map(
+              (change) => [change.positionSlotKey, change.assignment],
+            ),
+          ) as NonNullable<TeamSchedule["assignments"]>[string],
+        },
       },
+      accepted: [
+        { serviceId: sundayOccurrenceId, positionSlotKey: "position-vocal::0" },
+        { serviceId: sundayOccurrenceId, positionSlotKey: "position-keys::0" },
+      ],
+      skipped: [],
     });
+    await user.click(screen.getByRole("button", { name: /^Stay$/i }));
     await waitFor(() => {
       expect(screen.getByText(/Auto-filled 2 of 2 open slots/i)).toBeInTheDocument();
     });
+
+  });
+
+  it("keeps Auto Fill as one undo and redo assignment operation", async () => {
+    const user = userEvent.setup();
+    const autoFillSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: {},
+      occurrences: [
+        {
+          ...scheduleBootstrap.schedules[0].occurrences![0],
+          positionRequirements: [
+            { positionId: "position-vocal", count: 1 },
+            { positionId: "position-keys", count: 1 },
+          ],
+        },
+      ],
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: scheduleBootstrap.members.map((member) => ({
+          ...member,
+          blockoutDates: [],
+        })),
+        schedules: [autoFillSchedule],
+      }),
+    );
+    let persistedSchedule = autoFillSchedule;
+    mockUpdateTeamScheduleAssignmentsBatch.mockImplementation(async (_churchId, _scheduleId, body) => {
+      const assignments = { ...(persistedSchedule.assignments || {}) };
+      body.changes.forEach((change) => {
+        const row = { ...(assignments[change.serviceId] || {}) };
+        if (change.assignment) row[change.positionSlotKey] = change.assignment;
+        else delete row[change.positionSlotKey];
+        if (Object.keys(row).length) assignments[change.serviceId] = row;
+        else delete assignments[change.serviceId];
+      });
+      persistedSchedule = { ...persistedSchedule, assignments };
+      return {
+        success: true,
+        schedule: persistedSchedule,
+        accepted: body.changes.map(({ serviceId, positionSlotKey }) => ({ serviceId, positionSlotKey })),
+        skipped: [],
+      };
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /More schedule actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Auto-fill$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Continue$/i }));
+    await screen.findByText(/Auto-filled 2 of 2 open slots/i);
+
+    const undoButton = screen.getByRole("button", { name: /Undo auto-fill 2 slots/i });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    await user.click(undoButton);
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledTimes(2));
+    expect(mockUpdateTeamScheduleAssignmentsBatch.mock.calls[1][2].changes).toHaveLength(2);
+
+    const redoButton = screen.getByRole("button", { name: /Redo auto-fill 2 slots/i });
+    await waitFor(() => expect(redoButton).toBeEnabled());
+    await user.click(redoButton);
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledTimes(3));
+    expect(mockUpdateTeamScheduleAssignmentsBatch.mock.calls[2][2].changes).toHaveLength(2);
+  });
+
+  it("auto-fills generated schedules without changing hidden occurrence identity or assignments", async () => {
+    const user = userEvent.setup();
+    const hiddenOccurrenceId = "service-hidden@2026-07-12T10:00:00.000Z";
+    const hiddenAssignments = {
+      [hiddenOccurrenceId]: {
+        "position-vocal::0": { primaryMemberId: "member-avery" },
+      },
+    };
+    const generatedSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      scheduleId: "generated_0123456789abcdef",
+      source: "generated-period",
+      generatedPeriodKey: "july-2026-key",
+      assignments: hiddenAssignments,
+      occurrences: [
+        {
+          ...scheduleBootstrap.schedules[0].occurrences![0],
+          positionRequirements: [
+            { positionId: "position-vocal", count: 1 },
+            { positionId: "position-keys", count: 1 },
+          ],
+        },
+        {
+          occurrenceId: hiddenOccurrenceId,
+          serviceId: "service-hidden",
+          name: "Hidden service",
+          startsAt: "2026-07-12T10:00:00.000Z",
+          // This persisted service has no position on the selected team, so it
+          // has no assignment cells in the Auto Fill plan.
+          positionRequirements: [{ positionId: "position-hidden", count: 1 }],
+        },
+      ],
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: scheduleBootstrap.members.map((member) => ({
+          ...member,
+          blockoutDates: [],
+        })),
+        schedules: [generatedSchedule],
+      }),
+    );
+    mockUpdateTeamScheduleAssignmentsBatch.mockImplementationOnce(async (_churchId, _scheduleId, body) => {
+      const assignments = { ...generatedSchedule.assignments };
+      body.changes.forEach((change) => {
+        assignments[change.serviceId] = {
+          ...(assignments[change.serviceId] || {}),
+          ...(change.assignment
+            ? { [change.positionSlotKey]: change.assignment }
+            : {}),
+        };
+      });
+      return {
+        success: true,
+        schedule: {
+          ...generatedSchedule,
+          assignments: assignments as NonNullable<TeamSchedule["assignments"]>,
+        },
+        accepted: body.changes.map(({ serviceId, positionSlotKey }) => ({ serviceId, positionSlotKey })),
+        skipped: [],
+      };
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /More schedule actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Auto-fill$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Continue$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText(/Auto-filled 2 of 2 open slots/i)).toBeInTheDocument();
+    const [, scheduleId, body] = mockUpdateTeamScheduleAssignmentsBatch.mock.calls[0];
+    expect(scheduleId).toBe("generated_0123456789abcdef");
+    expect(body.changes).toHaveLength(2);
+    expect(body.changes.every((change) => change.serviceId === sundayOccurrenceId)).toBe(true);
+    expect(body).not.toHaveProperty("occurrences");
+    expect(body).not.toHaveProperty("assignments");
+    expect(mockUpdateTeamSchedule).not.toHaveBeenCalled();
+    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+  });
+
+  it("retries Auto Fill after cross-team conflict confirmation with the server fingerprint", async () => {
+    const user = userEvent.setup();
+    const autoFillSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: {},
+      occurrences: [
+        {
+          ...scheduleBootstrap.schedules[0].occurrences![0],
+          positionRequirements: [
+            { positionId: "position-vocal", count: 1 },
+            { positionId: "position-keys", count: 1 },
+          ],
+        },
+      ],
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: scheduleBootstrap.members.map((member) => ({
+          ...member,
+          blockoutDates: [],
+        })),
+        schedules: [autoFillSchedule],
+      }),
+    );
+    mockUpdateTeamScheduleAssignmentsBatch.mockRejectedValueOnce(
+      Object.assign(new Error("Schedule conflict"), {
+        status: 409,
+        details: {
+          conflictFingerprint: "auto-fill-conflict-v1",
+          occurrenceConflicts: [{
+            memberId: "member-avery",
+            scheduleId: "other-schedule",
+            scheduleName: "Production",
+            teamId: "team-production",
+            occurrenceId: sundayOccurrenceId,
+            conflictingOccurrenceId: sundayOccurrenceId,
+            cellKeys: ["position-camera::0"],
+          }],
+        },
+      }),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /More schedule actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Auto-fill$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Continue$/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /Schedule conflict/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Schedule anyway/i }));
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentsBatch).toHaveBeenCalledTimes(2);
+    });
+    expect(mockUpdateTeamScheduleAssignmentsBatch.mock.calls[1][2]).toEqual(
+      expect.objectContaining({
+        confirmedOccurrenceConflictFingerprint: "auto-fill-conflict-v1",
+      }),
+    );
+    expect(await screen.findByText(/Auto-filled 2 of 2 open slots/i)).toBeInTheDocument();
   });
 
   it("clears just-filled highlights when auto-fill save fails", async () => {
@@ -1403,9 +1643,9 @@ describe("Teams", () => {
     );
     // Reject after the first reveal step has painted so the failure path must
     // clear just-filled highlights rather than relying on them never appearing.
-    mockUpdateTeamSchedule.mockImplementationOnce(
+    mockUpdateTeamScheduleAssignmentsBatch.mockImplementationOnce(
       () =>
-        new Promise<UpdateTeamScheduleResponse>((_resolve, reject) => {
+        new Promise<UpdateTeamScheduleAssignmentsBatchResponse>((_resolve, reject) => {
           setTimeout(() => reject(new Error("Save failed")), 80);
         }),
     );
