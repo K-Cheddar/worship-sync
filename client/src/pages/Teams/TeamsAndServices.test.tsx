@@ -773,7 +773,9 @@ describe("Teams", () => {
     await user.click(addPositionButtons[0]);
     await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
     await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
-    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+    // Adding a position slot must not create another assignment write. The
+    // first assignment above already persisted once for the previous period.
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(2);
     expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[1]).toBeLessThan(
       mockAddTeamSchedulePositionSlot.mock.invocationCallOrder[0],
