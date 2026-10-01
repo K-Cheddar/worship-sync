@@ -11,7 +11,9 @@ import {
   getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
 import type {
+  ServiceEquipment,
   ServicePlanElement,
+  ServicePlanMicrophone,
   ServicePlanSection,
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
@@ -42,6 +44,11 @@ export type ServicePlanImportSummary = {
   added: number;
   removed: number;
   updated: number;
+};
+
+export type ServicePlanImportEquipmentDisplayContext = {
+  microphones?: ReadonlyArray<Pick<ServicePlanMicrophone, "id" | "name" | "type">>;
+  iemEquipment?: ReadonlyArray<Pick<ServiceEquipment, "id" | "name" | "subtype">>;
 };
 
 const itemName = (element: ServicePlanElement) =>
@@ -279,6 +286,7 @@ const describeScriptureReferenceDifference = (
 const changedFields = (
   current: ServicePlanElement,
   next: ServicePlanElement,
+  displayContext: ServicePlanImportEquipmentDisplayContext,
 ): ServicePlanImportFieldChange[] => {
   const fields: ServicePlanImportFieldChange[] = [];
   if (!richTextEqual(current.title, next.title)) {
@@ -335,15 +343,20 @@ const changedFields = (
   const nextAssignees = getServicePlanElementAssigneeNames(next).map(normalizedText);
   const assignmentIdentity = (element: ServicePlanElement) =>
     getServicePlanElementAssignees(element)
-      .filter((assignee) => assignee.name?.trim() || assignee.memberId)
-      .map((assignee) => [normalizedText(assignee.name), assignee.memberId || ""]);
+      .map((assignee) => ({
+        name: normalizedText(assignee.name),
+        memberId: assignee.memberId || "",
+        microphoneIds: [...(assignee.microphoneIds || [])].sort(),
+        iemIds: [...(assignee.iemIds || [])].sort(),
+      }))
+      .filter((assignee) => assignee.name || assignee.memberId || assignee.microphoneIds.length || assignee.iemIds.length);
   const sameAssignment = JSON.stringify(assignmentIdentity(current)) ===
     JSON.stringify(assignmentIdentity(next));
   if (!sameAssignment) {
     fields.push({
-      label: "Assigned to",
-      before: optionalValue(currentAssignees.join(", "), "Unassigned"),
-      after: optionalValue(nextAssignees.join(", "), "Unassigned") +
+      label: "Assignments and equipment",
+      before: optionalValue(formatAssignmentSummary(current, displayContext), "Unassigned"),
+      after: optionalValue(formatAssignmentSummary(next, displayContext), "Unassigned") +
         (JSON.stringify(currentAssignees) === JSON.stringify(nextAssignees)
           ? " (person link changed)"
           : ""),
@@ -373,10 +386,49 @@ const changedFields = (
   return fields;
 };
 
+const formatAssignmentSummary = (
+  element: ServicePlanElement,
+  displayContext: ServicePlanImportEquipmentDisplayContext,
+) => {
+  const microphonesById = new Map(
+    (displayContext.microphones || []).map((microphone) => [microphone.id, microphone]),
+  );
+  const iemsById = new Map(
+    (displayContext.iemEquipment || []).map((iem) => [iem.id, iem]),
+  );
+  const formatEquipment = (id: string, category: "microphone" | "iem") => {
+    if (category === "microphone") {
+      const equipment = microphonesById.get(id);
+      if (!equipment) return "Microphone";
+      const name = normalizedText(equipment.name) || "Microphone";
+      const subtype = normalizedText(equipment.type);
+      return subtype && subtype.toLocaleLowerCase() !== name.toLocaleLowerCase()
+        ? `${name} · ${subtype}`
+        : name;
+    }
+    const equipment = iemsById.get(id);
+    if (!equipment) return "IEM";
+    const name = normalizedText(equipment.name) || "IEM";
+    const subtype = normalizedText(equipment.subtype);
+    return subtype && subtype.toLocaleLowerCase() !== name.toLocaleLowerCase()
+      ? `${name} · ${subtype}`
+      : name;
+  };
+  return getServicePlanElementAssignees(element).map((assignee) => {
+    const identity = normalizedText(assignee.name) || (assignee.memberId ? "Linked member" : "Unassigned slot");
+    const equipment = [
+      ...(assignee.microphoneIds || []).map((id) => formatEquipment(id, "microphone")),
+      ...(assignee.iemIds || []).map((id) => formatEquipment(id, "iem")),
+    ].sort();
+    return equipment.length ? `${identity} (${equipment.join(", ")})` : identity;
+  }).join(", ");
+};
+
 /** Describes the user-visible result of a selected Service Planning refresh. */
 export const summarizeServicePlanImport = (
   currentSections: ServicePlanSection[],
   nextSections: ServicePlanSection[],
+  displayContext: ServicePlanImportEquipmentDisplayContext = {},
 ): ServicePlanImportSummary => {
   const currentItems = new Map<
     string,
@@ -420,7 +472,7 @@ export const summarizeServicePlanImport = (
       });
       return;
     }
-    const fields = changedFields(current.element, element);
+    const fields = changedFields(current.element, element, displayContext);
     if (fields.length) {
       changes.push({
         id,

@@ -15,6 +15,7 @@ import {
   useFloatingWindowBringToFront,
   useFloatingWindowManager,
 } from "./FloatingWindowZIndexContext";
+import { OverlayPortalProvider } from "./FloatingWindowPortalContext";
 
 const TITLE_BAR_HEIGHT = 40;
 const MIN_WIDTH = 200;
@@ -151,6 +152,8 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const { register, update, setFrontmost } = useFloatingWindowManager();
     // Fresh top z-index on mount so new windows open above existing ones.
     const [activeZ, setActiveZ] = useState(() => bringToFront());
+    const activeZRef = useRef(activeZ);
+    activeZRef.current = activeZ;
 
     const raiseWindow = useCallback(() => {
       // Skip setState when already frontmost — a re-render during touchstart
@@ -159,6 +162,42 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       setFrontmost(windowId);
     }, [bringToFront, setFrontmost, windowId]);
 
+    const [overlayPortalContainer, setOverlayPortalContainer] =
+      useState<HTMLElement | null>(null);
+
+    // Keep overlay DOM outside the window's overflow and transform contexts,
+    // while retaining a React ownership boundary for Radix focus/dismissal.
+    useLayoutEffect(() => {
+      const ownerDocument = containerRef.current?.ownerDocument;
+      if (!ownerDocument) return;
+
+      const host = ownerDocument.createElement("div");
+      host.dataset.testid = "floating-window-overlay-host";
+      host.dataset.floatingWindowOverlayHost = windowId;
+      host.style.position = "fixed";
+      host.style.inset = "0";
+      host.style.width = "100%";
+      host.style.height = "100%";
+      host.style.pointerEvents = "none";
+      host.style.isolation = "isolate";
+      host.style.zIndex = String(activeZRef.current + 1);
+      host.addEventListener("pointerdown", raiseWindow);
+      ownerDocument.body.appendChild(host);
+      setOverlayPortalContainer(host);
+
+      return () => {
+        host.removeEventListener("pointerdown", raiseWindow);
+        host.remove();
+        setOverlayPortalContainer(null);
+      };
+    }, [raiseWindow, windowId]);
+
+    useEffect(() => {
+      if (overlayPortalContainer) {
+        overlayPortalContainer.style.zIndex = String(activeZ + 1);
+      }
+    }, [activeZ, overlayPortalContainer]);
+
     // ── Animation state ──────────────────────────────────────────────────────
     const [phase, setPhase] = useState<AnimPhase>(
       initiallyMinimized ? "minimized" : "opening",
@@ -166,6 +205,20 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const phaseRef = useRef(phase);
     phaseRef.current = phase;
     const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+      if (!overlayPortalContainer) return;
+
+      const overlayHidden = [
+        "minimizing",
+        "minimized",
+        "restoring",
+        "closing",
+      ].includes(phase);
+      overlayPortalContainer.style.visibility = overlayHidden
+        ? "hidden"
+        : "visible";
+    }, [overlayPortalContainer, phase]);
 
     const clearAnimTimer = () => {
       if (animTimerRef.current) {
@@ -633,12 +686,8 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       ...(resolvedHeight !== undefined ? { height: resolvedHeight } : {}),
       zIndex: activeZ,
       transformOrigin: "bottom center",
-      // Omitted (not an identity transform) at rest: any `transform` value,
-      // even `scaleX(1) scaleY(1)`, makes this element the containing block
-      // for `position: fixed` descendants — which breaks a non-portaled
-      // Radix popper's viewport-relative sizing (see Select's `disablePortal`),
-      // making it size itself for the full viewport and then get silently
-      // clipped by this window's `overflow-hidden` instead of fitting inside it.
+      // Omit an identity transform at rest so fixed-position descendants keep
+      // viewport positioning during ordinary window interaction.
       ...(windowShrunk ? { transform: "scaleX(0.55) scaleY(0.08)" } : {}),
       opacity: windowShrunk ? 0 : 1,
       transition: `${minMaxTransition}, ${openCloseTransition}`,
@@ -658,82 +707,84 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     };
 
     return (
-      <div
-        data-testid="floating-window"
-        style={windowStyle}
-        ref={containerRef}
-        onMouseDown={raiseWindow}
-        onTouchStart={raiseWindow}
-        className={cn(
-          "flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-gray-800 shadow-2xl",
-          isMinimized && "rounded-b-none",
-          className,
-        )}
-      >
-        {/* Title bar — keep above content and resize handles for reliable close/minimize taps */}
+      <OverlayPortalProvider container={overlayPortalContainer}>
         <div
-          onMouseDown={handleTitleMouseDown}
-          onTouchStart={handleTitleTouchStart}
-          className="relative z-20 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
+          data-testid="floating-window"
+          style={windowStyle}
+          ref={containerRef}
+          onMouseDown={raiseWindow}
+          onTouchStart={raiseWindow}
+          className={cn(
+            "flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-gray-800 shadow-2xl",
+            isMinimized && "rounded-b-none",
+            className,
+          )}
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              variant="tertiary"
-              svg={isMinimized ? Maximize2 : Minus}
-              iconSize="sm"
-              className={TITLE_BAR_CONTROL_CLASS}
-              onMouseDown={stopTitleControlGesture}
-              onTouchStart={stopTitleControlGesture}
-              onClick={handleMinimize}
-              aria-label={isMinimized ? "Restore window" : "Minimize window"}
-            />
-            <Button
-              variant="tertiary"
-              svg={X}
-              iconSize="sm"
-              className={TITLE_BAR_CONTROL_CLASS}
-              onMouseDown={stopTitleControlGesture}
-              onTouchStart={stopTitleControlGesture}
-              onClick={handleClose}
-              aria-label="Close window"
-            />
-          </div>
-        </div>
-
-        {/* Content — animates in/out independently for minimize/restore */}
-        <div style={contentStyle} className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", contentHidden && "pointer-events-none")}>
+          {/* Title bar — keep above content and resize handles for reliable close/minimize taps */}
           <div
-            className={cn(
-              "min-h-0 flex-1 overflow-y-auto p-3 scrollbar-variable",
-              contentClassName,
-            )}
+            onMouseDown={handleTitleMouseDown}
+            onTouchStart={handleTitleTouchStart}
+            className="relative z-20 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
           >
-            {children}
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="tertiary"
+                svg={isMinimized ? Maximize2 : Minus}
+                iconSize="sm"
+                className={TITLE_BAR_CONTROL_CLASS}
+                onMouseDown={stopTitleControlGesture}
+                onTouchStart={stopTitleControlGesture}
+                onClick={handleMinimize}
+                aria-label={isMinimized ? "Restore window" : "Minimize window"}
+              />
+              <Button
+                variant="tertiary"
+                svg={X}
+                iconSize="sm"
+                className={TITLE_BAR_CONTROL_CLASS}
+                onMouseDown={stopTitleControlGesture}
+                onTouchStart={stopTitleControlGesture}
+                onClick={handleClose}
+                aria-label="Close window"
+              />
+            </div>
           </div>
-        </div>
 
-        {/* Resize handles — sides and bottom only (never on the title bar) */}
-        {resizable && !isMinimized && (
-          <>
-            <div data-testid="resize-handle-w" data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
-            <div data-testid="resize-handle-e" data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />
-            <div data-testid="resize-handle-s" data-resize-dir="s" className={BOTTOM_EDGE_RESIZE_CLASS} {...resizeHandleProps} />
+          {/* Content — animates in/out independently for minimize/restore */}
+          <div style={contentStyle} className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", contentHidden && "pointer-events-none")}>
             <div
-              data-testid="resize-handle-sw"
-              data-resize-dir="sw"
-              className={cn(BOTTOM_CORNER_RESIZE_CLASS, "left-0 cursor-nesw-resize")}
-              {...resizeHandleProps}
-            />
-            <div
-              data-testid="resize-handle-se"
-              data-resize-dir="se"
-              className={cn(BOTTOM_CORNER_RESIZE_CLASS, "right-0 cursor-nwse-resize")}
-              {...resizeHandleProps}
-            />
-          </>
-        )}
-      </div>
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto p-3 scrollbar-variable",
+                contentClassName,
+              )}
+            >
+              {children}
+            </div>
+          </div>
+
+          {/* Resize handles — sides and bottom only (never on the title bar) */}
+          {resizable && !isMinimized && (
+            <>
+              <div data-testid="resize-handle-w" data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
+              <div data-testid="resize-handle-e" data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />
+              <div data-testid="resize-handle-s" data-resize-dir="s" className={BOTTOM_EDGE_RESIZE_CLASS} {...resizeHandleProps} />
+              <div
+                data-testid="resize-handle-sw"
+                data-resize-dir="sw"
+                className={cn(BOTTOM_CORNER_RESIZE_CLASS, "left-0 cursor-nesw-resize")}
+                {...resizeHandleProps}
+              />
+              <div
+                data-testid="resize-handle-se"
+                data-resize-dir="se"
+                className={cn(BOTTOM_CORNER_RESIZE_CLASS, "right-0 cursor-nwse-resize")}
+                {...resizeHandleProps}
+              />
+            </>
+          )}
+        </div>
+      </OverlayPortalProvider>
     );
   },
 );

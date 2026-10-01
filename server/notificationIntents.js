@@ -37,6 +37,13 @@ const safeErrorMessage = (error, fallback) => {
   if (!value || /https?:\/\/|(?:^|\/)\/?(?:a|schedule-response|teams\/intake)\//i.test(value)) return fallback;
   return value.slice(0, 300);
 };
+const safeProviderFailureMessage = (error, fallback) => {
+  const value = normalize(error?.message || error?.details?.message || error?.response?.data?.message);
+  if (!value) return fallback;
+  return value
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]")
+    .slice(0, 500);
+};
 const intentIdFor = (hashValue, churchId, idempotencyKey) =>
   hashValue(`${churchId}|notification-intent|${idempotencyKey}`);
 
@@ -203,13 +210,12 @@ export const createNotificationIntentHandlers = ({
           weekday: "short", month: "short", day: "numeric",
         })
       : "an upcoming date";
-    const dateRange = form ? `${form.startDate} through ${form.endDate}` : "";
     switch (intentType) {
       case "availability_request":
       case "availability_reminder":
         return buildTeamIntakeSms({
           churchName,
-          formName: `${normalize(form?.name) || "availability"}${dateRange ? ` (${dateRange})` : ""}`,
+          formName: normalize(form?.name) || "availability",
           publicUrl,
           intentType,
           collectsAvailability: intakeFormCollectsServiceAvailability(form?.enabledFields, form?.availabilityOccurrences),
@@ -337,7 +343,7 @@ export const createNotificationIntentHandlers = ({
       throw httpError(400, messages[finalEligibility.status]);
     }
     const currentMessage = intent.sourceType === "team_intake_recipient"
-      ? buildTeamIntakeSms({ churchName: church?.name, formName: `${form.name} (${form.startDate} through ${form.endDate})`, publicUrl: responseUrlOverride || sourceContext.publicUrl, intentType: intent.intentType, collectsAvailability: intakeFormCollectsServiceAvailability(form.enabledFields, form.availabilityOccurrences) }).body
+      ? buildTeamIntakeSms({ churchName: church?.name, formName: form.name, publicUrl: responseUrlOverride || sourceContext.publicUrl, intentType: intent.intentType, collectsAvailability: intakeFormCollectsServiceAvailability(form.enabledFields, form.availabilityOccurrences) }).body
       : messageFor({ intentType: intent.intentType, church, schedule, occurrence, ...sourceContext, responseUrl: responseUrlOverride || sourceContext.responseUrl });
     if (intent.sourceType === "team_schedule" && intent.sourceVersion && intent.sourceVersion !== normalize(schedule.updatedAt) && intent.intentType !== "assignment_notification") {
       throw httpError(409, "The schedule changed after this preview. Refresh the message preview.");
@@ -738,7 +744,7 @@ export const createNotificationIntentHandlers = ({
         await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, {
           status: definitive ? "failed" : "pending", outcome,
           failureCode: String(error?.code || "provider_outcome_uncertain").slice(0, 80),
-          failureMessage: safeErrorMessage(error, "SMS provider outcome could not be confirmed."), updatedAt,
+          failureMessage: safeProviderFailureMessage(error, "SMS provider outcome could not be confirmed."), updatedAt,
         }, { merge: true });
         await setDoc(COLLECTIONS.notificationIntents, intentId, { status: outcome, ...(definitive ? { approvalSnapshot: null } : {}), attemptId, updatedAt }, { merge: true });
         return res.status(definitive ? 502 : 202).json({ success: false, outcome, errorMessage: definitive ? "The SMS provider rejected this message." : "The provider outcome is uncertain. Review delivery history before retrying." });
@@ -802,7 +808,7 @@ export const createNotificationIntentHandlers = ({
     if (!intent) {
       const message = buildTeamIntakeSms({
         churchName: context.church?.name,
-        formName: `${context.form.name} (${context.form.startDate} through ${context.form.endDate})`,
+        formName: context.form.name,
         publicUrl: context.publicUrl,
         intentType: "availability_request",
         collectsAvailability: intakeFormCollectsServiceAvailability(context.form.enabledFields, context.form.availabilityOccurrences),
@@ -1055,6 +1061,24 @@ export const createNotificationIntentHandlers = ({
       if (!attemptByIntentId.has(attempt.notificationIntentId)) attemptByIntentId.set(attempt.notificationIntentId, attempt);
     }
     const recipientById = new Map(recipients.map((recipient) => [recipient.recipientId || recipient.id, recipient]));
+    const selectedMemberIds = new Set(batch.selectedMemberIds || []);
+    const intakeRecipients = recipients
+      .filter((recipient) => selectedMemberIds.has(recipient.memberId))
+      .map((recipient) => {
+        const {
+          recipientTokenNonce,
+          recipientTokenHash,
+          recipientTokenCiphertext,
+          createdByUid,
+          linkCopiedByUid,
+          ...clientRecipient
+        } = recipient;
+        return {
+          ...clientRecipient,
+          ...(createdByUid ? { createdBy: createdByUid } : {}),
+          ...(linkCopiedByUid ? { linkCopiedBy: linkCopiedByUid } : {}),
+        };
+      });
     const formatted = rows.map((row) => {
       const intent = intentById.get(row.intentId);
       const attempt = intent ? attemptByIntentId.get(intent.intentId || intent.id) : null;
@@ -1105,6 +1129,7 @@ export const createNotificationIntentHandlers = ({
       selectedMemberIds: batch.selectedMemberIds || [],
       intentIds: batch.intentIds || [],
       recipients: formatted,
+      intakeRecipients,
       approvalVersion: reviewVersion,
       createdAt: batch.createdAt,
       updatedAt: batch.updatedAt,
@@ -1273,7 +1298,7 @@ export const createNotificationIntentHandlers = ({
           } else {
             const message = buildTeamIntakeSms({
               churchName: result.churchName,
-              formName: `${prepared.form.name} (${prepared.form.startDate} through ${prepared.form.endDate})`,
+              formName: prepared.form.name,
               publicUrl: result.publicUrl,
               intentType,
               collectsAvailability: intakeFormCollectsServiceAvailability(prepared.form.enabledFields, prepared.form.availabilityOccurrences),

@@ -61,6 +61,7 @@ const StreamPresentationPreview = memo(
     const streamItemContentBlocked = useSelector(
       (state) => selectOutputSlot(state, outputId, "stream").itemContentBlocked,
     );
+    const isContentHidden = streamItemContentBlocked;
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
       state.timers.timers.find((timer) => timer.id === info.timerId),
@@ -88,17 +89,22 @@ const StreamPresentationPreview = memo(
           (variant === "overlayStreamFocus" && showFocusedStreamControls)
         }
         isMobile={isMobile}
-        streamItemContentBlocked={hiddenStatus?.hidden ?? streamItemContentBlocked}
-        showContentHiddenIndicator={Boolean(hiddenStatus)}
+        // Redux reflects the operator's current toggle immediately. The
+        // Firebase snapshot is confirmation metadata and may briefly lag it.
+        streamItemContentBlocked={isContentHidden}
+        showContentHiddenIndicator={isContentHidden}
         contentHiddenUnconfirmed={
-          Boolean(hiddenStatus?.hidden) &&
-          (!hiddenStatus?.confirmed || !globalInfo?.realtimeConnected)
+          isContentHidden &&
+          (!hiddenStatus?.hidden ||
+            !hiddenStatus.confirmed ||
+            !globalInfo?.realtimeConnected)
         }
         contentHiddenUnconfirmedLabel={
           globalInfo?.realtimeConnected ? "Syncing" : "Offline"
         }
         previewScale={previewScale}
         fillWidth={fillWidth}
+        centerPreview={variant === "overlayStreamFocus"}
         footer={footer}
         isVisible={isVisible}
         suspendPreviewMedia={suspendPreviewMedia}

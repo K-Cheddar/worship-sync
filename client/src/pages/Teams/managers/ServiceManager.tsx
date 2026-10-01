@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import _ from "lodash";
 import { Minus, Plus } from "lucide-react";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
@@ -11,7 +12,9 @@ import {
   weekdays,
 } from "../../../containers/ServiceTimes/utils";
 import { useToast } from "../../../context/toastContext";
-import { useDispatch } from "../../../hooks";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import { useDispatch, useSelector } from "../../../hooks";
+import { AUTOSAVE_DEBOUNCE_KEYS } from "../../../store/autosaveIndicatorSlice";
 import {
   addService,
   removeService,
@@ -27,10 +30,10 @@ import type {
 } from "../../../types";
 import type { TeamRecord, TeamPosition, TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
-import Icon from "../../../components/Icon/Icon";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
@@ -52,10 +55,26 @@ import {
   planServiceGroupCleanupOnDelete,
   planServiceGroupUpdates,
 } from "../teamsUtils";
-import { formatServiceSaveToast } from "../teamsSaveToasts";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+
+const applyPositionCountDrafts = (
+  requirements: PositionRequirement[] | undefined,
+  drafts: Record<string, string>,
+): PositionRequirement[] => {
+  const byPositionId = new Map(
+    (requirements || []).map((requirement) => [requirement.positionId, requirement.count]),
+  );
+  Object.entries(drafts).forEach(([positionId, rawCount]) => {
+    const parsedCount = Number(rawCount);
+    const count = Number.isFinite(parsedCount)
+      ? Math.max(0, Math.floor(parsedCount))
+      : 0;
+    if (count === 0) byPositionId.delete(positionId);
+    else byPositionId.set(positionId, count);
+  });
+  return [...byPositionId].map(([positionId, count]) => ({ positionId, count }));
+};
 
 type ServiceManagerProps = {
   services: TeamService[];
@@ -63,6 +82,7 @@ type ServiceManagerProps = {
   teams: TeamRecord[];
   planTemplates?: ServicePlanTemplate[];
   canEdit: boolean;
+  onImported?: () => void;
 };
 
 const ServiceManager = ({
@@ -71,10 +91,11 @@ const ServiceManager = ({
   teams,
   planTemplates = [],
   canEdit,
+  onImported,
 }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
-  const isNarrowViewport = useTeamsNarrowViewport();
+  const churchId = useContext(GlobalInfoContext)?.churchId || "";
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -90,6 +111,27 @@ const ServiceManager = ({
   // Keep number inputs editable while the operator is typing. Values are
   // normalized and committed when the field loses focus.
   const [positionCountDrafts, setPositionCountDrafts] = useState<Record<string, string>>({});
+  const [savingEditorKeys, setSavingEditorKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [failedEditorKeys, setFailedEditorKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const savingEditorKeysRef = useRef(new Set<string>());
+  const pendingSavesRef = useRef(new Map<string, {
+    expectedService: ServiceTime;
+    partnerUpdates: { id: string; serviceGroupId?: string | null }[];
+    pendingObserved: boolean;
+  }>());
+  const serviceTimesSavePending = useSelector((state) =>
+    state.autosaveIndicator
+      ? Boolean(
+        state.autosaveIndicator.debouncedSaveDepth[
+          AUTOSAVE_DEBOUNCE_KEYS.serviceTimes
+        ],
+      )
+      : null,
+  );
 
   const reset = () => {
     setEditing(null);
@@ -127,6 +169,17 @@ const ServiceManager = ({
     }));
   };
 
+  const initialCombineWith = editing?.serviceGroupId
+    ? services
+      .filter(
+        (service) =>
+          service.serviceGroupId === editing.serviceGroupId &&
+          service.serviceId !== editing.serviceId,
+      )
+      .map((service) => service.serviceId)
+      .sort()
+    : [];
+
   const submit = () => {
     if (!canEdit) return;
     const name = String(draft.name || "").trim();
@@ -144,18 +197,30 @@ const ServiceManager = ({
       {
         ...draft,
         name,
-        positionRequirements: sanitizePositionRequirements(draft.positionRequirements),
+        positionRequirements: sanitizePositionRequirements(
+          applyPositionCountDrafts(draft.positionRequirements, positionCountDrafts),
+        ),
         serviceGroupId: groupId,
       },
       editing,
     );
-    const saveToastMessage = formatServiceSaveToast(
-      editing,
-      saved,
-      combineWith,
-      services,
+    const editorKey = editing?.serviceId || saved.id;
+    if (
+      savingEditorKeysRef.current.has(editorKey) ||
+      pendingSavesRef.current.has(editorKey)
+    ) return;
+    const retryingFailedCreate = Boolean(
+      editing &&
+      failedEditorKeys.has(editorKey) &&
+      !services.some((service) => service.serviceId === editorKey),
     );
-    if (editing) {
+    setFailedEditorKeys((current) => {
+      if (!current.has(editorKey)) return current;
+      const next = new Set(current);
+      next.delete(editorKey);
+      return next;
+    });
+    if (editing && !retryingFailedCreate) {
       dispatch(updateService({ id: editing.id, changes: saved }));
     } else {
       dispatch(addService(saved));
@@ -164,17 +229,139 @@ const ServiceManager = ({
     partnerUpdates.forEach(({ id, serviceGroupId }) => {
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
-    showToast(saveToastMessage, "success");
-    // On mobile the form covers the list, so close after save. On desktop keep
-    // the panel open for back-to-back editing and re-seed from the saved snapshot.
-    if (editing && !isNarrowViewport) {
-      const nextEditing: TeamService = { ...editing, ...saved };
-      setEditing(nextEditing);
-      setDraft({ ...nextEditing });
+    // Redux dispatch is optimistic; the store listener commits to Firebase and
+    // can roll this change back. Without a per-action acknowledgment, a success
+    // toast here would claim persistence before it is confirmed.
+    // Saving commits data; keep the same service open on every screen size.
+    // A new service uses its generated id immediately so later saves update it.
+    const nextEditing: TeamService = {
+      ...(editing ?? {}),
+      ...saved,
+      serviceId: editing?.serviceId || saved.id,
+      churchId: editing?.churchId || churchId,
+    };
+    if (serviceTimesSavePending === null) {
+      // The selector is unavailable in isolated editor contexts; dispatch stays
+      // optimistic there, matching the existing local save behavior.
     } else {
-      reset();
+      savingEditorKeysRef.current.add(nextEditing.serviceId);
+      pendingSavesRef.current.set(nextEditing.serviceId, {
+        expectedService: saved,
+        partnerUpdates,
+        pendingObserved: serviceTimesSavePending === true,
+      });
+      setSavingEditorKeys((current) => new Set(current).add(nextEditing.serviceId));
     }
+    setEditing(nextEditing);
+    setDraft({ ...nextEditing });
   };
+
+  const editorKey = editing?.serviceId || "__create__";
+  const hasIncompletePositionCountDraft = Object.values(positionCountDrafts).some(
+    (value) => !value.trim() || !Number.isFinite(Number(value)),
+  );
+  const hasPositionCountDraftChanges = Object.entries(positionCountDrafts).some(
+    ([positionId, value]) => {
+      const parsedCount = Number(value);
+      const normalizedCount = Number.isFinite(parsedCount)
+        ? Math.max(0, Math.floor(parsedCount))
+        : 0;
+      const savedCount = draft.positionRequirements?.find(
+        (requirement) => requirement.positionId === positionId,
+      )?.count ?? 0;
+      return !value.trim() || normalizedCount !== savedCount;
+    },
+  );
+  const normalizeServiceDraft = (value: typeof draft) => ({
+    ...value,
+    daysOfWeek: [...(value.daysOfWeek || [])].sort((a, b) => a.day - b.day),
+  });
+  const hasPendingChanges =
+    failedEditorKeys.has(editorKey) ||
+    JSON.stringify(normalizeServiceDraft(draft)) !==
+      JSON.stringify(normalizeServiceDraft(editing || createEmptyServiceDraft())) ||
+    JSON.stringify([...combineWith].sort()) !== JSON.stringify(initialCombineWith) ||
+    hasPositionCountDraftChanges;
+
+  useEffect(() => {
+    const pendingSaves = pendingSavesRef.current;
+    if (pendingSaves.size === 0) return;
+    if (serviceTimesSavePending === true) {
+      pendingSaves.forEach((pending) => {
+        pending.pendingObserved = true;
+      });
+      return;
+    }
+    if (serviceTimesSavePending === null) {
+      pendingSaves.forEach((pending) => {
+        if (!pending.pendingObserved) pending.pendingObserved = true;
+      });
+    }
+    if (serviceTimesSavePending !== false && serviceTimesSavePending !== null) return;
+
+    // Match Firebase's undefined-to-null persistence normalization before comparing values.
+    const normalizePersistedValue = (value: unknown): unknown => {
+      if (value === undefined) return null;
+      if (Array.isArray(value)) return value.map(normalizePersistedValue);
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value).map(([key, nestedValue]) => [
+            key,
+            normalizePersistedValue(nestedValue),
+          ]),
+        );
+      }
+      return value;
+    };
+    const matchesExpectedService = (actual: ServiceTime | undefined, expected: ServiceTime) =>
+      Boolean(actual) && Object.entries(expected).every(([key, value]) =>
+        key === "updatedAt" || _.isEqual(
+          normalizePersistedValue(actual?.[key as keyof ServiceTime]),
+          normalizePersistedValue(value),
+        ),
+      );
+    const completedKeys: string[] = [];
+    pendingSaves.forEach((pending, key) => {
+      const actual = services.find((service) => service.serviceId === key);
+      const partnersCommitted = pending.partnerUpdates.every((update) => {
+        const partner = services.find((service) => service.id === update.id);
+        return partner && _.isEqual(
+          normalizePersistedValue(partner.serviceGroupId ?? null),
+          normalizePersistedValue(update.serviceGroupId ?? null),
+        );
+      });
+      const saveCommitted = serviceTimesSavePending === null ||
+        (matchesExpectedService(actual, pending.expectedService) && partnersCommitted);
+      if (!pending.pendingObserved && serviceTimesSavePending === false && saveCommitted) {
+        pending.pendingObserved = true;
+      }
+      if (!pending.pendingObserved && serviceTimesSavePending === false && !saveCommitted) {
+        setFailedEditorKeys((current) => new Set(current).add(key));
+        completedKeys.push(key);
+        return;
+      }
+      if (!pending.pendingObserved) return;
+      if (saveCommitted) {
+        setFailedEditorKeys((current) => {
+          if (!current.has(key)) return current;
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      } else {
+        setFailedEditorKeys((current) => new Set(current).add(key));
+      }
+      completedKeys.push(key);
+    });
+    completedKeys.forEach((key) => pendingSaves.delete(key));
+    completedKeys.forEach((key) => savingEditorKeysRef.current.delete(key));
+    setSavingEditorKeys((current) => {
+      if (!completedKeys.some((key) => current.has(key))) return current;
+      const next = new Set(current);
+      completedKeys.forEach((key) => next.delete(key));
+      return next;
+    });
+  }, [serviceTimesSavePending, services]);
 
   // Services that can be combined with the one being edited: anything that could
   // fall on the same day (combining only merges same-day occurrences). Already
@@ -301,24 +488,13 @@ const ServiceManager = ({
   const recurrence = draft.reccurence || "weekly";
   const canSave =
     Boolean(String(draft.name || "").trim()) &&
+    !hasIncompletePositionCountDraft &&
     (recurrence === "one_time"
       ? Boolean(draft.dateTimeISO)
       : recurrence === "multi_weekly"
         ? Boolean(draft.daysOfWeek?.length) &&
         (draft.daysOfWeek || []).every((day) => Boolean(day.time))
         : Boolean(draft.time));
-  const initialCombineWith = editing?.serviceGroupId
-    ? services
-      .filter(
-        (service) =>
-          service.serviceGroupId === editing.serviceGroupId &&
-          service.serviceId !== editing.serviceId,
-      )
-      .map((service) => service.serviceId)
-    : [];
-  const hasPendingChanges =
-    JSON.stringify(draft) !== JSON.stringify(editing || createEmptyServiceDraft()) ||
-    JSON.stringify(combineWith) !== JSON.stringify(initialCombineWith);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
@@ -336,6 +512,7 @@ const ServiceManager = ({
       sectionTitle="Service settings"
       description="Manage service times used for scheduling."
       createLabel="Create service"
+        listHeaderActions={<PortableDataActions type="services" onImported={onImported} />}
       listToolbar={
         <EntityListFilterToolbar
           entityLabel="Services"
@@ -438,11 +615,13 @@ const ServiceManager = ({
       formFooter={
         <FormActionButtons
           pinFooter
-          saveLabel="Save service"
+          entityLabel="service"
+          isCreate={!editing}
+          isSaving={savingEditorKeys.has(editorKey)}
           onSave={submit}
           onCancel={() => requestDiscardAction(reset)}
           hasPendingChanges={hasPendingChanges}
-          disabled={!canEdit || !canSave}
+          disabled={!canEdit || !canSave || !hasPendingChanges || savingEditorKeys.has(editorKey)}
         />
       }
     >
@@ -638,7 +817,6 @@ const ServiceManager = ({
                   <span className="text-center">People needed</span>
                 </div>
                 {teamPositions.map((position) => {
-                  const PositionIcon = resolvePositionLucideIcon(position.icon);
                   const needed = requirements.some((req) => req.positionId === position.positionId);
                   const count = requirementCount(position.positionId);
                   return (
@@ -652,12 +830,16 @@ const ServiceManager = ({
                           setPositionNeeded(position.positionId, checked)
                         }
                         label={
-                          <>
-                            {PositionIcon ? (
-                              <Icon svg={PositionIcon} size="sm" className="text-orange-300" alt="" />
+                          <span className="inline-flex min-w-0 items-center gap-2">
+                            {position.icon ? (
+                              <PositionIconBadge
+                                icon={position.icon}
+                                className="size-5 rounded"
+                                iconClassName="size-3.5"
+                              />
                             ) : null}
                             {position.name}
-                          </>
+                          </span>
                         }
                         className="min-w-0"
                         labelClassName="flex-1 gap-2 text-sm"

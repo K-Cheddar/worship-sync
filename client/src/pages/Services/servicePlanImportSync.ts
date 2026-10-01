@@ -2,6 +2,7 @@ import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText
 import {
   getServicePlanElementAssignees,
   getServicePlanElementSongRefs,
+  isUnassignedServicePlanAssignee,
 } from "../../types/servicePlan";
 import generateRandomId from "../../utils/generateRandomId";
 import type {
@@ -11,8 +12,12 @@ import type {
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
-import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
+import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, upgradeLegacyImportedDescriptionTitles } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
+import { copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
+import {
+  servicePlanImportAmbiguityShouldQueue,
+} from "./servicePlanningTitleClassifier";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -47,7 +52,7 @@ const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["i
     })),
   });
 
-/** Return only unresolved imports that are new or materially changed in the
+/** Return only reviewable imports that are new or materially changed in the
  * refreshed plan. Element IDs come from reconciliation, so inserting another
  * source row does not make an unchanged ambiguity look new. */
 export const getNewServicePlanImportAmbiguityIds = (
@@ -57,14 +62,15 @@ export const getNewServicePlanImportAmbiguityIds = (
   const currentFingerprintById = new Map(
     currentSections.flatMap((section) => section.elements.flatMap((element) => {
       const ambiguity = element.importAmbiguity;
-      return ambiguity && (ambiguity.status === "unresolved" || ambiguity.status === "deferred")
+      return ambiguity &&
+        (ambiguity.status === "deferred" || servicePlanImportAmbiguityShouldQueue(ambiguity))
         ? [[element.id, ambiguityReviewFingerprint(ambiguity)] as const]
         : [];
     })),
   );
   return nextSections.flatMap((section) => section.elements.flatMap((element) => {
     const ambiguity = element.importAmbiguity;
-    return ambiguity?.status === "unresolved" &&
+    return ambiguity && servicePlanImportAmbiguityShouldQueue(ambiguity) &&
       currentFingerprintById.get(element.id) !== ambiguityReviewFingerprint(ambiguity)
       ? [element.id]
       : [];
@@ -354,12 +360,25 @@ const pairByLabelThenOrder = <T>(
   label: (item: T) => string | string[],
   canPairByLabel: (item: T) => boolean = () => true,
   canPairByOrder: (item: T) => boolean = () => true,
+  identity: (item: T) => string | undefined = () => undefined,
 ): Array<[Indexed<T>, Indexed<T>]> => {
   const availableCurrent = current.map((value, index) => ({ value, index }));
   const availableImported = imported.map((value, index) => ({ value, index }));
   const pairs: Array<[Indexed<T>, Indexed<T>]> = [];
   const usedCurrent = new Set<number>();
   const usedImported = new Set<number>();
+
+  for (const incoming of availableImported) {
+    const sourceIdentity = identity(incoming.value);
+    if (!sourceIdentity) continue;
+    const candidate = availableCurrent.find((existing) =>
+      !usedCurrent.has(existing.index) && identity(existing.value) === sourceIdentity,
+    );
+    if (!candidate) continue;
+    usedCurrent.add(candidate.index);
+    usedImported.add(incoming.index);
+    pairs.push([candidate, incoming]);
+  }
 
   for (const incoming of availableImported) {
     const candidate = availableCurrent.find(
@@ -388,14 +407,14 @@ const pairByLabelThenOrder = <T>(
 };
 
 /**
- * Take the source's people while keeping the operator's microphone plan.
+ * Take the source's people while keeping operator-owned equipment.
  *
- * Microphones live on assignees, so replacing the list outright would delete
- * the mic assignments on every refresh — the very thing "Assigned to" updates
- * must not touch. Local microphones follow the person by name when the source
+ * Microphones and IEMs live on assignees, so replacing the list outright would
+ * delete equipment on every refresh — the very thing assignment updates must
+ * not touch. Local equipment follows the person by name when the source
  * reorders them; unmatched slots still fall back to position so a rename keeps
  * the mic. Any local slot the source does not name survives as an unassigned
- * one so its microphones are never dropped.
+ * one so its equipment is never dropped.
  */
 export const mergeImportedAssignees = (
   current: ServicePlanElement,
@@ -404,18 +423,12 @@ export const mergeImportedAssignees = (
   const currentAssignees = getServicePlanElementAssignees(current);
   const importedAssignees = getServicePlanElementAssignees(imported);
   /** Strip the person, keep whatever they were carrying. */
-  const asUnassigned = (
-    assignee: ServicePlanAssignee,
-  ): ServicePlanAssignee => ({
-    id: assignee.id,
-    ...(assignee.microphoneIds?.length
-      ? { microphoneIds: assignee.microphoneIds }
-      : {}),
-  });
+  const asUnassigned = (assignee: ServicePlanAssignee): ServicePlanAssignee =>
+    stripServicePlanAssigneeIdentityPreservingEquipment(assignee) || { id: assignee.id };
 
   if (!importedAssignees.length) {
     return currentAssignees
-      .filter((assignee) => assignee.microphoneIds?.length)
+      .filter(hasServicePlanAssigneeEquipment)
       .map(asUnassigned);
   }
 
@@ -435,17 +448,14 @@ export const mergeImportedAssignees = (
   return [
     ...importedAssignees.map((importedAssignee, index) => {
       const existing = currentByImportedIndex.get(index)?.value;
-      return {
+      return copyServicePlanAssigneeEquipment({
         id: existing?.id ?? importedAssignee.id,
         ...(importedAssignee.name ? { name: importedAssignee.name } : {}),
-        ...(existing?.microphoneIds?.length
-          ? { microphoneIds: existing.microphoneIds }
-          : {}),
-      };
+      }, existing);
     }),
     ...currentAssignees
       .filter((_, index) => !pairedCurrentIndexes.has(index))
-      .filter((assignee) => assignee.microphoneIds?.length)
+      .filter(hasServicePlanAssigneeEquipment)
       .map(asUnassigned),
   ];
 };
@@ -453,12 +463,11 @@ export const mergeImportedAssignees = (
 const assigneeFingerprint = (assignee: ServicePlanAssignee) => JSON.stringify({ name: assignee.name });
 
 /** Reconcile the independently owned title and Led By people while leaving
- * operator-created assignees and their member/microphone links intact. */
+ * operator-created assignees and their member/equipment links intact. */
 const reconcileImportedSourceAssignees = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
   previousLedBy: string,
-  acceptTitlePeople: boolean,
 ): { assignees: ServicePlanAssignee[]; managedAssignees: NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"] } => {
   const existing = getServicePlanElementAssignees(current).map((assignee) => ({ ...assignee }));
   const existingOwnership = current.servicePlanningImport?.managedAssignees || [];
@@ -475,14 +484,22 @@ const reconcileImportedSourceAssignees = (
       ownership: { id: assignee.id, fields: ["ledBy" as const], fingerprint: assigneeFingerprint(assignee) },
     }];
   });
-  const incomingTitle = acceptTitlePeople
-    ? getServicePlanElementAssignees(imported).flatMap((assignee) => {
-        const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
-        return ownership?.fields.includes("title") && !ownership.fields.includes("ledBy") ? [{ assignee, ownership }] : [];
-      })
-    : [];
+  const incomingTitle = getServicePlanElementAssignees(imported).flatMap((assignee) => {
+    const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
+    if (!ownership?.fields.includes("title") || ownership.fields.includes("ledBy")) return [];
+    const priorTitleDecision = current.importAmbiguity?.parts.find((part) =>
+      (part.sourceField || "title") === "title" &&
+      (part.kind === "person" || part.kind === "description") &&
+      normalized(part.value) === normalized(assignee.name || ""),
+    );
+    // The saved destination belongs to this exact source value. A reviewed
+    // move away from assignees must survive unchanged-title refreshes.
+    if (priorTitleDecision && priorTitleDecision.destination !== "assignee") return [];
+    return [{ assignee, ownership }];
+  });
   const ownedOld = new Set<number>();
   const currentByIncoming = new Map<number, number>();
+  const operatorOwnedMatches = new Set<number>();
   const used = new Set<number>();
   const normalizedName = (name: string | undefined) => normalized(name || "");
 
@@ -529,6 +546,24 @@ const reconcileImportedSourceAssignees = (
     }
   });
 
+  // Reuse a same-name operator-owned row without making the source
+  // responsible for its future changes.
+  incomingLedBy.forEach((incomingAssignee, incomingIndex) => {
+    if (currentByIncoming.has(incomingIndex)) return;
+    const candidates = existing.flatMap((assignee, index) => {
+      const ownership = existingOwnership.find((item) => item.id === assignee.id);
+      return !used.has(index) && !ownedOld.has(index) && !ownership &&
+        normalizedName(assignee.name) === normalizedName(incomingAssignee.assignee.name)
+        ? [index]
+        : [];
+    });
+    if (candidates.length !== 1) return;
+    const match = candidates[0];
+    used.add(match);
+    currentByIncoming.set(incomingIndex, match);
+    operatorOwnedMatches.add(match);
+  });
+
   const remainingOld = [...ownedOld].filter((index) => !used.has(index));
   const remainingIncoming = incomingLedBy.map((_, index) => index).filter((index) => !currentByIncoming.has(index));
   if (remainingOld.length === remainingIncoming.length) {
@@ -539,6 +574,23 @@ const reconcileImportedSourceAssignees = (
     });
   }
 
+  // Template equipment is represented by blank assignee rows. After identity
+  // and name matches have first refusal, hand out remaining equipment slots in
+  // their existing order. An unmatched source-owned row with equipment is
+  // also safe to reuse because its old source person is being removed.
+  const fallbackIncoming = incomingLedBy.map((_, index) => index).filter((index) => !currentByIncoming.has(index));
+  const fallbackSlots = existing.flatMap((assignee, index) =>
+    !used.has(index) && hasServicePlanAssigneeEquipment(assignee) &&
+      (isUnassignedServicePlanAssignee(assignee) || ownedOld.has(index))
+      ? [index]
+      : [],
+  );
+  fallbackIncoming.slice(0, fallbackSlots.length).forEach((incomingIndex, index) => {
+    const slot = fallbackSlots[index];
+    used.add(slot);
+    currentByIncoming.set(incomingIndex, slot);
+  });
+
   const reconciledLedBy = incomingLedBy.map((incomingAssignee, index) => {
     const previous = currentByIncoming.get(index) === undefined ? undefined : existing[currentByIncoming.get(index)!];
     const identity = incomingAssignee.ownership.ledByIdentity;
@@ -546,12 +598,13 @@ const reconcileImportedSourceAssignees = (
     const isSamePerson = previous && (identity && previousIdentity
       ? identity === previousIdentity
       : normalizedName(previous.name) === normalizedName(incomingAssignee.assignee.name));
-    const assignee = {
+    const importedIdentity = {
       ...incomingAssignee.assignee,
       id: previous?.id || incomingAssignee.assignee.id,
       ...(isSamePerson && previous?.memberId ? { memberId: previous.memberId } : {}),
-      ...(previous?.microphoneIds?.length ? { microphoneIds: previous.microphoneIds } : {}),
     };
+    if (!isSamePerson) delete importedIdentity.memberId;
+    const assignee = copyServicePlanAssigneeEquipment(importedIdentity, previous);
     return {
       assignee,
       ownership: {
@@ -565,12 +618,12 @@ const reconcileImportedSourceAssignees = (
   const ownershipById = new Map<string, NonNullable<NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"]>[number]>();
   const emitted = new Set<number>();
   const result = existing.flatMap((assignee, index) => {
-    if (!ownedOld.has(index)) return [assignee];
     const matchedIncoming = [...currentByIncoming.entries()].find(([, currentIndex]) => currentIndex === index)?.[0];
-    if (matchedIncoming !== undefined) {
+    if (matchedIncoming !== undefined && !operatorOwnedMatches.has(index)) {
       emitted.add(matchedIncoming);
       return [reconciledLedBy[matchedIncoming].assignee];
     }
+    if (!ownedOld.has(index)) return [assignee];
     const ownership = existingOwnership.find((item) => item.id === assignee.id);
     if (ownership?.fields.includes("title") && ownership.fingerprint === assigneeFingerprint(assignee)) {
       const titleOwnership = { ...ownership, fields: ["title" as const] };
@@ -578,13 +631,18 @@ const reconcileImportedSourceAssignees = (
       ownershipById.set(assignee.id, titleOwnership);
       return [assignee];
     }
-    return assignee.microphoneIds?.length ? [{ id: assignee.id, microphoneIds: assignee.microphoneIds }] : [];
+    const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(assignee);
+    return equipmentSlot ? [equipmentSlot] : [];
   });
   existingOwnership.forEach((ownership) => {
     const assignee = result.find((item) => item.id === ownership.id);
     if (assignee && ownership.fingerprint === assigneeFingerprint(assignee) && !ownershipById.has(ownership.id)) ownershipById.set(ownership.id, ownership);
   });
-  reconciledLedBy.forEach((item) => ownershipById.set(item.assignee.id, item.ownership));
+  reconciledLedBy.forEach((item, index) => {
+    const currentIndex = currentByIncoming.get(index);
+    if (currentIndex !== undefined && operatorOwnedMatches.has(currentIndex)) return;
+    ownershipById.set(item.assignee.id, item.ownership);
+  });
   [...reconciledLedBy.filter((_, index) => !emitted.has(index)), ...incomingTitle].forEach((incomingItem) => {
     const incomingAssignee = incomingItem.assignee;
     const duplicate = result.find((assignee) => normalizedName(assignee.name) === normalizedName(incomingAssignee.name));
@@ -715,6 +773,9 @@ const mergeElement = (
   options: ServicePlanningRefreshOptions,
 ): ServicePlanElement => {
   let next: ServicePlanElement = { ...current, sourcePlanningManaged: true };
+  if (imported.sourceOccurrenceId && current.sourceOccurrenceId !== imported.sourceOccurrenceId) {
+    next.sourceOccurrenceId = imported.sourceOccurrenceId;
+  }
   const snapshotFor = (element: ServicePlanElement) =>
     element.servicePlanningImport?.observed || {
       elementType: element.sourceElementTypeRaw || element.importAmbiguity?.sourceElementType || "",
@@ -887,7 +948,6 @@ const mergeElement = (
       current,
       imported,
       currentState.applied.ledBy,
-      changedAcceptedTitle,
     );
     if (JSON.stringify(reconciledAssignees.assignees) !== JSON.stringify(getServicePlanElementAssignees(current))) {
       next.assignees = reconciledAssignees.assignees;
@@ -1061,7 +1121,7 @@ const mergeElement = (
       status: "unresolved",
     };
   }
-  return next;
+  return upgradeLegacyImportedDescriptionTitles(next, imported);
 };
 
 /**
@@ -1128,25 +1188,115 @@ export const refreshServicePlanFromImport = (
   // prove that an unfamiliar incoming section is a renamed existing section:
   // a newly-added late-service section would otherwise consume the first
   // unmatched section and inherit its position and local content.
-  const sectionPairs = pairByLabelThenOrder(
+  // A durable external row identity is plan-wide. Re-home a uniquely
+  // identified source-owned element into its new section before the ordinary
+  // section-local title/order reconciliation runs. Duplicate external IDs are
+  // deliberately excluded from reconciliation: neither row can safely claim
+  // the local state belonging to the other.
+  const importedIdentityCounts = new Map<string, number>();
+  importedSections.forEach((section) => section.elements.forEach((element) => {
+    const identity = element.sourceOccurrenceId?.trim();
+    if (identity) importedIdentityCounts.set(identity, (importedIdentityCounts.get(identity) || 0) + 1);
+  }));
+  const currentIdentityElements = new Map<string, Array<{ sectionIndex: number; elementIndex: number; element: ServicePlanElement }>>();
+  currentSections.forEach((section, sectionIndex) => section.elements.forEach((element, elementIndex) => {
+    if (!element.sourcePlanningManaged) return;
+    const identity = element.sourceOccurrenceId?.trim();
+    if (!identity) return;
+    const matches = currentIdentityElements.get(identity) || [];
+    matches.push({ sectionIndex, elementIndex, element });
+    currentIdentityElements.set(identity, matches);
+  }));
+  const ambiguousIdentities = new Set<string>();
+  importedIdentityCounts.forEach((count, identity) => {
+    if (count > 1 || (currentIdentityElements.get(identity)?.length || 0) > 1) {
+      ambiguousIdentities.add(identity);
+    }
+  });
+  const safeImportedSections = importedSections.map((section) => ({
+    ...section,
+    elements: section.elements.filter((element) =>
+      !element.sourceOccurrenceId?.trim() ||
+      !ambiguousIdentities.has(element.sourceOccurrenceId.trim()),
+    ),
+  }));
+  const importedSectionPairs = pairByLabelThenOrder(
     currentSections,
-    importedSections,
+    safeImportedSections,
+    (section) => section.name,
+    canPairByLabel,
+    () => false,
+  );
+  const currentSectionByImportedIndex = new Map(
+    importedSectionPairs.map(([current, imported]) => [imported.index, current.index]),
+  );
+  const movedElementsBySection = new Map<number, ServicePlanElement[]>();
+  const movedElementKeys = new Set<string>();
+  safeImportedSections.forEach((section, importedSectionIndex) => {
+    section.elements.forEach((importedElement) => {
+      const identity = importedElement.sourceOccurrenceId?.trim();
+      if (!identity || ambiguousIdentities.has(identity) || importedIdentityCounts.get(identity) !== 1) return;
+      const existingMatches = currentIdentityElements.get(identity) || [];
+      if (existingMatches.length !== 1) return;
+      const existing = existingMatches[0];
+      const destinationIndex = currentSectionByImportedIndex.get(importedSectionIndex);
+      if (destinationIndex === existing.sectionIndex) return;
+      movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
+      const moved = movedElementsBySection.get(importedSectionIndex) || [];
+      moved.push(existing.element);
+      movedElementsBySection.set(importedSectionIndex, moved);
+    });
+  });
+  const currentWithMovedElements = currentSections.map((section, sectionIndex) => ({
+    ...section,
+    elements: section.elements.filter((_, elementIndex) =>
+      !movedElementKeys.has(`${sectionIndex}:${elementIndex}`),
+    ),
+  }));
+  safeImportedSections.forEach((section, importedSectionIndex) => {
+    const moved = movedElementsBySection.get(importedSectionIndex);
+    if (!moved?.length) return;
+    const targetIndex = currentSectionByImportedIndex.get(importedSectionIndex);
+    if (targetIndex !== undefined) {
+      currentWithMovedElements[targetIndex] = {
+        ...currentWithMovedElements[targetIndex],
+        elements: [...currentWithMovedElements[targetIndex].elements, ...moved],
+      };
+      return;
+    }
+    // Keep a moved row even when its destination section is new. The source
+    // section ID is only used as a stable initial container ID; later refreshes
+    // pair that section by name as usual.
+    currentWithMovedElements.push({
+      id: section.id,
+      sourcePlanningManaged: true,
+      name: section.name,
+      elements: moved,
+    });
+  });
+
+  const safeSectionPairs = pairByLabelThenOrder(
+    currentWithMovedElements,
+    safeImportedSections,
     (section) => section.name,
     canPairByLabel,
     () => false,
   );
   const importedByCurrentIndex = new Map(
-    sectionPairs.map(([current, imported]) => [current.index, imported]),
+    safeSectionPairs.map(([current, imported]) => [current.index, imported]),
   );
   const pairedImportedSections = new Set(
-    sectionPairs.map(([, imported]) => imported.index),
+    safeSectionPairs.map(([, imported]) => imported.index),
   );
 
-  const refreshed = currentSections.flatMap(
+  const isAmbiguousCurrentElement = (element: ServicePlanElement): boolean =>
+    Boolean(element.sourceOccurrenceId?.trim() && ambiguousIdentities.has(element.sourceOccurrenceId.trim()));
+  const refreshed = currentWithMovedElements.flatMap(
     (currentSection, currentSectionIndex) => {
       const importedSection = importedByCurrentIndex.get(currentSectionIndex);
       if (!importedSection) {
-        return options.removeMissing && currentSection.sourcePlanningManaged
+        return options.removeMissing && currentSection.sourcePlanningManaged &&
+          !currentSection.elements.some(isAmbiguousCurrentElement)
           ? []
           : [currentSection];
       }
@@ -1160,8 +1310,11 @@ export const refreshServicePlanFromImport = (
           element.sourceElementTypeRaw || "",
           element.sourceContentTitleRaw || "",
         ],
-        canPairByLabel,
-        isSourceOwned,
+        (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element),
+        (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element),
+        (element) => element.sourcePlanningManaged && !isAmbiguousCurrentElement(element)
+          ? element.sourceOccurrenceId?.trim()
+          : undefined,
       );
       const importedByCurrentElementIndex = new Map(
         elementPairs.map(([current, imported]) => [current.index, imported]),
@@ -1194,7 +1347,8 @@ export const refreshServicePlanFromImport = (
       if (
         options.removeMissing &&
         currentSection.sourcePlanningManaged &&
-        elements.length === 0
+        elements.length === 0 &&
+        sourceSection.elements.length > 0
       ) {
         return [];
       }
@@ -1211,13 +1365,13 @@ export const refreshServicePlanFromImport = (
 
   if (options.addMissing) {
     const currentSectionIdByImportedIndex = new Map(
-      sectionPairs.map(([current, imported]) => [
+      safeSectionPairs.map(([current, imported]) => [
         imported.index,
         current.value.id,
       ]),
     );
     const newSectionByImportedIndex = new Map(
-      importedSections.flatMap((section, index) =>
+      safeImportedSections.flatMap((section, index) =>
         pairedImportedSections.has(index)
           ? []
           : [[index, managedImportedSection(section)] as const],
@@ -1225,7 +1379,7 @@ export const refreshServicePlanFromImport = (
     );
     return insertNewServicePlanSectionRuns(
       refreshed,
-      importedSections.length,
+      safeImportedSections.length,
       newSectionByImportedIndex,
       currentSectionIdByImportedIndex,
     );

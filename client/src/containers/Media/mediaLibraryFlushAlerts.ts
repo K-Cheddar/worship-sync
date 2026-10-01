@@ -1,9 +1,9 @@
 import { FLUSH_MEDIA_NO_DB_MESSAGE } from "../../utils/flushMediaLibraryDoc";
 
-export function alertMediaLibraryFlushFailed(
+export function mediaLibraryFlushFailureMessage(
   error: unknown,
   scope: "folder" | "library",
-) {
+): string {
   const noDb =
     error instanceof Error && error.message === FLUSH_MEDIA_NO_DB_MESSAGE;
   const reason = noDb
@@ -13,5 +13,5 @@ export function alertMediaLibraryFlushFailed(
     scope === "folder"
       ? "The folder was updated on this device only."
       : "The media library was updated on this device only.";
-  window.alert(`${intro} ${reason}`);
+  return `${intro} ${reason}`;
 }

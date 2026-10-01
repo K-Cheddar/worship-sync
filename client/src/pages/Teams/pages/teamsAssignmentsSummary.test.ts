@@ -8,7 +8,9 @@ import type {
 } from "../../../api/authTypes";
 import {
   getOccurrenceAssignmentSummary,
+  getScheduledEquipmentHolders,
   getScheduledMicrophoneHolders,
+  getTeamEquipmentRows,
   getTeamMicrophoneRows,
   groupAssignmentSummaryByTeam,
   summarizeNeededPositions,
@@ -210,19 +212,14 @@ describe("getOccurrenceAssignmentSummary", () => {
     ).toBeNull();
   });
 
-  it("falls back to one slot per team position when nothing is required", () => {
-    // The service's requirements are all team-1 positions, so for team-2's
-    // schedule they scope out and every team position gets a single slot.
+  it("does not add positions from teams excluded by the service requirements", () => {
+    // The service requires only team-1 positions; this team's unrelated slot
+    // must not appear as a scheduling need for the service.
     const rows = summaryFor([
       schedule({}, { scheduleId: "schedule-2", teamId: "team-2" }),
     ]).filter((row) => row.teamId === "team-2");
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      teamName: "Technical",
-      slotLabel: "Front of House Audio",
-      memberName: null,
-    });
+    expect(rows).toEqual([]);
   });
 
   it("ignores the assignments of a schedule that does not cover this occurrence", () => {
@@ -566,7 +563,56 @@ describe("getTeamMicrophoneRows", () => {
   });
 });
 
+describe("getTeamEquipmentRows", () => {
+  it("includes scheduled rows for microphone-only, IEM-only, and combined teams", () => {
+    const rows = summaryFor([
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+          "position-keys::0": { primaryMemberId: "member-1" },
+        },
+      }),
+    ]);
+    const equipmentRows = getTeamEquipmentRows(rows, [
+      { ...teams[0], usesMicrophoneAssignments: true },
+      { ...teams[1], usesIemAssignments: true },
+    ]);
+
+    expect(equipmentRows.map((row) => row.slotLabel)).toEqual([
+      "Vocal 1",
+      "Vocal 2",
+      "Keys",
+    ]);
+  });
+
+  it("does not include required slots without a schedule to mutate", () => {
+    const rows = getTeamEquipmentRows(summaryFor([]), [
+      { ...teams[0], usesIemAssignments: true },
+    ]);
+
+    expect(rows).toEqual([]);
+  });
+});
+
 describe("getScheduledMicrophoneHolders", () => {
+  it("projects IEM holders only from the matching scheduled occurrence", () => {
+    const rows = summaryFor([
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+        },
+      }, {
+        iemAssignments: {
+          [occurrence.occurrenceId]: { "position-vocal::0": ["iem-one"] },
+          "another-date": { "position-vocal::0": ["iem-other"] },
+        },
+      }),
+    ]);
+    const holders = getScheduledEquipmentHolders(rows, [{ ...teams[0], usesIemAssignments: true }, teams[1]]);
+    expect(holders.get("iem-one")).toEqual(["Morgan Lee"]);
+    expect(holders.has("iem-other")).toBe(false);
+  });
+
   it("lists every holder of a microphone so the plan can warn about sharing", () => {
     const holders = getScheduledMicrophoneHolders(
       summaryFor([

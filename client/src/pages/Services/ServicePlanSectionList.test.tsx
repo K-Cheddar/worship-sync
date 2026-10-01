@@ -177,10 +177,16 @@ const renderList = ({
   structureOnly = false,
   desktop = true,
   initialSections = createSections(),
+  reviewingElementId = null,
+  isFollowingLive = false,
+  scrollId,
 }: {
   structureOnly?: boolean;
   desktop?: boolean;
   initialSections?: ServicePlanSection[];
+  reviewingElementId?: string | null;
+  isFollowingLive?: boolean;
+  scrollId?: string;
 } = {}) => {
   desktopPanel = desktop;
 
@@ -203,6 +209,9 @@ const renderList = ({
           onSelectionChange={setSelection}
           microphones={structureOnly ? [microphone] : []}
           allSongDocs={[songDocument]}
+          reviewingElementId={reviewingElementId}
+          isFollowingLive={isFollowingLive}
+          scrollId={scrollId}
         />
         <button
           type="button"
@@ -249,6 +258,37 @@ const selectItemB = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 describe("ServicePlanSectionList item-specific panels", () => {
+  it("marks the transient review item without changing the editor selection", () => {
+    renderList({ reviewingElementId: "item-b" });
+
+    expect(screen.getByTestId("service-plan-element-item-b")).toHaveAttribute("data-reviewing", "true");
+    expect(screen.getByTestId("service-plan-element-item-a")).not.toHaveAttribute("data-reviewing");
+  });
+
+  it("scrolls the active review item only when it is outside the plan viewport", () => {
+    const scrollIntoView = jest.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.id === "review-scroll") {
+        return { top: 100, bottom: 300, left: 0, right: 400, width: 400, height: 200, x: 0, y: 100, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.id === "service-plan-element-item-b") {
+        return { top: 50, bottom: 120, left: 0, right: 400, width: 400, height: 70, x: 0, y: 50, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      renderList({ reviewingElementId: "item-b", scrollId: "review-scroll" });
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
   it.each([true, false])(
     "keeps the Content panel open and follows selection (%s desktop)",
     async (desktop) => {

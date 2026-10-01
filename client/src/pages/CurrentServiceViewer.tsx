@@ -24,6 +24,7 @@ import {
 import type { TeamScheduleOccurrence } from "../api/authTypes";
 import type { ServiceTime } from "../types";
 import type { ServicePlan } from "../types/servicePlan";
+import type { ChurchBranding } from "../api/authTypes";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
   isServicePlanUpdatedEvent,
@@ -46,6 +47,7 @@ import ServicePublicView from "./ServicePublicView";
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
 import type { Option } from "../types";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
+import { resolveChurchToolbarLogoUrl } from "../utils/churchBranding";
 
 const VIEWER_STALE_AFTER_MS = 10 * 60 * 1000;
 const VIEWER_OCCURRENCE_LOOKAHEAD_DAYS = 366;
@@ -53,6 +55,24 @@ const VIEWER_MANUAL_LOOKAHEAD_DAYS = 42;
 
 const getErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message.trim() ? error.message : fallback;
+
+const buildCurrentServiceViewerBranding = (
+  branding: ChurchBranding | null | undefined,
+): Pick<
+  PublicServiceFlowSnapshot,
+  "churchLogoUrl" | "churchPrimaryColor" | "churchSecondaryColor"
+> => {
+  const colors = branding?.colors || [];
+  const primaryColor =
+    colors.find((color) => color.label?.trim().toLowerCase() === "primary")?.value ||
+    colors[0]?.value ||
+    "";
+  return {
+    churchLogoUrl: resolveChurchToolbarLogoUrl(branding),
+    churchPrimaryColor: primaryColor,
+    churchSecondaryColor: colors[1]?.value || "",
+  };
+};
 
 const formatOccurrenceOptionDate = (startsAt: string): string => {
   const timestamp = Date.parse(startsAt);
@@ -576,6 +596,7 @@ const CurrentServiceViewer = () => {
     canViewTeams = false,
     churchId = "",
     churchName = "",
+    churchBranding,
   } = useContext(GlobalInfoContext) || {};
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
@@ -600,6 +621,10 @@ const CurrentServiceViewer = () => {
     data.plan && data.plan.planKey === activePlanKey,
   );
   const hasPlanError = Boolean(data.planError);
+  const fallbackBranding = useMemo(
+    () => buildCurrentServiceViewerBranding(churchBranding),
+    [churchBranding],
+  );
   const topBar = (
     <CurrentServiceViewerToolbar
       options={options}
@@ -640,6 +665,7 @@ const CurrentServiceViewer = () => {
             plan: data.plan!,
             startsAt: selection.occurrence!.startsAt,
             churchName,
+            branding: fallbackBranding,
             serverNowMs: selection.nowMs,
           })
         }

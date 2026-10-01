@@ -273,45 +273,56 @@ export const reorderElementsInSection = (
 export const cloneSectionsForTemplate = (
   sections: ServicePlanSection[],
 ): ServicePlanSection[] =>
-  sections.map((section) => ({
-    ...section,
-    id: generateRandomId(),
-    elements: section.elements.map((element) => {
-      const cloned = {
-        ...element,
-        id: generateRandomId(),
-        songRef: undefined,
-        songRefs: undefined,
-        scriptureRef: undefined,
-        scriptureRefs: undefined,
-        // Reusable file selections belong to the dated plan unless an
-        // operator deliberately adds them to a template itself.
-        resources: undefined,
-        // The people go, the microphone plan stays: each assignee is kept as
-        // the microphone slot it describes, and gains a name back when the
-        // template is applied to a date. Slots holding nothing are dropped.
-        assignees: getServicePlanElementAssignees(element)
-          .filter((assignee) => assignee.microphoneIds?.length)
-          .map((assignee) => ({
-            id: generateRandomId(),
-            microphoneIds: [...(assignee.microphoneIds || [])],
-          })),
-        assignedName: undefined,
-        assignedMemberId: undefined,
-        microphoneAssignments: undefined,
-        sourceLedByRaw: undefined,
-        pushedOutlineListId: undefined,
-        pushedOutlineListIds: undefined,
-        // Scheduled role links are reusable template structure, unlike the
-        // dated people assignments above.
-        scheduledPositionIds: element.scheduledPositionIds
-          ? [...element.scheduledPositionIds]
-          : undefined,
-      };
-      // Kind follows the (now-cleared) attachments.
-      return { ...cloned, type: getServicePlanElementType(cloned) };
-    }),
-  }));
+  sections.map((section) => {
+    const clonedSection = { ...section, id: generateRandomId() };
+    delete clonedSection.sourcePlanningManaged;
+    return {
+      ...clonedSection,
+      elements: section.elements.map((element) => {
+        const cloned = {
+          ...element,
+          id: generateRandomId(),
+          songRef: undefined,
+          songRefs: undefined,
+          scriptureRef: undefined,
+          scriptureRefs: undefined,
+          // Reusable file selections belong to the dated plan unless an
+          // operator deliberately adds them to a template itself.
+          resources: undefined,
+          contentOrder: undefined,
+          // Keep equipment slots while removing this week's people.
+          assignees: getServicePlanElementAssignees(element)
+            .filter((assignee) => assignee.microphoneIds?.length || assignee.iemIds?.length)
+            .map((assignee) => ({
+              id: generateRandomId(),
+              ...(assignee.microphoneIds?.length ? { microphoneIds: [...assignee.microphoneIds] } : {}),
+              ...(assignee.iemIds?.length ? { iemIds: [...assignee.iemIds] } : {}),
+            })),
+          assignedName: undefined,
+          assignedMemberId: undefined,
+          microphoneAssignments: undefined,
+          sourceLedByRaw: undefined,
+          sourceLedByAssignments: undefined,
+          sourceElementTypeRaw: undefined,
+          sourceContentTitleRaw: undefined,
+          sourceNoteRaw: undefined,
+          sourceOccurrenceId: undefined,
+          sourcePlanningManaged: undefined,
+          servicePlanningImport: undefined,
+          importAmbiguity: undefined,
+          sourceSongReferenceDismissed: undefined,
+          pushedOutlineListId: undefined,
+          pushedOutlineListIds: undefined,
+          // Scheduled role links are reusable template structure, unlike the
+          // dated people assignments above.
+          scheduledPositionIds: element.scheduledPositionIds
+            ? [...element.scheduledPositionIds]
+            : undefined,
+        };
+        return { ...cloned, type: getServicePlanElementType(cloned) };
+      }),
+    };
+  });
 
 /**
  * Template → plan (and template → duplicate). Re-key the sections without

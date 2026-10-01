@@ -27,7 +27,7 @@ describe("Plans filter persistence", () => {
     expect(readPlansFilterPreferences("church-b")).toBeNull();
   });
 
-  it("falls back from an invalid custom range to this month", () => {
+  it("falls back from an invalid custom range to Upcoming", () => {
     writePlansFilterPreferences("church-a", {
       serviceIds: [],
       organizeMode: "byDate",
@@ -39,7 +39,7 @@ describe("Plans filter persistence", () => {
     expect(readPlansFilterPreferences("church-a")).toEqual({
       serviceIds: [],
       organizeMode: "byDate",
-      rangePreset: "thisMonth",
+      rangePreset: "upcoming",
     });
   });
 
@@ -55,12 +55,40 @@ describe("Plans filter persistence", () => {
       }),
     );
 
-    expect(readPlansFilterPreferences("church-a")?.rangePreset).toBe("thisMonth");
+    expect(readPlansFilterPreferences("church-a")?.rangePreset).toBe("upcoming");
   });
 
   it("ignores malformed stored preferences", () => {
     window.localStorage.setItem("worshipSync:teamsPlansFilters:church-a", "not-json");
 
     expect(readPlansFilterPreferences("church-a")).toBeNull();
+  });
+
+  it("migrates the old persisted default without clearing other filters", () => {
+    window.localStorage.setItem(
+      "worshipSync:teamsPlansFilters:church-a",
+      JSON.stringify({
+        serviceIds: ["service-a"],
+        organizeMode: "byService",
+        rangePreset: "thisMonth",
+      }),
+    );
+
+    expect(readPlansFilterPreferences("church-a")).toEqual({
+      serviceIds: ["service-a"],
+      organizeMode: "byService",
+      rangePreset: "upcoming",
+    });
+  });
+
+  it("persists an explicit This month choice in the current version", () => {
+    writePlansFilterPreferences("church-a", {
+      serviceIds: ["service-a"],
+      organizeMode: "byDate",
+      rangePreset: "thisMonth",
+    });
+
+    expect(readPlansFilterPreferences("church-a")?.rangePreset).toBe("thisMonth");
+    expect(JSON.parse(window.localStorage.getItem("worshipSync:teamsPlansFilters:church-a") || "{}").version).toBe(1);
   });
 });

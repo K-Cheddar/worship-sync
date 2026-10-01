@@ -1603,6 +1603,22 @@ app.post(
   authHandlers.deleteTeamQualificationLevel,
 );
 app.post("/api/churches/:churchId/teams", authHandlers.createTeam);
+app.get(
+  "/api/churches/:churchId/data-transfer/export/:type",
+  authHandlers.exportPortableData,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/inspect",
+  authHandlers.inspectPortableImport,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/preview",
+  authHandlers.previewPortableImport,
+);
+app.post(
+  "/api/churches/:churchId/data-transfer/commit",
+  authHandlers.commitPortableImport,
+);
 app.post("/api/churches/:churchId/teams/:teamId", authHandlers.updateTeam);
 app.post(
   "/api/churches/:churchId/teams/:teamId/archive",
@@ -1621,6 +1637,10 @@ app.post(
   authHandlers.createTeamSchedule,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/ensure",
+  authHandlers.ensureTeamScheduleForPeriod,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId",
   authHandlers.updateTeamSchedule,
 );
@@ -1637,8 +1657,16 @@ app.post(
   authHandlers.updateTeamScheduleAssignment,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignments/batch",
+  authHandlers.updateTeamScheduleAssignmentsBatch,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignment-microphones",
   authHandlers.updateTeamScheduleAssignmentMicrophones,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-iems",
+  authHandlers.updateTeamScheduleAssignmentIems,
 );
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/additional-position-slots",
@@ -1673,6 +1701,10 @@ app.get(
 app.get(
   "/api/churches/:churchId/service-plans/:planKey/viewer",
   authHandlers.getServicePlanViewer,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/apply-template-bulk",
+  authHandlers.applyServicePlanTemplateBulk,
 );
 app.post(
   "/api/churches/:churchId/service-plans/:planKey",
@@ -1726,6 +1758,8 @@ app.post(
   "/api/churches/:churchId/service-plan-microphones",
   authHandlers.saveServicePlanMicrophones,
 );
+app.get("/api/churches/:churchId/service-equipment", authHandlers.getServiceEquipment);
+app.post("/api/churches/:churchId/service-equipment", authHandlers.saveServiceEquipment);
 app.get("/api/service-plan/public", authHandlers.getPublicServicePlan);
 app.get(
   "/api/service-plan/public/stream",

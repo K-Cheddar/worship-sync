@@ -455,6 +455,74 @@ describe("dbUtils", () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
+  it("preserves generated provenance and marks ordinary text edits as overrides", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "1-a",
+      id: "c1",
+      heading: "Welcome",
+      text: "Generated welcome",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: false,
+    });
+    db.put.mockResolvedValueOnce({ rev: "2-credit" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Welcome",
+      text: "Corrected by operator",
+      hidden: false,
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: true,
+    }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Corrected by operator",
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: true,
+    }));
+  });
+
+  it("keeps provenance unchanged when only heading and visibility change", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "1-a",
+      id: "c1",
+      heading: "Welcome",
+      text: "Generated welcome",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: false,
+    });
+    db.put.mockResolvedValueOnce({ rev: "2-credit" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Updated heading",
+      text: "Generated welcome",
+      hidden: true,
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      heading: "Updated heading",
+      hidden: true,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: false,
+    }));
+  });
+
   describe("migrateLegacyCreditsToActiveOutlineIfNeeded", () => {
     it("copies legacy credits into scoped docs when scoped is missing", async () => {
       const db = createDb();

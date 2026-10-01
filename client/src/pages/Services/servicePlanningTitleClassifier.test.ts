@@ -73,13 +73,31 @@ describe("classifyServicePlanningTitle", () => {
     expect(youtube.suggestedAssignees).toEqual([]);
   });
 
-  it("splits names with roles and common separators, removing repeated names", () => {
+  it("splits names with role prefixes without making the role a destination", () => {
     const result = classifyServicePlanningTitle({
       title: "Co-Hosts – Oniel Campbell; Jackie Mullings & Candice Bailey, Oniel Campbell",
     });
     expect(result.suggestedAssignees).toEqual(["Oniel Campbell", "Jackie Mullings", "Candice Bailey"]);
-    expect(result.parts.find((part) => part.kind === "description")?.value).toBe("Co-Hosts");
+    expect(result.parts.filter((part) => part.kind === "person").map((part) => part.value)).toEqual(result.suggestedAssignees);
+    expect(result.parts.some((part) => part.value.toLocaleLowerCase().includes("co-host"))).toBe(false);
     expect(result.reasons).toContain("The title resembles a list of names, but not every name matches a known person.");
+  });
+
+  it("recognizes singular role prefixes and keeps the full title available as source context", () => {
+    const coHosts = "Co-Hosts - Oniel Campbell, Jackie Mullings, Candice Bailey";
+    const coHost = classifyServicePlanningTitle({ title: "Co-Host: Oniel Campbell" });
+    expect(classifyServicePlanningTitle({ title: coHosts }).parts.map((part) => part.value)).toEqual([
+      "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+    expect(coHost.parts.map((part) => part.value)).toEqual(["Oniel Campbell"]);
+    expect(coHost.parts.some((part) => part.value === "Co-Host")).toBe(false);
+  });
+
+  it("retains ordinary descriptive title text as a destination part", () => {
+    const result = classifyServicePlanningTitle({ title: "Behind the Pulpit — Oniel Campbell" });
+    expect(result.parts).toContainEqual(expect.objectContaining({
+      kind: "description", value: "Behind the Pulpit", destination: "content",
+    }));
   });
 
   it("extracts a known person after descriptive text but keeps group names as content", () => {

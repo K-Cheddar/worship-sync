@@ -13,6 +13,7 @@ import { plainTextToRichText } from "../../types/richText";
 import type {
   ServicePlanElement,
   ServicePlanMicrophone,
+  ServiceEquipment,
   ServicePlanSongReference,
 } from "../../types/servicePlan";
 
@@ -201,8 +202,12 @@ const renderRow = (
     canCreateLibrarySong?: boolean;
     resolvedSongRef?: ServicePlanSongReference;
     microphones?: ServicePlanMicrophone[];
-    scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+    iemEquipment?: ServiceEquipment[];
+    scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+    scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
+    structureOnly?: boolean;
     onReviewImportAmbiguity?: jest.Mock;
+    isReviewing?: boolean;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
@@ -236,10 +241,14 @@ const renderRow = (
           onViewSongLyrics={overrides.onViewSongLyrics}
           onOpenContent={overrides.onOpenContent}
           onReviewImportAmbiguity={overrides.onReviewImportAmbiguity}
+          isReviewing={overrides.isReviewing}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
-          scheduledMicrophoneHolders={overrides.scheduledMicrophoneHolders}
+          iemEquipment={overrides.iemEquipment}
+          scheduledEquipmentHolders={overrides.scheduledEquipmentHolders}
+          scheduledEquipmentStatus={overrides.scheduledEquipmentStatus}
+          structureOnly={overrides.structureOnly}
         />
       </SortableContext>
     </DndContext>,
@@ -247,6 +256,12 @@ const renderRow = (
 };
 
 describe("import ambiguity indicator", () => {
+  it("marks the active review row without changing selection", () => {
+    renderRow({ isReviewing: true });
+
+    expect(screen.getByTestId("service-plan-element-el-1")).toHaveAttribute("data-reviewing", "true");
+  });
+
   it("opens review from an accessible row action and remains visible when deferred", async () => {
     const user = userEvent.setup();
     const onReviewImportAmbiguity = jest.fn();
@@ -292,6 +307,28 @@ describe("import ambiguity indicator", () => {
     });
 
     expect(screen.getByRole("button", { name: "Review import interpretation for Pastoral Greetings" })).toBeInTheDocument();
+  });
+
+  it("does not show a review warning for an empty-title-only import condition", () => {
+    renderRow({
+      element: {
+        ...baseElement,
+        importAmbiguity: {
+          source: "servicePlanning",
+          sourceKey: "Worship:0",
+          sourceElementType: "Special Feature",
+          sourceTitle: "",
+          sourceLedBy: "",
+          parts: [],
+          reasons: ["The source title is empty."],
+          status: "confirmed",
+          sourceFingerprint: "empty-title",
+        },
+      },
+      onReviewImportAmbiguity: jest.fn(),
+    });
+
+    expect(screen.queryByRole("button", { name: "Review import interpretation for Pastoral Greetings" })).not.toBeInTheDocument();
   });
 });
 
@@ -874,7 +911,7 @@ describe("ServicePlanElementRow", () => {
     expect(trigger).toHaveClass("min-w-10", "shrink-0");
 
     await user.click(trigger);
-    expect(await screen.findByText("Edit people and microphones")).toBeInTheDocument();
+    expect(await screen.findByText("Edit people and equipment")).toBeInTheDocument();
     expect(
       screen
         .getAllByPlaceholderText("Assigned to")
@@ -887,7 +924,7 @@ describe("ServicePlanElementRow", () => {
     ]));
     expect(screen.getAllByText("Orange").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByText("Edit people and microphones")).not.toBeInTheDocument();
+    expect(screen.queryByText("Edit people and equipment")).not.toBeInTheDocument();
   });
 
   it("keeps view names ordered for every assigned participant and excludes empty mic slots", () => {
@@ -926,10 +963,10 @@ describe("ServicePlanElementRow", () => {
     });
     expect(trigger).not.toHaveTextContent(/\d/);
     await user.click(trigger);
-    expect(await screen.findByText("Edit people and microphones")).toBeInTheDocument();
+    expect(await screen.findByText("Edit people and equipment")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Add person/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByText("Edit people and microphones")).not.toBeInTheDocument();
+    expect(screen.queryByText("Edit people and equipment")).not.toBeInTheDocument();
   });
 
   it("updates the lead input and additional names after promoting another participant", async () => {
@@ -1034,7 +1071,7 @@ describe("ServicePlanElementRow", () => {
       </DndContext>,
     );
     expect(
-      screen.getByRole("button", { name: "View people and microphones for Pastoral Greetings" }),
+      screen.getByRole("button", { name: "View people and equipment for Pastoral Greetings" }),
     ).not.toHaveTextContent(/\d/);
   });
 
@@ -1693,7 +1730,7 @@ describe("assignees and their microphones", () => {
     const user = userEvent.setup();
     renderRow({
       microphones: [orange, lapel],
-      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      scheduledEquipmentHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
       element: {
         ...baseElement,
         assignees: [{ id: "a1", name: "Abigail" }],
@@ -1717,11 +1754,105 @@ describe("assignees and their microphones", () => {
     expect(within(lapelOption).getByText("Lapel")).toBeInTheDocument();
   });
 
+  it("places microphone controls before IEM controls and uses the equipment accent", async () => {
+    const user = userEvent.setup();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      microphones: [orange],
+      iemEquipment: [iem],
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail" }] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
+
+    const equipmentButtons = within(
+      screen.getByRole("group", { name: "Assignees for Pastoral Greetings" }),
+    ).getAllByRole("button", { name: /Add (microphone|IEM) for Abigail/i });
+    expect(equipmentButtons).toHaveLength(2);
+    expect(equipmentButtons[0]).toHaveAccessibleName(/Add microphone for Abigail/i);
+    expect(equipmentButtons[1]).toHaveAccessibleName(/Add IEM for Abigail/i);
+    const addIem = equipmentButtons[1];
+    expect(addIem).toHaveClass("border-fuchsia-500/40", "text-fuchsia-200");
+  });
+
+  it("shows schedule holders and conflict details for IEM assignments", async () => {
+    const user = userEvent.setup();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      iemEquipment: [iem],
+      scheduledEquipmentHolders: new Map([[iem.id, ["Jordan Lee"]]]),
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail", iemIds: [iem.id] }] },
+    });
+    await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
+    expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "IEM conflict for IEM 1" }));
+    expect(await screen.findByText("IEM 1 is scheduled to Jordan Lee.")).toBeInTheDocument();
+  });
+
+  it("shows one-assignee IEM-only details in read-only mode", () => {
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      iemEquipment: [iem],
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail", iemIds: [iem.id] }] },
+    });
+
+    expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toHaveTextContent("IEM 1");
+  });
+
+  it("keeps a person's IEM on an unassigned slot when they are removed", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      iemEquipment: [iem],
+      onUpdate,
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail", memberId: "member-a", iemIds: [iem.id] }] },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }));
+    await user.click(await screen.findByRole("button", { name: /Remove Abigail from Pastoral Greetings, keeping their equipment/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith({ assignees: [{ id: "a1", iemIds: [iem.id] }] }, undefined);
+  });
+
+  it("adds an IEM-only equipment slot in structure mode", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({ structureOnly: true, iemEquipment: [iem], onUpdate });
+
+    await user.click(screen.getByRole("button", { name: "Add to Pastoral Greetings" }));
+    await user.click(await screen.findByRole("menuitem", { name: "IEM 1" }));
+
+    expect(onUpdate).toHaveBeenCalledWith({ assignees: [{ id: expect.any(String), iemIds: [iem.id] }] });
+  });
+
+  it.each([
+    ["loading", "Checking schedule…"],
+    ["unavailable", "Schedule availability couldn't be confirmed"],
+  ] as const)("shows %s schedule equipment status in the IEM picker", async (status, message) => {
+    const user = userEvent.setup();
+    const iem: ServiceEquipment = { id: "iem-one", category: "iem", name: "IEM 1", subtype: "Beltpack" };
+    renderRow({
+      iemEquipment: [iem],
+      scheduledEquipmentStatus: status,
+      element: { ...baseElement, assignees: [{ id: "a1", name: "Abigail" }] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
+    await user.click(await screen.findByRole("button", { name: /Add IEM for Abigail/i }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const item = screen.getByRole("menuitem", { name: /IEM 1/ });
+    expect(within(item).queryByText(/Available/i)).not.toBeInTheDocument();
+  });
+
   it("keeps conflict details in a popover behind the warning icon", async () => {
     const user = userEvent.setup();
     renderRow({
       microphones: [orange],
-      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      scheduledEquipmentHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
       element: {
         ...baseElement,
         assignees: [{ id: "a1", name: "Abigail", microphoneIds: ["mic-orange"] }],
@@ -1864,7 +1995,7 @@ describe("microphone slots from a template", () => {
     );
     await user.click(
       await screen.findByRole("button", {
-        name: /Remove Pastor John .*keeping their microphones/i,
+        name: /Remove Pastor John .*keeping their equipment/i,
       }),
     );
 
@@ -1887,7 +2018,7 @@ describe("microphone slots from a template", () => {
       },
     });
 
-    expect(screen.getByText("No mic")).toBeInTheDocument();
+    expect(screen.getByText("No equipment")).toBeInTheDocument();
     unmount();
 
     // An item with no microphones at all says nothing — most people never
@@ -1901,6 +2032,6 @@ describe("microphone slots from a template", () => {
       },
     });
 
-    expect(screen.queryByText("No mic")).not.toBeInTheDocument();
+    expect(screen.queryByText("No equipment")).not.toBeInTheDocument();
   });
 });

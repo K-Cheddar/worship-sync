@@ -45,6 +45,8 @@ type CreatePanelProps = {
   description?: ReactNode;
   /** Optional filters rendered above the list (e.g. search). Kept visible when the list scrolls. */
   listToolbar?: ReactNode;
+  /** Optional actions beside the list heading and create action. */
+  listHeaderActions?: ReactNode;
   /** When true, the list scrolls inside the panel while the heading and toolbar stay fixed. */
   scrollableList?: boolean;
   /** The list of existing entities. */
@@ -85,6 +87,7 @@ const CreatePanel = ({
   keepCreateActionVisible = false,
   description,
   listToolbar,
+  listHeaderActions,
   scrollableList = true,
   list,
   asideOpen = false,
@@ -103,10 +106,12 @@ const CreatePanel = ({
   const panelOpenOnMobile = open || asideOpen;
   const useScrollableList = scrollableList;
   const listInactiveOnMobile = isNarrowViewport && panelOpenOnMobile;
+  const listColumnWidth = panelOpenOnMobile ? "4fr" : "1fr";
+  const sidePanelColumnWidth = panelOpenOnMobile ? "3fr" : "0fr";
   const panelGridTemplateColumns = [
-    "minmax(0, 1fr)",
-    asideOpen ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
-    open ? "minmax(0, 1fr)" : "minmax(0, 0fr)",
+    `minmax(0, ${listColumnWidth})`,
+    asideOpen ? `minmax(0, ${sidePanelColumnWidth})` : "minmax(0, 0fr)",
+    open ? `minmax(0, ${sidePanelColumnWidth})` : "minmax(0, 0fr)",
   ].join(" ");
   const panelLayoutTransitionClassName = panelOpenOnMobile
     ? teamsCreatePanelRowOpenClassName
@@ -180,11 +185,14 @@ const CreatePanel = ({
             <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">{sectionTitle}</h2>
-                {(!open || keepCreateActionVisible) && canEdit ? (
-                  <Button variant="primary" svg={Plus} iconSize="sm" onClick={onOpenCreate}>
-                    {createLabel}
-                  </Button>
-                ) : null}
+                <div className="flex shrink-0 items-center gap-2">
+                  {(!open || keepCreateActionVisible) && canEdit ? (
+                    <Button variant="primary" svg={Plus} iconSize="sm" onClick={onOpenCreate}>
+                      {createLabel}
+                    </Button>
+                  ) : null}
+                  {listHeaderActions}
+                </div>
               </div>
               {description ? (
                 <p className="mt-1 text-sm text-gray-400">{description}</p>

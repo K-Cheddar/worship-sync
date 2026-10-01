@@ -46,6 +46,12 @@ afterEach(() => {
 });
 
 describe("CreatePanel layout", () => {
+  it("renders generic list header actions beside the create action", () => {
+    renderCreatePanel({ listHeaderActions: <button type="button">Import CSV…</button> });
+    expect(screen.getByRole("button", { name: "Import CSV…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create member" })).toBeInTheDocument();
+  });
+
   it("coordinates desktop columns and keeps closed panels inert", () => {
     const { rerender } = renderCreatePanel();
 
@@ -60,6 +66,7 @@ describe("CreatePanel layout", () => {
     expect(layout).toHaveClass(
       "lg:transition-[grid-template-columns,column-gap]",
       "lg:grid-cols-2",
+      "lg:max-w-[85rem]",
       "lg:gap-0",
       "lg:duration-[220ms]",
       "motion-reduce:transition-none",
@@ -92,7 +99,7 @@ describe("CreatePanel layout", () => {
 
     expect(layout).toHaveStyle({
       gridTemplateColumns:
-        "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)",
+        "minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr)",
     });
     expect(layout).toHaveClass("lg:gap-4", "lg:duration-300");
     expect(aside).not.toHaveAttribute("inert");

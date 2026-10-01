@@ -61,9 +61,7 @@ describe("formatEntitySaveToast", () => {
     expect(formatEntitySaveToast("Camera", true, [], "Position")).toBe(
       "Added Camera.",
     );
-    expect(formatEntitySaveToast("Camera", false, [], "Position")).toBe(
-      "Saved Camera.",
-    );
+    expect(formatEntitySaveToast("Camera", false, [], "Position")).toBeNull();
     expect(
       formatEntitySaveToast("Camera", false, ["Description"], "Position"),
     ).toBe("Updated Camera: Description.");

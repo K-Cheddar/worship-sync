@@ -8,7 +8,9 @@ import {
 } from "react";
 import type { VideoBackgroundPlaybackCue, Box } from "../../types";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
+import { useResourceGovernorPolicy } from "../../hooks/useResourceGovernorPolicy";
 import {
+  selectElectronMediaCandidatesForResourcePolicy,
   type ElectronMediaSurfaceCandidate,
   type ElectronMediaSurfaceView,
 } from "../../utils/electronMediaSurfacePool";
@@ -67,6 +69,26 @@ const ElectronEditorPreparedMediaPreview = ({
     contextSource: preparedMediaContext?.contextSource,
     scope: "service",
   });
+  const resourcePolicy = useResourceGovernorPolicy();
+  const candidates = useMemo(
+    () => selectElectronMediaCandidatesForResourcePolicy({
+      candidates: candidateResult.candidates,
+      currentMediaKey: currentMedia?.mediaKey,
+      currentItemId,
+      baseBudget: candidateResult.poolCapacity,
+      aggressiveness: resourcePolicy?.recommendations.distantMediaPreparation ?? "normal",
+      performanceClass: candidateResult.performanceClass,
+    }),
+    [
+      candidateResult.candidates,
+      candidateResult.performanceClass,
+      candidateResult.poolCapacity,
+      currentItemId,
+      currentMedia?.mediaKey,
+      resourcePolicy?.recommendations.distantMediaPreparation,
+    ],
+  );
+  const previewPaused = resourcePolicy?.recommendations.optionalPreviewWork === "paused";
 
   const currentMediaKey = currentMedia?.mediaKey;
   useLayoutEffect(() => {
@@ -141,7 +163,7 @@ const ElectronEditorPreparedMediaPreview = ({
         opacity:
           isMediaSurfaceVisible(statusByKey[currentMedia.mediaKey]) ? 1 : 0,
         zIndex: 1,
-        shouldPlay: true,
+        shouldPlay: !previewPaused,
         muted: true,
         volume,
         playback,
@@ -154,6 +176,7 @@ const ElectronEditorPreparedMediaPreview = ({
     currentMedia,
     playback,
     reportsEditorTransport,
+    previewPaused,
     statusByKey,
     videoBox,
     volume,
@@ -164,7 +187,7 @@ const ElectronEditorPreparedMediaPreview = ({
     <div className="pointer-events-none absolute inset-0">
       <ElectronMediaSurfacePool
         enabled
-        candidates={candidateResult.candidates}
+        candidates={candidates}
         candidateDiagnostics={candidateResult.diagnostics}
         views={views}
         onStatusChange={reportStatus}

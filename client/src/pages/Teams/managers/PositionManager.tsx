@@ -14,6 +14,7 @@ import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../../components/ServiceEquipmentIcon";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -23,12 +24,14 @@ import {
   createTeamPosition,
   deleteTeamPosition,
   getServicePlanMicrophones,
+  getServiceEquipment,
   updateTeamPosition,
 } from "../../../api/auth";
 import type { TeamRecord, TeamPosition } from "../../../api/authTypes";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import {
   EntityListFilterPanel,
   EntityListFilterFooter,
@@ -42,7 +45,8 @@ import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
-import PositionIconPicker from "../PositionIconPicker";
+import EntityIconPicker from "../EntityIconPicker";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import { useSensors } from "../../../utils/dndUtils";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
@@ -50,7 +54,6 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
-import { formatPositionSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_POSITION_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -59,7 +62,6 @@ import {
   buildTeamsQualificationsPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -75,9 +77,10 @@ import {
 type PositionDraft = {
   name: string;
   description: string;
-  icon: string;
+  icon: PositionIcon | "";
   qualificationAreaId: string;
   defaultMicrophoneId: string;
+  defaultIemId: string;
 };
 
 // Key used to track an in-flight save for the create form, which has no
@@ -88,6 +91,7 @@ const CREATE_SAVING_KEY = "__create__";
 // its own sentinel distinct from the draft's real (empty-string) value.
 const NO_QUALIFICATION_AREA_VALUE = "__none__";
 const NO_DEFAULT_MICROPHONE_VALUE = "__none_microphone__";
+const NO_DEFAULT_IEM_VALUE = "__none_iem__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -98,6 +102,7 @@ type PositionManagerProps = {
   onArchived: () => void;
   onRemoved: (positionId: string) => void;
   onReordered: (teamId: string, orderedPositionIds: string[]) => void;
+  onImported?: () => void;
 };
 
 const PositionManager = ({
@@ -109,6 +114,7 @@ const PositionManager = ({
   onArchived,
   onRemoved,
   onReordered,
+  onImported,
 }: PositionManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -127,8 +133,10 @@ const PositionManager = ({
     icon: "",
     qualificationAreaId: "",
     defaultMicrophoneId: "",
+    defaultIemId: "",
   });
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iems, setIems] = useState<ServiceEquipment[]>([]);
   // Positions with a save currently in flight, keyed by positionId (or
   // CREATE_SAVING_KEY for a new position). Tracking per-editor keeps the Save
   // spinner on the position actually saving and lets editing continue
@@ -144,7 +152,6 @@ const PositionManager = ({
   const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditPositionIdRef = useRef<string | null>(null);
 
   const applyTeamId = useCallback((nextTeamId: string) => {
@@ -163,9 +170,11 @@ const PositionManager = ({
     activeTeams.find((team) => team.teamId === positionTeamId)
       ?.usesMicrophoneAssignments,
   );
+  const positionTeamUsesIems = Boolean(activeTeams.find((team) => team.teamId === positionTeamId)?.usesIemAssignments);
   const selectedDefaultMicrophone = microphones.find(
     (microphone) => microphone.id === draft.defaultMicrophoneId,
   );
+  const selectedDefaultIem = iems.find((iem) => iem.id === draft.defaultIemId);
   const teamQualificationAreaOptions = useMemo(
     () =>
       data.qualificationAreas
@@ -216,6 +225,7 @@ const PositionManager = ({
       icon: "",
       qualificationAreaId: "",
       defaultMicrophoneId: "",
+      defaultIemId: "",
     });
   };
 
@@ -236,9 +246,21 @@ const PositionManager = ({
       cancelled = true;
     };
   }, [churchId]);
+  useEffect(() => {
+    if (!churchId) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => getServiceEquipment(churchId)).then((result) => {
+      if (!cancelled) setIems(result.equipment.filter((item) => item.category === "iem"));
+    }).catch(() => { if (!cancelled) setIems([]); });
+    return () => { cancelled = true; };
+  }, [churchId]);
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const confirmDelete = async () => {
@@ -285,9 +307,9 @@ const PositionManager = ({
       ...(draft.defaultMicrophoneId
         ? { defaultMicrophoneId: draft.defaultMicrophoneId }
         : {}),
+      ...(draft.defaultIemId ? { defaultIemId: draft.defaultIemId } : {}),
       teamId: positionTeamId,
     };
-    const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
     const optimisticPosition: TeamPosition = {
       churchId,
       positionId: localPositionId,
@@ -297,6 +319,7 @@ const PositionManager = ({
       icon: payload.icon,
       qualificationAreaId: payload.qualificationAreaId,
       defaultMicrophoneId: payload.defaultMicrophoneId || null,
+      defaultIemId: payload.defaultIemId || null,
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -310,12 +333,8 @@ const PositionManager = ({
       if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
-      showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different position while this save
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved; otherwise leave their current edit untouched so
@@ -355,6 +374,7 @@ const PositionManager = ({
       icon: editing.icon || "",
       qualificationAreaId: editing.qualificationAreaId || "",
       defaultMicrophoneId: editing.defaultMicrophoneId || "",
+      defaultIemId: editing.defaultIemId || "",
     })
     : JSON.stringify(draft) !==
     JSON.stringify({
@@ -363,6 +383,7 @@ const PositionManager = ({
       icon: "",
       qualificationAreaId: "",
       defaultMicrophoneId: "",
+      defaultIemId: "",
     });
   // A save already in flight for this editor is not an unsaved change: the
   // operator committed it, and `editing` only catches up when the response
@@ -381,6 +402,7 @@ const PositionManager = ({
       icon: position.icon || "",
       qualificationAreaId: position.qualificationAreaId || "",
       defaultMicrophoneId: position.defaultMicrophoneId || "",
+      defaultIemId: position.defaultIemId || "",
     });
   }, []);
 
@@ -435,6 +457,7 @@ const PositionManager = ({
         sectionTitle="Positions"
         description="Define roles and position requirements."
         createLabel="Create position"
+        listHeaderActions={<PortableDataActions type="positions" onImported={onImported} />}
         scrollableList
         listToolbar={
           activeTeams.length === 0 ? (
@@ -513,7 +536,7 @@ const PositionManager = ({
         }
         formHeaderActions={
           editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -548,12 +571,13 @@ const PositionManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save position"
+            entityLabel="position"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >
@@ -566,7 +590,7 @@ const PositionManager = ({
           .
         </p>
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
+        <EntityIconPicker context="position" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         {positionTeamUsesMicrophones ? (
           <div>
@@ -631,6 +655,24 @@ const PositionManager = ({
               Applied to this position&apos;s slots when a new schedule is created.
               You can change any date&apos;s microphone in the schedule.
             </p>
+          </div>
+        ) : null}
+        {positionTeamUsesIems ? (
+          <div>
+            <p className="p-1 text-sm font-semibold">Default IEM:</p>
+            <RadixSelect
+              value={draft.defaultIemId || NO_DEFAULT_IEM_VALUE}
+              onValueChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value === NO_DEFAULT_IEM_VALUE ? "" : value }))}
+            >
+              <SelectTrigger aria-label="Default IEM" className="w-full justify-between">
+                <SelectValue placeholder="No default IEM">{selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : "No default IEM"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_DEFAULT_IEM_VALUE}>No default IEM</SelectItem>
+                {iems.map((iem) => <SelectItem key={iem.id} value={iem.id} textValue={iem.name}><span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span></SelectItem>)}
+              </SelectContent>
+            </RadixSelect>
+            <p className="mt-1 text-xs text-gray-400">Applied to this position&apos;s slots when a new schedule is created.</p>
           </div>
         ) : null}
         <div>

@@ -33,8 +33,11 @@ import type {
   ServicePlanSection,
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
-import { classifyServicePlanningTitle } from "./servicePlanningTitleClassifier";
-import { createServicePlanTextResource } from "./servicePlanResources";
+import {
+  classifyServicePlanningTitle,
+  servicePlanningReasonsRequireReview,
+} from "./servicePlanningTitleClassifier";
+import { createServicePlanTextResource, getImportedTextResourceTitle } from "./servicePlanResources";
 import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 
 type ImportedAssigneeWithProvenance = ServicePlanAssignee & {
@@ -207,6 +210,9 @@ const buildElementFromRow = <
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
+    ...((row.sourceOccurrenceId || row.sourcePlanElementId)
+      ? { sourceOccurrenceId: row.sourceOccurrenceId || row.sourcePlanElementId }
+      : {}),
     sourcePlanningManaged: true,
     type,
     title: plainTextToRichText(rawTitle),
@@ -335,7 +341,7 @@ const buildElementFromRow = <
     );
     if (descriptionParts.length) {
       element.resources = descriptionParts.map((part) => createServicePlanTextResource({
-        title: "Imported description",
+        title: getImportedTextResourceTitle(part.value),
         text: multilineTextToRichText(part.value),
       }));
     }
@@ -404,7 +410,7 @@ const buildElementFromRow = <
     classification &&
     (classification.parts.length > 0 || classification.reasons.length > 0 || classification.urls.length > 0)
   ) {
-    const unresolved = classification.reasons.length > 0;
+    const unresolved = servicePlanningReasonsRequireReview(classification.reasons);
     element.importAmbiguity = {
       source: "servicePlanning",
       sourceKey: options.sourceKey || "",
@@ -421,9 +427,7 @@ const buildElementFromRow = <
         row.sourceLedByRaw || row.ledBy || "",
         row.note || "",
       ]),
-      ...(!unresolved && classification.urls.length
-        ? { authorizationPending: true }
-        : {}),
+      ...(classification.urls.length ? { authorizationPending: true } : {}),
     };
   }
 

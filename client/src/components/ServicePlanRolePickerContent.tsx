@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { Check } from "lucide-react";
+import { useSelector } from "../hooks";
+import type { RootState } from "../store/store";
 import Button from "./Button/Button";
 import Input from "./Input/Input";
 
@@ -111,6 +113,10 @@ const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) 
     allowEmpty = true,
   } = props;
   const multi = props.multi === true;
+  const scrollbarWidth = useSelector(
+    (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
+  );
+  const scrollbarStyle = { "--scrollbar-width": scrollbarWidth } as CSSProperties;
   const [query, setQuery] = useState("");
   const [teamId, setTeamId] = useState(() => readStoredTeamFilter(teamFilterStorageKey));
   const teams = useMemo(() => {
@@ -177,7 +183,10 @@ const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) 
       {!lockedTeamName ? (
         <div>
           <p className="mb-1 text-[11px] font-medium text-gray-400">Filter by team</p>
-          <div className="max-h-24 touch-pan-y overflow-y-auto overscroll-contain pr-0.5">
+          <div
+            className="scrollbar-portal max-h-24 touch-pan-y overflow-y-auto overscroll-contain pr-0.5"
+            style={scrollbarStyle}
+          >
             <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by team">
               <Button
                 variant={!teamId ? "cta" : "tertiary"}
@@ -207,7 +216,12 @@ const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) 
           </div>
         </div>
       ) : null}
-      <div className="max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
+      <div
+        className="scrollbar-portal max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1"
+        role="region"
+        aria-label="Role options"
+        style={scrollbarStyle}
+      >
         {allowEmpty ? (
           <Button
             variant="tertiary"

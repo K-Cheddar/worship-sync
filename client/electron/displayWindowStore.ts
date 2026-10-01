@@ -19,6 +19,29 @@ export function setDisplayWindow(
   }
 }
 
+/** Requests closure without changing ownership; the owner's `closed` callback clears it. */
+export function requestDisplayWindowClose(displayType: string): boolean {
+  const window = getDisplayWindow(displayType) as {
+    isDestroyed: () => boolean;
+    close: () => void;
+  } | null;
+  if (!window || window.isDestroyed()) return false;
+  window.close();
+  return true;
+}
+
+/** Clears a registration only when the callback still belongs to its owner. */
+export function clearDisplayWindowIfMatches(
+  displayType: string,
+  expectedWindow: unknown,
+  onCurrentWindowClosed?: () => void,
+): boolean {
+  if (getDisplayWindow(displayType) !== expectedWindow) return false;
+  displayWindows.delete(displayType);
+  onCurrentWindowClosed?.();
+  return true;
+}
+
 export function hasDisplayWindow(displayType: string): boolean {
   return displayWindows.has(displayType);
 }

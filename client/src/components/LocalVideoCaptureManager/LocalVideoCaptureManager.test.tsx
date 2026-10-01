@@ -178,6 +178,56 @@ describe("LocalVideoCaptureManager", () => {
     await waitFor(() => expect(mockAcquireCapture).toHaveBeenCalledTimes(2));
   });
 
+  it("does not restart capture recovery for unrelated presentation changes", async () => {
+    jest.useFakeTimers();
+    const setIntervalSpy = jest.spyOn(window, "setInterval");
+    const view = render(<LocalVideoCaptureManager />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const intervalCount = setIntervalSpy.mock.calls.length;
+    const acquisitionCount = mockAcquireCapture.mock.calls.length;
+    const output = mockState.presentation.outputs.projector;
+    mockState.presentation.outputs = {
+      projector: {
+        ...output,
+        prevInfo: output.prevInfo,
+        itemContentBlocked: true,
+      },
+    };
+    view.rerender(<LocalVideoCaptureManager />);
+
+    expect(setIntervalSpy).toHaveBeenCalledTimes(intervalCount);
+    expect(mockAcquireCapture).toHaveBeenCalledTimes(acquisitionCount);
+    setIntervalSpy.mockRestore();
+  });
+
+  it("reconciles when the saved device binding changes", async () => {
+    const view = render(<LocalVideoCaptureManager />);
+    await waitFor(() => expect(mockAcquireCapture).toHaveBeenCalledTimes(1));
+
+    mockResolveBinding.mockReturnValue({
+      sourceId: "source-1",
+      deviceId: "capture-card-2",
+      deviceLabel: "USB Capture",
+    });
+    mockState.presentation.outputs = {
+      projector: {
+        ...mockState.presentation.outputs.projector,
+        isTransmitting: false,
+      },
+    };
+    view.rerender(<LocalVideoCaptureManager />);
+
+    await waitFor(() => expect(mockAcquireCapture).toHaveBeenLastCalledWith(
+      "source-1",
+      expect.objectContaining({ deviceId: "capture-card-2" }),
+      true,
+      "active-output-manager",
+    ));
+  });
+
   it("releases the capture when no output is using the source", async () => {
     const view = render(<LocalVideoCaptureManager />);
     await waitFor(() => expect(mockAcquireCapture).toHaveBeenCalledTimes(1));

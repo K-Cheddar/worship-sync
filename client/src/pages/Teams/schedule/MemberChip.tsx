@@ -10,6 +10,7 @@ import { WantsThisBadge } from "./WantsThisIndicator";
 
 type MemberChipProps = {
   label: string;
+  avatar?: ReactNode;
   subtitle?: string;
   issue?: string;
   /** Non-blocking caution shown in amber; the member stays selectable. */
@@ -30,6 +31,7 @@ type MemberChipProps = {
 
 const MemberChip = ({
   label,
+  avatar,
   subtitle,
   issue,
   warning,
@@ -76,7 +78,7 @@ const MemberChip = ({
               type="button"
               disabled={disabled}
               className={cn(
-                "min-w-0 flex-1 truncate rounded text-left",
+                "flex min-w-0 flex-1 items-center gap-2 rounded text-left",
                 disabled
                   ? "cursor-not-allowed"
                   : "cursor-pointer hover:bg-gray-800/80",
@@ -91,10 +93,14 @@ const MemberChip = ({
                 onSelect?.();
               }}
             >
-              {label}
+              {avatar}
+              <span className="min-w-0 flex-1 truncate">{label}</span>
             </button>
           ) : (
-            <span className="min-w-0 flex-1 truncate">{label}</span>
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              {avatar}
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+            </span>
           )}
 
           {showHighlightAction ? (

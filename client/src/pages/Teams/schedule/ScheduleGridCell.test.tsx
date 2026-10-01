@@ -65,6 +65,26 @@ describe("ScheduleGridCell", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the assigned member photo and keeps an empty slot avatar-free", () => {
+    renderCell({
+      assignmentCell: { primaryMemberId: "m1" },
+      allMembers: [{
+        memberId: "m1",
+        churchId: "church-1",
+        firstName: "Rae",
+        lastName: "Kim",
+        positionIds: ["cam"],
+        blockoutDates: [],
+        profileImageUrl: "https://example.com/rae.jpg",
+      }],
+    });
+
+    expect(screen.getByAltText("")).toHaveAttribute(
+      "src",
+      "https://example.com/rae.jpg",
+    );
+  });
+
   it("shows remove for an added optional position and requests removal", () => {
     const { requestRemoveAdditionalPosition } = renderCell({
       isSlotEnabled: true,
@@ -96,6 +116,7 @@ describe("ScheduleGridCell", () => {
     expect(screen.getByText("Empty")).toHaveClass(
       ...scheduleAssignmentLabelClassName.split(" "),
     );
+    expect(screen.queryByAltText("")).not.toBeInTheDocument();
   });
 
   it("labels a schedule-only guest without treating the slot as empty", () => {

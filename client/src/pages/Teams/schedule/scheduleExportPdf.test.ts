@@ -4,7 +4,7 @@ import {
   SCHEDULE_EXPORT_LAYOUTS,
   type ScheduleExportLayout,
 } from "./scheduleExportPdf";
-import type { ScheduleExportModel } from "./scheduleExport";
+import { formatExportCellText, type ScheduleExportModel } from "./scheduleExport";
 
 const model = (
   overrides: Partial<ScheduleExportModel> = {},
@@ -106,6 +106,36 @@ describe("buildSchedulePdf", () => {
         }),
       ),
     ).not.toThrow();
+  });
+
+  it("includes microphone and IEM names in the same PDF cell text", () => {
+    const exportModel = model({
+      groups: [{
+        serviceName: "Sabbath",
+        timingLabel: "",
+        rows: [{
+          occurrenceId: "o1",
+          rowLabel: "May 2",
+          cells: [{
+            state: "filled",
+            highlighted: false,
+            tokens: [{ name: "Brandon", roleNote: "", highlighted: false }],
+            equipment: [
+              { id: "mic-1", category: "microphone", name: "Black" },
+              { id: "iem-1", category: "iem", name: "IEM 1" },
+            ],
+          }],
+        }],
+      }],
+      columnLabels: ["Director"],
+      columnKeys: ["dir::0"],
+    });
+    const text = formatExportCellText(exportModel.groups[0].rows[0].cells[0]);
+    expect(text).toBe("Brandon\nMic: Black\nIEM: IEM 1");
+    const doc = buildSchedulePdf(exportModel, "grid");
+    const pdf = doc.output();
+    expect(pdf).toContain("Black");
+    expect(pdf).toContain("IEM 1");
   });
 
   it.each(LAYOUTS)(

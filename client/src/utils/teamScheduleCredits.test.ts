@@ -118,6 +118,11 @@ describe("buildTeamScheduleCreditEntries", () => {
 
     expect(entries).toEqual([
       {
+        heading: "Audio Engineer",
+        names: "",
+        sourceLabel: "Media schedule: July Media - Sabbath Worship",
+      },
+      {
         heading: "Camera",
         names: "Alice Jones",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
@@ -150,8 +155,9 @@ describe("buildTeamScheduleCreditEntries", () => {
       ],
     });
 
-    expect(entries[0]?.names).toBe("Bob Smith");
-    expect(entries[0]?.sourceLabel).toContain("Afternoon Worship");
+    const camera = entries.find((entry) => entry.heading === "Camera");
+    expect(camera?.names).toBe("Bob Smith");
+    expect(camera?.sourceLabel).toContain("Afternoon Worship");
   });
 
   it("rolls to the next upcoming occurrence after the three-hour window", () => {
@@ -189,6 +195,11 @@ describe("buildTeamScheduleCreditEntries", () => {
     });
 
     expect(entries).toEqual([
+      {
+        heading: "Audio Engineer",
+        names: "",
+        sourceLabel: "Media schedule: July Media - Afternoon Worship",
+      },
       {
         heading: "Camera",
         names: "Bob Smith",
@@ -253,7 +264,9 @@ describe("buildTeamScheduleCreditEntries", () => {
       ],
     });
 
-    expect(entries[0].names).toBe("Taylor\nAlex Rivera");
+    expect(entries.find((entry) => entry.heading === "Camera")?.names).toBe(
+      "Taylor\nAlex Rivera",
+    );
   });
 
   it("returns an empty list when there is no media team or target occurrence", () => {
@@ -264,7 +277,7 @@ describe("buildTeamScheduleCreditEntries", () => {
         members,
         schedules: [],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: false });
+    ).toEqual({ entries: [], scheduleUnavailable: false, scheduleLoaded: false });
 
     expect(
       buildTeamScheduleCreditEntries({
@@ -280,7 +293,7 @@ describe("buildTeamScheduleCreditEntries", () => {
           }),
         ],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: false });
+    ).toEqual({ entries: [], scheduleUnavailable: false, scheduleLoaded: false });
   });
 
   // An empty roster and a roster we never fetched look identical once the
@@ -303,7 +316,24 @@ describe("buildTeamScheduleCreditEntries", () => {
         now: new Date("2026-07-04T10:30:00.000Z"),
         schedules: [{ ...summary, assignmentsOmitted: true }],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: true });
+    ).toEqual({ entries: [], scheduleUnavailable: true, scheduleLoaded: false });
+  });
+
+  it("reports hydrated empty assignments as loaded for every schedule position", () => {
+    const result = buildTeamScheduleCreditEntries({
+      teams,
+      positions,
+      members,
+      now: new Date("2026-07-04T10:30:00.000Z"),
+      schedules: [schedule("2026-07-04T10:00:00.000Z", { "occ-1": {} })],
+    });
+
+    expect(result.scheduleLoaded).toBe(true);
+    expect(result.scheduleUnavailable).toBe(false);
+    expect(result.entries).toEqual([
+      expect.objectContaining({ heading: "Audio Engineer", names: "" }),
+      expect.objectContaining({ heading: "Camera", names: "" }),
+    ]);
   });
 });
 

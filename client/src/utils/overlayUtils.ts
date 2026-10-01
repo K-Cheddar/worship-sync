@@ -69,7 +69,6 @@ export function normalizeOverlayForSync(
     servicePlanSource: overlay.servicePlanSource,
     servicePlanBaseline: overlay.servicePlanBaseline,
     servicePlanOverrides: overlay.servicePlanOverrides,
-    servicePlanReviewRequired: overlay.servicePlanReviewRequired,
   };
 }
 

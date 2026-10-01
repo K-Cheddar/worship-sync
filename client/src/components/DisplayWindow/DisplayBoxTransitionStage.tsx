@@ -25,6 +25,7 @@ import {
 } from "./laneBackgroundMedia";
 import { logVideoCue } from "../../utils/videoBackgroundPlayback";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
+import { useResourceGovernorPolicy } from "../../hooks/useResourceGovernorPolicy";
 import {
   useRemoteMediaPreparationManifest,
   useReportRemoteMediaPreparationReadiness,
@@ -32,7 +33,7 @@ import {
 import { GlobalInfoContext } from "../../context/globalInfo";
 import ElectronMediaSurfacePool from "./ElectronMediaSurfacePool";
 import {
-  selectElectronMediaSurfaceCandidates,
+  selectElectronMediaCandidatesForResourcePolicy,
   type ElectronMediaSurfaceCandidate,
   type ElectronMediaSurfacePerformanceClass,
   type ElectronMediaSurfaceView,
@@ -418,6 +419,7 @@ const DisplayBoxTransitionStage = ({
     outlineName: mediaPlayback?.preparedMediaContext?.outlineName,
     contextSource: mediaPlayback?.preparedMediaContext?.contextSource,
   });
+  const resourcePolicy = useResourceGovernorPolicy();
   useEffect(() => {
     // Electron poster rendering already resolves through the shared media
     // cache path; a second raw-URL request here could duplicate that fetch.
@@ -450,7 +452,15 @@ const DisplayBoxTransitionStage = ({
   );
   const poolCandidates = useMemo(() => {
     if (sessionKind !== "display" || !remotePreparation.manifest) {
-      return poolCandidateResult.candidates;
+      return selectElectronMediaCandidatesForResourcePolicy({
+        candidates: poolCandidateResult.candidates,
+        currentMediaKey: currentPoolMedia?.mediaKey,
+        currentItemId: mediaPlayback?.currentItemId,
+        protectedMediaKeys: protectedPoolMediaKeys,
+        baseBudget: poolCandidateResult.poolCapacity,
+        aggressiveness: resourcePolicy?.recommendations.distantMediaPreparation ?? "normal",
+        performanceClass: poolCandidateResult.performanceClass,
+      });
     }
     // Keep the live current-media fallback while the controller's next
     // structural manifest is still in flight. The remote renderer never reads
@@ -472,7 +482,7 @@ const DisplayBoxTransitionStage = ({
     const manifestKeys = new Set(
       remoteManifestCandidates.map((candidate) => candidate.mediaKey),
     );
-    return selectElectronMediaSurfaceCandidates({
+    return selectElectronMediaCandidatesForResourcePolicy({
       candidates: [
         ...manifestCandidates,
         ...currentFallback.filter(
@@ -482,19 +492,21 @@ const DisplayBoxTransitionStage = ({
       currentMediaKey: currentPoolMedia?.mediaKey,
       currentItemId: mediaPlayback?.currentItemId,
       protectedMediaKeys: protectedPoolMediaKeys,
-      maxSurfaces: mediaPlayback?.preparedSurfaceBudget,
-      performanceClass: mediaPlayback?.preparedSurfacePerformanceClass,
+      baseBudget: poolCandidateResult.poolCapacity,
+      aggressiveness: resourcePolicy?.recommendations.distantMediaPreparation ?? "normal",
+      performanceClass: poolCandidateResult.performanceClass,
     });
   }, [
     currentPoolMedia?.mediaKey,
     mediaPlayback?.currentItemId,
-    mediaPlayback?.preparedSurfaceBudget,
-    mediaPlayback?.preparedSurfacePerformanceClass,
+    poolCandidateResult.poolCapacity,
+    poolCandidateResult.performanceClass,
     poolCandidateResult.candidates,
     protectedPoolMediaKeys,
     remoteManifestCandidates,
     remotePreparation.manifest,
     sessionKind,
+    resourcePolicy?.recommendations.distantMediaPreparation,
   ]);
   const usingRemoteManifest = Boolean(
     sessionKind === "display" && remotePreparation.manifest,

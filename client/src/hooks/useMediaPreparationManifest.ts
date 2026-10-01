@@ -461,6 +461,24 @@ export const useRemoteMediaPreparationReadinessReports = ({
 const manifestWriteQueues = new Map<string, Promise<void>>();
 const manifestDrafts = new Map<string, MediaPreparationManifest>();
 const manifestPublicationGenerations = new Map<string, number>();
+const manifestPublicationOwners = new Map<string, Set<number>>();
+
+const retireManifestLifecycleIfIdle = (key: string): void => {
+  if (manifestPublicationOwners.get(key)?.size || manifestWriteQueues.has(key)) return;
+  manifestPublicationOwners.delete(key);
+  manifestPublicationGenerations.delete(key);
+  // Every committed draft is also cached in localStorage. An in-flight draft
+  // remains here until its queue settles so a newer owner can retain revision
+  // continuity without allowing an older completion to replace it.
+  manifestDrafts.delete(key);
+};
+
+export const getManifestLifecycleCountsForTests = () => ({
+  queues: manifestWriteQueues.size,
+  drafts: manifestDrafts.size,
+  generations: manifestPublicationGenerations.size,
+  owners: [...manifestPublicationOwners.values()].reduce((total, owners) => total + owners.size, 0),
+});
 
 const readCachedManifest = (
   churchId: string | undefined,
@@ -626,10 +644,21 @@ export const usePublishMediaPreparationManifest = ({
     const key = getStorageKey(churchId, outputId);
     const generation = (manifestPublicationGenerations.get(key) ?? 0) + 1;
     manifestPublicationGenerations.set(key, generation);
+    const owners = manifestPublicationOwners.get(key) ?? new Set<number>();
+    owners.add(generation);
+    manifestPublicationOwners.set(key, owners);
+    let active = true;
+    const retireOwner = () => {
+      active = false;
+      const currentOwners = manifestPublicationOwners.get(key);
+      currentOwners?.delete(generation);
+      if (currentOwners?.size === 0) manifestPublicationOwners.delete(key);
+      retireManifestLifecycleIfIdle(key);
+    };
     // A newly selected outline can spend one render in `loading`. Invalidate
     // the previous request immediately, while retaining its manifest until
     // the replacement discovery is complete.
-    if (!discovery || discovery.outlineLoadState !== "loaded") return;
+    if (!discovery || discovery.outlineLoadState !== "loaded") return retireOwner;
 
     const path = getManifestPath(churchId, outputId);
     const revisionBaseline =
@@ -641,7 +670,6 @@ export const usePublishMediaPreparationManifest = ({
       previous: revisionBaseline,
       publishedAt,
     });
-    let active = true;
     publishManifestStatus(churchId, {
       outputId,
       state: "publishing",
@@ -750,7 +778,13 @@ export const usePublishMediaPreparationManifest = ({
     const queueCycle = (attempt = 0) => {
       const previous = manifestWriteQueues.get(key) ?? Promise.resolve();
       const write = previous.catch(() => undefined).then(() => publishAttempt(attempt));
-      manifestWriteQueues.set(key, write.then(() => undefined, () => undefined));
+      const queue = write.then(() => undefined, () => undefined);
+      manifestWriteQueues.set(key, queue);
+      void queue.then(() => {
+        if (manifestWriteQueues.get(key) !== queue) return;
+        manifestWriteQueues.delete(key);
+        retireManifestLifecycleIfIdle(key);
+      });
       return write;
     };
     unsubscribeConnection = onValue(ref(firebaseDb, ".info/connected"), (snapshot) => {
@@ -785,11 +819,11 @@ export const usePublishMediaPreparationManifest = ({
     });
     void queueCycle(0);
     return () => {
-      active = false;
       unsubscribeConnection?.();
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       resolveScheduledRetry?.();
+      retireOwner();
     };
   }, [
     churchId,

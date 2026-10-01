@@ -1,7 +1,18 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { act, fireEvent, render as renderRtl, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Provider } from "react-redux";
 import ServicePublic from "./ServicePublic";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
+import store from "../store/store";
+
+const render = (ui: ReactElement) => {
+  const view = renderRtl(<Provider store={store}>{ui}</Provider>);
+  return {
+    ...view,
+    rerender: (next: ReactElement) => view.rerender(<Provider store={store}>{next}</Provider>),
+  };
+};
 
 const flushDoubleRaf = () =>
   new Promise<void>((resolve) => {

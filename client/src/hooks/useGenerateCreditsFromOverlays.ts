@@ -165,6 +165,7 @@ export function useGenerateCreditsFromOverlays() {
       };
 
       let schedule: TeamScheduleCreditEntry[] = [];
+      let scheduleLoaded = false;
       let scheduleError: string | null = null;
       // The bootstrap only hydrates schedules around today. A service outside
       // that window comes back as a summary, and generating from it would write
@@ -182,6 +183,7 @@ export function useGenerateCreditsFromOverlays() {
           });
           schedule = credits.entries;
           scheduleUnavailable = credits.scheduleUnavailable;
+          scheduleLoaded = credits.scheduleLoaded;
         } catch (error) {
           console.error("Error generating credits from Teams schedule:", error);
           scheduleError =
@@ -263,6 +265,8 @@ export function useGenerateCreditsFromOverlays() {
             (m) => credit.heading.toLowerCase() === m.headingMatch,
           );
           if (!match) return credit;
+          // A matching Teams schedule row is authoritative, including an empty row.
+          if (scheduleLoaded && findTeamScheduleCreditEntryForHeading(schedule, credit.heading)) return credit;
           const text = buildTeamCreditsText(
             teamAssignments,
             match.teamName,
@@ -296,8 +300,7 @@ export function useGenerateCreditsFromOverlays() {
           const preserveManual = Boolean(
             existing?.generatedTextOverridden
             || (existing?.generatedBaselineText !== undefined
-              ? existing.text !== existing.generatedBaselineText
-              : Boolean(existing?.text.trim())),
+              && existing.text !== existing.generatedBaselineText),
           );
           return [
             {
@@ -317,6 +320,7 @@ export function useGenerateCreditsFromOverlays() {
         });
       const missedScheduleItems = schedule
         .filter((entry) => !matchedScheduleEntries.has(entry))
+        .filter((entry) => entry.names.trim())
         .map((entry, index) => ({
           creditId: `schedule-miss-${index}-${entry.heading}`,
           creditHeading: entry.heading,

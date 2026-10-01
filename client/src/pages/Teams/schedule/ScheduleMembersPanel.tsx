@@ -6,6 +6,7 @@ import { cn } from "@/utils/cnHelper";
 import { formatBirthDate } from "@/utils/birthDate";
 import type { TeamPosition, TeamRosterMember } from "../../../api/authTypes";
 import EntityListSearch from "../components/EntityListSearch";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import MemberChip from "./MemberChip";
 import ScheduleMembersPositionFilter from "./ScheduleMembersPositionFilter";
 import ScheduleMembersSort from "./ScheduleMembersSort";
@@ -261,6 +262,13 @@ const ScheduleMembersPanel = ({
         <MemberChip
           key={member.memberId}
           label={scheduleMemberName(member, duplicateFirstNames)}
+          avatar={
+            <MemberAvatar
+              profileImageUrl={member.profileImageUrl}
+              memberName={`${member.firstName} ${member.lastName}`}
+              className="h-8 w-8"
+            />
+          }
           subtitle={positionNames.length > 0 ? positionNames.join(", ") : undefined}
           assignmentCount={scheduleAssignmentCounts.get(member.memberId) || 0}
           lastServedDate={memberServingHistory.get(member.memberId)?.lastServedDate}
@@ -301,6 +309,13 @@ const ScheduleMembersPanel = ({
           {showEligibilityGroupDivider ? <ScheduleMemberPositionGroupDivider /> : null}
           <MemberChip
             label={scheduleMemberName(row.member, duplicateFirstNames)}
+            avatar={
+              <MemberAvatar
+                profileImageUrl={row.member.profileImageUrl}
+                memberName={`${row.member.firstName} ${row.member.lastName}`}
+                className="h-8 w-8"
+              />
+            }
             subtitle={row.eligible ? baseSubtitle : row.issue}
             issue={row.eligible ? undefined : row.issue}
             warning={row.eligible ? row.warning || undefined : undefined}
@@ -400,6 +415,7 @@ const ScheduleMembersPanel = ({
                 label={isAssignMode ? "Members to assign" : "Members"}
                 value={searchValue}
                 onChange={onSearchChange}
+                clearable
               />
             </div>
           ) : null}

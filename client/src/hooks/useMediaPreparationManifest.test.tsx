@@ -7,6 +7,7 @@ import {
   useRemoteMediaPreparationReadinessReports,
   useReportRemoteMediaPreparationReadiness,
   usePublishMediaPreparationManifest,
+  getManifestLifecycleCountsForTests,
   MEDIA_READINESS_STATUS_EVENT,
 } from "./useMediaPreparationManifest";
 import {
@@ -1029,7 +1030,11 @@ describe("useRemoteMediaPreparationManifest", () => {
     );
 
     await waitFor(() => expect(pending).toHaveLength(1));
+    expect(getManifestLifecycleCountsForTests().queues).toBe(1);
     view.rerender({ discovery: makeDiscovery("outline-b", "loading") });
+    // The stale generation loses publication rights, but its transaction queue
+    // stays owned until the in-flight Firebase transaction settles.
+    expect(getManifestLifecycleCountsForTests().queues).toBe(1);
 
     let staleValue: unknown;
     await act(async () => {
@@ -1311,5 +1316,40 @@ describe("useRemoteMediaPreparationManifest", () => {
         itemId: "item-1",
       }),
     ]);
+  });
+});
+
+describe("media preparation manifest publisher lifecycle", () => {
+  it("retires many abandoned church/output generations while preserving a current write queue", async () => {
+    const discovery = { outlineLoadState: "loading" } as ElectronMediaDiscovery;
+    let churchId = "lifecycle-church-0";
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ firebaseDb: { name: "shared" }, churchId, sharedDataReady: true, sessionKind: "controller" } as never}>
+        {children}
+      </GlobalInfoContext.Provider>
+    );
+    const view = renderHook(
+      ({ outputId }: { outputId: string }) => usePublishMediaPreparationManifest({ enabled: true, discovery, outputId }),
+      { initialProps: { outputId: "output-0" }, wrapper },
+    );
+
+    for (let index = 1; index <= 40; index += 1) {
+      churchId = `lifecycle-church-${index}`;
+      view.rerender({ outputId: `output-${index}` });
+    }
+    expect(getManifestLifecycleCountsForTests()).toMatchObject({
+      queues: 0,
+      drafts: 0,
+      generations: 1,
+      owners: 1,
+    });
+
+    view.unmount();
+    expect(getManifestLifecycleCountsForTests()).toEqual({
+      queues: 0,
+      drafts: 0,
+      generations: 0,
+      owners: 0,
+    });
   });
 });

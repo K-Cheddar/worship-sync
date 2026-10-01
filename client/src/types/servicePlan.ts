@@ -68,6 +68,39 @@ export type ServicePlanMicrophone = {
   color: string;
 };
 
+/**
+ * Equipment shown in the shared assignment UI. Existing microphones continue
+ * to be stored in servicePlanMicrophones; only new categories are written to
+ * serviceEquipment during this compatibility phase.
+ */
+export type EquipmentCategory = "microphone" | "iem";
+export type ServiceEquipment = {
+  id: string;
+  category: EquipmentCategory;
+  name: string;
+  subtype?: string;
+  color?: string;
+};
+
+/** Adapt the microphone catalog for common read-only inventory views. */
+export const getAvailableEquipment = ({
+  microphones,
+  equipment,
+}: {
+  microphones: ServicePlanMicrophone[];
+  equipment: ServiceEquipment[];
+}): ServiceEquipment[] => [
+  ...microphones.map((microphone) => ({
+    id: microphone.id,
+    category: "microphone" as const,
+    name: microphone.name,
+    subtype: microphone.type,
+    color: microphone.color,
+  })),
+  // During compatibility, microphones enter only through the legacy adapter.
+  ...equipment.filter((item) => item.category !== "microphone"),
+];
+
 /** A position that should receive an assigned microphone in its notes area. */
 export type ServicePlanMicrophoneAudience = {
   positionId: string;
@@ -103,6 +136,8 @@ export type ServicePlanAssignee = {
   name?: string;
   /** Microphones this person carries for this item, in operator order. */
   microphoneIds?: string[];
+  /** In-ear monitor/beltpack IDs this person carries for this item. */
+  iemIds?: string[];
 };
 
 /** Structured source assignment retained when an importer can distinguish a
@@ -247,6 +282,8 @@ export const getServicePlanCustomDocumentId = (
 
 export type ServicePlanElement = {
   id: string;
+  /** Durable row identity supplied by an external plan API, when available. */
+  sourceOccurrenceId?: string;
   /** Internal provenance flag used to safely reconcile later Service Planning
    * refreshes without treating operator-created items as source items. */
   sourcePlanningManaged?: boolean;

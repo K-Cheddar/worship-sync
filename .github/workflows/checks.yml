@@ -2,9 +2,13 @@ name: Checks
 
 on:
   pull_request:
-  push:
-    branches: [staging]
   workflow_dispatch:
+    inputs:
+      coverage:
+        description: Run client coverage and enforce global thresholds
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -48,7 +52,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node24-jest-shard-${{ matrix.shard }}-${{ hashFiles('client/package-lock.json', 'client/jest.config.cjs', 'client/jestImportMetaTransform.cjs', 'client/tsconfig.jest.json') }}
 
-      - name: Run client Jest shard
+      - name: Run client Jest shard without coverage
+        if: (github.event_name != 'pull_request' || github.base_ref != 'master') && (github.event_name != 'workflow_dispatch' || !inputs.coverage)
+        env:
+          CI_JEST_SHARD: ${{ matrix.shard }}
+          JEST_CACHE_DIRECTORY: ${{ runner.temp }}/jest-cache-${{ matrix.shard }}
+        run: >-
+          npm test --prefix client --
+          --shard=${{ matrix.shard }}/4
+          --maxWorkers=2
+          --cacheDirectory="$JEST_CACHE_DIRECTORY"
+
+      - name: Run client Jest coverage shard
+        if: (github.event_name == 'pull_request' && github.base_ref == 'master') || (github.event_name == 'workflow_dispatch' && inputs.coverage)
         env:
           CI_JEST_SHARD: ${{ matrix.shard }}
           JEST_CACHE_DIRECTORY: ${{ runner.temp }}/jest-cache-${{ matrix.shard }}
@@ -61,13 +77,46 @@ jobs:
           --coverageReporters=json
 
       - name: Upload client coverage artifact
-        if: always() && !cancelled()
+        if: (github.event_name == 'pull_request' && github.base_ref == 'master') || (github.event_name == 'workflow_dispatch' && inputs.coverage)
         uses: actions/upload-artifact@v4
         with:
           name: client-coverage-shard-${{ matrix.shard }}
           path: client/coverage/shard-${{ matrix.shard }}/coverage-final.json
           if-no-files-found: error
           retention-days: 1
+
+  coverage:
+    name: Merge client coverage
+    if: (github.event_name == 'pull_request' && github.base_ref == 'master') || (github.event_name == 'workflow_dispatch' && inputs.coverage)
+    needs: [client_tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/coverage-tools/package-lock.json
+
+      - name: Install coverage merge dependency
+        run: npm ci --prefix client/coverage-tools
+
+      - name: Download all client coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: client-coverage-shard-*
+          path: client/coverage-artifacts
+          merge-multiple: false
+
+      - name: Merge coverage and enforce global thresholds
+        working-directory: client
+        env:
+          NODE_PATH: ${{ github.workspace }}/client/coverage-tools/node_modules
+        run: node scripts/merge-jest-coverage.cjs
 
   server_tests:
     name: Server tests
@@ -147,6 +196,9 @@ jobs:
     name: Electron production build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -160,7 +212,15 @@ jobs:
             package-lock.json
             client/package-lock.json
 
-      - name: Install root dependencies
+      - name: Restore Electron build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('client/package-lock.json') }}
+
+      - name: Install server dependencies
         run: npm ci
 
       - name: Install client dependencies
@@ -169,39 +229,7 @@ jobs:
       - name: Build Electron bundles
         run: npm run build:electron --prefix client
 
-  coverage:
-    name: Merge client coverage
-    if: always() && !cancelled()
-    needs: [client_tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: client/coverage-tools/package-lock.json
-
-      - name: Install coverage merge dependency
-        run: npm ci --prefix client/coverage-tools
-
-      - name: Download all client coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: client-coverage-shard-*
-          path: client/coverage-artifacts
-          merge-multiple: false
-
-      - name: Merge coverage and enforce global thresholds
-        working-directory: client
-        env:
-          NODE_PATH: ${{ github.workspace }}/client/coverage-tools/node_modules
-        run: node scripts/merge-jest-coverage.cjs
-
+  # Keep this status name stable for branch protection; it only aggregates CI.
   checks:
     name: npm run checks
     if: always()
@@ -219,4 +247,5 @@ jobs:
       - name: Verify every required check succeeded
         env:
           CHECK_RESULTS: ${{ toJSON(needs) }}
+          COVERAGE_REQUIRED: ${{ (github.event_name == 'pull_request' && github.base_ref == 'master') || (github.event_name == 'workflow_dispatch' && inputs.coverage) }}
         run: node .github/scripts/verify-checks-status.cjs

@@ -10,7 +10,8 @@ import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import type { MenuItemType } from "../../../types";
 import { cn } from "@/utils/cnHelper";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
+import type { EntityIcon } from "../../../components/icons/iconTypes";
 import {
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
@@ -27,7 +28,7 @@ type EntityRowProps = {
   headerBadgePlacement?: "inline" | "top-end";
   /** Secondary detail shown below subtitle with reduced emphasis (e.g. member notes). */
   note?: string;
-  icon?: string;
+  icon?: EntityIcon;
   archived?: boolean;
   /** Soft-inactive (e.g. past end date). Shown when not archived. */
   inactive?: boolean;
@@ -44,6 +45,8 @@ type EntityRowProps = {
   actionsPlacement?: "aside" | "footer-end";
   /** Drag handle rendered at the start of the row when the list is sortable. */
   dragHandle?: ReactNode;
+  /** Optional visual rendered before the title, without adding an action. */
+  leadingVisual?: ReactNode;
   /** When false, hides the chevron on clickable rows. Defaults to true. */
   showChevron?: boolean;
   /** Root element ref, used by the sortable wrapper. */
@@ -70,12 +73,12 @@ const EntityRow = ({
   actions,
   actionsPlacement = "aside",
   dragHandle,
+  leadingVisual,
   showChevron = true,
   headerBadgePlacement = "inline",
   rowRef,
   style,
 }: EntityRowProps) => {
-  const IconComponent = resolvePositionLucideIcon(icon);
   const menuItems = useMemo(() => {
     const items: MenuItemType[] = [];
     if (!canEdit) return items;
@@ -159,11 +162,10 @@ const EntityRow = ({
 
   const rowContent = (
     <>
-      {IconComponent ? (
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/30 bg-cyan-400/10 text-cyan-100">
-          <IconComponent className="h-4 w-4" />
-        </span>
+      {icon ? (
+        <EntityIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
+      {leadingVisual}
       <div className="min-w-0 flex-1">
         {titleBlock}
         {metaBlock}
@@ -179,11 +181,10 @@ const EntityRow = ({
 
   const stackedCardBody = (
     <>
-      {IconComponent ? (
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/30 bg-cyan-400/10 text-cyan-100">
-          <IconComponent className="h-4 w-4" />
-        </span>
+      {icon ? (
+        <EntityIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
+      {leadingVisual}
       <div className="min-w-0 flex-1">
         {titleBlock}
         {metaBlock}

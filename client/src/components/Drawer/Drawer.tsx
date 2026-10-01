@@ -3,6 +3,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
 import Button from "../Button/Button";
 import { X } from "lucide-react";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 export interface DrawerProps {
   isOpen: boolean;
@@ -69,6 +70,7 @@ const Drawer: React.FC<DrawerProps> = ({
   contentClassName = "overflow-auto flex-1 min-h-0",
   portalContainer,
 }) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
@@ -96,7 +98,11 @@ const Drawer: React.FC<DrawerProps> = ({
     <Sheet open={isOpen} onOpenChange={handleOpenChange} modal={showBackdrop}>
       <SheetContent
         side={side}
-        container={portalContainer ?? getControllerElement()}
+        container={
+          portalContainer ??
+          overlayPortalContainer ??
+          getControllerElement()
+        }
         showOverlay={showBackdrop}
         showClose={false}
         className={cn("max-w-full max-h-dvh", dimensionClass, className)}

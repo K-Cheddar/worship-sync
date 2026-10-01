@@ -1,27 +1,29 @@
-import { Save, X } from "lucide-react";
+import { Check, Save, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
 import { teamsFormPanelFooterClassName } from "../teamsStyles";
 
 type FormActionButtonsProps = {
-  saveLabel: string;
+  entityLabel: string;
+  isCreate: boolean;
+  isSaving?: boolean;
   onSave: () => void;
   onCancel: () => void;
   /** Whether closing would discard edits. */
   hasPendingChanges?: boolean;
   disabled?: boolean;
-  isLoading?: boolean;
   /** Pin Close/Cancel and Save to the bottom of a scrollable form panel. */
   pinFooter?: boolean;
 };
 
 const FormActionButtons = ({
-  saveLabel,
+  entityLabel,
+  isCreate,
+  isSaving = false,
   onSave,
   onCancel,
   hasPendingChanges = true,
   disabled = false,
-  isLoading = false,
   pinFooter = false,
 }: FormActionButtonsProps) => (
   <div className={cn(pinFooter && teamsFormPanelFooterClassName)}>
@@ -31,6 +33,7 @@ const FormActionButtons = ({
         className="flex-1 justify-center"
         svg={X}
         iconSize="sm"
+        disabled={isSaving}
         onClick={onCancel}
       >
         {hasPendingChanges ? "Cancel" : "Close"}
@@ -38,13 +41,24 @@ const FormActionButtons = ({
       <Button
         variant="cta"
         className="flex-1 justify-center"
-        svg={Save}
+        svg={isSaving || (!isCreate && !hasPendingChanges) ? undefined : Save}
         iconSize="sm"
-        disabled={disabled}
-        isLoading={isLoading}
+        aria-busy={isSaving || undefined}
+        disabled={disabled || isSaving || (!isCreate && !hasPendingChanges)}
         onClick={onSave}
       >
-        {saveLabel}
+        {isSaving ? (
+          isCreate ? "Creating…" : "Saving…"
+        ) : !isCreate && !hasPendingChanges ? (
+          <>
+            <Check aria-hidden="true" data-testid="form-save-success-icon" className="size-4 shrink-0 text-emerald-300" />
+            Saved
+          </>
+        ) : isCreate ? (
+          `Create ${entityLabel}`
+        ) : (
+          `Save ${entityLabel}`
+        )}
       </Button>
     </div>
   </div>

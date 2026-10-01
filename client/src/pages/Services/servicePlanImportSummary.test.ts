@@ -33,6 +33,75 @@ const namedSection = (
 ): ServicePlanSection => ({ id, name, elements });
 
 describe("summarizeServicePlanImport", () => {
+  it("surfaces semantic microphone and IEM equipment changes in review", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"], microphoneIds: ["mic-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer updated", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"] }],
+    })])];
+    const summary = summarizeServicePlanImport(current, next, {
+      microphones: [{ id: "mic-1", name: "Lead", type: "Handheld" }],
+      iemEquipment: [{ id: "iem-1", name: "IEM 3", subtype: "wireless-beltpack" }],
+    });
+    expect(summary.changes[0].fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: "Assignments and equipment",
+        before: expect.stringContaining("Lead · Handheld"),
+        after: expect.stringContaining("IEM 3 · wireless-beltpack"),
+      }),
+    ]));
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, new Set(["updated:equipment"]));
+    expect(applied[0].elements[0].assignees).toEqual(next[0].elements[0].assignees);
+  });
+
+  it("ignores harmless equipment ID ordering differences", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-2", "iem-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1", "iem-2"] }],
+    })])];
+    expect(summarizeServicePlanImport(current, next).changes).toEqual([]);
+  });
+
+  it("uses safe generic labels when an equipment ID is unknown", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", microphoneIds: ["missing-mic"], iemIds: ["missing-iem"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", name: "Clarence Jones", microphoneIds: ["missing-mic"], iemIds: ["missing-iem"] }],
+    })])];
+
+    const field = summarizeServicePlanImport(current, next).changes[0].fields[0];
+
+    expect(field).toMatchObject({
+      label: "Assignments and equipment",
+      before: "Unassigned slot (IEM, Microphone)",
+      after: "Clarence Jones (IEM, Microphone)",
+    });
+    expect(field.before).not.toContain("missing-mic");
+    expect(field.before).not.toContain("missing-iem");
+  });
+
+  it("keeps a person-only equipment-slot change readable", () => {
+    const current = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", microphoneIds: ["mic-1"] }],
+    })])];
+    const next = [section([element("equipment", "Prayer", {
+      assignees: [{ id: "slot", name: "Clarence Jones", microphoneIds: ["mic-1"] }],
+    })])];
+
+    const summary = summarizeServicePlanImport(current, next, {
+      microphones: [{ id: "mic-1", name: "Lead", type: "Handheld" }],
+    });
+
+    expect(summary.changes[0].fields).toContainEqual({
+      label: "Assignments and equipment",
+      before: "Unassigned slot (Lead · Handheld)",
+      after: "Clarence Jones (Lead · Handheld)",
+    });
+  });
   it("keeps changes in the order of items on the service", () => {
     const current = [section([
       element("first", "Zulu", { notes: plainTextToRichText("old") }),
@@ -84,7 +153,7 @@ describe("summarizeServicePlanImport", () => {
           itemName: "Welcome",
           fields: [
             { label: "Title", before: "Old welcome", after: "Welcome" },
-            { label: "Assigned to", before: "Avery", after: "Blair" },
+            { label: "Assignments and equipment", before: "Avery", after: "Blair" },
             {
               label: "Time or duration",
               before: "09:00 · 1m",
@@ -382,7 +451,7 @@ describe("summarizeServicePlanImport", () => {
     })])];
 
     expect(summarizeServicePlanImport(current, next).changes[0].fields.map(({ label }) => label)).toEqual([
-      "Title", "Assigned to", "Time or duration", "Notes",
+      "Title", "Assignments and equipment", "Time or duration", "Notes",
     ]);
   });
 

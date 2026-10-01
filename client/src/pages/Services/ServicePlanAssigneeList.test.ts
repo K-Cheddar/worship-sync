@@ -1,6 +1,9 @@
 import {
+  addIemSlot,
   addMicrophoneSlot,
+  applyAssigneeChanges,
   hasUnclaimedMicrophoneSlot,
+  hasUnclaimedIemSlot,
   releaseServicePlanAssignee,
 } from "./ServicePlanAssigneeList";
 
@@ -35,6 +38,14 @@ describe("releaseServicePlanAssignee", () => {
     ).toEqual([{ id: "a1", microphoneIds: ["mic-orange"] }]);
   });
 
+  it("keeps both independent equipment assignments on an unclaimed slot", () => {
+    expect(releaseServicePlanAssignee([
+      { id: "a1", name: "Sarah", microphoneIds: ["same-id"], iemIds: ["same-id"] },
+    ], "a1")).toEqual([
+      { id: "a1", microphoneIds: ["same-id"], iemIds: ["same-id"] },
+    ]);
+  });
+
   it("deletes the slot on the second press, once nobody is on it", () => {
     expect(
       releaseServicePlanAssignee([{ id: "a1", microphoneIds: ["mic-orange"] }], "a1"),
@@ -54,6 +65,23 @@ describe("releaseServicePlanAssignee", () => {
     ];
     expect(releaseServicePlanAssignee(others, "a1")).toEqual([others[1]]);
   });
+});
+
+it("preserves an IEM-only unclaimed slot when assignments are normalized in the editor", () => {
+  expect(hasUnclaimedIemSlot([{ id: "s1", iemIds: ["iem-3"] }])).toBe(true);
+  expect(applyAssigneeChanges([{ id: "s1", iemIds: ["iem-3"] }], "s1", { name: "" })).toEqual([
+    { id: "s1", iemIds: ["iem-3"], name: "" },
+  ]);
+});
+
+it("removes microphone and IEM assignments independently", () => {
+  const assignees = [{ id: "s1", name: "Sarah", microphoneIds: ["mic-2"], iemIds: ["iem-3"] }];
+  expect(applyAssigneeChanges(assignees, "s1", { iemIds: [] })).toEqual([
+    { id: "s1", name: "Sarah", microphoneIds: ["mic-2"], iemIds: [] },
+  ]);
+  expect(applyAssigneeChanges(assignees, "s1", { microphoneIds: [] })).toEqual([
+    { id: "s1", name: "Sarah", microphoneIds: [], iemIds: ["iem-3"] },
+  ]);
 });
 
 describe("addMicrophoneSlot", () => {
@@ -82,5 +110,14 @@ describe("addMicrophoneSlot", () => {
     expect(next[0]).toMatchObject({ name: "Pastor John" });
     expect(next[1].name).toBeUndefined();
     expect(next[1].microphoneIds).toEqual(["mic-stand"]);
+  });
+});
+
+describe("addIemSlot", () => {
+  it("gives each IEM its own unclaimed template slot", () => {
+    const next = addIemSlot([{ id: "person", name: "Jordan" }], "iem-one");
+
+    expect(next).toHaveLength(2);
+    expect(next[1]).toEqual({ id: expect.any(String), iemIds: ["iem-one"] });
   });
 });

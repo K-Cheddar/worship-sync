@@ -24,9 +24,6 @@ type PopOverProps = {
   align?: "start" | "center" | "end";
   side?: "top" | "right" | "bottom" | "left";
   sideOffset?: number;
-  /** Render the menu inline instead of in a portal. Needed inside a
-   * FloatingWindow, whose stacking context a portaled menu escapes. */
-  disablePortal?: boolean;
   /**
    * Forwarded to Radix PopoverContent. Use e.g. onFocusOutside preventDefault
    * when a child (color wheel) must restore selection into another field
@@ -49,7 +46,6 @@ const PopOver = ({
   align = "end",
   side = "bottom",
   sideOffset = 4,
-  disablePortal,
   onFocusOutside,
   onPointerDownOutside,
   onInteractOutside,
@@ -62,7 +58,6 @@ const PopOver = ({
         align={align}
         side={side}
         sideOffset={sideOffset}
-        portal={!disablePortal}
         className={cn(
           "w-auto max-w-[85vw] overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-0 text-white shadow-md",
           contentClassName,

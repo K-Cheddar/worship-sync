@@ -37,6 +37,7 @@ import { useToast } from "../../context/toastContext";
 import {
   deleteServicePlanTemplate,
   getServicePlanMicrophones,
+  getServiceEquipment,
   saveServicePlanTemplate,
   AuthApiError,
 } from "../../api/auth";
@@ -79,6 +80,7 @@ import type {
 import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
   ServicePlanSection,
   ServicePlanTemplate,
   ServicePlanTemplatePayload,
@@ -198,6 +200,7 @@ const ServicePlanTemplateEditor = ({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [hideNotes, setHideNotes] = useState(false);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iemEquipment, setIemEquipment] = useState<ServiceEquipment[]>([]);
   const [microphoneAudiences, setMicrophoneAudiences] = useState<
     ServicePlanMicrophoneAudience[] | undefined
   >();
@@ -272,6 +275,13 @@ const ServicePlanTemplateEditor = ({
       })
       .catch(() => {
         // Optional operational metadata — see above.
+      });
+    Promise.resolve().then(() => getServiceEquipment(churchId))
+      .then((res) => {
+        if (!cancelled) setIemEquipment(res.equipment.filter((item) => item.category === "iem"));
+      })
+      .catch(() => {
+        if (!cancelled) setIemEquipment([]);
       });
     return () => {
       cancelled = true;
@@ -663,6 +673,7 @@ const ServicePlanTemplateEditor = ({
           structureOnly
           hideNotes={hideNotes}
           microphones={microphones}
+          iemEquipment={iemEquipment}
           microphoneAudiences={microphoneAudiences}
           roleNoteOptions={roleNoteOptions}
           scheduledPositionOptions={scheduledPositionOptions}

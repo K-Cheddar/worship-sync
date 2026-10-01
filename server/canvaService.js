@@ -718,6 +718,8 @@ export const createCanvaService = ({
         ) {
           throw createClientError("That Canva short link redirects outside Canva.", 422);
         }
+        const designId = canvaDesignIdFromUrl(next);
+        if (designId) return { designId };
         current = next;
         continue;
       }

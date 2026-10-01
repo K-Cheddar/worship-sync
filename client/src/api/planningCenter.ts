@@ -129,6 +129,8 @@ export type PlanningCenterPlanImport = {
   sections: Array<{
     sectionName: string;
     rows: Array<{
+      /** Stable Planning Center plan item ID. */
+      sourceOccurrenceId?: string;
       elementType: string;
       title: string;
       ledBy: string;

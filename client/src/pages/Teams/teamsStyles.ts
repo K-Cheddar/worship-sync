@@ -21,7 +21,7 @@ export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";
 
 /** Side-by-side list + edit form row inside Teams managers. */
 export const teamsCreatePanelRowClassName =
-  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 max-lg:relative max-lg:overflow-hidden lg:grid lg:grid-cols-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:transition-[grid-template-columns,column-gap] lg:ease-in-out motion-reduce:transition-none";
+  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 max-lg:relative max-lg:overflow-hidden lg:mx-auto lg:max-w-[85rem] lg:grid lg:grid-cols-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:transition-[grid-template-columns,column-gap] lg:ease-in-out motion-reduce:transition-none";
 
 /** Full-height mobile detail view shared by the list, aside, and form. */
 export const teamsCreatePanelMobileViewClassName =
@@ -75,11 +75,11 @@ export const scheduleWorkspaceTabsClassName =
 
 /** Team schedule panel grows below title/actions with internal scroll regions. */
 export const scheduleWorkspacePanelClassName =
-  "mt-4 flex flex-col overflow-hidden max-lg:flex-none lg:min-h-0 lg:flex-1";
+  "flex flex-col overflow-hidden max-lg:flex-none lg:min-h-0 lg:flex-1";
 
 /** Grid + members row inside the team schedule panel. */
 export const scheduleWorkspaceBodyRowClassName =
-  "relative mt-4 flex min-h-0 min-w-0 flex-col gap-4 max-lg:flex-none lg:flex-1 lg:flex-row lg:items-stretch";
+  "relative mt-2 flex min-h-0 min-w-0 flex-col gap-4 max-lg:flex-none lg:flex-1 lg:flex-row lg:items-stretch";
 
 /** Main column for the schedule grid. */
 export const scheduleWorkspaceMainColumnClassName =
@@ -116,9 +116,12 @@ export const teamsRowIconButtonClassName =
 export const teamsRowIconButtonPadding =
   "px-2 py-1 max-md:px-2 lg:px-1 lg:py-0.5";
 
-/** Church mic catalog tiles — as many columns as the panel width allows. */
-export const microphoneCatalogGridClassName =
+/** Equipment catalog tiles — as many columns as the panel width allows. */
+export const equipmentCatalogGridClassName =
   "grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] content-start gap-2";
+
+/** Compatibility alias for existing microphone catalog consumers. */
+export const microphoneCatalogGridClassName = equipmentCatalogGridClassName;
 
 export const inputStackClassName = "min-w-0 w-full";
 

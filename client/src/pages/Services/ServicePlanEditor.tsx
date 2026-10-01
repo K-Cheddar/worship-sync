@@ -75,6 +75,7 @@ import {
   getServicePlan,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
+  getServiceEquipment,
   listServicePlanTemplates,
   publishServicePlan,
   saveServicePlan,
@@ -100,9 +101,9 @@ import {
   isOccurrenceOnCalendarDay,
 } from "../../utils/teamScheduleOccurrences";
 import { memberName } from "../Teams/teamsUtils";
-import TeamMicrophonesPanel from "../Teams/pages/TeamMicrophonesPanel";
+import TeamEquipmentPanel from "../Teams/pages/TeamEquipmentPanel";
 import {
-  getTeamMicrophoneRows,
+  getTeamEquipmentRows,
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
 import {
@@ -142,6 +143,7 @@ import {
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
+import { servicePlanImportAmbiguityShouldQueue } from "./servicePlanningTitleClassifier";
 import ServicePlanSectionList, {
   servicePlanSectionDomId,
   type ServicePlanSelection,
@@ -184,9 +186,12 @@ import {
 import {
   readServicePlanHideNotes,
   readServicePlanImportSource,
+  readServicePlanTemplateHistory,
+  rememberServicePlanTemplate,
   writeServicePlanHideNotes,
   writeServicePlanImportSource,
 } from "./servicePlanViewPreferences";
+import { resolvePrimaryServicePlanTemplate } from "./servicePlanTemplateResolution";
 import type {
   TeamRosterMember,
   TeamPosition,
@@ -203,6 +208,7 @@ import type {
   ServicePlanSourceImport,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
   ServicePlanTemplate,
 } from "../../types/servicePlan";
 import { getServicePlanElementAssigneeNames } from "../../types/servicePlan";
@@ -316,7 +322,7 @@ type ServicePlanImportPreview = {
   summary: ServicePlanImportSummary;
 };
 
-type ServicePlanEditorTab = "plan" | "setlist" | "microphones" | "serving";
+type ServicePlanEditorTab = "plan" | "setlist" | "equipment" | "serving";
 
 const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
   new Intl.DateTimeFormat("en-US", {
@@ -398,19 +404,20 @@ type ServicePlanEditorProps = {
   /** Roles available for role-specific operational notes. */
   positions?: TeamPosition[];
   teams?: TeamRecord[];
-  /** Scheduled team holders for church microphones on this occurrence. */
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  /** Scheduled team holders for church equipment on this occurrence. */
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  /** Whether projected holders reflect the loaded schedule data. */
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   /** Schedule-derived rows shown under linked plan items. */
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /**
-   * Day-level microphone allocation for this occurrence's scheduled roles.
-   * When the occurrence has slots on a team that uses microphone assignments,
-   * the plan gains a Microphones tab beside the order of service — allocation
-   * belongs to the plan, but not in the middle of the running order.
+   * Day-level microphone/IEM allocation for this occurrence's scheduled roles.
+   * The schedule remains authoritative; this is only the editor's equipment
+   * view of those existing assignment maps.
    */
-  teamMicrophones?: {
-    /** Every assignment row for this occurrence; filtered here to mic teams. */
+  teamEquipment?: {
+    /** Every assignment row for this occurrence; filtered here by capability. */
     rows: TeamsAssignmentSummaryRow[];
     /**
      * Whether `rows` is the whole picture. Schedules outside the bootstrap's
@@ -419,11 +426,13 @@ type ServicePlanEditorProps = {
      */
     assignmentsStatus?: "ready" | "loading" | "unavailable";
     /** Slot key (`scheduleId:occurrenceId:columnKey`) currently saving. */
-    savingSlot?: string | null;
-    onChange: (
+    savingMicrophoneSlot?: string | null;
+    savingIemSlot?: string | null;
+    onMicrophoneChange: (
       row: TeamsAssignmentSummaryRow,
       microphoneIds: string[],
     ) => void;
+    onIemChange: (row: TeamsAssignmentSummaryRow, iemIds: string[]) => void;
   };
   canEdit: boolean;
   /** Current-service controller surfaces already show live status elsewhere. */
@@ -480,10 +489,11 @@ const ServicePlanEditor = ({
   members,
   positions = [],
   teams = [],
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
-  teamMicrophones,
+  teamEquipment,
   canEdit,
   showSummary = true,
   onBack,
@@ -510,6 +520,7 @@ const ServicePlanEditor = ({
   );
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iemEquipment, setIemEquipment] = useState<ServiceEquipment[]>([]);
   const [microphoneAudiences, setMicrophoneAudiences] = useState<
     ServicePlanMicrophoneAudience[] | undefined
   >();
@@ -595,6 +606,9 @@ const ServicePlanEditor = ({
   const [loading, setLoading] = useState(Boolean(churchId && planKey));
   const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
   const [planTemplatesLoading, setPlanTemplatesLoading] = useState(false);
+  const [lastUsedTemplateIds, setLastUsedTemplateIds] = useState<Record<string, string>>(
+    () => readServicePlanTemplateHistory(churchId),
+  );
   const [showImport, setShowImport] = useState(false);
   const [importSource, setImportSource] = useState<ServicePlanImportSource>(
     readServicePlanImportSource,
@@ -605,7 +619,20 @@ const ServicePlanEditor = ({
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
-  const [ambiguityDialog, setAmbiguityDialog] = useState<{ prompt: boolean; elementIds?: string[] } | null>(null);
+  const [ambiguityDialog, setAmbiguityDialog] = useState<{
+    prompt: boolean;
+    elementIds: string[];
+    batchTotal: number;
+    completedCount: number;
+  } | null>(null);
+  const openAmbiguityDialog = (elementIds: string[], prompt: boolean) => {
+    setAmbiguityDialog({
+      prompt,
+      elementIds,
+      batchTotal: elementIds.length,
+      completedCount: 0,
+    });
+  };
   const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
     DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   );
@@ -644,7 +671,7 @@ const ServicePlanEditor = ({
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(initialEditing);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
-  // Microphones live beside the running order rather than inside it.
+  // Service-level equipment lives beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
   const servicePlanScrollRef = useRef<HTMLDivElement | null>(null);
   const planTabPlanKeyRef = useRef(planKey);
@@ -766,6 +793,10 @@ const ServicePlanEditor = ({
   }, [canEdit, churchId, showToast]);
 
   useEffect(() => {
+    setLastUsedTemplateIds(readServicePlanTemplateHistory(churchId));
+  }, [churchId]);
+
+  useEffect(() => {
     mergeApplyAttemptRef.current += 1;
     mergeApplyingRef.current = false;
     setMergeApplying(false);
@@ -868,6 +899,13 @@ const ServicePlanEditor = ({
       })
       .catch(() => {
         // Microphones are optional operational metadata. The plan remains usable.
+      });
+    Promise.resolve().then(() => getServiceEquipment(churchId))
+      .then((res) => {
+        if (!cancelled) setIemEquipment(res.equipment.filter((item) => item.category === "iem"));
+      })
+      .catch(() => {
+        if (!cancelled) setIemEquipment([]);
       });
     return () => {
       cancelled = true;
@@ -1492,6 +1530,17 @@ const ServicePlanEditor = ({
         : { planName: occurrence.name || service.name || "" }),
     });
     setIsEditing(true);
+    setPlanTemplates((current) =>
+      current.some((item) => item.templateId === template.templateId)
+        ? current
+        : [...current, template],
+    );
+    const nextHistory = rememberServicePlanTemplate(
+      churchId,
+      service.serviceId,
+      template.templateId,
+    );
+    setLastUsedTemplateIds((current) => ({ ...current, ...nextHistory }));
     showToast(`Applied "${template.name}".`, "success");
   };
 
@@ -1629,7 +1678,10 @@ const ServicePlanEditor = ({
         currentSections: sections,
         sections: nextSections,
         sourceImport: nextSourceImport,
-        summary: summarizeServicePlanImport(sections, nextSections),
+        summary: summarizeServicePlanImport(sections, nextSections, {
+          microphones,
+          iemEquipment,
+        }),
       });
       setShowImport(false);
       return;
@@ -1640,9 +1692,9 @@ const ServicePlanEditor = ({
       sourceImport: nextSourceImport,
     });
     const newAmbiguities = nextSections.flatMap((section) =>
-      section.elements.filter((element) => element.importAmbiguity?.status === "unresolved").map((element) => element.id),
+      section.elements.filter((element) => element.importAmbiguity && servicePlanImportAmbiguityShouldQueue(element.importAmbiguity)).map((element) => element.id),
     );
-    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
+    if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
     setShowImport(false);
     setImportUrl("");
     setIsEditing(true);
@@ -1735,11 +1787,11 @@ const ServicePlanEditor = ({
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
     const selectedSections = applySelectedServicePlanImportChanges(
-        importPreview.currentSections,
-        importPreview.sections,
-        importPreview.summary,
-        new Set(selectedChangeKeys),
-      );
+      importPreview.currentSections,
+      importPreview.sections,
+      importPreview.summary,
+      new Set(selectedChangeKeys),
+    );
     applyImportedDraft({
       sections: selectedSections,
       planName: occurrence.name || service.name || "",
@@ -1749,7 +1801,7 @@ const ServicePlanEditor = ({
       importPreview.currentSections,
       selectedSections,
     );
-    if (newAmbiguities.length) setAmbiguityDialog({ prompt: true, elementIds: newAmbiguities });
+    if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
     setImportPreview(null);
     setImportUrl("");
     setIsEditing(true);
@@ -2003,11 +2055,19 @@ const ServicePlanEditor = ({
   // empty section, so it does not bounce back into this empty state.
   const defaultPlanTemplate =
     planTemplates.find(
-      (template) => template.templateId === defaultPlanTemplateId,
+      (template) =>
+        template.templateId === defaultPlanTemplateId &&
+        (!template.serviceId || template.serviceId === service.serviceId),
     ) || null;
   const defaultPlanTemplateMissing = Boolean(
     defaultPlanTemplateId && !planTemplatesLoading && !defaultPlanTemplate,
   );
+  const primaryTemplate = resolvePrimaryServicePlanTemplate({
+    templates: planTemplates,
+    serviceId: service.serviceId,
+    defaultTemplateId: defaultPlanTemplateId,
+    lastUsedTemplateId: lastUsedTemplateIds[service.serviceId],
+  });
   const loadingInitialContent = loading;
   const hasSections = Boolean(sections && sections.length > 0);
   /** Whether the draft holds anything an import would have to reconcile. */
@@ -2018,19 +2078,19 @@ const ServicePlanEditor = ({
     () => collectServicePlanTeamNoteLabels(sections, microphoneAudiences),
     [microphoneAudiences, sections],
   );
-  /** Scheduled slots on teams that use microphone assignments, if any. */
-  const microphoneRows = useMemo(
+  /** Scheduled slots on teams that use either kind of equipment, if any. */
+  const equipmentRows = useMemo(
     () =>
-      teamMicrophones ? getTeamMicrophoneRows(teamMicrophones.rows, teams) : [],
-    [teamMicrophones, teams],
+      teamEquipment ? getTeamEquipmentRows(teamEquipment.rows, teams) : [],
+    [teamEquipment, teams],
   );
-  // Keep the workspace stable at three desktop tabs (four on mobile). The mic
-  // panel already explains an empty catalog or a service with no eligible
+  // Keep the workspace stable at three desktop tabs (four on mobile). The
+  // equipment panel explains an empty catalog or a service with no eligible
   // scheduled roles, which is more useful than making the tab disappear.
-  const showMicrophoneTab = Boolean(teamMicrophones);
+  const showEquipmentTab = Boolean(teamEquipment);
   const showServingTab = Boolean(mobileServingContent);
   const activeTab: ServicePlanEditorTab =
-    (planTab === "microphones" && !showMicrophoneTab) ||
+    (planTab === "equipment" && !showEquipmentTab) ||
       (planTab === "serving" && !showServingTab)
       ? "plan"
       : planTab;
@@ -2039,17 +2099,26 @@ const ServicePlanEditor = ({
     [scheduledAssignmentRows],
   );
   const filledScheduledRows = scheduledRows.filter((row) => Boolean(row.memberName));
-  const micCoveredRows = scheduledRows.filter(
-    (row) => Boolean(row.memberName) && row.microphoneIds.length > 0,
+  const teamById = useMemo(() => new Map(teams.map((team) => [team.teamId, team])), [teams]);
+  const microphoneRows = equipmentRows.filter(
+    (row) => teamById.get(row.teamId)?.usesMicrophoneAssignments,
   );
+  const iemRows = equipmentRows.filter(
+    (row) => teamById.get(row.teamId)?.usesIemAssignments,
+  );
+  const filledMicrophoneRows = microphoneRows.filter((row) => Boolean(row.memberName));
+  const filledIemRows = iemRows.filter((row) => Boolean(row.memberName));
+  const micCoveredRows = filledMicrophoneRows.filter((row) => row.microphoneIds.length > 0);
+  const iemCoveredRows = filledIemRows.filter((row) => (row.iemIds || []).length > 0);
   const respondedRows = filledScheduledRows.filter((row) => (row.response || "pending") !== "pending");
   // Empty 0/0 fill/response/mic counts are noise — only surface the summary when
   // there is at least one scheduled slot (or mic coverage) worth scanning.
   const hasFillStats = scheduledRows.length > 0;
   const hasResponseStats = filledScheduledRows.length > 0;
-  const hasMicStats = Boolean(teamMicrophones) && filledScheduledRows.length > 0;
-  const hasUsefulSummary = hasFillStats || hasMicStats;
-  const hasSummaryDetails = hasMicStats;
+  const hasMicStats = micCoveredRows.length > 0 || filledMicrophoneRows.length > 0;
+  const hasIemStats = iemCoveredRows.length > 0 || filledIemRows.length > 0;
+  const hasUsefulSummary = hasFillStats || hasMicStats || hasIemStats;
+  const hasSummaryDetails = hasMicStats || hasIemStats;
   const workspaceSummary = hasUsefulSummary ? (
     <div className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
       <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
@@ -2074,7 +2143,10 @@ const ServicePlanEditor = ({
       {summaryExpanded && hasSummaryDetails ? (
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-700/70 pt-1 text-gray-400">
           {hasMicStats ? (
-            <span>Mics: {micCoveredRows.length}/{filledScheduledRows.length} covered</span>
+            <span>Mics: {micCoveredRows.length}/{filledMicrophoneRows.length} assigned</span>
+          ) : null}
+          {hasIemStats ? (
+            <span>IEMs: {iemCoveredRows.length}/{filledIemRows.length} assigned</span>
           ) : null}
         </div>
       ) : null}
@@ -2752,6 +2824,7 @@ const ServicePlanEditor = ({
             <TimePicker
               label="Service start time"
               labelLayout="stacked"
+              portal={false}
               value={anchorStartTime}
               disabled={!canEdit || !sections || sections.every((section) => section.elements.length === 0)}
               onChange={(value) => {
@@ -2793,19 +2866,26 @@ const ServicePlanEditor = ({
               <Button
                 type="button"
                 variant="primary"
-                className="rounded-r-none border-r-0"
+                className="min-w-0 max-w-[min(28rem,calc(100vw-2rem))] rounded-r-none border-r-0"
                 disabled={planTemplatesLoading}
                 onClick={() => {
-                  if (defaultPlanTemplate) {
-                    applySavedTemplate(defaultPlanTemplate);
+                  if (primaryTemplate) {
+                    applySavedTemplate(primaryTemplate);
                     return;
                   }
                   setTemplateModal("apply");
                 }}
+                title={
+                  primaryTemplate
+                    ? `Apply ${primaryTemplate.name}`
+                    : "Choose a template"
+                }
               >
-                {defaultPlanTemplate
-                  ? `Apply ${defaultPlanTemplate.name}`
-                  : "Apply a template"}
+                <span className="min-w-0 truncate">
+                  {primaryTemplate
+                    ? `Apply ${primaryTemplate.name}`
+                    : "Choose a template"}
+                </span>
               </Button>
               <Button
                 type="button"
@@ -2902,6 +2982,8 @@ const ServicePlanEditor = ({
               onSelectionChange={setSelectedPlanTarget}
               scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
               scrollContainerRef={servicePlanScrollRef}
+              reviewingElementId={ambiguityDialog?.elementIds[0] ?? null}
+              isFollowingLive={isFollowingLive}
               header={
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-gray-100">
@@ -2921,8 +3003,10 @@ const ServicePlanEditor = ({
               scheduledPositionOptions={scheduledPositionOptions}
               teamNoteOptions={teamNoteOptions}
               microphones={microphones}
+              iemEquipment={iemEquipment}
               microphoneAudiences={microphoneAudiences}
-              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledEquipmentHolders={scheduledEquipmentHolders}
+              scheduledEquipmentStatus={scheduledEquipmentStatus}
               scheduledAssignmentRows={scheduledAssignmentRows}
               onOpenScheduledAssignment={onOpenScheduledAssignment}
               isServiceDay={isServiceDay}
@@ -2943,21 +3027,8 @@ const ServicePlanEditor = ({
               resolvedSongRefs={resolvedSongRefs}
               onReviewImportAmbiguity={(elementId) => {
                 setIsEditing(true);
-                setAmbiguityDialog({ prompt: false, elementIds: [elementId] });
+                openAmbiguityDialog([elementId], false);
               }}
-              followLiveControl={
-                liveElementId && !isEditing && activeTab === "plan" && !isFollowingLive ? (
-                  <Button
-                    type="button"
-                    variant="cta"
-                    svg={LocateFixed}
-                    className="absolute bottom-3 right-3 z-10 shadow-xl max-md:min-h-0"
-                    onClick={resumeFollowing}
-                  >
-                    Follow live
-                  </Button>
-                ) : null
-              }
             />
           </div>
 
@@ -3060,6 +3131,20 @@ const ServicePlanEditor = ({
             </Button>
           ) : null}
         </div>
+        {liveElementId &&
+          !isEditing &&
+          activeTab === "plan" &&
+          !isFollowingLive ? (
+          <Button
+            type="button"
+            variant="cta"
+            svg={LocateFixed}
+            className="max-md:min-h-0"
+            onClick={resumeFollowing}
+          >
+            Follow live
+          </Button>
+        ) : null}
       </div>
     ) : null;
 
@@ -3240,13 +3325,13 @@ const ServicePlanEditor = ({
             >
               Setlist
             </TabsTrigger>
-            {showMicrophoneTab ? (
+            {showEquipmentTab ? (
               <TabsTrigger
-                value="microphones"
+                value="equipment"
                 className={lineTabsTriggerSmClassName}
-                aria-label="Mic Assignments"
+                aria-label="Equipment assignments"
               >
-                Mics
+                Equipment
               </TabsTrigger>
             ) : null}
             {showServingTab ? (
@@ -3285,19 +3370,25 @@ const ServicePlanEditor = ({
               }
             />
           </TabsContent>
-          {showMicrophoneTab ? (
+          {showEquipmentTab ? (
             <TabsContent
-              value="microphones"
+              value="equipment"
               className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
             >
-              <TeamMicrophonesPanel
-                rows={microphoneRows}
+              <TeamEquipmentPanel
+                rows={equipmentRows}
                 microphones={microphones}
+                iems={iemEquipment}
+                teams={teams}
                 canEdit={canEdit}
-                assignmentsStatus={teamMicrophones?.assignmentsStatus}
-                savingSlot={teamMicrophones?.savingSlot}
-                onChange={(row, microphoneIds) =>
-                  teamMicrophones?.onChange(row, microphoneIds)
+                assignmentsStatus={teamEquipment?.assignmentsStatus}
+                savingMicrophoneSlot={teamEquipment?.savingMicrophoneSlot}
+                savingIemSlot={teamEquipment?.savingIemSlot}
+                onMicrophoneChange={(row, microphoneIds) =>
+                  teamEquipment?.onMicrophoneChange(row, microphoneIds)
+                }
+                onIemChange={(row, iemIds) =>
+                  teamEquipment?.onIemChange(row, iemIds)
                 }
               />
             </TabsContent>
@@ -3498,11 +3589,13 @@ const ServicePlanEditor = ({
       {ambiguityDialog ? (
         <ServicePlanAmbiguityReview
           sections={sections || []}
-          elementIds={ambiguityDialog.elementIds || []}
+          elementIds={ambiguityDialog.elementIds}
+          batchTotal={ambiguityDialog.batchTotal}
+          completedCount={ambiguityDialog.completedCount}
           prompt={ambiguityDialog.prompt}
           onLater={() => {
             if (!sections) { setAmbiguityDialog(null); return; }
-            const ids = new Set(ambiguityDialog.elementIds || []);
+            const ids = new Set(ambiguityDialog.elementIds);
             updateDraftSections(sections.map((section) => ({
               ...section,
               elements: section.elements.map((element) => ids.has(element.id) && element.importAmbiguity
@@ -3519,8 +3612,15 @@ const ServicePlanEditor = ({
             })));
             setAmbiguityDialog((current) => {
               if (!current) return null;
-              const remainingIds = (current.elementIds || []).filter((id) => id !== elementId);
-              return remainingIds.length ? { prompt: false, elementIds: remainingIds } : null;
+              const remainingIds = current.elementIds.filter((id) => id !== elementId);
+              return remainingIds.length
+                ? {
+                  ...current,
+                  prompt: false,
+                  elementIds: remainingIds,
+                  completedCount: Math.min(current.completedCount + 1, current.batchTotal),
+                }
+                : null;
             });
           }}
         />
@@ -3534,15 +3634,7 @@ const ServicePlanEditor = ({
           serviceName={service.name}
           sections={sections || []}
           onClose={() => setTemplateModal(null)}
-          onApply={(templateSections) => {
-            updateDraft({
-              sections: templateSections,
-              ...(planName
-                ? {}
-                : { planName: occurrence.name || service.name || "" }),
-            });
-            setIsEditing(true);
-          }}
+          onApply={applySavedTemplate}
         />
       ) : null}
 

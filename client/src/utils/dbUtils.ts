@@ -585,9 +585,22 @@ export const putCreditDoc = async (
     existing.heading = credit.heading;
     existing.text = credit.text;
     existing.hidden = credit.hidden;
-    existing.generatedBaselineText = credit.generatedBaselineText;
-    existing.generatedSource = credit.generatedSource;
-    existing.generatedTextOverridden = credit.generatedTextOverridden;
+    const hasField = (field: keyof CreditsInfo) =>
+      Object.prototype.hasOwnProperty.call(credit, field);
+    if (hasField("generatedBaselineText")) {
+      existing.generatedBaselineText = credit.generatedBaselineText;
+    }
+    if (hasField("generatedSource")) {
+      existing.generatedSource = credit.generatedSource;
+    }
+    if (hasField("generatedTextOverridden")) {
+      existing.generatedTextOverridden = credit.generatedTextOverridden;
+    }
+    if (existing.generatedBaselineText !== undefined) {
+      // Text edits are authoritative even if an older client omitted the explicit flag.
+      existing.generatedTextOverridden = credit.text !== existing.generatedBaselineText
+        || existing.generatedTextOverridden === true;
+    }
     existing.updatedAt = new Date().toISOString();
     const result = await db.put(existing);
     return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };

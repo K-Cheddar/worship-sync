@@ -1,39 +1,39 @@
-import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ExternalLink, FileText, Music } from "lucide-react";
-import { getServicePlanMicrophones } from "../../api/auth";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Eye } from "lucide-react";
+import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
+import Select from "../../components/Select/Select";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
+import ServicePlanRolePicker from "../../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
-import { formatServicePlanDuration } from "../Services/servicePlanDuration";
-import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
 import {
-  getServicePlanResourceRichNotes,
-  getServicePlanResourceText,
-} from "../Services/servicePlanResources";
-import { isRichTextEmpty } from "../../types/richText";
+  buildServiceFlowRoleOptions,
+  buildServiceFlowTeamLabels,
+  filterServiceFlowRoleOptions,
+  selectedServiceFlowRoleTeamNames,
+  visibleServiceFlowMicrophoneAssignmentsForItem,
+  visibleServiceFlowNotesForItem,
+  type ServiceFlowFilterPreference,
+} from "../../services/serviceFlowAudience";
+import type { PublicServiceFlowResource, PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
-  getServicePlanElementAssignees,
-  getServicePlanElementContentResources,
-  getServicePlanRoleNotePositionIds,
+  getServicePlanElementAssigneeNames,
   type ServicePlan,
-  type ServicePlanMicrophone,
-  type ServicePlanMicrophoneAudience,
-  type ServicePlanTeamNote,
 } from "../../types/servicePlan";
+import { formatServicePlanDuration } from "../Services/servicePlanDuration";
+import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import {
-  getServicePlanRoleNoteRoleName,
-  getServicePlanRoleNoteTeamNames,
-  roleNoteMatchesServicePlanTeam,
-} from "../Services/servicePlanRoleNoteTeam";
-import { richTextToPlainText } from "../../types/richText";
+  getServicePlanResourceDefinition,
+} from "../Services/servicePlanResources";
+import { buildServicePlanFlowSnapshot } from "../buildServicePlanFlowSnapshot";
 
-type RoleOption = { positionId: string; label: string; teamName: string };
-type Preference = { teamName: string; positionIds: string[] };
+type ControllerServicePlanPreference = ServiceFlowFilterPreference;
 
-const readPreference = (key: string): Preference => {
+const readPreference = (key: string): ControllerServicePlanPreference => {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) || "null");
     if (value && typeof value === "object") {
-      const candidate = value as Partial<Preference>;
+      const candidate = value as Partial<ControllerServicePlanPreference>;
       return {
         teamName: typeof candidate.teamName === "string" ? candidate.teamName : "",
         positionIds: Array.isArray(candidate.positionIds)
@@ -47,207 +47,283 @@ const readPreference = (key: string): Preference => {
   return { teamName: "", positionIds: [] };
 };
 
-const roleOptionsFor = (plan: ServicePlan, audiences: ServicePlanMicrophoneAudience[]): RoleOption[] => {
-  const options = new Map<string, RoleOption>();
-  audiences.forEach((audience) => {
-    const positionId = String(audience.positionId || "").trim();
-    if (positionId) options.set(positionId, {
-      positionId,
-      label: audience.roleName,
-      teamName: audience.teamName || "Other roles",
-    });
-  });
-  plan.sections.forEach((section) => section.elements.forEach((element) => {
-    (element.teamNotes || []).filter((note) => note.scope === "role").forEach((note) => {
-      getServicePlanRoleNotePositionIds(note).forEach((positionId) => {
-        if (!options.has(positionId)) options.set(positionId, {
-          positionId,
-          label: getServicePlanRoleNoteRoleName(note.label),
-          teamName: getServicePlanRoleNoteTeamNames(note)[0] || "Other roles",
-        });
-      });
-    });
-  }));
-  return [...options.values()].sort((a, b) => a.teamName.localeCompare(b.teamName) || a.label.localeCompare(b.label));
+const writePreference = (key: string, preference: ControllerServicePlanPreference) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(preference));
+  } catch {
+    // Local preference storage is optional; the controller remains usable.
+  }
 };
 
-const visibleNotes = (notes: ServicePlanTeamNote[], preference: Preference, roles: RoleOption[]) => {
-  const selectedRoleTeamNames = roles
-    .filter((role) => preference.positionIds.includes(role.positionId))
-    .map((role) => role.teamName);
-  const audienceTeams = preference.teamName ? [preference.teamName] : selectedRoleTeamNames;
-  return notes.filter((note) => note.scope === "role"
-    ? roleNoteMatchesServicePlanTeam(note, preference.teamName)
-      && (!preference.positionIds.length || getServicePlanRoleNotePositionIds(note).some((id) => preference.positionIds.includes(id)))
-    : !audienceTeams.length || audienceTeams.includes(note.label));
+const ControllerResources = ({ resources }: { resources: PublicServiceFlowResource[] }) => {
+  const [previewResource, setPreviewResource] = useState<ContentPreviewResource | null>(null);
+  if (!resources.length) return null;
+
+  return (
+    <>
+      <div className="flex min-w-0 flex-wrap gap-1" aria-label="Resources">
+        {resources.map((resource, index) => {
+          const definition = getServicePlanResourceDefinition(resource.type);
+          const ResourceIcon = definition.icon;
+          const canPreview = Boolean(resource.url || resource.detail || resource.richTextContent);
+          const label = resource.title?.trim() || definition.label;
+          const content = (
+            <>
+              <ResourceIcon className={`size-3.5 shrink-0 ${definition.toneClassName}`} aria-hidden />
+              <span className="min-w-0 flex-1 whitespace-normal break-words [overflow-wrap:anywhere]">{label}</span>
+              {canPreview ? <Eye className="size-3 shrink-0 opacity-70" aria-hidden /> : null}
+            </>
+          );
+          const chipClassName = "inline-flex min-w-0 max-w-full items-center gap-1 whitespace-normal rounded-full border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-left text-xs leading-5 text-neutral-300 hover:border-cyan-500/70 hover:bg-neutral-800";
+          return canPreview ? (
+            <div key={`${resource.type}:${label}:${index}`} className="flex min-w-0 max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <button
+                type="button"
+                title={label}
+                aria-label={`View ${definition.label}: ${label}`}
+                className={`${chipClassName} cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400`}
+                onClick={() => setPreviewResource({
+                  id: `${resource.type}:${label}:${index}`,
+                  type: resource.type,
+                  title: label,
+                  ...(resource.url ? { url: resource.url } : {}),
+                  ...(resource.detail ? { textContent: resource.detail } : {}),
+                  ...(resource.richTextContent ? { richTextContent: resource.richTextContent } : {}),
+                })}
+              >
+                {content}
+              </button>
+            </div>
+          ) : (
+            <span
+              key={`${resource.type}:${label}:${index}`}
+              title={`${definition.label}: ${label}`}
+              className={chipClassName}
+            >
+              {content}
+            </span>
+          );
+        })}
+      </div>
+      <ContentPreviewDialog resource={previewResource} onClose={() => setPreviewResource(null)} />
+    </>
+  );
 };
 
 const ControllerServicePlanView = ({
   plan,
+  snapshot,
   churchId,
   controllerProfileId,
-  activeItemId,
+  sectionLabelColor,
+  sectionBorderColor,
 }: {
   plan: ServicePlan;
+  snapshot?: PublicServiceFlowSnapshot | null;
   churchId: string;
   controllerProfileId: string;
-  activeItemId?: string;
+  sectionLabelColor: string;
+  sectionBorderColor: string;
 }) => {
   const preferenceKey = `worship-sync:service-plan-operator:${churchId}:${controllerProfileId}`;
   const [preference, setPreference] = useState(() => readPreference(preferenceKey));
-  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
-  const [audiences, setAudiences] = useState<ServicePlanMicrophoneAudience[]>([]);
+  const [clientNow, setClientNow] = useState(() => Date.now());
   useEffect(() => {
-    let active = true;
-    void getServicePlanMicrophones(churchId)
-      .then((result) => {
-        if (!active) return;
-        setMicrophones(result.microphones || []);
-        setAudiences(result.audiences || []);
-      })
-      .catch(() => {
-        if (active) {
-          setMicrophones([]);
-          setAudiences([]);
-        }
-      });
-    return () => { active = false; };
-  }, [churchId]);
-
-  const roles = useMemo(() => roleOptionsFor(plan, audiences), [audiences, plan]);
-  const teams = useMemo(() => [...new Set([
-    ...plan.sections.flatMap((section) => section.elements.flatMap((element) =>
-      (element.teamNotes || []).filter((note) => note.scope !== "role").map((note) => note.label),
-    )),
-    ...roles.map((role) => role.teamName),
-  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [plan, roles]);
-  const effectivePreference = {
-    teamName: teams.includes(preference.teamName) ? preference.teamName : "",
-    positionIds: preference.positionIds.filter((id) => roles.some((role) =>
-      role.positionId === id && (!preference.teamName || role.teamName === preference.teamName),
-    )),
-  };
-  const visibleRoles = roles.filter((role) => !effectivePreference.teamName || role.teamName === effectivePreference.teamName);
-  const microphoneById = useMemo(() => new Map(microphones.map((microphone) => [microphone.id, microphone])), [microphones]);
-
-  const updatePreference = (next: Preference) => {
+    const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const fallbackSnapshot = useMemo(
+    () => buildServicePlanFlowSnapshot({
+      plan,
+      startsAt: plan.startsAt || `${plan.date}T00:00:00.000Z`,
+    }),
+    [plan],
+  );
+  const serviceSnapshot = snapshot || fallbackSnapshot;
+  const serverOffsetMs = useMemo(
+    () => snapshot ? snapshot.serverNowMs - Date.now() : 0,
+    [snapshot],
+  );
+  const currentItemId = getServicePlanLiveProgress({
+    ...plan,
+    startsAt: plan.startsAt || `${plan.date}T00:00:00.000Z`,
+  }, clientNow + serverOffsetMs)?.current?.item.id ?? null;
+  const teams = useMemo(() => buildServiceFlowTeamLabels(serviceSnapshot), [serviceSnapshot]);
+  const allRoles = useMemo(() => buildServiceFlowRoleOptions(serviceSnapshot), [serviceSnapshot]);
+  const effectivePreference = useMemo(() => {
+    const teamName = teams.includes(preference.teamName) ? preference.teamName : "";
+    const rolesForTeam = filterServiceFlowRoleOptions(allRoles, teamName);
+    return {
+      teamName,
+      positionIds: preference.positionIds.filter((id) =>
+        rolesForTeam.some((role) => role.positionId === id),
+      ),
+    };
+  }, [allRoles, preference, teams]);
+  const roleOptions = useMemo(
+    () => filterServiceFlowRoleOptions(allRoles, effectivePreference.teamName),
+    [allRoles, effectivePreference.teamName],
+  );
+  const selectedRoleTeamNames = useMemo(
+    () => selectedServiceFlowRoleTeamNames(roleOptions, effectivePreference.positionIds),
+    [effectivePreference.positionIds, roleOptions],
+  );
+  const updatePreference = useCallback((next: ControllerServicePlanPreference) => {
     setPreference(next);
-    try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch { /* local preference is optional */ }
-  };
-
-  const getVisibleMicrophones = (microphoneIds: string[], element: ServicePlan["sections"][number]["elements"][number]) => microphoneIds.flatMap((id) => {
-    const microphone = microphoneById.get(id);
-    if (!microphone) return [];
-    const legacyAssignment = element.microphoneAssignments?.find((assignment) => assignment.microphoneId === id);
-    if (legacyAssignment) {
-      const assignmentAudiences = legacyAssignment.audiences || [];
-      if (assignmentAudiences.length) {
-        const isVisible = assignmentAudiences.some((audience) =>
-          (!effectivePreference.teamName || audience.teamName === effectivePreference.teamName)
-          && (!effectivePreference.positionIds.length || effectivePreference.positionIds.includes(audience.positionId)),
-        );
-        if (!isVisible) return [];
-      }
-    }
-    // Modern assignee-held microphones have no role association in the saved
-    // plan shape. Keep the cue visible with an explicit label instead of
-    // silently hiding every assignment under a team/role filter.
-    return [microphone];
-  });
-  const hasUnscopedMicrophoneAssignment = (
-    microphoneIds: string[],
-    element: ServicePlan["sections"][number]["elements"][number],
-  ) => microphoneIds.some((id) => {
-    const legacyAssignment = element.microphoneAssignments?.find((assignment) => assignment.microphoneId === id);
-    return !legacyAssignment?.audiences?.length;
-  });
+    writePreference(preferenceKey, next);
+  }, [preferenceKey]);
+  useEffect(() => {
+    if (
+      preference.teamName !== effectivePreference.teamName ||
+      preference.positionIds.length !== effectivePreference.positionIds.length
+    ) updatePreference(effectivePreference);
+  }, [effectivePreference, preference, updatePreference]);
+  const planItemsById = useMemo(() => new Map(
+    plan.sections.flatMap((section) => section.elements.map((item) => [item.id, item] as const)),
+  ), [plan]);
 
   return (
     <div className="flex flex-col gap-2 pr-1" aria-label="Selected service plan running order">
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-zinc-700 bg-zinc-950/50 p-2">
-        <label className="flex min-w-36 flex-1 flex-col gap-1 text-[11px] text-zinc-400">
-          Notes for team
-          <select
-            aria-label="Filter service plan notes by team"
-            value={effectivePreference.teamName}
-            onChange={(event) => updatePreference({ ...effectivePreference, teamName: event.target.value })}
-            className="h-8 rounded border border-zinc-600 bg-zinc-900 px-2 text-xs text-white"
-          >
-            <option value="">All teams</option>
-            {teams.map((team) => <option key={team} value={team}>{team}</option>)}
-          </select>
-        </label>
-        <fieldset className="flex min-w-0 flex-1 flex-wrap gap-x-2 gap-y-1 text-[11px] text-zinc-300">
-          <legend className="mb-1 w-full text-zinc-400">Roles</legend>
-          {visibleRoles.map((role) => (
-            <label key={role.positionId} className="inline-flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={effectivePreference.positionIds.includes(role.positionId)}
-                onChange={(event) => updatePreference({
-                  ...effectivePreference,
-                  positionIds: event.target.checked
-                    ? [...effectivePreference.positionIds, role.positionId]
-                    : effectivePreference.positionIds.filter((id) => id !== role.positionId),
-                })}
-              />
-              {role.label}
-            </label>
-          ))}
-          {visibleRoles.length === 0 ? <span>No roles available</span> : null}
-        </fieldset>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-950/50 p-1.5" aria-label="Service plan filters">
+        <Select
+          label="Team"
+          labelLayout="inline"
+          labelFontSize="text-[10px]"
+          labelClassName="!p-0 !font-normal text-zinc-400"
+          options={[
+            { value: "", label: "All teams" },
+            ...teams.map((team) => ({ value: team, label: team })),
+          ]}
+          value={effectivePreference.teamName}
+          onChange={(teamName) => updatePreference({
+            ...effectivePreference,
+            teamName,
+          })}
+          className="min-w-0 gap-1"
+          selectClassName="h-7 min-h-7 w-40 max-w-40 rounded border-zinc-700 bg-zinc-900 px-1.5 text-[11px] text-zinc-100 focus-visible:ring-1 focus-visible:ring-cyan-300"
+          backgroundColor="bg-zinc-900"
+          textColor="text-zinc-100"
+          contentBackgroundColor="bg-zinc-900"
+          contentTextColor="text-zinc-100"
+        />
+        <ServicePlanRolePicker
+          multi
+          value={effectivePreference.positionIds}
+          onValueChange={(positionIds) => updatePreference({
+            ...effectivePreference,
+            positionIds,
+          })}
+          options={roleOptions}
+          teamFilterStorageKey={`${preferenceKey}:role-team-filter`}
+          lockedTeamName={effectivePreference.teamName || undefined}
+          ariaLabel="Filter roles"
+          label="Roles"
+          placeholder="All roles"
+          className="!h-7 !min-h-0 !max-w-full !rounded !border !border-zinc-700 !bg-zinc-900 !px-1.5 !py-0 !text-[11px] !text-zinc-100 hover:!border-zinc-600 hover:!bg-zinc-800 focus-visible:!ring-1 focus-visible:!ring-cyan-300"
+        />
       </div>
 
-      {plan.sections.map((section) => (
-        <section key={section.id} className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40">
-          {section.name ? <h3 className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5 text-xs font-semibold text-orange-300">{section.name}</h3> : null}
+      {serviceSnapshot.service.sections.map((section) => (
+        <section
+          key={section.id}
+          aria-label={`Service plan section: ${section.title || "Untitled"}`}
+          className="min-w-0 overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
+          style={{ borderLeftColor: sectionBorderColor }}
+        >
+          {section.title ? (
+            <h3
+              className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5 text-xs font-semibold"
+              style={{ color: sectionLabelColor }}
+            >
+              {section.title}
+            </h3>
+          ) : null}
           <ol className="divide-y divide-zinc-700">
-            {section.elements.map((element) => {
-              const title = richTextToPlainText(element.title).trim() || "Untitled item";
-              const assignees = getServicePlanElementAssignees(element).filter((assignee) => assignee.name?.trim());
-              const notes = visibleNotes(element.teamNotes || [], effectivePreference, roles);
-              const isLive = activeItemId === element.id;
+            {section.items.map((item) => {
+              const planItem = planItemsById.get(item.id);
+              const isLive = currentItemId === item.id;
+              const leadName = item.creditName?.trim() || (
+                planItem ? getServicePlanElementAssigneeNames(planItem).join(", ") : ""
+              );
+              const notes = visibleServiceFlowNotesForItem(
+                item,
+                effectivePreference.teamName,
+                effectivePreference.positionIds,
+                selectedRoleTeamNames,
+              );
+              const microphones = visibleServiceFlowMicrophoneAssignmentsForItem(
+                item,
+                effectivePreference.teamName,
+                effectivePreference.positionIds,
+              );
+              const hasAudienceSelection = Boolean(
+                effectivePreference.teamName || effectivePreference.positionIds.length,
+              );
+              // The public snapshot carries IEM holder names, but no role or
+              // team audience for them. Treat those cues like unscoped legacy
+              // microphones and keep them out of a narrowed audience view.
+              const equipment = hasAudienceSelection ? [] : item.equipmentAssignments || [];
+              const duration = item.durationSeconds > 0
+                ? formatServicePlanDuration({ durationSeconds: item.durationSeconds })
+                : "";
               return (
-                <li key={element.id} className={`flex flex-col gap-1.5 px-2.5 py-2 ${isLive ? "border-l-2 border-emerald-400 bg-emerald-500/10" : ""}`}>
-                  <div className="flex flex-wrap items-baseline gap-x-2 text-[11px] text-zinc-400">
-                    {element.startTime ? <time>{element.startTime}</time> : null}
-                    {(element.durationSeconds ?? 0) > 0 || (element.durationMinutes ?? 0) > 0
-                      ? <span>{formatServicePlanDuration({ durationSeconds: element.durationSeconds, durationMinutes: element.durationMinutes })}</span>
-                      : null}
-                    {isLive ? <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 font-semibold uppercase text-emerald-200">Live</span> : null}
+                <li
+                  key={item.id}
+                  className={`flex min-w-0 flex-col gap-1.5 border-l-2 px-2.5 py-2 ${isLive ? "border-emerald-400 bg-emerald-500/[0.07]" : "border-transparent"}`}
+                  aria-current={isLive ? "true" : undefined}
+                >
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[11px] text-zinc-400">
+                    {planItem?.startTime ? <time className="shrink-0">{planItem.startTime}</time> : null}
+                    {duration ? <span className="shrink-0">{duration}</span> : null}
+                    <h4 className="min-w-0 flex-1 break-words whitespace-normal text-xs font-semibold text-zinc-100">{item.title}</h4>
+                    {isLive ? <span className="shrink-0 rounded bg-emerald-400/15 px-1.5 py-0.5 font-semibold uppercase text-emerald-200">Live</span> : null}
                   </div>
-                  <h4 className="text-xs font-semibold text-zinc-100">{title}</h4>
-                  {assignees.length ? <p className="text-xs text-cyan-200">{assignees.map((assignee) => assignee.name).join(", ")}</p> : null}
-                  {element.notes ? <ServiceFlowRichText document={element.notes} className="text-xs text-zinc-200" /> : null}
-                  {notes.map((note) => (
-                    <div key={note.id} className="border-l border-amber-500/50 pl-2 text-xs text-amber-100">
-                      <p className="mb-0.5 text-[10px] font-semibold uppercase text-amber-300">{note.label}{note.scope === "role" ? " role" : ""} notes</p>
-                      <ServiceFlowRichText document={note.note} />
-                    </div>
-                  ))}
-                  {assignees.map((assignee) => {
-                    const assignedMicrophones = getVisibleMicrophones(assignee.microphoneIds || [], element);
-                    return assignedMicrophones.length ? (
-                      <div key={`${element.id}:${assignee.id}`} className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>
-                        {assignedMicrophones.map((microphone) => <ServicePlanMicrophoneChip key={microphone.id} microphone={microphone} details={[assignee.name || ""]} className="gap-1 rounded-full px-2 py-0.5 text-[11px]" />)}
-                        {(effectivePreference.teamName || effectivePreference.positionIds.length) && hasUnscopedMicrophoneAssignment(assignee.microphoneIds || [], element) ? <span className="text-[10px] text-zinc-500">Role not specified</span> : null}
+                  {leadName ? <p className="break-words whitespace-normal text-xs font-normal text-white"><span className="text-zinc-400">Led by:</span> {leadName}</p> : null}
+
+                  {item.resources?.length ? (
+                    <ControllerResources resources={item.resources} />
+                  ) : null}
+
+                  {item.notes.blocks.length || notes.length ? (
+                    <details className="min-w-0 text-xs leading-4 text-zinc-300">
+                      <summary className="w-fit cursor-pointer select-none text-amber-300/90 hover:text-amber-200">
+                        View notes{notes.length ? ` (${notes.length + (item.notes.blocks.length ? 1 : 0)})` : ""}
+                      </summary>
+                      <div className="mt-1 min-w-0 break-words space-y-1 overflow-hidden border-l border-amber-500/40 pl-2 [&_*]:break-words">
+                        {item.notes.blocks.length ? <ServiceFlowRichText document={item.notes} /> : null}
+                        {notes.map((note, index) => (
+                          <div key={`${note.label}:${index}`} className="min-w-0">
+                            <span className="font-medium text-amber-200">{note.label}{note.scope === "role" ? " role" : ""} notes: </span>
+                            <ServiceFlowRichText document={note.notes} />
+                          </div>
+                        ))}
                       </div>
-                    ) : null;
-                  })}
-                  {getServicePlanElementContentResources(element).length ? (
-                    <ul className="flex flex-col gap-1 border-l border-indigo-500/40 pl-2 text-xs text-indigo-100">
-                      {getServicePlanElementContentResources(element).map((resource) => {
-                        const isWebLink = /^https?:\/\//i.test(resource.url || "");
-                        const resourceNotes = resource.type === "text"
-                          ? getServicePlanResourceText(resource)
-                          : resource.type === "generic"
-                            ? getServicePlanResourceRichNotes(resource)
-                            : null;
-                        const icon = resource.type === "song" ? <Music size={12} aria-hidden /> : resource.type === "scripture" ? <BookOpen size={12} aria-hidden /> : <FileText size={12} aria-hidden />;
-                        return <li key={resource.id} className="flex min-w-0 flex-col gap-1"><div className="flex min-w-0 items-center gap-1.5">{icon}<span className="text-zinc-500">{getServicePlanResourceTypeLabel(resource.type)}:</span>{isWebLink ? <a className="min-w-0 truncate underline" href={resource.url} target="_blank" rel="noreferrer">{resource.title}<ExternalLink className="ml-1 inline size-3" aria-hidden /></a> : <span className="min-w-0 truncate">{resource.title}</span>}</div>{resourceNotes && !isRichTextEmpty(resourceNotes) ? <ServiceFlowRichText document={resourceNotes} className="pl-5 text-xs" /> : null}</li>;
-                      })}
-                    </ul>
+                    </details>
+                  ) : null}
+
+                  {microphones.length || equipment.length ? (
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      {microphones.length ? (
+                        <span className="text-[10px] font-semibold uppercase text-zinc-500">Microphones</span>
+                      ) : null}
+                      {microphones.map((assignment) => (
+                        <ServicePlanMicrophoneChip
+                          key={`${assignment.microphone.id}:${assignment.holderName || ""}`}
+                          microphone={assignment.microphone}
+                          details={assignment.holderName ? [assignment.holderName] : []}
+                          className="gap-1 rounded-full px-2 py-0.5 text-[11px]"
+                        />
+                      ))}
+                      {equipment.map((assignment) => (
+                        <span
+                          key={`${assignment.equipment.id}:${assignment.holderName || ""}`}
+                          className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-cyan-800/70 bg-cyan-950/30 px-1.5 py-0.5 text-[10px] text-cyan-100"
+                          title={`${assignment.equipment.name}${assignment.holderName ? ` · ${assignment.holderName}` : ""}`}
+                        >
+                          {assignment.equipment.name}{assignment.holderName ? ` · ${assignment.holderName}` : ""}
+                        </span>
+                      ))}
+                    </div>
                   ) : null}
                 </li>
               );
@@ -255,7 +331,9 @@ const ControllerServicePlanView = ({
           </ol>
         </section>
       ))}
-      {plan.sections.every((section) => section.elements.length === 0) ? <p className="text-xs text-zinc-400">This service plan has no items.</p> : null}
+      {serviceSnapshot.service.sections.every((section) => section.items.length === 0) ? (
+        <p className="text-xs text-zinc-400">This service plan has no items.</p>
+      ) : null}
     </div>
   );
 };

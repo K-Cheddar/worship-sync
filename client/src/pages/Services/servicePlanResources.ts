@@ -22,6 +22,7 @@ import {
   multilineTextToRichText,
   isRichTextEmpty,
   normalizeRichTextDocument,
+  richTextToPlainText,
   richTextToFormattedPlainText,
   type RichTextDocument,
 } from "../../types/richText";
@@ -108,6 +109,32 @@ export const getServicePlanResourceText = (
     ? multilineTextToRichText(value)
     : normalizeRichTextDocument(value);
 };
+
+const IMPORTED_TEXT_RESOURCE_TITLE_MAX_LENGTH = 72;
+
+/** Give imported plain text a useful, stable title without changing its body. */
+export const getImportedTextResourceTitle = (text: string): string => {
+  const firstMeaningfulLine = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .find(Boolean) || "Imported text";
+  if (firstMeaningfulLine.length <= IMPORTED_TEXT_RESOURCE_TITLE_MAX_LENGTH) return firstMeaningfulLine;
+  return `${firstMeaningfulLine.slice(0, IMPORTED_TEXT_RESOURCE_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
+};
+
+/** Compare imported text by its visible content, independent of rich-text formatting. */
+export const areServicePlanTextResourceBodiesEqual = (
+  resource: ServicePlanContentResource,
+  text: string,
+): boolean => resource.type === "text" &&
+  richTextToPlainText(getServicePlanResourceText(resource)).replace(/\r\n?/g, "\n").trim() ===
+  text.replace(/\r\n?/g, "\n").trim();
+
+/** Legacy source imports used this internal title before meaningful titles were stored. */
+export const isLegacyImportedDescriptionResource = (
+  resource: ServicePlanContentResource,
+): boolean => resource.type === "text" && resource.title?.trim() === "Imported description";
 
 /** Read rich and legacy plain-text optional notes through one compatible path. */
 export const getServicePlanResourceRichNotes = (

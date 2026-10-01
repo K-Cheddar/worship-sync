@@ -25,6 +25,7 @@ import ServicePlanContentPanel from "./ServicePlanContentPanel";
 import ServicePlanSongDetailsPanel from "./ServicePlanSongDetailsPanel";
 import ServicePlanElementRow, {
   elementDndId,
+  servicePlanElementDomId,
   ServicePlanElementColumnHeader,
   SERVICE_PLAN_INLINE_INPUT_CLASS,
   SERVICE_PLAN_COL,
@@ -74,6 +75,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServicePlanAssignee,
+  ServiceEquipment,
 } from "../../types/servicePlan";
 import { getServicePlanElementAssignees, getServicePlanElementLead } from "../../types/servicePlan";
 import { richTextToPlainText } from "../../types/richText";
@@ -135,8 +137,10 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   scheduledPositionOptions: ServicePlanRoleNoteOption[];
   teamNoteOptions: ServicePlanTeamNoteOption[];
   microphones: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /** Local view preference: hide shared and team notes on every element. */
@@ -164,6 +168,8 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
     songRef: ServicePlanSongReference,
   ) => void;
   onReviewImportAmbiguity?: (elementId: string) => void;
+  /** Transient imported-item review focus; never persisted or reused as selection. */
+  reviewingElementId?: string | null;
   /** When an item is dragging, section cards must not also translate — the preview array is the layout. */
   lockSortableLayout?: boolean;
 };
@@ -189,8 +195,10 @@ const SortableSectionCard = ({
   scheduledPositionOptions,
   teamNoteOptions,
   microphones,
+  iemEquipment = [],
   microphoneAudiences,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   isServiceDay = false,
@@ -215,6 +223,7 @@ const SortableSectionCard = ({
   onOpenContent,
   onOpenSongDetails,
   onReviewImportAmbiguity,
+  reviewingElementId = null,
   lockSortableLayout = false,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
@@ -353,8 +362,10 @@ const SortableSectionCard = ({
                   roleNoteOptions={roleNoteOptions}
                   teamNoteOptions={teamNoteOptions}
                   microphones={microphones}
+                  iemEquipment={iemEquipment}
                   microphoneAudiences={microphoneAudiences}
-                  scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                  scheduledEquipmentHolders={scheduledEquipmentHolders}
+                  scheduledEquipmentStatus={scheduledEquipmentStatus}
                   scheduledAssignmentRows={scheduledAssignmentRows}
                   onOpenScheduledAssignment={onOpenScheduledAssignment}
                   onViewSongLyrics={onViewSongLyrics}
@@ -366,6 +377,7 @@ const SortableSectionCard = ({
                   onOpenContent={(trigger) => onOpenContent(element.id, trigger)}
                   onOpenSongDetails={(songRef) => onOpenSongDetails(element.id, songRef)}
                   onReviewImportAmbiguity={onReviewImportAmbiguity ? () => onReviewImportAmbiguity(element.id) : undefined}
+                  isReviewing={reviewingElementId === element.id}
                 />
               ))}
             </div>
@@ -395,8 +407,10 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   scheduledPositionOptions?: ServicePlanRoleNoteOption[];
   teamNoteOptions?: ServicePlanTeamNoteOption[];
   microphones?: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   hideNotes?: boolean;
@@ -418,8 +432,6 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   scrollId?: string;
   /** Ref for a caller that coordinates scrolling within this list only. */
   scrollContainerRef?: Ref<HTMLDivElement>;
-  /** Optional control positioned over this list, outside its scrolling content. */
-  followLiveControl?: ReactNode;
   ariaLabel?: string;
   sectionLabelColor?: string;
   sectionBorderColor?: string;
@@ -430,6 +442,10 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   onOpenContent?: (elementId: string, trigger?: HTMLElement) => void;
   allSongDocs?: DBItem[];
   onReviewImportAmbiguity?: (elementId: string) => void;
+  /** Transient imported-item review focus; never persisted or reused as selection. */
+  reviewingElementId?: string | null;
+  /** Prevent review focus from competing with the live-follow scroll owner. */
+  isFollowingLive?: boolean;
 };
 
 /**
@@ -454,8 +470,10 @@ const ServicePlanSectionList = ({
   scheduledPositionOptions = roleNoteOptions,
   teamNoteOptions = [],
   microphones = [],
+  iemEquipment = [],
   microphoneAudiences,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   hideNotes = false,
@@ -468,7 +486,6 @@ const ServicePlanSectionList = ({
   structureOnly = false,
   scrollId,
   scrollContainerRef,
-  followLiveControl,
   ariaLabel = "Service plan",
   sectionLabelColor = "#f97316",
   sectionBorderColor = "#f97316",
@@ -476,6 +493,8 @@ const ServicePlanSectionList = ({
   onOpenAssignment: onOpenAssignmentProp,
   onOpenContent: onOpenContentProp,
   onReviewImportAmbiguity,
+  reviewingElementId = null,
+  isFollowingLive = false,
   allSongDocs = [],
   ...liveRowState
 }: ServicePlanSectionListProps) => {
@@ -499,6 +518,18 @@ const ServicePlanSectionList = ({
   const songDetailsElementId = songDetailsRef?.elementId;
   const elementPlacementRef = useRef<ServicePlanElementPlacement | null>(null);
   const planListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!reviewingElementId || isFollowingLive) return;
+    const container = planListRef.current;
+    const row = document.getElementById(servicePlanElementDomId(reviewingElementId));
+    if (!container || !row || !container.contains(row)) return;
+    const containerRect = container.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < containerRect.top || rowRect.bottom > containerRect.bottom) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [isFollowingLive, reviewingElementId]);
   const setDragElementPlacement = (
     next: ServicePlanElementPlacement | null,
   ) => {
@@ -859,12 +890,14 @@ const ServicePlanSectionList = ({
           assignees={getServicePlanElementAssignees(assignmentPanelElement)}
           allowEdit={canEdit && isEditing}
           microphones={microphones}
+          iemEquipment={iemEquipment}
           assignedToHistoryValues={assignedToHistoryValues}
           onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
           isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
           itemLabel={richTextToPlainText(assignmentPanelElement.title).trim() || "Untitled item"}
           structureOnly={structureOnly}
-          scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+          scheduledEquipmentHolders={scheduledEquipmentHolders}
+          scheduledEquipmentStatus={scheduledEquipmentStatus}
           onChange={updatePanelAssignees}
         />
       ) : null}
@@ -965,7 +998,8 @@ const ServicePlanSectionList = ({
                 teamNoteOptions={teamNoteOptions}
                 microphones={microphones}
                 microphoneAudiences={microphoneAudiences}
-                scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                scheduledEquipmentHolders={scheduledEquipmentHolders}
+                scheduledEquipmentStatus={scheduledEquipmentStatus}
                 scheduledAssignmentRows={scheduledAssignmentRows}
                 onOpenScheduledAssignment={onOpenScheduledAssignment}
                 hideNotes={hideNotes}
@@ -991,12 +1025,12 @@ const ServicePlanSectionList = ({
                   setSongDetailsRef({ elementId, songRef });
                 }}
                 onReviewImportAmbiguity={onReviewImportAmbiguity}
+                reviewingElementId={reviewingElementId}
                 {...liveRowState}
               />
               ))}
 
             </div>
-            {followLiveControl}
           </div>
         </SortableContext>
         {isDesktopPanel && (activePanelElement || songDetails) ? (

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ChurchBrandColor } from "../../api/authTypes";
 import { OverlayFormatting } from "../../types";
 import PopOver from "../PopOver/PopOver";
@@ -7,6 +7,7 @@ import { HexAlphaColorPicker, HexColorInput, HexColorPicker } from "react-colorf
 import cn from "classnames";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchBrandColorLabel } from "../../utils/churchBranding";
+import { contrastingInkForFill } from "../../utils/richTextColorContrast";
 import {
   addRecentColor,
   COMMON_COLOR_SWATCHES,
@@ -23,6 +24,8 @@ interface ColorFieldProps {
   labelKey?: string;
   value: string;
   onChange: (value: string) => void;
+  /** Use an opaque hex picker when the stored field accepts solid colors only. */
+  alpha?: boolean;
   defaultColor?: string;
   formatting?: OverlayFormatting;
   /**
@@ -34,29 +37,7 @@ interface ColorFieldProps {
   onPopoverOpenChange?: (open: boolean) => void;
 }
 
-const getContrastingTextColor = (hex: string) => {
-  // Remove '#' if present
-  hex = hex.replace(/^#/, "");
-
-  // Expand shorthand (e.g. #abc → #aabbcc)
-  if (hex.length === 3) {
-    hex = hex
-      .split("")
-      .map((c) => c + c)
-      .join("");
-  }
-
-  // Parse RGB values
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-
-  // Calculate luminance using the WCAG formula
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-  // Return black for light backgrounds, white for dark
-  return luminance > 128 ? "#000000" : "#FFFFFF";
-};
+const getContrastingTextColor = (hex: string) => contrastingInkForFill(hex);
 
 type ChurchBrandColorSwatchesProps = {
   colors: ChurchBrandColor[];
@@ -122,8 +103,11 @@ const ColorSwatchRow: React.FC<ColorSwatchRowProps> = ({
         variant="tertiary"
         aria-label={`Color ${swatch}`}
         padding="p-0"
-        className="size-6 aspect-square shrink-0 min-h-0 max-md:min-h-0 border border-white/25"
-        style={{ backgroundColor: swatch }}
+        className="size-6 aspect-square shrink-0 min-h-0 max-md:min-h-0 border-2"
+        style={{
+          backgroundColor: swatch,
+          borderColor: getContrastingTextColor(swatch),
+        }}
         onClick={() => onSelect(swatch)}
       />
     ))}
@@ -156,6 +140,7 @@ type BrandAwareColorPickerProps = {
   onChange: (value: string) => void;
   colors: ChurchBrandColor[];
   alpha?: boolean;
+  hexInputLabel?: string;
 };
 
 export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
@@ -163,6 +148,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
   onChange,
   colors,
   alpha = false,
+  hexInputLabel,
 }) => {
   const PickerComponent = alpha ? HexAlphaColorPicker : HexColorPicker;
   const inputProps = alpha ? { alpha: true } : {};
@@ -236,6 +222,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
             onChange={handlePickerChange}
             className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
+            aria-label={hexInputLabel}
           />
         </div>
         {colors.length > 0 && (
@@ -258,6 +245,128 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
   );
 };
 
+type CompactColorPickerProps = {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  alpha?: boolean;
+  /** Show a rainbow trigger when the caller has no explicit color override. */
+  showUnset?: boolean;
+  className?: string;
+  /** Keep the picker draft local and commit the latest value after this delay. */
+  debounceParentCommitMs?: number;
+  /** Receives immediate local updates without notifying the parent. */
+  onPreviewChange?: (value: string) => void;
+  /** Cancel a pending draft and restore the controlled value. */
+  resetSignal?: number;
+};
+
+export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
+  label,
+  value,
+  onChange,
+  alpha = false,
+  showUnset = false,
+  className,
+  debounceParentCommitMs,
+  onPreviewChange,
+  resetSignal = 0,
+}) => {
+  const globalInfo = useContext(GlobalInfoContext);
+  const brandColors = globalInfo?.churchBranding.colors || [];
+  const [draftColor, setDraftColor] = useState(value);
+  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorRef = useRef<string | null>(null);
+  const controlledValueRef = useRef(value);
+  const resetSignalRef = useRef(resetSignal);
+  const onChangeRef = useRef(onChange);
+  const onPreviewChangeRef = useRef(onPreviewChange);
+  onChangeRef.current = onChange;
+  onPreviewChangeRef.current = onPreviewChange;
+
+  const clearCommitTimer = useCallback(() => {
+    if (commitTimerRef.current) {
+      clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const controlledValueChanged = controlledValueRef.current !== value;
+    const resetRequested = resetSignalRef.current !== resetSignal;
+    if (!controlledValueChanged && !resetRequested) return;
+
+    controlledValueRef.current = value;
+    resetSignalRef.current = resetSignal;
+    clearCommitTimer();
+    pendingColorRef.current = null;
+    setDraftColor(value);
+    onPreviewChangeRef.current?.(value);
+  }, [clearCommitTimer, resetSignal, value]);
+
+  useEffect(() => () => {
+    clearCommitTimer();
+    const pendingColor = pendingColorRef.current;
+    pendingColorRef.current = null;
+    if (pendingColor !== null) onChangeRef.current(pendingColor);
+  }, [clearCommitTimer]);
+
+  const handleColorChange = (next: string) => {
+    onPreviewChangeRef.current?.(next);
+    if (!debounceParentCommitMs) {
+      onChangeRef.current(next);
+      return;
+    }
+
+    setDraftColor(next);
+    pendingColorRef.current = next;
+    clearCommitTimer();
+    commitTimerRef.current = setTimeout(() => {
+      commitTimerRef.current = null;
+      pendingColorRef.current = null;
+      onChangeRef.current(next);
+    }, debounceParentCommitMs);
+  };
+
+  const effectiveColor = debounceParentCommitMs ? draftColor : value;
+  const contrastColor = getContrastingTextColor(effectiveColor);
+
+  return (
+    <PopOver
+      align="start"
+      contentClassName="w-[min(28rem,calc(100vw-2rem))]"
+      bodyClassName="px-3 pb-3"
+      TriggeringButton={
+        <Button
+          type="button"
+          variant="tertiary"
+          aria-label={label}
+          title={label}
+          padding="p-0"
+          className={cn(
+            "size-7 min-h-0 shrink-0 rounded-full border-2",
+            className,
+          )}
+          style={showUnset
+            ? {
+              backgroundImage: "conic-gradient(from 45deg, #ef4444, #eab308, #22c55e, #3b82f6, #8b5cf6, #ec4899, #ef4444)",
+              borderColor: "#d1d5db",
+            }
+            : { backgroundColor: effectiveColor, borderColor: contrastColor }}
+        />
+      }
+    >
+      <BrandAwareColorPicker
+        color={effectiveColor}
+        onChange={handleColorChange}
+        colors={brandColors}
+        alpha={alpha}
+        hexInputLabel={`${label} hex`}
+      />
+    </PopOver>
+  );
+};
+
 const ColorField: React.FC<ColorFieldProps> = ({
   className,
   label,
@@ -265,6 +374,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
   labelKey,
   value,
   onChange,
+  alpha = true,
   defaultColor = "#ffffff",
   formatting,
   debounceParentCommitMs,
@@ -345,7 +455,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           color={val}
           onChange={handleColorChange}
           colors={brandColors}
-          alpha
+          alpha={alpha}
         />
       </PopOver>
     </div>

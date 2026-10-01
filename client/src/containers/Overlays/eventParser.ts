@@ -5,6 +5,8 @@ export interface EventData {
   /** Stable source identity present only on saved WorshipSync plans. */
   sourcePlanKey?: string;
   sourcePlanElementId?: string;
+  /** Durable source row identity when an importer exposes one. */
+  sourceOccurrenceId?: string;
   /**
    * Attached content title when the source exposes it separately from the
    * service moment. `title` remains the legacy source-column fallback.

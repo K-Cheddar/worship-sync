@@ -1,5 +1,6 @@
 // Re-export WindowType from windowState for use in React code
 // The actual type is defined in electron/windowState.ts
+import type { ResourcePolicy } from "../../electron/resourceGovernor";
 /**
  * Key identifying a display window. The original surfaces keep "projector",
  * "monitor", and "board"; a window opened for a display output uses that
@@ -224,10 +225,12 @@ export interface ElectronAPI {
   ) => Promise<{ downloaded: number; cleaned: number }>;
   /** Timestamped app-process metrics, sampled once in main while subscribed. */
   getPreparedVideoMetrics?: () => Promise<PreparedVideoMetrics>;
-  subscribePreparedVideoMetrics?: () => Promise<boolean>;
-  unsubscribePreparedVideoMetrics?: () => Promise<boolean>;
-  onPreparedVideoMetrics?: (
+  subscribePreparedVideoMetrics?: (
     callback: (metrics: PreparedVideoMetrics) => void,
+  ) => () => void;
+  getResourceGovernorPolicy?: () => Promise<ResourcePolicy>;
+  subscribeResourceGovernorPolicy?: (
+    callback: (policy: ResourcePolicy) => void,
   ) => () => void;
 
   // App-managed local assets

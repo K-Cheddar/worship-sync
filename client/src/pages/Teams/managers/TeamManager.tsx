@@ -16,6 +16,7 @@ import {
 import type { TeamRecord, TeamPosition, TeamQualificationArea, TeamRole, TeamRosterMember } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
@@ -28,10 +29,9 @@ import {
 } from "../components/EntityListFilters";
 import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
-import PositionIconPicker from "../PositionIconPicker";
+import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
-import { formatTeamSaveToast } from "../teamsSaveToasts";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -39,7 +39,6 @@ import {
   buildTeamsRolesPath,
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import type { TeamsData } from "../types";
@@ -59,6 +58,7 @@ type TeamManagerProps = {
   onSaved: (team: TeamRecord, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (teamId: string) => void;
+  onImported?: () => void;
 };
 
 const TeamManager = ({
@@ -72,6 +72,7 @@ const TeamManager = ({
   onSaved,
   onArchived,
   onRemoved,
+  onImported,
 }: TeamManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -89,6 +90,7 @@ const TeamManager = ({
     icon: "",
     memberIds: [],
     usesMicrophoneAssignments: false,
+    usesIemAssignments: false,
   });
   // Teams with a save currently in flight, keyed by teamId (or CREATE_SAVING_KEY
   // for a new team). Tracking per-editor keeps the Save spinner on the team
@@ -97,7 +99,6 @@ const TeamManager = ({
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
 
   const editingTeamPositions = useMemo(() => {
     if (!editing) return [];
@@ -133,11 +134,12 @@ const TeamManager = ({
       icon: "",
       memberIds: [],
       usesMicrophoneAssignments: false,
+      usesIemAssignments: false,
     });
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const startEditingTeam = useCallback((team: TeamRecord) => {
@@ -149,6 +151,7 @@ const TeamManager = ({
       icon: team.icon || "",
       memberIds: team.memberIds || [],
       usesMicrophoneAssignments: Boolean(team.usesMicrophoneAssignments),
+      usesIemAssignments: Boolean(team.usesIemAssignments),
     });
   }, []);
 
@@ -202,11 +205,6 @@ const TeamManager = ({
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
     setSavingIds((prev) => new Set(prev).add(savingKey));
-    const saveToastMessage = formatTeamSaveToast(wasEditing, draft, {
-      memberNameById: new Map(
-        members.map((member) => [member.memberId, memberName(member)]),
-      ),
-    });
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const optimisticTeam: TeamRecord = {
       churchId,
@@ -216,6 +214,7 @@ const TeamManager = ({
       icon: draft.icon || "",
       memberIds: draft.memberIds,
       usesMicrophoneAssignments: Boolean(draft.usesMicrophoneAssignments),
+      usesIemAssignments: Boolean(draft.usesIemAssignments),
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -229,12 +228,8 @@ const TeamManager = ({
       if (!wasEditing) {
         onSaved(response.team, localTeamId);
       }
-      showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different team while this save was
         // in flight. Only refresh the selected record if they're still on the
         // one we just saved, so the panel never rebinds to a stale team.
@@ -265,21 +260,23 @@ const TeamManager = ({
   const currentEditorKey = editing ? editing.teamId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
   const hasPendingChanges = editing
-    ? JSON.stringify(draft) !==
+    ? JSON.stringify({ ...draft, memberIds: [...draft.memberIds].sort() }) !==
       JSON.stringify({
         name: editing.name,
         description: editing.description || "",
         icon: editing.icon || "",
-        memberIds: editing.memberIds || [],
+        memberIds: [...(editing.memberIds || [])].sort(),
         usesMicrophoneAssignments: Boolean(editing.usesMicrophoneAssignments),
+        usesIemAssignments: Boolean(editing.usesIemAssignments),
       })
-    : JSON.stringify(draft) !==
+    : JSON.stringify({ ...draft, memberIds: [...draft.memberIds].sort() }) !==
       JSON.stringify({
         name: "",
         description: "",
         icon: "",
         memberIds: [],
         usesMicrophoneAssignments: false,
+        usesIemAssignments: false,
       });
   useTeamsUnsavedChanges(hasPendingChanges);
 
@@ -303,6 +300,7 @@ const TeamManager = ({
         sectionTitle="Teams"
         description="Organize members into scheduling teams."
         createLabel="Create team"
+        listHeaderActions={<PortableDataActions type="teams" onImported={onImported} />}
         listToolbar={
           <div className="space-y-3">
             {returnTo && !showCreate ? (
@@ -377,17 +375,18 @@ const TeamManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save team"
+            entityLabel="team"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
+        <EntityIconPicker context="team" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-20" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         <EntityMultiSelect
           label="Members"
@@ -409,6 +408,16 @@ const TeamManager = ({
             ...current,
             usesMicrophoneAssignments,
           }))}
+        />
+        <Checkbox
+          label={(
+            <span className="flex flex-col gap-0.5">
+              <span>Use IEM assignments</span>
+              <span className="text-xs text-gray-400">Assign physical IEMs/beltpacks to this team&apos;s roles.</span>
+            </span>
+          )}
+          checked={Boolean(draft.usesIemAssignments)}
+          onCheckedChange={(usesIemAssignments) => setDraft((current) => ({ ...current, usesIemAssignments }))}
         />
         {editing ? (
           <div className="space-y-4">
