@@ -16,6 +16,12 @@ import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
 
 type CanvaTransferStatus = "pending" | "exporting" | "processing" | "finalizing" | "completed" | "partial" | "failed" | "cancelled";
+type CanvaPageState = {
+  status: "waiting" | "exporting" | "processing" | "saving" | "ready" | "error" | "cancelled";
+  requested?: boolean;
+  processed?: boolean;
+  skipped?: boolean;
+};
 type CanvaTransfer = {
   id: string;
   kind: "canva";
@@ -23,7 +29,7 @@ type CanvaTransfer = {
   format: "png" | "mp4";
   pages: number[];
   status: CanvaTransferStatus;
-  pageStatus: Record<number, string>;
+  pageStatus: Record<number, CanvaPageState>;
   error?: string;
   importedCount?: number;
   viewPath?: string;
@@ -49,6 +55,64 @@ type UploadTransfer = {
   message: string;
 };
 export type TransferItem = CanvaTransfer | UploadTransfer;
+
+const terminalCanvaStatuses: CanvaTransferStatus[] = ["completed", "partial", "failed", "cancelled"];
+const isActiveTransfer = (item: TransferItem) => item.kind === "upload"
+  ? item.status === "uploading" || item.status === "processing"
+  : !terminalCanvaStatuses.includes(item.status);
+
+const getCanvaProgressCounts = (item: CanvaTransfer) => ({
+  totalPages: item.pages.filter((page) => !item.pageStatus[page]?.skipped).length,
+  requestedPages: item.pages.filter((page) => item.pageStatus[page]?.requested && !item.pageStatus[page]?.skipped).length,
+  processedPages: item.pages.filter((page) => item.pageStatus[page]?.processed && !item.pageStatus[page]?.skipped).length,
+});
+
+const getCanvaTransferProgress = (item: CanvaTransfer) => {
+  const { totalPages, requestedPages, processedPages } = getCanvaProgressCounts(item);
+  return totalPages ? ((requestedPages + processedPages) / (totalPages * 2)) * 100 : 100;
+};
+
+const getTransferProgress = (item: TransferItem) => {
+  const progress = item.kind === "upload" ? item.progress : getCanvaTransferProgress(item);
+  return Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
+};
+
+export type ActiveTransferSummary = {
+  id: string;
+  name: string;
+  type?: string;
+  status: string;
+  progress: number;
+};
+
+const getCanvaTransferPhase = (item: CanvaTransfer) => {
+  const { totalPages, requestedPages, processedPages } = getCanvaProgressCounts(item);
+  const hasStartedProcessing = item.status === "processing" || item.status === "finalizing" || Object.values(item.pageStatus).some((page) => ["processing", "saving"].includes(page.status) || (page.status === "ready" && !page.skipped));
+  if (hasStartedProcessing) return `Processing Canva pages · ${processedPages} of ${totalPages}`;
+  if (item.pageStatus && item.pages.some((page) => item.pageStatus[page]?.status === "exporting")) {
+    return `Requesting page ${requestedPages} of ${totalPages}`;
+  }
+  const waitingPage = item.pages.find((page) => item.pageStatus[page]?.status === "waiting");
+  if (waitingPage) return `Waiting for Canva to prepare export · page ${waitingPage} of ${totalPages}`;
+  return stageLabel(item.status);
+};
+
+export const getTransferOverview = (transfers: TransferItem[]) => {
+  const activeTransfers = transfers.filter(isActiveTransfer);
+  const summaries: ActiveTransferSummary[] = activeTransfers.map((item) => ({
+    id: item.id,
+    name: item.title,
+    ...(item.kind === "canva" ? { type: "Canva" } : {}),
+    status: item.kind === "canva"
+      ? getCanvaTransferPhase(item)
+      : item.status === "processing" ? "Processing" : "Uploading",
+    progress: getTransferProgress(item),
+  }));
+  const progress = summaries.length
+    ? summaries.reduce((sum, item) => sum + item.progress, 0) / summaries.length
+    : null;
+  return { activeCount: summaries.length, progress, transfers: summaries };
+};
 
 type TransferContextValue = {
   transfers: TransferItem[];
@@ -85,9 +149,7 @@ const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
   onMinimize: () => void;
 }) => {
   const [transferToCancel, setTransferToCancel] = useState<CanvaTransfer | null>(null);
-  const activeCount = transfers.filter((item) => item.kind === "upload"
-    ? item.status === "uploading" || item.status === "processing"
-    : !["completed", "partial", "failed", "cancelled"].includes(item.status)).length;
+  const { activeCount } = getTransferOverview(transfers);
 
   const cancel = (job: CanvaTransfer) => {
     setTransferToCancel(job);
@@ -116,25 +178,25 @@ const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
             {(item.status === "uploading" || item.status === "processing") ? <div className="mt-2 h-1.5 rounded bg-gray-700"><div className="h-1.5 rounded bg-cyan-500" style={{ width: `${item.progress}%` }} /></div> : null}
             {item.status === "completed" || item.status === "failed" ? <button className="mt-2 text-xs text-cyan-200 underline" onClick={() => dismiss(item.id)}>Dismiss</button> : null}
           </li>;
-          const completedPages = Object.values(item.pageStatus).filter((status) => status === "ready").length;
-          const pagePercent = item.pages.length ? Math.floor(completedPages / item.pages.length * 100) : 0;
-          const percent = item.status === "completed" ? 100 : Math.min(95, pagePercent);
-          const currentExportPage = item.pages.find((page) => item.pageStatus[page] === "exporting");
-          const currentWaitingPage = item.pages.find((page) => item.pageStatus[page] === "waiting");
-          const currentProcessingPage = item.pages.find((page) => item.pageStatus[page] === "processing" || item.pageStatus[page] === "saving");
-          const isPageProcessing = item.status === "finalizing" || Object.values(item.pageStatus).some((status) => ["processing", "saving", "ready", "error"].includes(status));
+          const { totalPages, requestedPages, processedPages } = getCanvaProgressCounts(item);
+          const progress = getTransferProgress(item);
+          const percent = item.status === "completed" ? 100 : progress ?? 0;
+          const currentExportPage = item.pages.find((page) => item.pageStatus[page]?.status === "exporting");
+          const currentWaitingPage = item.pages.find((page) => item.pageStatus[page]?.status === "waiting");
+          const isPageProcessing = item.status === "processing" || item.status === "finalizing" || Object.values(item.pageStatus).some((page) => ["processing", "saving"].includes(page.status) || (page.status === "ready" && !page.skipped));
+          const hasPageProgress = isPageProcessing || Object.values(item.pageStatus).some((page) => page.status === "error");
           const isTerminal = ["completed", "partial", "failed", "cancelled"].includes(item.status);
           const progressLabel = isTerminal
             ? item.customItemError ? "Media imported; custom item needs attention" : stageLabel(item.status)
             : item.customItemError
               ? "Media imported; custom item needs attention"
-            : currentExportPage
-            ? `Requesting Canva export · page ${currentExportPage} of ${item.pages.length}`
-            : currentWaitingPage
-              ? `Waiting for Canva to prepare export · page ${currentWaitingPage} of ${item.pages.length}`
-            : currentProcessingPage
-              ? `Processing page ${currentProcessingPage} of ${item.pages.length}`
-              : stageLabel(item.status);
+              : isPageProcessing
+                ? `Processing Canva pages · ${processedPages} of ${totalPages}`
+                : currentExportPage
+                  ? `Requesting Canva export · page ${requestedPages} of ${totalPages}`
+                  : currentWaitingPage
+                    ? `Waiting for Canva to prepare export · page ${currentWaitingPage} of ${item.pages.length}`
+                    : stageLabel(item.status);
           return <li key={item.id} className="rounded-md bg-gray-800 p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2"><Presentation size={18} className="shrink-0 text-cyan-200" /><p className="truncate text-sm font-medium">{item.title}</p></div>
@@ -143,8 +205,8 @@ const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
                 : <Button variant="tertiary" svg={X} aria-label={`Cancel ${item.title}`} onClick={() => cancel(item)} />}
             </div>
             <p className="mt-1 text-xs text-gray-300">{progressLabel}</p>
-            {isPageProcessing && <p className="mt-1 text-xs text-gray-300">{completedPages} of {item.pages.length} pages processed · {pagePercent}%</p>}
-            {item.status !== "failed" && item.status !== "cancelled" ? <div role="progressbar" aria-label={`${item.title} progress`} aria-valuemin={0} aria-valuemax={100} {...(isPageProcessing ? { "aria-valuenow": percent } : {})} className="mt-2 h-1.5 overflow-hidden rounded bg-gray-700">{isPageProcessing
+            {hasPageProgress && <p className="mt-1 text-xs text-gray-300">{processedPages} of {totalPages} pages processed{item.status === "completed" ? "" : ` · ${Math.round(percent)}%`}</p>}
+            {item.status !== "failed" && item.status !== "cancelled" ? <div role="progressbar" aria-label={`${item.title} progress`} aria-valuemin={0} aria-valuemax={100} {...(item.status !== "pending" ? { "aria-valuenow": percent } : {})} className="mt-2 h-1.5 overflow-hidden rounded bg-gray-700">{item.status !== "pending"
               ? <div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} />
               : <div className="h-full w-1/3 animate-pulse rounded bg-cyan-500" />}</div> : null}
             {item.error ? <p role="alert" className="mt-2 text-xs text-red-200">{item.error}</p> : null}
@@ -215,12 +277,24 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       try {
         if (controller.signal.aborted) throw new Error("Canva import cancelled.");
         const result = await job.run(controller.signal, (event) => {
-          if (event.type === "started") update({ status: "exporting", pageStatus: Object.fromEntries((event.pages || job.pages).map((page) => [page, "waiting"])) });
+          if (event.type === "started") update({ status: "exporting", pageStatus: Object.fromEntries((event.pages || job.pages).map((page) => [page, { status: "waiting" }])) });
           else if (event.type === "page-progress") {
-            update({ status: event.status === "exporting" ? "exporting" : "processing" });
-            setTransfers((current) => current.map((item) => item.id === job.id && item.kind === "canva"
-              ? { ...item, pageStatus: { ...item.pageStatus, [event.page]: event.status === "ready" ? "saving" : event.status } }
-              : item));
+            setTransfers((current) => current.map((item) => {
+              if (item.id !== job.id || item.kind !== "canva") return item;
+              const skipped = item.pageStatus[event.page]?.skipped || event.skipped === true;
+              const requested = item.pageStatus[event.page]?.requested || (!skipped && (event.status === "exporting" || event.status === "processing" || event.exported === true));
+              const hasStartedProcessing = item.status === "processing" || item.status === "finalizing" || (!skipped && (event.status === "processing" || event.status === "saving" || event.exported === true));
+              return {
+                ...item,
+                status: hasStartedProcessing ? "processing" : "exporting",
+                pageStatus: { ...item.pageStatus, [event.page]: {
+                  ...item.pageStatus[event.page],
+                  status: event.status === "ready" && !event.skipped ? "saving" : event.status,
+                  requested,
+                  ...(skipped ? { skipped: true } : {}),
+                } },
+              };
+            }));
           }
           else if (event.type === "finalizing") update({ status: "finalizing" });
         });
@@ -228,12 +302,12 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         const completion = await job.finalize(result, controller.signal, (pages) => {
           pages.forEach((page) => persistedPages.add(page));
           setTransfers((current) => current.map((item) => item.id === job.id && item.kind === "canva"
-            ? { ...item, pageStatus: { ...item.pageStatus, ...Object.fromEntries(pages.map((page) => [page, "ready"])) } }
+            ? { ...item, pageStatus: { ...item.pageStatus, ...Object.fromEntries(pages.map((page) => [page, { ...item.pageStatus[page], status: "ready", ...(!item.pageStatus[page]?.skipped ? { requested: true, processed: true } : {}) }])) } }
             : item));
         });
         if (controller.signal.aborted) {
           const savedPages = persistedPages.size;
-          update({ status: "cancelled", ...completion, error: `Import cancelled after saving ${savedPages} ${savedPages === 1 ? "page" : "pages"}. Saved Media and custom items remain available.`, pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "cancelled"])), controller: undefined });
+          update({ status: "cancelled", ...completion, error: `Import cancelled after saving ${savedPages} ${savedPages === 1 ? "page" : "pages"}. Saved Media and custom items remain available.`, pageStatus: Object.fromEntries(job.pages.map((page) => [page, { status: persistedPages.has(page) ? "ready" : "cancelled", ...(persistedPages.has(page) ? { requested: true, processed: true } : {}) }])), controller: undefined });
           return;
         }
         update({ status: completion.failedPages?.length || completion.customItemError ? "partial" : "completed", ...completion, controller: undefined });
@@ -244,7 +318,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
           const cancellationMessage = savedPages
             ? `Import cancelled after saving ${savedPages} ${savedPages === 1 ? "page" : "pages"}. Saved Media remains available.`
             : "Import cancelled before any pages were saved.";
-          update({ status: "cancelled", error: `${cancellationMessage}${cleanupMessage && !job.cleanupRetry ? ` ${cleanupMessage}` : ""}`, ...(cleanupMessage && job.cleanupRetry ? { cleanupError: cleanupMessage, cleanupRetry: job.cleanupRetry } : {}), pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "cancelled"])), controller: undefined });
+          update({ status: "cancelled", error: `${cancellationMessage}${cleanupMessage && !job.cleanupRetry ? ` ${cleanupMessage}` : ""}`, ...(cleanupMessage && job.cleanupRetry ? { cleanupError: cleanupMessage, cleanupRetry: job.cleanupRetry } : {}), pageStatus: Object.fromEntries(job.pages.map((page) => [page, { status: persistedPages.has(page) ? "ready" : "cancelled", ...(persistedPages.has(page) ? { requested: true, processed: true } : {}) }])), controller: undefined });
           return;
         }
         const savedPages = persistedPages.size;
@@ -254,7 +328,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
           status: savedPages ? "partial" : "failed",
           error: message,
           ...(job.cleanupRetry && /could not be removed/i.test(rawError) ? { cleanupError: rawError, cleanupRetry: job.cleanupRetry } : {}),
-          pageStatus: Object.fromEntries(job.pages.map((page) => [page, persistedPages.has(page) ? "ready" : "error"])),
+          pageStatus: Object.fromEntries(job.pages.map((page) => [page, { status: persistedPages.has(page) ? "ready" : "error", ...(persistedPages.has(page) ? { requested: true, processed: true } : {}) }])),
           failedPages: job.pages.filter((page) => !persistedPages.has(page)).map((page) => ({ page, error: message })),
           controller: undefined,
         });

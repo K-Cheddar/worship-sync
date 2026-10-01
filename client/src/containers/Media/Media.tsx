@@ -290,8 +290,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             <MediaAddControl
               uploadProgress={c.uploadProgress}
               uploadTitle={toolbarAddMediaTitle}
-              onUploadClick={() => void c.requestMediaUpload()}
-              disabled={c.isMediaReadOnly}
             >
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
