@@ -578,12 +578,16 @@ const ScheduleTab = ({
     : null;
   const latestScheduleRef = useRef(selectedSchedule);
   useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
+  const activeScheduleIdRef = useRef(selectedScheduleRecord?.scheduleId || "");
+  useLayoutEffect(() => {
+    activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
+  }, [selectedScheduleRecord?.scheduleId]);
   const [ensuringScheduleId, setEnsuringScheduleId] = useState("");
   const pendingScheduleEnsureRef = useRef<{
     virtualScheduleId: string;
-    promise: Promise<TeamSchedule>;
+    promise: Promise<TeamSchedule | null>;
   } | null>(null);
-  const ensureActiveSchedule = useCallback(async () => {
+  const ensureActiveSchedule = useCallback(async (): Promise<TeamSchedule | null> => {
     const active = latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:")) return active;
@@ -591,7 +595,10 @@ const ScheduleTab = ({
     if (!churchId) throw new Error("Church information is unavailable.");
     const pending = pendingScheduleEnsureRef.current;
     if (pending?.virtualScheduleId === virtualScheduleId) return pending.promise;
-    const request: { virtualScheduleId: string; promise: Promise<TeamSchedule> } = {
+    const request: {
+      virtualScheduleId: string;
+      promise: Promise<TeamSchedule | null>;
+    } = {
       virtualScheduleId,
       promise: Promise.resolve().then(async () => {
         setEnsuringScheduleId(virtualScheduleId);
@@ -607,6 +614,7 @@ const ScheduleTab = ({
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           }));
           onScheduleSaved(result.schedule);
+          if (activeScheduleIdRef.current !== virtualScheduleId) return null;
           if (latestScheduleRef.current?.scheduleId === virtualScheduleId) {
             setSelectedScheduleId(result.schedule.scheduleId);
             setViewingSavedSchedule(false);
@@ -2036,6 +2044,7 @@ const ScheduleTab = ({
     setIsSendingSchedule(true);
     try {
       const schedule = await ensureActiveSchedule();
+      if (!schedule) return;
       const result = await sendTeamSchedule(
         churchId,
         schedule.scheduleId,
@@ -2146,7 +2155,9 @@ const ScheduleTab = ({
       }
     }
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
@@ -2296,6 +2307,7 @@ const ScheduleTab = ({
       ] ?? "";
     try {
       const schedule = await ensureActiveSchedule();
+      if (!schedule) return;
       const response = await enqueueAssignmentSave(() =>
         updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
           serviceId: activeSlot.occurrenceId,
@@ -2331,6 +2343,7 @@ const ScheduleTab = ({
     if (!canEdit || !selectedSchedule) return;
     try {
       const schedule = await ensureActiveSchedule();
+      if (!schedule) return;
       const guests = (schedule.guests || []).map((existingGuest) =>
         existingGuest.guestId === guest.guestId ? guest : existingGuest,
       );
@@ -2610,7 +2623,9 @@ const ScheduleTab = ({
     }
 
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
@@ -2752,7 +2767,9 @@ const ScheduleTab = ({
     }
 
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
       nextAssignments = { ...(previousSchedule.assignments || {}) };
       targetRow = { ...(nextAssignments[occurrenceId] || {}) };
       applied.forEach((entry) => {
@@ -2844,7 +2861,9 @@ const ScheduleTab = ({
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
     let previousSchedule: TeamSchedule;
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
@@ -3125,6 +3144,7 @@ const ScheduleTab = ({
     const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
     try {
       const schedule = await ensureActiveSchedule();
+      if (!schedule) return;
       const { member } = await createTeamRosterMember(churchId, {
         firstName: trimmedFirst,
         lastName: lastName.trim(),
@@ -3369,6 +3389,7 @@ const ScheduleTab = ({
     setCopyingLink(true);
     try {
       const schedule = await ensureActiveSchedule();
+      if (!schedule) return;
       const { publicToken } = await getTeamSchedulePublicLink(
         churchId,
         schedule.scheduleId,
@@ -3976,7 +3997,9 @@ const ScheduleTab = ({
     }
     let previousSchedule: TeamSchedule;
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
@@ -4280,7 +4303,9 @@ const ScheduleTab = ({
       if (!canEdit || !churchId || !selectedSchedule) return;
       let baseSchedule: TeamSchedule;
       try {
-        baseSchedule = await ensureActiveSchedule();
+        const ensuredSchedule = await ensureActiveSchedule();
+        if (!ensuredSchedule) return;
+        baseSchedule = ensuredSchedule;
       } catch (error) {
         showApiErrorToast(showToast, error, "Could not start this schedule.");
         return;
@@ -4351,7 +4376,9 @@ const ScheduleTab = ({
       if (!canEdit || !churchId || !selectedSchedule) return;
       let baseSchedule: TeamSchedule;
       try {
-        baseSchedule = await ensureActiveSchedule();
+        const ensuredSchedule = await ensureActiveSchedule();
+        if (!ensuredSchedule) return;
+        baseSchedule = ensuredSchedule;
       } catch (error) {
         showApiErrorToast(showToast, error, "Could not start this schedule.");
         return;
@@ -4585,7 +4612,9 @@ const ScheduleTab = ({
       if (!canEdit || !churchId || !selectedSchedule) return;
       let previousSchedule: TeamSchedule;
       try {
-        previousSchedule = await ensureActiveSchedule();
+        const ensuredSchedule = await ensureActiveSchedule();
+        if (!ensuredSchedule) return;
+        previousSchedule = ensuredSchedule;
       } catch (error) {
         showApiErrorToast(showToast, error, "Could not start this schedule.");
         return;
@@ -4683,7 +4712,9 @@ const ScheduleTab = ({
     const { serviceId, cellKey } = pendingAdditionalPositionRemoval;
     let previousSchedule: TeamSchedule;
     try {
-      previousSchedule = await ensureActiveSchedule();
+      const ensuredSchedule = await ensureActiveSchedule();
+      if (!ensuredSchedule) return;
+      previousSchedule = ensuredSchedule;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;

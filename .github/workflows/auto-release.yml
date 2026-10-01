@@ -177,7 +177,7 @@ jobs:
   publish-electron-release:
     name: Publish Electron release assets
     needs: [release, build-electron]
-    if: needs.release.outputs.published == 'true'
+    if: ${{ !cancelled() && needs.release.outputs.published == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

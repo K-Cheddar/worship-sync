@@ -773,10 +773,125 @@ describe("Teams", () => {
     await user.click(addPositionButtons[0]);
     await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
     await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(2);
     expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[1]).toBeLessThan(
       mockAddTeamSchedulePositionSlot.mock.invocationCallOrder[0],
     );
+    expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe(
+      `generated-period-${secondFuturePeriod.start}`,
+    );
+  });
+
+  it("drops a pending virtual-period assignment after the operator changes periods", async () => {
+    const user = userEvent.setup();
+    const serviceId = "service-next-period";
+    const positionId = "position-vocal";
+    mockState = {
+      undoable: {
+        present: {
+          serviceTimes: {
+            list: [{
+              ...mockSharedServices[0],
+              id: serviceId,
+              serviceId,
+              name: "Saturday service",
+              reccurence: "weekly",
+              dayOfWeek: 6,
+              time: "10:00",
+              positionRequirements: [{ positionId, count: 1 }],
+            }],
+          },
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal", icon: "mic" }],
+      members: [{
+        memberId: "member-morgan", churchId: "church-1", firstName: "Morgan", lastName: "Lee",
+        positionIds: [positionId], blockoutDates: [], notes: "",
+      }],
+      teams: [{ ...baseBootstrap.teams[0], memberIds: ["member-morgan"] }],
+      schedules: [],
+    }));
+
+    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
+    const makeEnsuredSchedule = (
+      body: Parameters<typeof ensureTeamScheduleForPeriod>[1],
+    ): TeamSchedule => ({
+      scheduleId: `generated-period-${body.startDate}`,
+      churchId: "church-1",
+      name: body.name,
+      teamId: body.teamId,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      serviceIds: body.serviceIds,
+      occurrences: body.occurrences,
+      source: "generated-period",
+      generatedPeriodKey: "period-key",
+      assignments: {},
+    });
+    let resolveFirstEnsure: ((
+      value: Awaited<ReturnType<typeof ensureTeamScheduleForPeriod>>,
+    ) => void) | null = null;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      const schedule = makeEnsuredSchedule(body);
+      if (!resolveFirstEnsure) {
+        return new Promise((resolve) => {
+          resolveFirstEnsure = resolve;
+        });
+      }
+      return { success: true, created: true, schedule };
+    });
+    mockAddTeamSchedulePositionSlot.mockImplementation(async (_churchId, scheduleId, body) => ({
+      success: true,
+      schedule: {
+        ...makeEnsuredSchedule({
+          name: "Next period",
+          teamId: "team-main",
+          startDate: secondFuturePeriod.start,
+          endDate: secondFuturePeriod.end,
+          serviceIds: [serviceId],
+          occurrences: [],
+          timeZone: "UTC",
+        }),
+        scheduleId,
+        additionalPositionSlots: { [body.serviceId]: [body.positionSlotKey] },
+      },
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "Upcoming" }));
+    await user.click(screen.getByRole("button", { name: "Next period" }));
+    const cell = (await screen.findAllByRole("button", { name: /Vocal, Empty/i }))[0];
+    await user.click(cell);
+    await screen.findByRole("combobox", { name: /Vocal/i });
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Next period" }));
+    const nextPeriodCell = await screen.findByRole("group", { name: "Team schedule identity" });
+    expect(nextPeriodCell).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstEnsure?.({
+        success: true,
+        created: true,
+        schedule: makeEnsuredSchedule(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]),
+      });
+    });
+    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+
+    const addPositionButtons = await screen.findAllByRole("button", { name: "Add position" });
+    await user.click(addPositionButtons[0]);
+    await user.click(await screen.findByRole("menuitem", { name: /Add Vocal 2/i }));
+    await waitFor(() => expect(mockAddTeamSchedulePositionSlot).toHaveBeenCalledTimes(1));
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(2);
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[1][1].startDate).toBe(secondFuturePeriod.start);
     expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe(
       `generated-period-${secondFuturePeriod.start}`,
     );
