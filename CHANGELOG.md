@@ -1,3 +1,10 @@
+## [2.40.1](https://github.com/K-Cheddar/worship-sync/compare/v2.40.0...v2.40.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* Correct scheduling selection ([bd011e9](https://github.com/K-Cheddar/worship-sync/commit/bd011e96846776528a18e988b86c3d3778209afa))
+
 # [2.40.0](https://github.com/K-Cheddar/worship-sync/compare/v2.39.0...v2.40.0) (2026-10-01)
 
 
