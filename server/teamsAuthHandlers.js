@@ -13820,7 +13820,23 @@ export const createTeamsAuthHandlers = ({
               },
             );
           }
-          const populated = compatible.filter(hasScheduleData);
+          const canonicalGenerated = compatible.filter(
+            (schedule) =>
+              schedule.source === "generated-period" &&
+              Boolean(schedule.generatedPeriodKey) &&
+              schedule.scheduleId ===
+                generatedPeriodScheduleId(schedule.generatedPeriodKey),
+          );
+          // Preserve generated identity precedence over source-less legacy
+          // copies, while treating custom schedules as peers when populated.
+          const resolutionCandidates = canonicalGenerated.length
+            ? compatible.filter(
+                (schedule) =>
+                  schedule.source != null ||
+                  canonicalGenerated.includes(schedule),
+              )
+            : compatible;
+          const populated = resolutionCandidates.filter(hasScheduleData);
           if (populated.length === 1) {
             return { schedule: populated[0], created: false };
           }
@@ -13830,24 +13846,17 @@ export const createTeamsAuthHandlers = ({
               "Several schedules match this period. Choose one from Schedule history before editing it.",
             );
           }
-          const canonicalGenerated = compatible.filter(
-            (schedule) =>
-              schedule.source === "generated-period" &&
-              Boolean(schedule.generatedPeriodKey) &&
-              schedule.scheduleId ===
-                generatedPeriodScheduleId(schedule.generatedPeriodKey),
-          );
           if (canonicalGenerated.length === 1) {
             return { schedule: canonicalGenerated[0], created: false };
           }
-          if (canonicalGenerated.length > 1 || compatible.length > 1) {
+          if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) {
             throw httpError(
               409,
               "Several schedules match this period. Choose one from Schedule history before editing it.",
             );
           }
-          if (compatible.length === 1) {
-            return { schedule: compatible[0], created: false };
+          if (resolutionCandidates.length === 1) {
+            return { schedule: resolutionCandidates[0], created: false };
           }
 
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);

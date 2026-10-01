@@ -87,23 +87,28 @@ export const findReusablePeriodSchedule = ({
     const storedOccurrenceIds = schedule.occurrences?.map((occurrence) => occurrence.occurrenceId) || [];
     return visibleOccurrenceIds.every((id) => storedOccurrenceIds.includes(id));
   });
-  const populated = compatible.filter(hasScheduleData);
+  const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);
+  // A valid generated identity has always outranked its source-less legacy
+  // copy. Custom schedules remain peers so real conflicting staffing is not
+  // hidden by generated identity alone.
+  const resolutionCandidates = canonicalGenerated.length > 0
+    ? compatible.filter((schedule) => schedule.source != null || isCanonicalGeneratedSchedule(schedule))
+    : compatible;
+  const populated = resolutionCandidates.filter(hasScheduleData);
   if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
   if (populated.length > 1) return { schedule: null, ambiguous: true };
 
-  // The client cannot synchronously recalculate the server's generated key.
-  // A stored generated identity is canonical when its key and ID agree.
-  const canonicalGenerated = compatible.filter((schedule) =>
-    schedule.source === "generated-period" &&
-    Boolean(schedule.generatedPeriodKey) &&
-    schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
-  );
   if (canonicalGenerated.length === 1) return { schedule: canonicalGenerated[0], ambiguous: false };
-  if (canonicalGenerated.length > 1 || compatible.length > 1) return { schedule: null, ambiguous: true };
-  return compatible.length === 1
-    ? { schedule: compatible[0], ambiguous: false }
+  if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) return { schedule: null, ambiguous: true };
+  return resolutionCandidates.length === 1
+    ? { schedule: resolutionCandidates[0], ambiguous: false }
     : { schedule: null, ambiguous: false };
 };
+
+const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
+  schedule.source === "generated-period" &&
+  Boolean(schedule.generatedPeriodKey) &&
+  schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`;
 
 const hasScheduleData = (schedule: TeamScheduleSummary) => {
   if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;

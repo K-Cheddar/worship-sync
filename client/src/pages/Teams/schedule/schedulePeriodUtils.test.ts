@@ -214,13 +214,17 @@ describe("findReusablePeriodSchedule", () => {
     })).toEqual({ schedule: null, ambiguous: false });
   });
 
-  it("prefers a generated period over an equivalent legacy schedule", () => {
+  it("prefers a populated generated period over a populated source-less legacy copy", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
       generatedPeriodKey: "current-key",
+      assignmentCounts: { byMemberId: { generatedMember: 1 }, byPositionId: { camera: 1 } },
     });
-    const legacy = schedule({ scheduleId: "legacy" });
+    const legacy = schedule({
+      scheduleId: "legacy",
+      assignmentCounts: { byMemberId: { legacyMember: 1 }, byPositionId: { camera: 1 } },
+    });
     expect(findReusablePeriodSchedule({ schedules: [legacy, generated], ...target })).toEqual({
       schedule: generated,
       ambiguous: false,
@@ -365,7 +369,16 @@ describe("findReusablePeriodSchedule", () => {
   });
 
   it("does not choose among multiple equivalent legacy schedules", () => {
-    const schedules = [schedule({ scheduleId: "a" }), schedule({ scheduleId: "b" })];
+    const schedules = [
+      schedule({
+        scheduleId: "a",
+        assignmentCounts: { byMemberId: { memberA: 1 }, byPositionId: { camera: 1 } },
+      }),
+      schedule({
+        scheduleId: "b",
+        assignmentCounts: { byMemberId: { memberB: 1 }, byPositionId: { camera: 1 } },
+      }),
+    ];
     expect(findReusablePeriodSchedule({ schedules, ...target })).toEqual({
       schedule: null,
       ambiguous: true,
