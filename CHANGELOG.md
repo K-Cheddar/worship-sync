@@ -1,3 +1,12 @@
+# [2.40.0](https://github.com/K-Cheddar/worship-sync/compare/v2.39.0...v2.40.0) (2026-10-01)
+
+
+### Features
+
+* add generic equipment and IEM assignments ([ebbfdc1](https://github.com/K-Cheddar/worship-sync/commit/ebbfdc14345b7cee08f97b553e7038374b8014f6))
+* adding icons ([381afa9](https://github.com/K-Cheddar/worship-sync/commit/381afa939a6b330f680d81ad7c3d2d56df8a0223))
+* adding member icons to list and schedules ([dd777f4](https://github.com/K-Cheddar/worship-sync/commit/dd777f4c8654888a8775c739086c4a237ab3a044))
+
 # [2.39.0](https://github.com/K-Cheddar/worship-sync/compare/v2.38.0...v2.39.0) (2026-09-29)
 
 
