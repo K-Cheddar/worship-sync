@@ -5153,7 +5153,7 @@ const ScheduleTab = ({
                   onClick={() => returnFromSchedule()}
                 />
               ) : null}
-              <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100">
+              <h1 className="sr-only flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100 sm:not-sr-only">
                 <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
                 <span className="truncate">Team schedule</span>
               </h1>

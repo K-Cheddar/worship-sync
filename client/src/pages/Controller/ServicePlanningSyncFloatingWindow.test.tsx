@@ -30,6 +30,10 @@ const mockPushPlanToOutline = jest.fn();
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
 }));
+jest.mock("../../utils/generalUtils", () => ({
+  ...jest.requireActual("../../utils/generalUtils"),
+  ensureElementInView: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock("../Services/useServicePlanOutlinePush", () => ({
   useServicePlanOutlinePush: () => ({ pushPlanToOutline: mockPushPlanToOutline }),
 }));

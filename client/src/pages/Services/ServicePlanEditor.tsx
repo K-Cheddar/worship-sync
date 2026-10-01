@@ -1787,11 +1787,11 @@ const ServicePlanEditor = ({
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
     const selectedSections = applySelectedServicePlanImportChanges(
-        importPreview.currentSections,
-        importPreview.sections,
-        importPreview.summary,
-        new Set(selectedChangeKeys),
-      );
+      importPreview.currentSections,
+      importPreview.sections,
+      importPreview.summary,
+      new Set(selectedChangeKeys),
+    );
     applyImportedDraft({
       sections: selectedSections,
       planName: occurrence.name || service.name || "",
@@ -2824,6 +2824,7 @@ const ServicePlanEditor = ({
             <TimePicker
               label="Service start time"
               labelLayout="stacked"
+              portal={false}
               value={anchorStartTime}
               disabled={!canEdit || !sections || sections.every((section) => section.elements.length === 0)}
               onChange={(value) => {
@@ -3028,19 +3029,6 @@ const ServicePlanEditor = ({
                 setIsEditing(true);
                 openAmbiguityDialog([elementId], false);
               }}
-              followLiveControl={
-                liveElementId && !isEditing && activeTab === "plan" && !isFollowingLive ? (
-                  <Button
-                    type="button"
-                    variant="cta"
-                    svg={LocateFixed}
-                    className="absolute bottom-3 right-3 z-10 shadow-xl max-md:min-h-0"
-                    onClick={resumeFollowing}
-                  >
-                    Follow live
-                  </Button>
-                ) : null
-              }
             />
           </div>
 
@@ -3143,6 +3131,20 @@ const ServicePlanEditor = ({
             </Button>
           ) : null}
         </div>
+        {liveElementId &&
+          !isEditing &&
+          activeTab === "plan" &&
+          !isFollowingLive ? (
+          <Button
+            type="button"
+            variant="cta"
+            svg={LocateFixed}
+            className="max-md:min-h-0"
+            onClick={resumeFollowing}
+          >
+            Follow live
+          </Button>
+        ) : null}
       </div>
     ) : null;
 
@@ -3613,11 +3615,11 @@ const ServicePlanEditor = ({
               const remainingIds = current.elementIds.filter((id) => id !== elementId);
               return remainingIds.length
                 ? {
-                    ...current,
-                    prompt: false,
-                    elementIds: remainingIds,
-                    completedCount: Math.min(current.completedCount + 1, current.batchTotal),
-                  }
+                  ...current,
+                  prompt: false,
+                  elementIds: remainingIds,
+                  completedCount: Math.min(current.completedCount + 1, current.batchTotal),
+                }
                 : null;
             });
           }}

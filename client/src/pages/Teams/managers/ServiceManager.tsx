@@ -118,7 +118,7 @@ const ServiceManager = ({
   );
   const savingEditorKeysRef = useRef(new Set<string>());
   const pendingSavesRef = useRef(new Map<string, {
-    expectedService: TeamService;
+    expectedService: ServiceTime;
     partnerUpdates: { id: string; serviceGroupId?: string | null }[];
     pendingObserved: boolean;
   }>());
@@ -245,7 +245,7 @@ const ServiceManager = ({
     } else {
       savingEditorKeysRef.current.add(nextEditing.serviceId);
       pendingSavesRef.current.set(nextEditing.serviceId, {
-        expectedService: nextEditing,
+        expectedService: saved,
         partnerUpdates,
         pendingObserved: serviceTimesSavePending === true,
       });
@@ -298,10 +298,14 @@ const ServiceManager = ({
     }
     if (serviceTimesSavePending !== false && serviceTimesSavePending !== null) return;
 
-    const comparableValue = (value: unknown) => JSON.stringify(value);
-    const matchesExpectedService = (actual: TeamService | undefined, expected: TeamService) =>
+    // The Firebase writer converts undefined optional fields to null before persisting.
+    const comparableValue = (value: unknown) =>
+      JSON.stringify(value, (_key, nestedValue: unknown) =>
+        nestedValue === undefined ? null : nestedValue,
+      );
+    const matchesExpectedService = (actual: ServiceTime | undefined, expected: ServiceTime) =>
       Boolean(actual) && Object.entries(expected).every(([key, value]) =>
-        key === "updatedAt" || comparableValue(actual?.[key as keyof TeamService]) === comparableValue(value),
+        key === "updatedAt" || comparableValue(actual?.[key as keyof ServiceTime]) === comparableValue(value),
       );
     const completedKeys: string[] = [];
     pendingSaves.forEach((pending, key) => {

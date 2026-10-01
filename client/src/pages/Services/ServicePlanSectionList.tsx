@@ -432,8 +432,6 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   scrollId?: string;
   /** Ref for a caller that coordinates scrolling within this list only. */
   scrollContainerRef?: Ref<HTMLDivElement>;
-  /** Optional control positioned over this list, outside its scrolling content. */
-  followLiveControl?: ReactNode;
   ariaLabel?: string;
   sectionLabelColor?: string;
   sectionBorderColor?: string;
@@ -488,7 +486,6 @@ const ServicePlanSectionList = ({
   structureOnly = false,
   scrollId,
   scrollContainerRef,
-  followLiveControl,
   ariaLabel = "Service plan",
   sectionLabelColor = "#f97316",
   sectionBorderColor = "#f97316",
@@ -1034,7 +1031,6 @@ const ServicePlanSectionList = ({
               ))}
 
             </div>
-            {followLiveControl}
           </div>
         </SortableContext>
         {isDesktopPanel && (activePanelElement || songDetails) ? (
