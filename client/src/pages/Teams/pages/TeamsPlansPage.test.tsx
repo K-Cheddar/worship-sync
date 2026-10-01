@@ -229,14 +229,17 @@ describe("TeamsPlansPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
+    const results = screen.getByRole("region", { name: "Service results" });
+    expect(within(results).getByRole("heading", { name: "All services" })).toBeInTheDocument();
+    expect(within(results).getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^By date$/i })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
+    expect(within(results).queryByRole("button", { name: "Service filter" })).not.toBeInTheDocument();
+    expect(within(results).queryByRole("button", { name: "Date range" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Date range" }));
     expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
@@ -259,7 +262,8 @@ describe("TeamsPlansPage", () => {
 
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "All services" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
   });
 
   it("scopes By service Apply template to that service", async () => {
@@ -269,7 +273,9 @@ describe("TeamsPlansPage", () => {
     await screen.findByRole("heading", { name: "All services" });
     await user.click(screen.getByRole("button", { name: /^By service$/i }));
     await screen.findByRole("heading", { name: "Sabbath Service" });
-    await user.click(screen.getAllByRole("button", { name: "Apply template" })[0]);
+    const applyTemplateButton = screen.getAllByRole("button", { name: "Apply template" })[0];
+    expect(applyTemplateButton).toHaveAttribute("data-variant", "presentPrimary");
+    await user.click(applyTemplateButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Apply plan templates" });
     expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();
@@ -283,7 +289,9 @@ describe("TeamsPlansPage", () => {
     await screen.findByRole("heading", { name: "All services" });
     await user.click(screen.getByRole("button", { name: "Service filter" }));
     await user.click(await screen.findByRole("checkbox", { name: "Sabbath Service" }));
-    await user.click(screen.getByRole("button", { name: "Apply template" }));
+    const applyTemplateButton = screen.getByRole("button", { name: "Apply template" });
+    expect(applyTemplateButton).toHaveAttribute("data-variant", "presentPrimary");
+    await user.click(applyTemplateButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Apply plan templates" });
     expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();

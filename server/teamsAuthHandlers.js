@@ -2508,27 +2508,34 @@ export const createTeamsAuthHandlers = ({
     return { plan: generalPlan, viewMode: "general", token: trimmed };
   };
 
-  const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
+  const buildPublicServicePlan = async ({
+    plan,
+    viewMode,
+    token,
+    includeTeamDetails = true,
+    allowUnpublished = false,
+    includeControllerEquipment = false,
+  }) => {
     const isGeneralView = viewMode === "general";
     const [church, brandingChrome, positions, teams, schedules] =
       await Promise.all([
         getDoc(COLLECTIONS.churches, plan.churchId),
         readChurchPublicBrandingChrome(plan.churchId),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teamPositions,
               "positionId",
               plan.churchId,
             ),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teams,
               "teamId",
               plan.churchId,
             ),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teamSchedules,
@@ -2536,7 +2543,7 @@ export const createTeamsAuthHandlers = ({
               plan.churchId,
             ),
       ]);
-    const memberIds = isGeneralView
+    const memberIds = isGeneralView || !includeTeamDetails
       ? []
       : publicServingMemberIdsForPlan({
           plan,
@@ -2571,6 +2578,9 @@ export const createTeamsAuthHandlers = ({
       churchSecondaryColor: brandingChrome.secondaryColor,
       viewMode,
       shareId: token,
+      allowUnpublished,
+      includeControllerEquipment,
+      equipment: church?.serviceEquipment || [],
     });
   };
 
@@ -14578,17 +14588,20 @@ export const createTeamsAuthHandlers = ({
           return res.json({ success: true, plan: null, snapshot: null });
         }
 
+        const hasTeamDetails = hasTeamsPlanAccess(reader);
         const plan = withoutServicePlanAssignments(servicePlan, reader);
-        const snapshot =
-          hasTeamsPlanAccess(reader) &&
-          servicePlan.published &&
-          servicePlan.publicLinkToken
-            ? await buildPublicServicePlan({
-                plan: servicePlan,
-                viewMode: "team",
-                token: servicePlan.publicLinkToken,
-              })
-            : null;
+        const snapshot = await buildPublicServicePlan({
+          // Use the same display-only sanitizer as published team links. A
+          // plan-only reader keeps assignment and roster data stripped.
+          plan: hasTeamDetails ? servicePlan : plan,
+          viewMode: "team",
+          token:
+            servicePlan.publicLinkToken ||
+            `current-service-viewer:${servicePlan.planKey}`,
+          includeTeamDetails: hasTeamDetails,
+          allowUnpublished: true,
+          includeControllerEquipment: hasTeamDetails,
+        });
         return res.json({ success: true, plan, snapshot });
       } catch (error) {
         return sendTeamsJsonError(

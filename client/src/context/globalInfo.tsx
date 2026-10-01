@@ -59,6 +59,8 @@ import {
 } from "../api/auth";
 import {
   registerAuthRecoveryHandler,
+  registerUserAuthRecoveryHandler,
+  requestAuthRecovery,
   setAuthenticatedSessionExpected,
 } from "../api/authErrorBus";
 import type {
@@ -3141,7 +3143,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [device, navigate, sessionKind]);
 
-  const clearLocalSessionState = useCallback(async (nextPath: string) => {
+  const clearLocalSessionState = useCallback(async (
+    nextPath: string,
+    navigationState?: unknown,
+  ) => {
     clearOperatorNameStorage();
     clearWorkstationSessionOperatorName();
     clearCsrfToken();
@@ -3153,6 +3158,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     if (sessionKind === "display") {
       clearDisplayToken();
     }
+    await signOutFirebaseAuth(getHumanAuth());
     await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
     setPendingEmailVerificationEmail(null);
@@ -3163,11 +3169,48 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     dispatch(ActionCreators.clearHistory());
     applyBootstrap(null);
     reloadElectronDisplayWindows();
-    navigate(nextPath, { replace: true });
+    navigate(nextPath, { replace: true, state: navigationState });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
     globalFireDbInfo.isConnected = false;
   }, [applyBootstrap, clearPendingLinkState, dispatch, navigate, sessionKind]);
+
+  const recoverAuthSessionForUser = useCallback(
+    async (onConfirmedUnauthenticated: () => void) => {
+      if (await requestAuthRecovery()) return "recovered" as const;
+
+      try {
+        const bootstrap = await getAuthBootstrap({
+          workstationToken: getWorkstationToken(),
+          displayToken: getDisplayToken(),
+          authRecovery: false,
+        });
+        if (bootstrap.authenticated) return "unknown" as const;
+      } catch (error) {
+        if (!(error instanceof AuthApiError) || error.status !== 401) {
+          return "unknown" as const;
+        }
+      }
+
+      onConfirmedUnauthenticated();
+      setAuthError("");
+      setAuthServerStatus("online");
+      await clearLocalSessionState("/login", {
+        from: {
+          pathname: location.pathname,
+          search: location.search,
+          hash: location.hash,
+        },
+      });
+      return "unauthenticated" as const;
+    },
+    [clearLocalSessionState, location.hash, location.pathname, location.search],
+  );
+
+  useEffect(
+    () => registerUserAuthRecoveryHandler(recoverAuthSessionForUser),
+    [recoverAuthSessionForUser],
+  );
 
   const unlinkCurrentWorkstation = useCallback(async () => {
     if (sessionKind !== "workstation" || !device?.deviceId) {

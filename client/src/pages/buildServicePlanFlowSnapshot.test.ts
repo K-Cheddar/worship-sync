@@ -51,4 +51,29 @@ describe("buildServicePlanFlowSnapshot resources", () => {
       "First line.\nSecond line.",
     ]);
   });
+
+  it("accepts explicit public branding for the authenticated fallback", () => {
+    const snapshot = buildServicePlanFlowSnapshot({
+      plan: {
+        planKey: "plan-1",
+        name: "Sunday Service",
+        timezone: "UTC",
+        sections: [],
+      } as unknown as ServicePlan,
+      startsAt: "2026-09-25T10:00:00Z",
+      churchName: "Northside",
+      branding: {
+        churchLogoUrl: "https://res.cloudinary.com/example/image/upload/church.png",
+        churchPrimaryColor: "#112233",
+        churchSecondaryColor: "#AABBCC",
+      },
+    });
+
+    expect(snapshot).toMatchObject({
+      churchName: "Northside",
+      churchLogoUrl: "https://res.cloudinary.com/example/image/upload/church.png",
+      churchPrimaryColor: "#112233",
+      churchSecondaryColor: "#AABBCC",
+    });
+  });
 });

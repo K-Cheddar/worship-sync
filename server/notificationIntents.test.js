@@ -7,6 +7,7 @@ import {
   NOTIFICATION_INTENT_TYPES,
 } from "./notificationIntents.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
+import { measureSmsMessage } from "./smsMessage.js";
 
 const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, validateReplacementCandidate } = {}) => {
   const collections = new Map();
@@ -228,9 +229,9 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(batch.summary.eligible, 1);
   assert.equal(batch.summary.excluded, 1);
   assert.equal(batch.intentIds.length, 1);
-  assert.match(batch.recipients[0].message, /October availability/);
-  assert.match(batch.recipients[0].message, /Reply STOP to opt out/);
-  assert.match(batch.recipients[0].message, /\/a\/secure-token/);
+  assert.equal(batch.recipients[0].message, "First Church: Please submit your October availability: https://www.worshipsync.net/a/secure-token Reply STOP to opt out.");
+  assert.equal(batch.recipients[0].segmentCount, 1);
+  assert.equal(measureSmsMessage(batch.recipients[0].message).segmentCount, 1);
   assert.deepEqual(batch.intakeRecipients, [{
     recipientId: h.recipient.recipientId,
     churchId: h.churchId,
@@ -261,7 +262,7 @@ test("forms with editable non-availability fields prepare form-response messages
   const { res, batch } = await h.preview();
   assert.equal(res.statusCode, 200);
   assert.equal(batch.summary.eligible, 1);
-  assert.match(batch.recipients[0].message, /Please complete the October availability \(2026-10-01 through 2026-10-31\) form/);
+  assert.equal(batch.recipients[0].message, "First Church: Please complete the October availability form: https://www.worshipsync.net/a/secure-token Reply STOP to opt out.");
   assert.match(batch.recipients[0].message, /\/a\/secure-token/);
   assert.match(batch.recipients[0].message, /Reply STOP to opt out/);
   assert.doesNotMatch(batch.recipients[0].message, /submit your .*availability/);
@@ -279,7 +280,9 @@ test("form reminders use reminder wording and remain scoped to the current form 
   const { res, batch } = await h.preview({ intentType: "availability_reminder" });
   assert.equal(res.statusCode, 200);
   assert.equal(batch.reminderRound, 1);
-  assert.match(batch.recipients[0].message, /Reminder: Please complete the October availability .* form/);
+  assert.equal(batch.recipients[0].message, "First Church: Reminder: Please complete the October availability form: https://www.worshipsync.net/a/secure-token Reply STOP to opt out.");
+  assert.equal(batch.recipients[0].segmentCount, 1);
+  assert.equal(measureSmsMessage(batch.recipients[0].message).segmentCount, 1);
   assert.match(batch.recipients[0].message, /\/a\/secure-token/);
   assert.equal(h.providerCalls, 0);
 });
@@ -491,7 +494,27 @@ test("provider timeout is recorded as uncertain and cannot be retried", async ()
   assert.equal(savedIntent.status, "unknown");
   assert.equal(attempt.status, "pending");
   assert.equal(attempt.outcome, "unknown");
+  assert.equal(attempt.failureCode, "ETIMEDOUT");
+  assert.equal(attempt.failureMessage, "socket timed out");
   assert.equal(h.providerCalls, 1);
+});
+
+test("Twilio 21609 records its provider message and code as a definitive rejection", async () => {
+  const h = createHarness({ providerSend: async () => {
+    throw Object.assign(new Error("A statusCallback URL must be publicly accessible."), {
+      code: 21609,
+      statusCode: 400,
+    });
+  } });
+  const { intent } = await h.preview();
+  const result = await h.send(intent.intentId);
+  const attempt = [...h.storeFor("smsDeliveryAttempts").values()][0];
+  assert.equal(result.statusCode, 502);
+  assert.equal(result.payload.outcome, "failed");
+  assert.equal(attempt.status, "failed");
+  assert.equal(attempt.outcome, "failed");
+  assert.equal(attempt.failureCode, "21609");
+  assert.equal(attempt.failureMessage, "A statusCallback URL must be publicly accessible.");
 });
 
 test("interrupted bulk dispatch marks in-flight attempts uncertain and can resume only untouched recipients", async () => {

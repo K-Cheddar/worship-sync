@@ -37,7 +37,7 @@ import {
   classifyServicePlanningTitle,
   servicePlanningReasonsRequireReview,
 } from "./servicePlanningTitleClassifier";
-import { createServicePlanTextResource } from "./servicePlanResources";
+import { createServicePlanTextResource, getImportedTextResourceTitle } from "./servicePlanResources";
 import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 
 type ImportedAssigneeWithProvenance = ServicePlanAssignee & {
@@ -341,7 +341,7 @@ const buildElementFromRow = <
     );
     if (descriptionParts.length) {
       element.resources = descriptionParts.map((part) => createServicePlanTextResource({
-        title: "Imported description",
+        title: getImportedTextResourceTitle(part.value),
         text: multilineTextToRichText(part.value),
       }));
     }

@@ -109,6 +109,7 @@ import {
 } from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
 import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
+import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
   readScheduleTeamFilter,
@@ -148,7 +149,7 @@ import {
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
-import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import {
   panelClassName,
   panelShellClassName,
@@ -986,6 +987,18 @@ const ScheduleTab = ({
   const [scheduleNotificationNextCursor, setScheduleNotificationNextCursor] = useState("");
   const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
   const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
+  const [scheduleSmsPreview, setScheduleSmsPreview] = useState<{
+    intent: NotificationIntent;
+    recipientName: string;
+    phoneNumberSnapshot: string;
+    message: string;
+    segmentCount: number;
+    approvalVersion: string;
+  } | null>(null);
+  const [sendingScheduleSms, setSendingScheduleSms] = useState(false);
+  const scheduleSmsSendLockRef = useRef(false);
+  const [replacementIntentToClose, setReplacementIntentToClose] = useState<NotificationIntent | null>(null);
+  const [closingReplacement, setClosingReplacement] = useState(false);
   const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1059,8 +1072,9 @@ const ScheduleTab = ({
   ).length;
 
   const handleSendScheduleIntent = async (intent: NotificationIntent) => {
-    if (!canEdit || sendingNotificationIntentId) return;
+    if (!canEdit || sendingNotificationIntentId || scheduleSmsPreview || intent.churchId !== churchId) return;
     setSendingNotificationIntentId(intent.intentId);
+    let awaitingConfirmation = false;
     try {
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
       if (!preview.preview.eligible) {
@@ -1069,23 +1083,71 @@ const ScheduleTab = ({
       }
       const memberName = data.members.find((member) => member.memberId === intent.memberId);
       const recipient = memberName ? `${memberName.firstName} ${memberName.lastName}`.trim() : "this volunteer";
-      if (!window.confirm(`Send one SMS to ${recipient} at ${preview.preview.phoneNumberSnapshot}?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"}.`)) return;
-      const result = await sendNotificationIntent(churchId, intent.intentId, preview.preview.approvalVersion);
-      await refreshScheduleNotificationHistory(intent.sourceId);
-      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
+      setScheduleSmsPreview({
+        intent: { ...intent, intentId: preview.preview.intentId },
+        recipientName: recipient,
+        phoneNumberSnapshot: preview.preview.phoneNumberSnapshot,
+        message: preview.preview.message,
+        segmentCount: preview.preview.segmentCount,
+        approvalVersion: preview.preview.approvalVersion,
+      });
+      awaitingConfirmation = true;
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
         await refreshScheduleNotificationHistory(intent.sourceId);
       } catch { /* Keep the last known queue visible. */ }
     } finally {
+      if (!awaitingConfirmation) setSendingNotificationIntentId("");
+    }
+  };
+
+  const confirmScheduleSms = async () => {
+    const preview = scheduleSmsPreview;
+    if (!preview || scheduleSmsSendLockRef.current) return;
+    if (preview.intent.churchId !== churchId) {
+      setScheduleSmsPreview(null);
+      setSendingNotificationIntentId("");
+      return;
+    }
+    scheduleSmsSendLockRef.current = true;
+    setScheduleSmsPreview(null);
+    setSendingScheduleSms(true);
+    try {
+      const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
+      await refreshScheduleNotificationHistory(preview.intent.sourceId);
+      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this schedule message.");
+      try {
+        await refreshScheduleNotificationHistory(preview.intent.sourceId);
+      } catch { /* Keep the last known queue visible. */ }
+    } finally {
+      scheduleSmsSendLockRef.current = false;
+      setSendingScheduleSms(false);
       setSendingNotificationIntentId("");
     }
   };
 
+  const cancelScheduleSms = () => {
+    if (scheduleSmsSendLockRef.current) return;
+    setScheduleSmsPreview(null);
+    setSendingNotificationIntentId("");
+  };
+
   const handleResolveReplacementIntent = async (intent: NotificationIntent) => {
     if (!canEdit || intent.replacementResolvedAt || ["sending", "unknown"].includes(intent.status)) return;
-    if (!window.confirm("Close this replacement invitation and allow the administrator to choose another candidate? The schedule assignment will not change.")) return;
+    setReplacementIntentToClose(intent);
+  };
+
+  const confirmResolveReplacementIntent = async () => {
+    const intent = replacementIntentToClose;
+    if (!intent || closingReplacement) return;
+    if (intent.churchId !== churchId) {
+      setReplacementIntentToClose(null);
+      return;
+    }
+    setClosingReplacement(true);
     setSendingNotificationIntentId(intent.intentId);
     try {
       await resolveReplacementNotificationIntent(churchId, intent.intentId);
@@ -1094,7 +1156,9 @@ const ScheduleTab = ({
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
     } finally {
+      setClosingReplacement(false);
       setSendingNotificationIntentId("");
+      setReplacementIntentToClose(null);
     }
   };
   const [autoFillConfirmOpen, setAutoFillConfirmOpen] = useState(false);
@@ -4925,27 +4989,82 @@ const ScheduleTab = ({
     />
   );
 
+  const scheduleActionsMenuItems: MenuItemType[] = [
+    ...(canEdit
+      ? [{
+        element: (
+          <span className="flex items-center gap-2">
+            <Plus className="h-4 w-4" aria-hidden />
+            Create schedule
+          </span>
+        ),
+        onClick: () => setFormState({ mode: "create-custom" }),
+      }]
+      : []),
+    {
+      text: "Schedule history",
+      onClick: () => setIsBrowsingSchedules(true),
+    },
+    ...(canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:")
+      ? [
+        {
+          element: (
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="flex items-center gap-2">
+                <MessageSquareText className="h-4 w-4" aria-hidden />
+                Messages
+                {scheduleMessagesRequiringAttention > 0 ? (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
+                    {scheduleMessagesRequiringAttention}
+                  </span>
+                ) : null}
+              </span>
+              {scheduleNotificationIntents.length > 0 ? (
+                <span className="pl-6 text-xs text-gray-400">
+                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
+                </span>
+              ) : null}
+            </span>
+          ),
+          onClick: () => {
+            if (shouldOverlayMembers) setMembersPanelOpen(false);
+            setScheduleMessagesOpen(true);
+          },
+          "aria-expanded": scheduleMessagesOpen,
+        },
+        {
+          element: (
+            <span className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" aria-hidden />
+              {selectedSchedule.source === "generated-period"
+                ? "Schedule details"
+                : "Edit schedule"}
+            </span>
+          ),
+          onClick: () => setFormState({
+            mode: "edit",
+            scheduleId: selectedSchedule.scheduleId,
+          }),
+        },
+        {
+          element: (
+            <span className="flex items-center gap-2">
+              <Copy className="h-4 w-4" aria-hidden />
+              Copy schedule
+            </span>
+          ),
+          onClick: handleCopySchedule,
+        },
+      ]
+      : []),
+  ];
+
   const scheduleWorkflowActions = (
     <div
       className="flex flex-wrap items-center justify-end gap-2"
       role="group"
       aria-label="Schedule actions"
     >
-      <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>
-        Schedule history
-      </Button>
-      {canEdit ? (
-        <Button
-          variant="tertiary"
-          svg={Plus}
-          iconSize="sm"
-          onClick={() => {
-            setFormState({ mode: "create-custom" });
-          }}
-        >
-          Create custom schedule
-        </Button>
-      ) : null}
       {canEdit && selectedSchedule ? (
         <Popover
           open={isConfirmingSend}
@@ -4993,70 +5112,19 @@ const ScheduleTab = ({
           </PopoverContent>
         </Popover>
       ) : null}
-      {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
-        <Menu
-          align="end"
-          menuItems={[
-            {
-              element: (
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="flex items-center gap-2">
-                    <MessageSquareText className="h-4 w-4" aria-hidden />
-                    Messages
-                    {scheduleMessagesRequiringAttention > 0 ? (
-                      <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
-                        {scheduleMessagesRequiringAttention}
-                      </span>
-                    ) : null}
-                  </span>
-                  {scheduleNotificationIntents.length > 0 ? (
-                    <span className="pl-6 text-xs text-gray-400">
-                      {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
-                    </span>
-                  ) : null}
-                </span>
-              ),
-              onClick: () => {
-                if (shouldOverlayMembers) setMembersPanelOpen(false);
-                setScheduleMessagesOpen(true);
-              },
-              "aria-expanded": scheduleMessagesOpen,
-            },
-            {
-              element: (
-                <span className="flex items-center gap-2">
-                  <Pencil className="h-4 w-4" aria-hidden />
-                  {selectedSchedule.source === "generated-period"
-                    ? "Schedule details"
-                    : "Edit schedule"}
-                </span>
-              ),
-              onClick: () => setFormState({
-                mode: "edit",
-                scheduleId: selectedSchedule.scheduleId,
-              }),
-            },
-            {
-              element: (
-                <span className="flex items-center gap-2">
-                  <Copy className="h-4 w-4" aria-hidden />
-                  Copy schedule
-                </span>
-              ),
-              onClick: handleCopySchedule,
-            },
-          ]}
-          TriggeringButton={
-            <Button
-              variant="tertiary"
-              svg={MoreHorizontal}
-              iconSize="sm"
-              ref={scheduleActionsTriggerRef}
-              aria-label="More schedule options"
-            />
-          }
-        />
-      ) : null}
+      <Menu
+        align="end"
+        menuItems={scheduleActionsMenuItems}
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            svg={MoreHorizontal}
+            iconSize="sm"
+            ref={scheduleActionsTriggerRef}
+            aria-label="More schedule options"
+          />
+        }
+      />
     </div>
   );
   const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
@@ -5107,10 +5175,11 @@ const ScheduleTab = ({
           </header>
 
           <section className={cn(panelShellClassName, "w-full shrink-0 px-3 py-3")}>
-            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
               <Select
-                className="w-full sm:min-w-40 sm:w-auto"
+                className="w-full sm:w-60"
                 label="Team"
+                labelLayout="inline"
                 value={workspaceTeamId}
                 onChange={updateScheduleTeamFilter}
                 options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
@@ -5119,7 +5188,6 @@ const ScheduleTab = ({
               <RangeSelector
                 preset={periodPreset}
                 range={periodRange}
-                summary={scheduleRangeSummary}
                 onPresetChange={selectPeriodPreset}
                 onCustomRangeChange={(range) => {
                   hasExplicitPeriodSelectionRef.current = true;
@@ -5128,6 +5196,7 @@ const ScheduleTab = ({
                 }}
                 onNavigate={shiftPeriod}
                 className="min-w-0 flex-1 sm:min-w-0"
+                labelLayout="inline"
               />
             </div>
           </section>
@@ -5138,11 +5207,16 @@ const ScheduleTab = ({
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
-                <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  {scheduleRangeSummary ? (
+                    <p role="status" className="min-w-0 px-0.5 text-xs text-gray-400">
+                      {scheduleRangeSummary}
+                    </p>
+                  ) : null}
                   <div
                     role="group"
                     aria-label="Team schedule controls"
-                    className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                    className="flex min-w-0 shrink-0 flex-nowrap items-center justify-end gap-2 lg:ml-auto"
                   >
                     {selectedSchedule && shouldOverlayMembers ? (
                       <Button
@@ -5443,9 +5517,6 @@ const ScheduleTab = ({
                     />
                   </div>
                 </div>
-                <p className="mt-1 text-sm text-gray-400">
-                  Select a service to manage or copy assignments.
-                </p>
               </div>
 
               {occurrencesStale && !showForm ? (
@@ -5617,7 +5688,11 @@ const ScheduleTab = ({
                                       >
                                         <span className="inline-flex min-w-0 max-w-full items-center gap-2">
                                           {column.position.icon ? (
-                                            <WorshipSyncIcon icon={column.position.icon} className="h-4 w-4 shrink-0 text-cyan-200" />
+                                            <PositionIconBadge
+                                              icon={column.position.icon}
+                                              className="h-6 w-6 rounded"
+                                              iconClassName="h-4 w-4"
+                                            />
                                           ) : null}
                                           <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
                                             {column.label}
@@ -5671,7 +5746,13 @@ const ScheduleTab = ({
                                     return (
                                       <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
                                         <span className="inline-flex items-center gap-2">
-                                          {column.position.icon ? <WorshipSyncIcon icon={column.position.icon} className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
+                                          {column.position.icon ? (
+                                            <PositionIconBadge
+                                              icon={column.position.icon}
+                                              className="h-6 w-6 rounded"
+                                              iconClassName="h-4 w-4"
+                                            />
+                                          ) : null}
                                           <span>{column.label}</span>
                                           {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
                                         </span>
@@ -5975,6 +6056,28 @@ const ScheduleTab = ({
                   onLoadOlder={() => void loadOlderScheduleNotifications()}
                 />
               ) : null}
+              {scheduleSmsPreview ? <SmsConfirmationModal
+                isOpen
+                recipientName={scheduleSmsPreview.recipientName}
+                phoneNumberSnapshot={scheduleSmsPreview.phoneNumberSnapshot}
+                message={scheduleSmsPreview.message}
+                segmentCount={scheduleSmsPreview.segmentCount}
+                busy={sendingScheduleSms}
+                onCancel={cancelScheduleSms}
+                onSend={() => void confirmScheduleSms()}
+              /> : null}
+              <Modal
+                isOpen={Boolean(replacementIntentToClose)}
+                onClose={() => { if (!closingReplacement) setReplacementIntentToClose(null); }}
+                title="Close replacement invitation?"
+                description="This allows the administrator to choose another candidate. The schedule assignment will not change."
+                size="sm"
+              >
+                <div className="flex justify-end gap-2 text-sm">
+                  <Button variant="secondary" disabled={closingReplacement} onClick={() => setReplacementIntentToClose(null)}>Cancel</Button>
+                  <Button disabled={closingReplacement} isLoading={closingReplacement} onClick={() => void confirmResolveReplacementIntent()}>Close invitation</Button>
+                </div>
+              </Modal>
               {canEdit ? (
                 <SchedulePasteRowDialog
                   open={pasteRowOpen}
@@ -6075,7 +6178,11 @@ const ScheduleTab = ({
                       <Fragment key={position.positionId}>
                         <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-white">
                           {positionIcon ? (
-                            <WorshipSyncIcon icon={positionIcon} className="h-4 w-4 shrink-0 text-cyan-200" />
+                            <PositionIconBadge
+                              icon={positionIcon}
+                              className="h-6 w-6 rounded"
+                              iconClassName="h-4 w-4"
+                            />
                           ) : null}
                           {position.name}:
                         </span>

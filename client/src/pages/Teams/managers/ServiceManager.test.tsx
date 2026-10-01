@@ -8,10 +8,11 @@ import type { TeamPosition, TeamRecord, TeamService } from "../../../api/authTyp
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 
 const mockDispatch = jest.fn();
+let mockSelectorState: unknown = {};
 
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
-  useSelector: (selector: (state: unknown) => unknown) => selector({}),
+  useSelector: (selector: (state: unknown) => unknown) => selector(mockSelectorState),
 }));
 
 const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
@@ -59,13 +60,12 @@ const midweek = service({
   time: "18:30",
 });
 
-const renderManager = (
+const managerElement = (
   services: TeamService[],
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
-) =>
-  render(
+) => (
     <MemoryRouter>
       <ToastProvider>
         <TeamsNavigationGuardProvider>
@@ -78,11 +78,18 @@ const renderManager = (
           />
         </TeamsNavigationGuardProvider>
       </ToastProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 
+const renderManager = (
+  services: TeamService[],
+  positions: TeamPosition[] = [],
+  teams: TeamRecord[] = [],
+  planTemplates: ServicePlanTemplate[] = [],
+) => render(managerElement(services, positions, teams, planTemplates));
+
 const serviceFormSaveButton = () =>
-  screen.getAllByRole("button", { name: /^(Create|Save) service$/ }).at(-1)!;
+  screen.getAllByRole("button", { name: /^(Create service|Save service|Saved|Created)$/ }).at(-1)!;
 
 const findActions = (calls: unknown[][], type: string) =>
   calls
@@ -91,6 +98,7 @@ const findActions = (calls: unknown[][], type: string) =>
 
 beforeEach(() => {
   mockDispatch.mockClear();
+  mockSelectorState = {};
   originalMatchMedia = window.matchMedia;
   // Desktop default: max-width queries do not match, so the edit panel stays open.
   window.matchMedia = makeMatchMedia(false);
@@ -161,12 +169,62 @@ describe("ServiceManager combined services", () => {
 
     const updates = findActions(mockDispatch.mock.calls, "serviceTimes/updateService");
     expect(updates.length).toBeGreaterThan(0);
+    expect(await screen.findByRole("button", { name: "Saved" })).toBeDisabled();
+    expect(screen.getByTestId("form-save-success-icon")).toHaveClass("text-emerald-300");
     // The panel stays open on edit so services can be edited back-to-back, and
     // the form is re-seeded from the saved snapshot.
     expect(
       screen.getByRole("heading", { name: "Edit service" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Early Service");
+
+    const savedButton = screen.getByRole("button", { name: "Saved" });
+    expect(savedButton).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), {
+      target: { value: "Earlier Service" },
+    });
+    expect(screen.getByRole("button", { name: "Save service" })).toBeEnabled();
+  });
+
+  it("disables save until a service setting changes", async () => {
+    const user = userEvent.setup();
+    renderManager([sundayMorning, sundayLate, midweek]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    expect(serviceFormSaveButton()).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), {
+      target: { value: "First Service Updated" },
+    });
+    expect(screen.getByRole("button", { name: "Save service" })).toBeEnabled();
+  });
+
+  it("shows saving while service changes are awaiting persistence", async () => {
+    const user = userEvent.setup();
+    mockSelectorState = { autosaveIndicator: { debouncedSaveDepth: {} } };
+    const { rerender } = renderManager([sundayMorning, sundayLate, midweek]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), {
+      target: { value: "Early Service" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+
+    mockSelectorState = {
+      autosaveIndicator: { debouncedSaveDepth: { "debounced/serviceTimes": 1 } },
+    };
+    rerender(managerElement([sundayMorning, sundayLate, midweek]));
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+
+    const changes = (findActions(mockDispatch.mock.calls, "serviceTimes/updateService")[0].payload as {
+      changes: Partial<TeamService>;
+    }).changes;
+    const persistedService = { ...sundayMorning, ...changes };
+    mockSelectorState = { autosaveIndicator: { debouncedSaveDepth: {} } };
+    rerender(managerElement([persistedService, sundayLate, midweek]));
+
+    expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled();
   });
 
   it("keeps the editor open after saving on narrow screens until Cancel", async () => {
@@ -236,7 +294,7 @@ describe("ServiceManager combined services", () => {
 });
 
 describe("ServiceManager position requirements", () => {
-  it("uses one heading and adjusts people needed with plus and minus buttons", async () => {
+  it("marks unblurred position counts dirty and saves their current value", async () => {
     const user = userEvent.setup();
     const team: TeamRecord = {
       teamId: "media",
@@ -250,6 +308,48 @@ describe("ServiceManager position requirements", () => {
       teamId: team.teamId,
       name: "Producer",
     };
+    const staffedService = service({
+      serviceId: "staffed",
+      name: "Staffed service",
+      positionRequirements: [{ positionId: position.positionId, count: 1 }],
+    });
+    renderManager([staffedService], [position], [team]);
+
+    await user.click(screen.getByRole("button", { name: "Edit Staffed service" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "People needed for Producer" }), {
+      target: { value: "2" },
+    });
+    expect(screen.getByRole("button", { name: "Save service" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          id: staffedService.id,
+          changes: expect.objectContaining({
+            positionRequirements: [{ positionId: "producer", count: 2 }],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("uses one heading and adjusts people needed with plus and minus buttons", async () => {
+    const user = userEvent.setup();
+    const team: TeamRecord = {
+      teamId: "media",
+      churchId: "church-1",
+      name: "Media",
+      memberIds: [],
+    };
+    const position: TeamPosition = {
+      positionId: "producer",
+      churchId: "church-1",
+      teamId: team.teamId,
+      name: "Producer",
+      icon: { source: "lucide", name: "MicVocal" },
+    };
     renderManager([sundayMorning], [position], [team]);
 
     await user.click(screen.getAllByRole("button", { name: "Create service" })[0]);
@@ -257,14 +357,16 @@ describe("ServiceManager position requirements", () => {
     expect(screen.getByText("People needed")).toBeInTheDocument();
     expect(screen.queryByText("People needed:")).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(0);
+    const producerCheckbox = screen.getByRole("checkbox", { name: "Producer" });
+    expect(screen.getByText("Producer")).toHaveClass("inline-flex", "gap-2");
 
     await user.click(screen.getByRole("button", { name: "Increase people needed for Producer" }));
     expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(1);
-    expect(screen.getByRole("checkbox", { name: "Producer" })).toBeChecked();
+    expect(producerCheckbox).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: "Decrease people needed for Producer" }));
     expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(0);
-    expect(screen.getByRole("checkbox", { name: "Producer" })).not.toBeChecked();
+    expect(producerCheckbox).not.toBeChecked();
   });
 });
 

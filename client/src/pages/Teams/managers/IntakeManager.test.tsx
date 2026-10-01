@@ -133,7 +133,6 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 test("shows the consent reason and keeps Copy link available when SMS is ineligible", async () => {
@@ -171,6 +170,7 @@ test("prevents duplicate SMS activation while the send is pending and updates th
       characterCount: 92,
       segmentCount: 1,
       maskedPhoneNumber: "••• ••• 1234",
+      phoneNumberSnapshot: "+19545551234",
     },
   });
   mockSendIntent.mockImplementation(
@@ -186,9 +186,14 @@ test("prevents duplicate SMS activation while the send is pending and updates th
 
   const sendButton = screen.getByRole("button", { name: "Send SMS" });
   await user.click(sendButton);
-  expect(window.confirm).toHaveBeenCalledTimes(1);
-  await user.click(sendButton);
+  expect(await screen.findByRole("dialog", { name: "Send this SMS?" })).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "Send this SMS?" });
+  expect(within(dialog).getByText("+19545551234")).toBeInTheDocument();
+  expect(within(dialog).getByText(/First Church: respond at/)).toBeInTheDocument();
+  expect(mockSendIntent).not.toHaveBeenCalled();
+  expect(sendButton).toBeDisabled();
   expect(mockPrepareSms).toHaveBeenCalledWith("church-1", form.formId, recipient.recipientId);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
   expect(mockSendIntent).toHaveBeenCalledWith("church-1", "intent-1", "review-v1");
   expect(sendButton).toBeDisabled();
 
@@ -328,6 +333,7 @@ test("successful form edits return to the form view with Send form available", a
   renderManager();
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
   await user.click(screen.getByRole("button", { name: "Save form" }));
 
   await screen.findByRole("button", { name: "Send form" });
@@ -344,6 +350,7 @@ test("saving a form with existing recipients preserves its covered occurrence sn
   await user.click(screen.getByRole("button", { name: `Edit ${issuedForm.name}` }));
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByText(/already has private links or responses/)).toBeInTheDocument();
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
   await user.click(screen.getByRole("button", { name: "Save form" }));
 
   await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({ availabilityOccurrences: [savedOccurrence] })));

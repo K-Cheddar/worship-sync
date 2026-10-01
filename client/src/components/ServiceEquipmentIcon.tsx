@@ -1,7 +1,6 @@
 import { Cable, Headphones, Radio, type LucideIcon } from "lucide-react";
 import type { CSSProperties } from "react";
-import { cn } from "@/utils/cnHelper";
-import { contrastingInkForFill, normalizeHexColor } from "../utils/richTextColorContrast";
+import ColoredIconBadge from "./ColoredIconBadge";
 import type { ServiceEquipment } from "../types/servicePlan";
 
 export const SERVICE_EQUIPMENT_DEFAULT_COLOR = "#9ca3af";
@@ -53,18 +52,14 @@ export const ServiceEquipmentIcon = ({
   color,
 }: ServiceEquipmentIconProps) => {
   const Icon = getServiceEquipmentIcon(equipment);
-  const fill = normalizeHexColor(color) || SERVICE_EQUIPMENT_DEFAULT_COLOR;
-  const ink = contrastingInkForFill(fill);
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border border-current/40",
-        className,
-      )}
-      style={{ backgroundColor: fill, color: ink, ...style }}
-      aria-hidden
+    <ColoredIconBadge
+      fillColor={color || SERVICE_EQUIPMENT_DEFAULT_COLOR}
+      defaultColor={SERVICE_EQUIPMENT_DEFAULT_COLOR}
+      className={className}
+      style={style}
     >
-      <Icon className="size-[90%] text-current" style={{ color: ink }} />
-    </span>
+      <Icon className="size-[90%] text-current" />
+    </ColoredIconBadge>
   );
 };

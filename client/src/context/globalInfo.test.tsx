@@ -6,7 +6,10 @@ import GlobalInfoProvider, {
   globalFireDbInfo,
 } from "./globalInfo";
 import * as authApi from "../api/auth";
-import { requestAuthRecovery } from "../api/authErrorBus";
+import {
+  requestAuthRecovery,
+  requestUserAuthRecovery,
+} from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
 import * as environmentUtils from "../utils/environment";
 import {
@@ -93,11 +96,13 @@ jest.mock("../hooks", () => ({
 jest.mock("../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {
     isReachabilityError: boolean;
+    status?: number;
 
-    constructor(message: string, options?: { isReachabilityError?: boolean }) {
+    constructor(message: string, options?: { isReachabilityError?: boolean; status?: number }) {
       super(message);
       this.name = "AuthApiError";
       this.isReachabilityError = Boolean(options?.isReachabilityError);
+      this.status = options?.status;
     }
   },
   getAuthBootstrap: jest.fn(),
@@ -314,6 +319,7 @@ const ContextProbe = () => {
   return (
     <div>
       <div data-testid="session-kind">{context.sessionKind || "none"}</div>
+      <div data-testid="login-state">{context.loginState}</div>
       <div data-testid="realtime-connected">
         {context.realtimeConnected ? "yes" : "no"}
       </div>
@@ -341,6 +347,10 @@ const ContextProbe = () => {
         {context.churchIntegrations.youtube.connected ? "yes" : "no"}
       </div>
       <div data-testid="path">{location.pathname}</div>
+      <div data-testid="location">
+        {location.pathname}{location.search}{location.hash}
+      </div>
+      <div data-testid="location-state">{JSON.stringify(location.state)}</div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
       </button>
@@ -1829,6 +1839,89 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       expect(screen.getByTestId("session-kind")).toHaveTextContent("human");
     });
     expect(screen.getByTestId("church-id")).toHaveTextContent("church-1");
+  });
+
+  it("keeps the current route when user-triggered recovery succeeds", async () => {
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInWorkstationBootstrap)
+      .mockResolvedValueOnce(loggedInWorkstationBootstrap);
+    renderProvider(<ContextProbe />, ["/controller/bible?search=John#verse-16"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation"),
+    );
+
+    let result: string | undefined;
+    await act(async () => {
+      result = await requestUserAuthRecovery(jest.fn());
+    });
+
+    expect(result).toBe("recovered");
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/controller/bible?search=John#verse-16",
+    );
+    expect(screen.getByTestId("login-state")).toHaveTextContent("success");
+  });
+
+  it("clears Firebase and server session state after confirmed session loss and preserves the return route", async () => {
+    const firebaseUser = {
+      uid: "user-stale",
+      getIdToken: jest.fn(() => Promise.resolve("expired-firebase-token")),
+      providerData: [],
+    };
+    mockHumanAuth.currentUser = firebaseUser;
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInHumanBootstrap)
+      .mockResolvedValueOnce(demoBootstrap);
+    (authApi.createHumanSession as jest.Mock).mockRejectedValueOnce(
+      new authApi.AuthApiError("Unauthorized", { status: 401 }),
+    );
+    renderProvider(<ContextProbe />, ["/controller/bible?search=John#verse-16"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("login-state")).toHaveTextContent("success"),
+    );
+
+    const onConfirmedUnauthenticated = jest.fn();
+    let result: string | undefined;
+    await act(async () => {
+      result = await requestUserAuthRecovery(onConfirmedUnauthenticated);
+    });
+
+    expect(result).toBe("unauthenticated");
+    expect(onConfirmedUnauthenticated).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("path")).toHaveTextContent("/login");
+    expect(screen.getByTestId("login-state")).not.toHaveTextContent("success");
+    expect(screen.getByTestId("location-state")).toHaveTextContent(
+      '"from":{"pathname":"/controller/bible","search":"?search=John","hash":"#verse-16"}',
+    );
+    expect(signOutMock).toHaveBeenCalledWith(mockHumanAuth);
+    expect(localStorage.getItem("loggedIn")).toBe("false");
+  });
+
+  it("does not sign out when recovery status is uncertain", async () => {
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInHumanBootstrap)
+      .mockRejectedValueOnce(makeReachabilityError());
+    renderProvider(<ContextProbe />, ["/controller/bible?search=John#verse-16"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("login-state")).toHaveTextContent("success"),
+    );
+
+    const onConfirmedUnauthenticated = jest.fn();
+    let result: string | undefined;
+    await act(async () => {
+      result = await requestUserAuthRecovery(onConfirmedUnauthenticated);
+    });
+
+    expect(result).toBe("unknown");
+    expect(onConfirmedUnauthenticated).not.toHaveBeenCalled();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/controller/bible?search=John#verse-16",
+    );
+    expect(screen.getByTestId("login-state")).toHaveTextContent("success");
+    expect(signOutMock).not.toHaveBeenCalledWith(mockHumanAuth);
   });
 
   it("restores a pending provider link after remount and links on password sign-in", async () => {

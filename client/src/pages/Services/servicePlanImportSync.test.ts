@@ -750,7 +750,7 @@ describe("remaining Service Planning import reconciliation defects", () => {
 
     const expectedResources = nextDestination === "resource"
       ? [manualResource, expect.objectContaining({ url: "https://example.org/service" })]
-      : [manualResource, expect.objectContaining({ title: "Imported description" })];
+      : [manualResource, expect.objectContaining({ title: nextValue })];
     expect(applied.resources).toContainEqual(manualResource);
     expect(applied.importAmbiguity?.parts[0].managed).toBeDefined();
     expect(applied.resources).toEqual(expectedResources);
@@ -2267,6 +2267,110 @@ describe("refreshing reviewed source-owned occurrences", () => {
       DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
     );
 
+  const importedDescription = (title: string) => buildServicePlanSectionsFromImport({
+    planLabel: "Sunday",
+    sections: [{ sectionName: "Special", rows: [{ elementType: "Special Feature", title, ledBy: "" }] }],
+    teamAssignments: [],
+  }, [], { classifyExternalTitle: true });
+
+  it("reconciles a meaningful-title imported text resource on accepted source refresh", () => {
+    const [oldImport] = importedDescription("Skit/Mime – Pathfinder Pledge");
+    const [newImport] = importedDescription("Skit/Mime – Walking With Jesus");
+    const oldResource = oldImport.elements[0].resources![0];
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Skit/Mime – Pathfinder Pledge",
+      resources: [oldResource],
+      importAmbiguity: oldImport.elements[0].importAmbiguity,
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Skit/Mime – Pathfinder Pledge", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Skit/Mime – Pathfinder Pledge", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+    const refreshed = managedRefresh(current, newImport.elements[0])[0].elements[0];
+
+    expect(refreshed.resources).toHaveLength(1);
+    expect(refreshed.resources![0]).toMatchObject({ title: "Skit/Mime – Walking With Jesus", type: "text" });
+    expect(richTextToPlainText(refreshed.resources![0].data!.text as never)).toBe("Skit/Mime – Walking With Jesus");
+    expect(refreshed.importAmbiguity?.parts[0].managed).toMatchObject({
+      kind: "resource",
+      id: refreshed.resources![0].id,
+      fingerprint: servicePlanResourceFingerprint(refreshed.resources![0]),
+    });
+  });
+
+  it("keeps imported text titles stable across serialize and repeated import", () => {
+    const [fresh] = importedDescription("Skit/Mime – Walking With Jesus");
+    const imported = [section("section", "Worship", [fresh.elements[0]])];
+    const firstRefresh = refreshServicePlanFromImport(imported, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const serialized = JSON.parse(JSON.stringify(firstRefresh)) as ServicePlanSection[];
+    const repeatedRefresh = refreshServicePlanFromImport(serialized, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(serialized[0].elements[0].resources?.[0].title).toBe("Skit/Mime – Walking With Jesus");
+    expect(repeatedRefresh).toEqual(serialized);
+  });
+
+  it("upgrades a legacy placeholder only when its saved managed provenance matches", () => {
+    const [incoming] = importedDescription("Walking With Jesus");
+    const legacyResource = { ...createServicePlanTextResource({
+      title: "Imported description",
+      text: plainTextToRichText("Walking With Jesus"),
+    }), id: "legacy-imported-description" };
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Walking With Jesus",
+      resources: [legacyResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special Feature",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "", parts: [{
+          kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+          managed: { kind: "resource", id: legacyResource.id, fingerprint: servicePlanResourceFingerprint(legacyResource) },
+        }], reasons: [], status: "confirmed", sourceFingerprint: "legacy-description",
+      },
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+    const refreshed = managedRefresh(current, incoming.elements[0]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+
+    expect(serialized[0].elements[0].resources![0]).toMatchObject({ id: legacyResource.id, title: "Walking With Jesus" });
+    expect(serialized[0].elements[0].importAmbiguity?.parts[0].managed?.fingerprint)
+      .toBe(servicePlanResourceFingerprint(serialized[0].elements[0].resources![0]));
+    expect(refreshServicePlanFromImport(serialized, [section("section", "Worship", [incoming.elements[0]])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS)).toEqual(serialized);
+  });
+
+  it("does not claim or rename an operator resource with matching imported text", () => {
+    const [incoming] = importedDescription("Walking With Jesus");
+    const operatorResource = createServicePlanTextResource({
+      title: "Operator attachment",
+      text: plainTextToRichText("Walking With Jesus"),
+    });
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Walking With Jesus",
+      resources: [operatorResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special Feature",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "", parts: [{
+          kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+        }], reasons: [], status: "confirmed", sourceFingerprint: "legacy-with-operator-resource",
+      },
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+
+    const refreshed = managedRefresh(current, incoming.elements[0])[0].elements[0];
+    expect(refreshed.resources).toEqual([operatorResource]);
+    expect(refreshed.importAmbiguity?.parts[0].managed).toBeUndefined();
+  });
+
   it.each([
     ["IEM only", { iemIds: ["iem-2"] }],
     ["microphone and IEM", { microphoneIds: ["mic-1"], iemIds: ["iem-2"] }],
@@ -2445,6 +2549,72 @@ describe("refreshing reviewed source-owned occurrences", () => {
 
   const source = (title: string, ledBy: string) => ({
     elementType: "Reading the Word", title, ledBy, note: "",
+  });
+
+  it("imports title-derived people on new and matching items and stays stable after serialization", () => {
+    const title = "Co-Hosts - Oniel Campbell, Jackie Mullings, Candice Bailey";
+    const sourceData: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading the Word", title, ledBy: "Clarence Jones" }] }],
+      teamAssignments: [],
+    };
+    const [fresh] = buildServicePlanSectionsFromImport(sourceData, [], {
+      classifyExternalTitle: true,
+      knownPeople: ["Oniel Campbell", "Jackie Mullings", "Candice Bailey", "Clarence Jones"],
+    });
+    const freshElement = fresh.elements[0];
+    expect(freshElement.assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones", "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+    expect(freshElement.sourceContentTitleRaw).toBe(title);
+    expect(freshElement.importAmbiguity?.sourceTitle).toBe(title);
+    expect(freshElement.importAmbiguity?.parts.map(({ value }) => value)).toEqual([
+      "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+
+    const current = [section("current", "Reading", [element("same", "Reading the Word", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: title,
+      sourceLedByRaw: "Clarence Jones",
+      assignees: [{ id: "lead", name: "Clarence Jones" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: title, sourceLedBy: "Clarence Jones", parts: [], reasons: [],
+        status: "confirmed", sourceFingerprint: "prior-import",
+      },
+      servicePlanningImport: {
+        observed: source(title, "Clarence Jones"), applied: source(title, "Clarence Jones"), pendingFields: [],
+        managedAssignees: [{ id: "lead", fields: ["ledBy"], fingerprint: JSON.stringify({ name: "Clarence Jones" }) }],
+      },
+    })])];
+    const refreshed = refreshServicePlanFromImport(current, [fresh], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones", "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    expect(refreshServicePlanFromImport(serialized, [fresh], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS)).toEqual(serialized);
+  });
+
+  it("continues reconciling an explicitly confirmed title assignee when the title is unchanged", () => {
+    const title = "Psalms 97 (NLT) Jasmine Williams";
+    const [incoming] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday", sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading", title, ledBy: "" }] }], teamAssignments: [],
+    }, [], { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+    const current = [section("current", "Reading", [element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: title,
+      assignees: [],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: title,
+        sourceLedBy: "", parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "reviewed-title-person",
+      },
+      servicePlanningImport: {
+        observed: source(title, ""), applied: source(title, ""), pendingFields: [],
+      },
+    })])];
+    const refreshed = refreshServicePlanFromImport(current, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual(["Jasmine Williams"]);
   });
 
   it("updates Led By without restoring a Title person moved out of assignees", () => {
@@ -2694,7 +2864,7 @@ describe("refreshing reviewed source-owned occurrences", () => {
     );
 
     expect(applied[0].elements[0].resources).toEqual([
-      expect.objectContaining({ title: "Imported description" }), manualResource,
+      expect.objectContaining({ title: "Skit/Mime – The Good Samaritan" }), manualResource,
     ]);
     expect(JSON.stringify(applied[0].elements[0].resources?.[0])).toContain("The Good Samaritan");
     expect(JSON.stringify(applied[0].elements[0].resources?.[0])).not.toContain("Walking With Jesus");

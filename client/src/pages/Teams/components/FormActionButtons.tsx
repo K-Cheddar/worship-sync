@@ -2,13 +2,11 @@ import { Check, Save, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
 import { teamsFormPanelFooterClassName } from "../teamsStyles";
-import type { FormSaveMode } from "./useFormSaveFeedback";
 
 type FormActionButtonsProps = {
   entityLabel: string;
   isCreate: boolean;
   isSaving?: boolean;
-  successMode?: FormSaveMode | null;
   onSave: () => void;
   onCancel: () => void;
   /** Whether closing would discard edits. */
@@ -22,7 +20,6 @@ const FormActionButtons = ({
   entityLabel,
   isCreate,
   isSaving = false,
-  successMode = null,
   onSave,
   onCancel,
   hasPendingChanges = true,
@@ -36,6 +33,7 @@ const FormActionButtons = ({
         className="flex-1 justify-center"
         svg={X}
         iconSize="sm"
+        disabled={isSaving}
         onClick={onCancel}
       >
         {hasPendingChanges ? "Cancel" : "Close"}
@@ -43,18 +41,18 @@ const FormActionButtons = ({
       <Button
         variant="cta"
         className="flex-1 justify-center"
-        svg={successMode || isSaving ? undefined : Save}
+        svg={isSaving || (!isCreate && !hasPendingChanges) ? undefined : Save}
         iconSize="sm"
         aria-busy={isSaving || undefined}
-        disabled={disabled}
+        disabled={disabled || isSaving || (!isCreate && !hasPendingChanges)}
         onClick={onSave}
       >
         {isSaving ? (
           isCreate ? "Creating…" : "Saving…"
-        ) : successMode ? (
+        ) : !isCreate && !hasPendingChanges ? (
           <>
-            <Check aria-hidden="true" data-testid="form-save-success-icon" className="size-4 shrink-0" />
-            {successMode === "create" ? "Created" : "Saved"}
+            <Check aria-hidden="true" data-testid="form-save-success-icon" className="size-4 shrink-0 text-emerald-300" />
+            Saved
           </>
         ) : isCreate ? (
           `Create ${entityLabel}`

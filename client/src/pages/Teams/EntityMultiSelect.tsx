@@ -5,7 +5,7 @@ import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import SelectAllButton from "../../components/SelectAllButton";
-import WorshipSyncIcon from "../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../components/icons/PositionIconBadge";
 import type { PositionIcon } from "../../components/icons/iconTypes";
 import {
   boardFieldsetDescriptionClassName,
@@ -369,16 +369,10 @@ const EntityMultiSelect = ({
                     {checked ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : null}
                   </span>
                   {option.icon ? (
-                    <span
-                      className={cn(
-                        "flex h-7 w-7 shrink-0 items-center justify-center rounded",
-                        isBoard
-                          ? "bg-amber-400/10 text-amber-200"
-                          : "border border-cyan-300/30 bg-cyan-400/10 text-cyan-100",
-                      )}
-                    >
-                      <WorshipSyncIcon icon={option.icon} className="h-4 w-4" />
-                    </span>
+                    <PositionIconBadge
+                      icon={option.icon}
+                      className={cn("h-7 w-7", isBoard && "border-stone-600")}
+                    />
                   ) : null}
                   <span className="min-w-0 flex-1">
                     {option.sublabel && emphasizeSublabel ? (

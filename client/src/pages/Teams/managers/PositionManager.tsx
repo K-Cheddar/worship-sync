@@ -43,7 +43,6 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import PositionIconPicker from "../PositionIconPicker";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
@@ -54,7 +53,6 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
-import { formatPositionSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_POSITION_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -305,7 +303,6 @@ const PositionManager = ({
       ...(draft.defaultIemId ? { defaultIemId: draft.defaultIemId } : {}),
       teamId: positionTeamId,
     };
-    const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
     const optimisticPosition: TeamPosition = {
       churchId,
       positionId: localPositionId,
@@ -329,8 +326,6 @@ const PositionManager = ({
       if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(wasEditing?.positionId || response.position.positionId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         // The operator may have switched to a different position while this save
@@ -383,7 +378,6 @@ const PositionManager = ({
       defaultMicrophoneId: "",
       defaultIemId: "",
     });
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   // A save already in flight for this editor is not an unsaved change: the
   // operator committed it, and `editing` only catches up when the response
   // lands. Without this, switching positions mid-save falsely prompts to
@@ -572,7 +566,6 @@ const PositionManager = ({
             entityLabel="position"
             isCreate={!editing}
             isSaving={isSavingCurrent}
-            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}

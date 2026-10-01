@@ -320,7 +320,7 @@ describe("ScheduleEditForm", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("heading", { name: "New custom schedule" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New schedule" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Team/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Start date/)).toBeInTheDocument();
     expect(screen.getByLabelText(/End date/)).toBeInTheDocument();

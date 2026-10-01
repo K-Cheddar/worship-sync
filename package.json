@@ -32,7 +32,8 @@
     "release": "semantic-release",
     "release:ci": "node scripts/semantic-release-with-outputs.js",
     "migrate:service-plan-assignees": "node scripts/migrate-service-plan-assignees.js",
-    "migrate:service-plan-assignees:dry-run": "node scripts/migrate-service-plan-assignees.js --dry-run"
+    "migrate:service-plan-assignees:dry-run": "node scripts/migrate-service-plan-assignees.js --dry-run",
+    "firebase:update-indexes": "firebase deploy --only firestore:indexes"
   },
   "engines": {
     "node": "24.x"

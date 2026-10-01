@@ -5665,6 +5665,25 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(staleSave.payload.servicePlan.revision, 2);
   assert.equal(staleSave.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
 
+  const unpublishedViewer = await callHandler(authHandlers.getServicePlanViewer, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(unpublishedViewer.statusCode, 200);
+  assert.equal(unpublishedViewer.payload.plan.published, false);
+  assert.equal(
+    unpublishedViewer.payload.snapshot.service.shareId,
+    `current-service-viewer:${planKey}`,
+  );
+  assert.equal(
+    unpublishedViewer.payload.snapshot.service.sections[0].items[0].creditName,
+    undefined,
+  );
+  assert.deepEqual(
+    unpublishedViewer.payload.snapshot.service.sections[0].items[0].teamNotes,
+    [{ label: "Media", notes: richText("Private cue") }],
+  );
+
   const published = await callHandler(authHandlers.publishServicePlan, {
     context,
     params: { planKey },

@@ -96,17 +96,30 @@ describe("WorshipSync position icons", () => {
     expect(resolveWorshipSyncIcon({ source: "invalid" } as never)).toBeNull();
   });
 
-  it("applies an optional color to the glyph and leaves the default unstyled", () => {
+  it("leaves an uncolored glyph inheriting its surface and preserves explicit colors", () => {
     const { rerender } = render(<WorshipSyncIcon data-testid="position-icon" icon={{ source: "lucide", name: "Camera" }} />);
-    expect(screen.getByTestId("position-icon")).not.toHaveStyle({ color: "#22d3ee" });
+    expect(screen.getByTestId("position-icon").style.color).toBe("");
     rerender(<WorshipSyncIcon data-testid="position-icon" icon={{ source: "lucide", name: "Camera", color: "#22d3ee" }} />);
     expect(screen.getByTestId("position-icon")).toHaveStyle({ color: "#22d3ee" });
   });
 
-  it("keeps dark glyph colors visible with a contrasting edge and leaves bright colors clean", () => {
+  it("can inherit a badge's contrasting ink instead of using the ref color", () => {
+    render(
+      <span style={{ color: "#ffffff" }}>
+        <WorshipSyncIcon
+          data-testid="position-icon"
+          icon={{ source: "lucide", name: "Camera", color: "#000000" }}
+          inheritColor
+        />
+      </span>,
+    );
+    expect(screen.getByTestId("position-icon").style.color).toBe("");
+  });
+
+  it("does not assume a fixed background or add a glyph shadow", () => {
     const { rerender } = render(<WorshipSyncIcon data-testid="position-icon" icon={{ source: "lucide", name: "Camera", color: "#000000" }} />);
     expect(screen.getByTestId("position-icon")).toHaveStyle({ color: "#000000" });
-    expect(screen.getByTestId("position-icon").style.filter).toContain("#ffffff");
+    expect(screen.getByTestId("position-icon").style.filter).toBe("");
 
     rerender(<WorshipSyncIcon data-testid="position-icon" icon={{ source: "lucide", name: "Camera", color: "#fbbf24" }} />);
     expect(screen.getByTestId("position-icon")).toHaveStyle({ color: "#fbbf24" });

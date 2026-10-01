@@ -262,7 +262,7 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(section.elements[0].resources).toEqual([
       expect.objectContaining({
         type: "text",
-        title: "Imported description",
+        title: "Skit/Mime – Walking With Jesus",
         data: { text: expect.anything() },
       }),
     ]);
@@ -272,6 +272,18 @@ describe("buildServicePlanSectionsFromImport", () => {
       kind: "resource",
       id: section.elements[0].resources![0].id,
     });
+  });
+
+  it("uses a concise imported title while retaining a long multiline description", () => {
+    const description = "Pathfinder Pledge\nI promise to do my best to serve others and follow the Scout Law.\nAdditional service details.";
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Program", rows: [{ elementType: "Special Feature", title: description, ledBy: "" }] }],
+    }, songs, { classifyExternalTitle: true });
+
+    const resource = section.elements[0].resources![0];
+    expect(resource.title).toBe("Pathfinder Pledge");
+    expect(richTextToPlainText(getServicePlanResourceText(resource))).toBe(description);
   });
 
   it("keeps clear links out of the ambiguity prompt while preserving attachment authorization", () => {

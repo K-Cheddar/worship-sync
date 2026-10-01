@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Search } from "lucide-react";
+import { Check, Save, Search, X } from "lucide-react";
 import Modal from "../Modal/Modal";
 import Input from "../Input/Input";
 import Button from "../Button/Button";
@@ -60,6 +60,36 @@ const toEditableSongLinks = (links: SongLink[]): EditableSongLink[] =>
           : formatYouTubeTimestamp(segment.endSeconds),
     })),
   }));
+
+const itemDetailsFingerprint = ({
+  name,
+  artist,
+  album,
+  key,
+  links,
+}: {
+  name: string;
+  artist: string;
+  album: string;
+  key: string;
+  links: EditableSongLink[];
+}) => JSON.stringify({
+  name: name.trim(),
+  artist: artist.trim(),
+  album: album.trim(),
+  key: key.trim(),
+  links: links.map((link) => ({
+    ...link,
+    label: link.label.trim(),
+    url: link.url.trim(),
+    segments: link.segments.map((segment) => ({
+      ...segment,
+      label: segment.label.trim(),
+      startTime: segment.startTime.trim(),
+      endTime: segment.endTime.trim(),
+    })),
+  })),
+});
 
 export type ItemDetailsModalProps = {
   isOpen: boolean;
@@ -157,9 +187,9 @@ export function ItemDetailsEditorFields({
   className,
 }: ItemDetailsEditorFieldsProps) {
   const [localName, setLocalName] = useState(itemName);
-  const [artistName, setArtistName] = useState("");
-  const [albumName, setAlbumName] = useState("");
-  const [songKey, setSongKey] = useState("");
+  const [artistName, setArtistName] = useState(songMetadata?.artistName ?? "");
+  const [albumName, setAlbumName] = useState(songMetadata?.albumName ?? "");
+  const [songKey, setSongKey] = useState(songMetadata?.key ?? "");
   const [localSongLinks, setLocalSongLinks] = useState<EditableSongLink[]>(() =>
     toEditableSongLinks(songLinks),
   );
@@ -168,6 +198,22 @@ export function ItemDetailsEditorFields({
   const [isSaving, setIsSaving] = useState(false);
   const [isYouTubePickerOpen, setIsYouTubePickerOpen] = useState(false);
   const isSong = itemType === "song";
+  const draftFingerprint = itemDetailsFingerprint({
+    name: localName,
+    artist: artistName,
+    album: albumName,
+    key: songKey,
+    links: localSongLinks,
+  });
+  const persistedFingerprint = itemDetailsFingerprint({
+    name: itemName,
+    artist: songMetadata?.artistName ?? "",
+    album: songMetadata?.albumName ?? "",
+    key: songMetadata?.key ?? "",
+    links: toEditableSongLinks(songLinks),
+  });
+  const [savedFingerprint, setSavedFingerprint] = useState(() => persistedFingerprint);
+  const hasPendingChanges = draftFingerprint !== savedFingerprint;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -176,10 +222,11 @@ export function ItemDetailsEditorFields({
     setAlbumName(songMetadata?.albumName ?? "");
     setSongKey(songMetadata?.key ?? "");
     setLocalSongLinks(toEditableSongLinks(songLinks));
+    setSavedFingerprint(persistedFingerprint);
     setLinkError("");
     setSaveError("");
     setIsYouTubePickerOpen(false);
-  }, [isOpen, itemName, songLinks, songMetadata]);
+  }, [isOpen, itemName, songLinks, songMetadata, persistedFingerprint]);
 
   const updateSongLink = (id: string, patch: Partial<EditableSongLink>) => {
     setLocalSongLinks((links) =>
@@ -328,12 +375,12 @@ export function ItemDetailsEditorFields({
     return links;
   };
 
-  const saveAndClose = async (payload: ItemDetailsSavePayload) => {
+  const saveDraft = async (payload: ItemDetailsSavePayload) => {
     setSaveError("");
     setIsSaving(true);
     try {
       await onSave(payload);
-      onClose();
+      setSavedFingerprint(draftFingerprint);
     } catch (error) {
       setSaveError(
         error instanceof Error && error.message
@@ -352,7 +399,7 @@ export function ItemDetailsEditorFields({
     }
 
     if (!isSong) {
-      await saveAndClose({ name: nextName });
+      await saveDraft({ name: nextName });
       return;
     }
 
@@ -364,7 +411,7 @@ export function ItemDetailsEditorFields({
     if (!nextSongLinks) return;
 
     if (!songMetadata) {
-      await saveAndClose({
+      await saveDraft({
         name: nextName,
         ...(hasSongDetails
           ? {
@@ -382,7 +429,7 @@ export function ItemDetailsEditorFields({
     }
 
     if (songMetadata.source === "manual" && !hasSongDetails) {
-      await saveAndClose({
+      await saveDraft({
         name: nextName,
         songMetadataPatch: null,
         songLinksPatch: nextSongLinks,
@@ -390,7 +437,7 @@ export function ItemDetailsEditorFields({
       return;
     }
 
-    await saveAndClose({
+    await saveDraft({
       name: nextName,
       songMetadataPatch: {
         ...songMetadata,
@@ -568,16 +615,35 @@ export function ItemDetailsEditorFields({
         </>
       )}
       <div className="flex justify-end gap-2 pt-2">
-        <Button variant="tertiary" onClick={onClose} disabled={isSaving}>
-          Cancel
+        <Button
+          variant="tertiary"
+          svg={X}
+          onClick={() => {
+            if (hasPendingChanges) {
+              setLocalName(itemName);
+              setArtistName(songMetadata?.artistName ?? "");
+              setAlbumName(songMetadata?.albumName ?? "");
+              setSongKey(songMetadata?.key ?? "");
+              setLocalSongLinks(toEditableSongLinks(songLinks));
+              setLinkError("");
+              setSaveError("");
+              setIsYouTubePickerOpen(false);
+            }
+            onClose();
+          }}
+          disabled={isSaving}
+        >
+          {hasPendingChanges ? "Cancel" : "Close"}
         </Button>
         <Button
           variant="cta"
+          svg={isSaving || !hasPendingChanges ? undefined : Save}
           onClick={() => void handleSave()}
-          disabled={!localName.trim() || isSaving}
+          disabled={!hasPendingChanges || !localName.trim() || isSaving}
+          aria-busy={isSaving || undefined}
           isLoading={isSaving}
         >
-          Save
+          {isSaving ? "Saving…" : hasPendingChanges ? "Save" : <><Check aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />Saved</>}
         </Button>
       </div>
       {saveError ? (

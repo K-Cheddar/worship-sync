@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
-import { Headphones, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { Check, Headphones, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -157,8 +157,6 @@ const TeamsMicrophonesPage = () => {
       const iems = result.equipment.filter((item) => item.category === "iem");
       setIemEquipment(iems);
       setIemDraft(iems);
-      setIsEditingIems(false);
-      showToast("IEM list saved.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save the IEM list.");
     } finally {
@@ -168,6 +166,9 @@ const TeamsMicrophonesPage = () => {
 
   const visibleIems = isEditingIems ? iemDraft : iemEquipment;
   const hasIncompleteIem = iemDraft.some((item) => !item.name.trim());
+  const iemHasPendingChanges =
+    JSON.stringify([...iemDraft].sort((a, b) => a.id.localeCompare(b.id))) !==
+    JSON.stringify([...iemEquipment].sort((a, b) => a.id.localeCompare(b.id)));
   const updateIem = (id: string, changes: Partial<ServiceEquipment>) =>
     setIemDraft((current) => current.map((item) =>
       item.id === id ? { ...item, ...changes } : item,
@@ -199,12 +200,6 @@ const TeamsMicrophonesPage = () => {
       );
       setMicrophones(result.microphones);
       setMicrophoneAudiences(result.audiences || []);
-      showToast(
-        saveTarget === "visibility"
-          ? "Mic note visibility saved."
-          : "Microphone list saved.",
-        "success",
-      );
       return true;
     } catch (error) {
       showApiErrorToast(
@@ -222,7 +217,6 @@ const TeamsMicrophonesPage = () => {
 
   return (
     <div className={teamsManagerPageRootClassName}>
-          <h2 className="text-base font-semibold text-white">Equipment</h2>
       <section
         className={cn(
           panelShellClassName,
@@ -255,8 +249,8 @@ const TeamsMicrophonesPage = () => {
                       {actions.editing ? (
                         <>
                           <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
-                          <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>Cancel</Button>
-                          <Button type="button" variant="cta" svg={Save} disabled={!actions.canSave} aria-label={actions.saving ? "Saving microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : "Save"}</Button>
+                          <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>{actions.hasPendingChanges ? "Cancel" : "Close"}</Button>
+                          <Button type="button" variant="cta" svg={actions.saving || actions.saved ? undefined : Save} aria-busy={actions.saving || undefined} disabled={!actions.canSave || actions.saved} aria-label={actions.saving ? "Saving microphones" : actions.saved ? "Saved microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : actions.saved ? <><Check aria-hidden="true" data-testid="microphone-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
                         </>
                       ) : null}
                     </div>
@@ -278,8 +272,8 @@ const TeamsMicrophonesPage = () => {
                 {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
                   <div className="flex flex-wrap items-center gap-2">
                     <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
-                    <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(false); }}>Cancel</Button>
-                    <Button type="button" variant="cta" svg={Save} disabled={savingIems || hasIncompleteIem} aria-label={savingIems ? "Saving IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : "Save"}</Button>
+                    <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { if (iemHasPendingChanges) setIemDraft(iemEquipment); setIsEditingIems(false); }}>{iemHasPendingChanges ? "Cancel" : "Close"}</Button>
+                    <Button type="button" variant="cta" svg={savingIems || !iemHasPendingChanges ? undefined : Save} aria-busy={savingIems || undefined} disabled={savingIems || hasIncompleteIem || !iemHasPendingChanges} aria-label={savingIems ? "Saving IEMs" : !iemHasPendingChanges ? "Saved IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : !iemHasPendingChanges ? <><Check aria-hidden="true" data-testid="iem-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
                   </div>
                 ) : null}
               </div>

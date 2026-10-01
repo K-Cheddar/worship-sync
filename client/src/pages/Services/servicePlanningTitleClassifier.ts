@@ -227,7 +227,6 @@ export const classifyServicePlanningTitle = ({
       const index = reasons.indexOf(additionalTextReason);
       if (index >= 0) reasons.splice(index, 1);
     }
-    if (rolePrefix) parts.push({ kind: "description", value: rolePrefix.trim().replace(/[:–—-]$/, "").trim(), destination: "content" });
     if (contentPrefix) parts.push({ kind: "description", value: contentPrefix, destination: "content" });
     remaining = contentPrefix;
   } else if (remaining) {

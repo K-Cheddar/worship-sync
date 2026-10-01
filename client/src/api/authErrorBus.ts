@@ -8,9 +8,17 @@
 
 type AuthErrorHandler = () => void;
 type AuthRecoveryHandler = () => boolean | Promise<boolean>;
+export type UserAuthRecoveryResult =
+  | "recovered"
+  | "unauthenticated"
+  | "unknown";
+type UserAuthRecoveryHandler = (
+  onConfirmedUnauthenticated: () => void,
+) => UserAuthRecoveryResult | Promise<UserAuthRecoveryResult>;
 
 const handlers = new Set<AuthErrorHandler>();
 const recoveryHandlers = new Set<AuthRecoveryHandler>();
+const userRecoveryHandlers = new Set<UserAuthRecoveryHandler>();
 let authenticatedSessionExpected = false;
 
 /**
@@ -51,6 +59,31 @@ export const requestAuthRecovery = async () => {
     }
   }
   return false;
+};
+
+/** Register the user-initiated recovery flow, including confirmed session loss. */
+export const registerUserAuthRecoveryHandler = (
+  handler: UserAuthRecoveryHandler,
+) => {
+  userRecoveryHandlers.add(handler);
+  return () => {
+    userRecoveryHandlers.delete(handler);
+  };
+};
+
+/** Retry recovery explicitly and distinguish a gone session from uncertainty. */
+export const requestUserAuthRecovery = async (
+  onConfirmedUnauthenticated: () => void,
+): Promise<UserAuthRecoveryResult> => {
+  for (const handler of userRecoveryHandlers) {
+    try {
+      const result = await handler(onConfirmedUnauthenticated);
+      if (result !== "unknown") return result;
+    } catch {
+      // Preserve the toast when recovery status cannot be confirmed.
+    }
+  }
+  return "unknown";
 };
 
 /** Called by the API layer when a request fails with 401 Unauthorized. */

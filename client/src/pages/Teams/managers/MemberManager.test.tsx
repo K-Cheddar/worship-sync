@@ -228,7 +228,7 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
-  it("shows create, pending, and created states, then clears success when the draft changes", async () => {
+  it("shows create, pending, and saved states after a successful member save", async () => {
     const user = userEvent.setup();
     let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
     mockCreateTeamRosterMember.mockImplementation(
@@ -245,7 +245,7 @@ describe("MemberManager member preferences", () => {
       success: true,
       member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
     });
-    expect(await screen.findByRole("button", { name: "Created" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Saved" })).toBeDisabled();
     expect(screen.getByRole("heading", { name: "Edit member" })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/^First name/i), "lar");

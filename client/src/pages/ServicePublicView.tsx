@@ -11,6 +11,7 @@ import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRichText";
 import { getServiceFlowProgress } from "../services/serviceFlowProgress";
 import type {
+  PublicServiceFlowEquipmentAssignment,
   PublicServiceFlowItem,
   PublicServiceFlowResource,
   PublicServiceFlowServingTeam,
@@ -23,6 +24,7 @@ import { SERVICE_PLAN_SONG_ICON_CLASS } from "./Services/servicePlanChipStyles";
 import { SERVICE_PLAN_SCRIPTURE_ICON_CLASS } from "./Services/ServicePlanScripturePopover";
 import { getServicePlanResourceDefinition } from "./Services/servicePlanResources";
 import { ServicePlanMicrophoneChip } from "../components/ServicePlanMicrophoneChip";
+import { ServiceEquipmentChip } from "../components/ServiceEquipmentChip";
 import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
@@ -35,10 +37,15 @@ import { publicPageScrollClassName } from "./Teams/teamsStyles";
 import { normalizeHexColor } from "../utils/richTextColorContrast";
 import useFollowLiveScroll from "../hooks/useFollowLiveScroll";
 import {
-  getServicePlanRoleNoteTeamName,
-  getServicePlanRoleNoteRoleName,
-  roleNoteMatchesServicePlanTeam,
-} from "./Services/servicePlanRoleNoteTeam";
+  buildServiceFlowRoleOptions,
+  buildServiceFlowTeamLabels,
+  filterServiceFlowRoleOptions,
+  selectedServiceFlowRoleTeamNames,
+  serviceFlowItemHasVisibleAudienceContent,
+  visibleServiceFlowMicrophoneAssignmentsForItem,
+  visibleServiceFlowNotesForItem,
+  type ServiceFlowFilterPreference,
+} from "../services/serviceFlowAudience";
 
 const servicePublicItemDomId = (itemId: string) => `service-item-${itemId}`;
 
@@ -92,56 +99,6 @@ const formatServiceTime = (value: number, timezone: string) =>
   new Intl.DateTimeFormat(undefined, {
     hour: "numeric", minute: "2-digit", timeZone: timezone,
   }).format(new Date(value));
-
-const itemHasNotes = (
-  item: PublicServiceFlowItem,
-  selectedTeam: string,
-  selectedRoles: string[],
-  selectedRoleTeamNames: string[],
-) => {
-  if (item.notes.blocks.length) return true;
-  return Boolean(
-    visibleAudienceNotesForItem(item, selectedTeam, selectedRoles, selectedRoleTeamNames).length
-    || visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRoles).length,
-  );
-};
-
-const visibleAudienceNotesForItem = (
-  item: PublicServiceFlowItem,
-  selectedTeam: string,
-  selectedRoles: string[],
-  selectedRoleTeamNames: string[],
-) => {
-  const notes = item.teamNotes || [];
-  const audienceTeams = selectedTeam
-    ? [selectedTeam]
-    : selectedRoleTeamNames;
-  return notes.filter((note) =>
-    note.scope === "role"
-      ? roleNoteMatchesServicePlanTeam(note, selectedTeam)
-      && (
-        !selectedRoles.length
-        || rolePositionIds(note).some((positionId) => selectedRoles.includes(positionId))
-      )
-      : !audienceTeams.length || audienceTeams.includes(note.label),
-  );
-};
-
-const visibleMicrophoneAssignmentsForItem = (
-  item: PublicServiceFlowItem,
-  selectedTeam: string,
-  selectedRoles: string[],
-) =>
-  (item.microphoneAssignments || []).filter((assignment) => {
-    // A microphone whose holder is named but whose roles are not configured
-    // still belongs on the unfiltered view — otherwise it would vanish for
-    // everyone rather than just for the role that filtered it out.
-    if (!assignment.audiences.length) return !selectedTeam && !selectedRoles.length;
-    return assignment.audiences.some((audience) =>
-      (!selectedTeam || audience.teamName === selectedTeam)
-      && (!selectedRoles.length || selectedRoles.includes(audience.positionId)),
-    );
-  });
 
 const PublicItemContent = ({
   item,
@@ -252,9 +209,6 @@ const PublicResourceReferences = ({
   );
 };
 
-const rolePositionIds = (note: { positionId?: string; positionIds?: string[] }) =>
-  note.positionIds?.filter(Boolean) ?? (note.positionId ? [note.positionId] : []);
-
 const normalizePublicBrandHex = (raw: string) => {
   const trimmed = String(raw || "").trim();
   const normalized = normalizeHexColor(trimmed);
@@ -354,6 +308,13 @@ export type ServicePublicViewProps = {
   topContent?: ReactNode;
   connection?: PublicServiceConnection;
   error?: string;
+  /** Controller surfaces can supply their own profile-scoped filter draft. */
+  filterPreference?: ServiceFlowFilterPreference & {
+    onChange: (preference: ServiceFlowFilterPreference) => void;
+  };
+  /** The embedded controller's live outline can be ahead of the saved snapshot. */
+  activeItemId?: string | null;
+  rolePickerTeamFilterStorageKey?: string;
   /**
    * Parent owns the page shell (My Schedule tabs). Skips the full-page scroll
    * main and the fixed "Follow live" dock.
@@ -373,10 +334,15 @@ const ServicePublicView = ({
   error = "",
   embedded = false,
   onRefresh,
+  filterPreference,
+  activeItemId = null,
+  rolePickerTeamFilterStorageKey = "worshipsyncServicePublicRoleTeamFilter",
 }: ServicePublicViewProps) => {
   const [clientNow, setClientNow] = useState(() => Date.now());
-  const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
-  const [selectedRoles, setSelectedRoles] = useState(() => readServicePublicNotesRole());
+  const [localSelectedTeam, setLocalSelectedTeam] = useState(() => readServicePublicNotesTeam());
+  const [localSelectedRoles, setLocalSelectedRoles] = useState(() => readServicePublicNotesRole());
+  const selectedTeam = filterPreference?.teamName ?? localSelectedTeam;
+  const selectedRoles = filterPreference?.positionIds ?? localSelectedRoles;
   const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const servicePlanScrollRef = useRef<HTMLElement | null>(null);
@@ -413,9 +379,18 @@ const ServicePublicView = ({
   };
 
   const serverOffsetMs = useMemo(() => snapshot.serverNowMs - Date.now(), [snapshot]);
+  const serviceWithControllerLiveItem = useMemo(() => {
+    if (!activeItemId) return snapshot.service;
+    const itemExists = snapshot.service.sections.some((section) =>
+      section.items.some((item) => item.id === activeItemId),
+    );
+    return itemExists
+      ? { ...snapshot.service, live: { mode: "manual" as const, currentItemId: activeItemId } }
+      : snapshot.service;
+  }, [activeItemId, snapshot.service]);
   const progress = useMemo(
-    () => getServiceFlowProgress(snapshot.service, clientNow + serverOffsetMs),
-    [clientNow, serverOffsetMs, snapshot],
+    () => getServiceFlowProgress(serviceWithControllerLiveItem, clientNow + serverOffsetMs),
+    [clientNow, serverOffsetMs, serviceWithControllerLiveItem],
   );
   const currentItemId = progress?.current?.item.id ?? null;
   const {
@@ -433,106 +408,44 @@ const ServicePublicView = ({
     scrollToItem: scrollServicePublicItemNearTop,
   });
 
-  const teamLabels = useMemo(() => {
-    if (snapshot.service.viewMode === "general") return [];
-    return Array.from(new Set(
-      snapshot.service.sections.flatMap((section) =>
-        section.items.flatMap((item) =>
-          (item.teamNotes || [])
-            .filter((note) => note.scope !== "role")
-            .map((teamNote) => teamNote.label),
-        ),
-      ),
-    )).sort((left, right) => left.localeCompare(right));
-  }, [snapshot]);
-  const allRoleOptions = useMemo(() => {
-    if (snapshot.service.viewMode === "general") return [];
-    const options = new Map<string, {
-      positionId: string;
-      label: string;
-      teamId?: string;
-      teamName?: string;
-    }>();
-    // Prefer the full church roster so quiet roles (no notes/mics) stay selectable.
-    (snapshot.roles || []).forEach((role) => {
-      const positionId = String(role.positionId || "").trim();
-      const label = String(role.label || "").trim();
-      if (!positionId || !label) return;
-      options.set(positionId, {
-        positionId,
-        label,
-        teamId: role.teamId,
-        teamName: role.teamName,
-      });
-    });
-    snapshot.service.sections.forEach((section) => {
-      section.items.forEach((item) => {
-        (item.teamNotes || []).forEach((note) => {
-          if (note.scope === "role" && rolePositionIds(note).length) {
-            const separatorIndex = note.label.indexOf(" · ");
-            const legacyTeamName = separatorIndex > 0
-              ? note.label.slice(0, separatorIndex)
-              : "Other roles";
-            const teamName = getServicePlanRoleNoteTeamName(note) || legacyTeamName;
-            rolePositionIds(note).forEach((positionId) => {
-              if (options.has(positionId)) return;
-              options.set(positionId, {
-                positionId,
-                label: getServicePlanRoleNoteRoleName(note.label),
-                teamId: note.teamIds?.[0] || note.teamId || `legacy:${teamName}`,
-                teamName: note.teamNames?.[0] || teamName,
-              });
-            });
-          }
-        });
-        (item.microphoneAssignments || []).forEach((assignment) => {
-          assignment.audiences.forEach((audience) => {
-            if (options.has(audience.positionId)) return;
-            const teamName = audience.teamName || "Other roles";
-            options.set(audience.positionId, {
-              positionId: audience.positionId,
-              label: audience.roleName,
-              teamId: audience.teamId || `legacy:${teamName}`,
-              teamName,
-            });
-          });
-        });
-      });
-    });
-    return Array.from(options.values())
-      .sort((left, right) => left.label.localeCompare(right.label));
-  }, [snapshot]);
+  const teamLabels = useMemo(() => buildServiceFlowTeamLabels(snapshot), [snapshot]);
+  const allRoleOptions = useMemo(() => buildServiceFlowRoleOptions(snapshot), [snapshot]);
   const roleOptions = useMemo(
-    () => allRoleOptions.filter((role) =>
-      roleNoteMatchesServicePlanTeam(role, selectedTeam),
-    ),
+    () => filterServiceFlowRoleOptions(allRoleOptions, selectedTeam),
     [allRoleOptions, selectedTeam],
   );
   const selectedRoleTeamNames = useMemo(() => {
-    const names: string[] = [];
-    const seen = new Set<string>();
-    selectedRoles.forEach((positionId) => {
-      const teamName = roleOptions.find((role) => role.positionId === positionId)?.teamName || "";
-      if (!teamName || seen.has(teamName)) return;
-      seen.add(teamName);
-      names.push(teamName);
-    });
-    return names;
+    return selectedServiceFlowRoleTeamNames(roleOptions, selectedRoles);
   }, [roleOptions, selectedRoles]);
+
+  const updateFilterPreference = useCallback((next: ServiceFlowFilterPreference) => {
+    if (filterPreference) {
+      filterPreference.onChange(next);
+      return;
+    }
+    setLocalSelectedTeam(next.teamName);
+    setLocalSelectedRoles(next.positionIds);
+    writeServicePublicNotesTeam(next.teamName);
+    writeServicePublicNotesRole(next.positionIds);
+  }, [filterPreference]);
 
   useEffect(() => {
     if (!teamLabels.length) {
-      if (selectedTeam) setSelectedTeam("");
+      if (selectedTeam) updateFilterPreference({ teamName: "", positionIds: selectedRoles });
       return;
     }
     if (selectedTeam && teamLabels.includes(selectedTeam)) return;
-    const stored = readServicePublicNotesTeam();
-    if (stored && teamLabels.includes(stored)) {
-      setSelectedTeam(stored);
+    if (filterPreference) {
+      if (selectedTeam) updateFilterPreference({ teamName: "", positionIds: selectedRoles });
       return;
     }
-    if (selectedTeam) setSelectedTeam("");
-  }, [selectedTeam, teamLabels]);
+    const stored = readServicePublicNotesTeam();
+    if (stored && teamLabels.includes(stored)) {
+      updateFilterPreference({ teamName: stored, positionIds: selectedRoles });
+      return;
+    }
+    if (selectedTeam) updateFilterPreference({ teamName: "", positionIds: selectedRoles });
+  }, [filterPreference, selectedRoles, selectedTeam, teamLabels, updateFilterPreference]);
 
   useEffect(() => {
     if (!selectedRoles.length) return;
@@ -540,19 +453,16 @@ const ServicePublicView = ({
       roleOptions.some((role) => role.positionId === positionId),
     );
     if (validRoles.length === selectedRoles.length) return;
-    setSelectedRoles(validRoles);
-    writeServicePublicNotesRole(validRoles);
-  }, [roleOptions, selectedRoles]);
+    updateFilterPreference({ teamName: selectedTeam, positionIds: validRoles });
+  }, [roleOptions, selectedRoles, selectedTeam, updateFilterPreference]);
 
   const handleTeamNotesFilterChange = (value: string) => {
     const next = value === "__everyone__" ? "" : value;
-    setSelectedTeam(next);
-    writeServicePublicNotesTeam(next);
+    updateFilterPreference({ teamName: next, positionIds: selectedRoles });
   };
 
   const handleRoleNotesFilterChange = (positionIds: string[]) => {
-    setSelectedRoles(positionIds);
-    writeServicePublicNotesRole(positionIds);
+    updateFilterPreference({ teamName: selectedTeam, positionIds });
   };
 
   const jumpToCurrent = () => {
@@ -758,7 +668,7 @@ const ServicePublicView = ({
                           value={selectedRoles}
                           onValueChange={handleRoleNotesFilterChange}
                           options={roleOptions}
-                          teamFilterStorageKey="worshipsyncServicePublicRoleTeamFilter"
+                          teamFilterStorageKey={rolePickerTeamFilterStorageKey}
                           lockedTeamName={selectedTeam || undefined}
                           ariaLabel="Filter role notes"
                           label="Role notes"
@@ -832,12 +742,17 @@ const ServicePublicView = ({
                       const isCurrent = progress?.current?.item.id === item.id;
                       const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
                       const visibleAudienceNotes = !isGeneralView
-                        ? visibleAudienceNotesForItem(item, selectedTeam, selectedRoles, selectedRoleTeamNames)
+                        ? visibleServiceFlowNotesForItem(item, selectedTeam, selectedRoles, selectedRoleTeamNames)
                         : [];
                       const visibleMicrophoneAssignments = !isGeneralView
-                        ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRoles)
+                        ? visibleServiceFlowMicrophoneAssignmentsForItem(item, selectedTeam, selectedRoles)
                         : [];
-                      const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRoles, selectedRoleTeamNames);
+                      const equipmentAssignments: PublicServiceFlowEquipmentAssignment[] =
+                        !isGeneralView ? item.equipmentAssignments || [] : [];
+                      const hasNotes = !isGeneralView && (
+                        serviceFlowItemHasVisibleAudienceContent(item, selectedTeam, selectedRoles, selectedRoleTeamNames)
+                        || equipmentAssignments.length > 0
+                      );
                       const durationLabel = item.durationSeconds > 0
                         ? formatServicePlanDuration(item)
                         : "";
@@ -943,6 +858,23 @@ const ServicePublicView = ({
                                               assignment.holderName || "",
                                             ]}
                                             theme={theme}
+                                          />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {equipmentAssignments.length ? (
+                                    <div>
+                                      <p className={cn("mb-1 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
+                                        Equipment
+                                      </p>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {equipmentAssignments.map((assignment) => (
+                                          <ServiceEquipmentChip
+                                            key={assignment.equipment.id}
+                                            equipment={assignment.equipment}
+                                            details={assignment.holderName ? [assignment.holderName] : []}
+                                            className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
                                           />
                                         ))}
                                       </div>

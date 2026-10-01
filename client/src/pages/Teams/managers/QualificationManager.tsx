@@ -33,14 +33,9 @@ import EntityRow from "../components/EntityRow";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
-import {
-  formatQualificationAreaSaveToast,
-  formatQualificationLevelSaveToast,
-} from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
@@ -238,7 +233,6 @@ const QualificationManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
-    const saveToastMessage = formatQualificationAreaSaveToast(wasEditing, payload);
     const optimisticArea: TeamQualificationArea = {
       churchId,
       areaId: localAreaId,
@@ -255,8 +249,6 @@ const QualificationManager = ({
       if (!wasEditing) {
         onAreaSaved(response.area, localAreaId);
       }
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(wasEditing?.areaId || response.area.areaId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         if (editingRef.current?.areaId === wasEditing.areaId) {
@@ -328,7 +320,6 @@ const QualificationManager = ({
   // represents work that the operator could discard.
   const hasPendingChanges =
     showCreate && (hasPendingAreaChanges || hasPendingLevelChanges);
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingAreaChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const saveLevel = async (levelId?: string) => {
@@ -346,10 +337,6 @@ const QualificationManager = ({
     }
     const savingKey = levelId ? `level:${levelId}` : "level:new";
     setLevelSavingKey(savingKey);
-    const existingLevel = levelId
-      ? levels.find((level) => level.levelId === levelId) || null
-      : null;
-    const saveToastMessage = formatQualificationLevelSaveToast(existingLevel, payload);
     const localLevel: TeamQualificationLevel = {
       churchId,
       levelId: levelId || `local-level-${generateRandomId()}`,
@@ -380,8 +367,6 @@ const QualificationManager = ({
           rank: response.level.rank,
         },
       }));
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(response.level.levelId, levelId ? "update" : "create");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification level.");
       onArchived();
@@ -509,7 +494,6 @@ const QualificationManager = ({
             entityLabel="qualification area"
             isCreate={!editing}
             isSaving={isSavingCurrent}
-            successMode={saveFeedback.successMode}
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
@@ -552,6 +536,12 @@ const QualificationManager = ({
                   description: level.description || "",
                   rank: level.rank,
                 };
+                const hasPendingLevelChanges = JSON.stringify(levelDraft) !== JSON.stringify({
+                  areaId: level.areaId,
+                  name: level.name,
+                  description: level.description || "",
+                  rank: level.rank,
+                });
                 return (
                   <div
                     key={level.levelId}
@@ -563,7 +553,6 @@ const QualificationManager = ({
                       value={levelDraft.name}
                       placeholder="Level 2"
                       onChange={(name) => {
-                        saveFeedback.clearSuccess(`level:${level.levelId}`);
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: { ...levelDraft, name: String(name) },
@@ -576,7 +565,6 @@ const QualificationManager = ({
                       type="number"
                       value={levelDraft.rank}
                       onChange={(rank) => {
-                        saveFeedback.clearSuccess(`level:${level.levelId}`);
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: {
@@ -591,16 +579,16 @@ const QualificationManager = ({
                       aria-label={
                         levelSavingKey === `level:${level.levelId}`
                           ? `Saving ${level.name}`
-                          : saveFeedback.successModeFor(`level:${level.levelId}`)
+                          : !hasPendingLevelChanges
                             ? `Saved ${level.name}`
                             : `Save ${level.name}`
                       }
                       aria-busy={levelSavingKey === `level:${level.levelId}` || undefined}
-                      disabled={levelSavingKey === `level:${level.levelId}`}
-                      svg={levelSavingKey === `level:${level.levelId}` || saveFeedback.successModeFor(`level:${level.levelId}`) ? undefined : Save}
+                      disabled={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges}
+                      svg={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges ? undefined : Save}
                       onClick={() => void saveLevel(level.levelId)}
                     >
-                      {levelSavingKey === `level:${level.levelId}` ? "Saving…" : saveFeedback.successModeFor(`level:${level.levelId}`) ? <><Check aria-hidden="true" className="size-4 shrink-0" />Saved</> : "Save"}
+                      {levelSavingKey === `level:${level.levelId}` ? "Saving…" : !hasPendingLevelChanges ? <><Check aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}
                     </Button>
                   </div>
                 );
@@ -612,7 +600,6 @@ const QualificationManager = ({
                   value={newLevelName}
                   placeholder="New level"
                   onChange={(name) => {
-                    saveFeedback.clearSuccess("level:new");
                     setNewLevelName(String(name));
                   }}
                 />
@@ -622,7 +609,6 @@ const QualificationManager = ({
                   type="number"
                   value={newLevelRank}
                   onChange={(rank) => {
-                    saveFeedback.clearSuccess("level:new");
                     setNewLevelRank(String(rank));
                   }}
                 />

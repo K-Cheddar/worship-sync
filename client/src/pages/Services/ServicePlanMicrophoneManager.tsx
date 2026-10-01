@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Eye, Mic2, Pencil, Save, Trash2, X } from "lucide-react";
+import { Check, Eye, Mic2, Pencil, Save, Trash2, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import ColorField from "../../components/ColorField/ColorField";
@@ -19,7 +19,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import generateRandomId from "../../utils/generateRandomId";
-import WorshipSyncIcon from "../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../components/icons/PositionIconBadge";
 import type { PositionIcon } from "../../components/icons/iconTypes";
 import {
   teamsRowIconButtonClassName,
@@ -53,6 +53,8 @@ export type MicrophoneEditorActions = {
   disabled: boolean;
   editing: boolean;
   saving: boolean;
+  saved: boolean;
+  hasPendingChanges: boolean;
   canAdd: boolean;
   canSave: boolean;
   hasIncompleteMicrophone: boolean;
@@ -199,16 +201,16 @@ const ServicePlanMicrophoneManager = ({
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [isEditingVisibility, setIsEditingVisibility] = useState(false);
   const [visibilityTeamFilter, setVisibilityTeamFilter] = useState(readStoredTeamFilter);
-  const savedFingerprint = useMemo(
-    () => JSON.stringify({ microphones, microphoneAudiences }),
-    [microphones, microphoneAudiences],
-  );
-  const hasUnsavedChanges = JSON.stringify({
-    microphones: draft,
-    microphoneAudiences: audienceDraft,
-  }) !== savedFingerprint;
+  const normalizeByKey = <T,>(items: T[], getKey: (item: T) => string) =>
+    [...items].sort((a, b) => getKey(a).localeCompare(getKey(b)));
+  const hasUnsavedMicrophoneChanges =
+    JSON.stringify(normalizeByKey(draft, (item) => item.id)) !==
+    JSON.stringify(normalizeByKey(microphones, (item) => item.id));
   const hasUnsavedVisibilityChanges =
-    JSON.stringify(audienceDraft) !== JSON.stringify(microphoneAudiences);
+    JSON.stringify(normalizeByKey(audienceDraft, (item) => item.positionId)) !==
+    JSON.stringify(normalizeByKey(microphoneAudiences, (item) => item.positionId));
+  const hasUnsavedChanges =
+    hasUnsavedMicrophoneChanges || hasUnsavedVisibilityChanges;
 
   const positionTeams = useMemo(
     () => collectPositionTeams(positionNoteOptions),
@@ -311,8 +313,7 @@ const ServicePlanMicrophoneManager = ({
   };
 
   const saveVisibility = async () => {
-    const saved = await onSave(microphones, audienceDraft, "visibility");
-    if (saved) setIsEditingVisibility(false);
+    await onSave(microphones, audienceDraft, "visibility");
   };
 
   const saveMicrophones = async () => {
@@ -326,8 +327,10 @@ const ServicePlanMicrophoneManager = ({
     disabled,
     editing: isEditing,
     saving,
+    saved: !hasUnsavedMicrophoneChanges,
+    hasPendingChanges: hasUnsavedMicrophoneChanges,
     canAdd: !isLocked && draft.length < MAX_SERVICE_PLAN_MICROPHONES,
-    canSave: !isLocked && !hasIncompleteMicrophone,
+    canSave: !isLocked && hasUnsavedMicrophoneChanges && !hasIncompleteMicrophone,
     hasIncompleteMicrophone,
     onStartEditing: () => onStartEditing?.(),
     onAdd: addMicrophone,
@@ -519,7 +522,11 @@ const ServicePlanMicrophoneManager = ({
                         className="flex min-h-8 items-center gap-2 rounded-md border border-gray-800 bg-gray-900/60 px-2 py-1.5 text-sm text-gray-300"
                       >
                         {position.icon ? (
-                          <WorshipSyncIcon icon={position.icon} className="size-4 shrink-0 text-orange-300" />
+                          <PositionIconBadge
+                            icon={position.icon}
+                            className="size-6 rounded"
+                            iconClassName="size-4"
+                          />
                         ) : (
                           <span className="size-4 shrink-0" aria-hidden />
                         )}
@@ -567,7 +574,11 @@ const ServicePlanMicrophoneManager = ({
                         label={
                           <>
                             {position.icon ? (
-                              <WorshipSyncIcon icon={position.icon} className="size-4 shrink-0 text-orange-300" />
+                              <PositionIconBadge
+                                icon={position.icon}
+                                className="size-6 rounded"
+                                iconClassName="size-4"
+                              />
                             ) : null}
                             <span className="truncate">
                               {positionOptionLabel(position)}
@@ -653,18 +664,19 @@ const ServicePlanMicrophoneManager = ({
                   variant="tertiary"
                   svg={X}
                   disabled={saving}
-                  onClick={cancelVisibilityEditing}
+                  onClick={hasUnsavedVisibilityChanges ? cancelVisibilityEditing : () => setIsEditingVisibility(false)}
                 >
-                  Cancel
+                  {hasUnsavedVisibilityChanges ? "Cancel" : "Close"}
                 </Button>
                 <Button
                   type="button"
                   variant="cta"
-                  svg={Save}
-                  disabled={isVisibilityLocked}
+                  svg={saving || !hasUnsavedVisibilityChanges ? undefined : Save}
+                  aria-busy={saving || undefined}
+                  disabled={isVisibilityLocked || !hasUnsavedVisibilityChanges}
                   onClick={() => void saveVisibility()}
                 >
-                  {saving && isEditingVisibility ? "Saving…" : "Save visibility"}
+                  {saving && isEditingVisibility ? "Saving…" : !hasUnsavedVisibilityChanges ? <><Check aria-hidden="true" data-testid="service-plan-visibility-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save visibility"}
                 </Button>
               </div>
             ) : null}

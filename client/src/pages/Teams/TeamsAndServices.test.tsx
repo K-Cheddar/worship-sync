@@ -352,7 +352,8 @@ const waitForScheduleGrid = async () => {
   await waitForTeamsBootstrap();
   if (!screen.queryByRole("button", { name: /Sunday Vocal/i })) {
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Schedule history/i }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
     await user.click(await screen.findByRole("button", { name: /July/i }));
   }
   await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
@@ -1250,8 +1251,11 @@ describe("Teams", () => {
     const user = userEvent.setup();
     renderTeams();
     await waitForTeamsBootstrap();
-    await user.click(screen.getByRole("button", { name: /Schedule history/i }));
-    await user.click(await screen.findByRole("button", { name: /June/i }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
+    const historySchedule = await screen.findByRole("button", { name: /June/i });
+    expect(historySchedule).toHaveClass("cursor-pointer");
+    await user.click(historySchedule);
 
     await waitFor(() => {
       expect(mockGetTeamScheduleDetail).toHaveBeenCalledWith("church-1", scheduleId);
@@ -1562,8 +1566,10 @@ describe("Teams", () => {
 
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
     await user.click(screen.getByRole("button", { name: /Icon picker/i }));
-    await user.click(screen.getByRole("tab", { name: /^Tabler$/i }));
-    await user.click(await screen.findByRole("button", { name: /^tabler: video$/i }));
+    await user.click(screen.getByRole("tab", { name: /^All icons$/i }));
+    await user.type(screen.getByPlaceholderText("Search icons…"), "video");
+    const videoButtons = await screen.findAllByRole("button", { name: "Video" });
+    await user.click(videoButtons[videoButtons.length - 1]);
     await user.click(screen.getByRole("button", { name: "Choose custom icon color" }));
     await user.click(screen.getByRole("button", { name: "Color #22C55E" }));
     await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
@@ -1683,6 +1689,7 @@ describe("Teams", () => {
       await screen.findByRole("heading", { name: /Edit team/i }),
     ).toBeInTheDocument();
 
+    await user.type(screen.getByLabelText(/^Name/i), " Updated");
     await user.click(screen.getByRole("button", { name: /Save team/i }));
 
     await waitFor(() => {
@@ -1691,7 +1698,7 @@ describe("Teams", () => {
     // Saving commits the team and leaves the editor open on every width.
     // Back or Cancel is what returns to the list.
     expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Create team/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled();
   });
 
   it("shows Close for an unchanged team and Cancel after an edit", async () => {
@@ -2555,6 +2562,7 @@ describe("Teams", () => {
   });
 
   it("loads Teams in view-only mode without schedule edit actions", async () => {
+    const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -2569,11 +2577,14 @@ describe("Teams", () => {
     await waitForScheduleGrid();
 
     expect(
-      screen.queryByRole("button", { name: /Create custom schedule/i }),
+      screen.queryByRole("button", { name: /Create schedule/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /More schedule options/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /More schedule options/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    expect(screen.getByRole("menuitem", { name: "Schedule history" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Create schedule" })).not.toBeInTheDocument();
   });
 
   it("keeps Messages in schedule overflow and opens Members beside the workspace on narrow layouts", async () => {
@@ -2586,7 +2597,9 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    await user.click(screen.getByRole("button", { name: "Schedule history" }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    expect(screen.getByRole("menuitem", { name: "Create schedule" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
     await user.click(await screen.findByRole("button", { name: /July/i }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "All schedules" })).not.toBeInTheDocument());
     await waitForScheduleGrid();
@@ -2653,6 +2666,21 @@ describe("Teams", () => {
     expect(panelArrow).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("keeps schedule staffing status separate from the navigable date range", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByText("Jul 1, 2026 – Jul 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/1 service · .*positions filled/);
+    expect(
+      screen.queryByText(/Jul 1, 2026 – Jul 31, 2026 · .*positions filled/),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
@@ -2662,14 +2690,22 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("button", { name: /Create custom schedule/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Send schedule/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    const scheduleActionItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
+    expect(scheduleActionItems.slice(0, 2)).toEqual(["Create schedule", "Schedule history"]);
+    await user.click(screen.getByRole("menuitem", { name: "Create schedule" }));
+    expect(await screen.findByRole("heading", { name: "New schedule" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitForScheduleGrid();
     await user.click(screen.getByRole("button", { name: /Send schedule/i }));
     expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mockSendTeamSchedule).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /Create custom schedule/i }));
-    expect(await screen.findByRole("heading", { name: "New custom schedule" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Create schedule" }));
+    expect(await screen.findByRole("heading", { name: "New schedule" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Start date/)).toBeInTheDocument();
     expect(screen.getByLabelText(/End date/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Services" })).toBeInTheDocument();

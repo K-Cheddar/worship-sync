@@ -100,7 +100,6 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
 
   const handleSave = async (payload: ItemDetailsSavePayload) => {
     await persistSongPatch(payload);
-    setEditing(false);
   };
 
   const saveLyrics = useCallback(async ({

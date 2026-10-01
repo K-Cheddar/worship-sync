@@ -73,9 +73,9 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
-import { formatIntakeFormSaveToast } from "../teamsSaveToasts";
 import { getUpcomingAvailabilitySuggestion } from "../intakeAvailabilitySuggestion";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
+import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
@@ -254,6 +254,16 @@ const IntakeManager = ({
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientBusy, setRecipientBusy] = useState(false);
   const [recipientActionKey, setRecipientActionKey] = useState("");
+  const [recipientSmsPreview, setRecipientSmsPreview] = useState<{
+    intentId: string;
+    approvalVersion: string;
+    recipientName: string;
+    phoneNumberSnapshot: string;
+    message: string;
+    segmentCount: number;
+    recipient?: TeamIntakeRecipient;
+  } | null>(null);
+  const recipientSmsSendLockRef = useRef(false);
   const editingFormHasIssuedRequests = Boolean(editing && (
     intakeRecipients.some((recipient) => recipient.formId === editing.formId) ||
     submissions.some((submission) => submission.formId === editing.formId) ||
@@ -266,9 +276,16 @@ const IntakeManager = ({
     setRecipientMemberIds(new Set());
     setRecipientSearch("");
   };
+  const normalizeDraft = (value: typeof draft) => ({
+    ...value,
+    availabilityServices: [...value.availabilityServices].sort((a, b) => a.serviceId.localeCompare(b.serviceId)),
+    availabilityOccurrences: [...value.availabilityOccurrences].sort((a, b) => a.occurrenceId.localeCompare(b.occurrenceId)),
+    teamIds: [...value.teamIds].sort(),
+    enabledFields: [...(value.enabledFields || [])].sort(),
+  });
   const hasPendingChanges = editing
-    ? JSON.stringify(draft) !==
-      JSON.stringify({
+    ? JSON.stringify(normalizeDraft(draft)) !==
+      JSON.stringify(normalizeDraft({
         name: editing.name,
         startDate: editing.startDate,
         endDate: editing.endDate,
@@ -283,8 +300,8 @@ const IntakeManager = ({
         positionsMessage: editing.positionsMessage || "",
         availabilityMessage: editing.availabilityMessage || "",
         notesMessage: editing.notesMessage || "",
-      })
-    : JSON.stringify(draft) !== JSON.stringify(emptyDraft());
+      }))
+    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(emptyDraft()));
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const closePanel = () => {
@@ -488,12 +505,6 @@ const IntakeManager = ({
       return;
     }
     const payload = buildPayload();
-    const saveToastMessage = formatIntakeFormSaveToast(editing, payload, {
-      teamNameById: new Map(teams.map((team) => [team.teamId, team.name])),
-      serviceNameById: new Map(
-        services.map((service) => [service.serviceId, service.name]),
-      ),
-    });
     setSaving(true);
     try {
       if (editing) {
@@ -508,7 +519,6 @@ const IntakeManager = ({
         setShowSendForm(false);
         setEditing(null);
         setDraft(emptyDraft());
-        if (saveToastMessage) showToast(saveToastMessage, "success");
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
         onFormSaved(response.form);
@@ -518,7 +528,6 @@ const IntakeManager = ({
               buildTeamIntakePublicUrl(response.publicToken),
           );
         }
-        if (saveToastMessage) showToast(saveToastMessage, "success");
         setSelectedForm(response.form);
         setShowCreate(false);
         setShowEditForm(false);
@@ -770,6 +779,7 @@ const IntakeManager = ({
   const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
     if (!canEdit || recipientActionKey || recipient.revokedAt) return;
     setRecipientActionKey(`${recipient.recipientId}:sms`);
+    let awaitingConfirmation = false;
     try {
       const prepared = await prepareTeamIntakeRecipientSms(
         churchId,
@@ -781,9 +791,31 @@ const IntakeManager = ({
         return;
       }
       const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
-      if (!window.confirm(`Send one intake form SMS to ${recipientName} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
-      const response = await sendNotificationIntent(churchId, prepared.preview.intentId, prepared.preview.approvalVersion);
-      if (prepared.recipient) onRecipientSaved(prepared.recipient);
+      setRecipientSmsPreview({
+        intentId: prepared.preview.intentId,
+        approvalVersion: prepared.preview.approvalVersion,
+        recipientName,
+        phoneNumberSnapshot: prepared.preview.phoneNumberSnapshot,
+        message: prepared.preview.message,
+        segmentCount: prepared.preview.segmentCount,
+        recipient: prepared.recipient,
+      });
+      awaitingConfirmation = true;
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not prepare this SMS.");
+    } finally {
+      if (!awaitingConfirmation) setRecipientActionKey("");
+    }
+  };
+
+  const confirmRecipientSms = async () => {
+    const preview = recipientSmsPreview;
+    if (!preview || recipientSmsSendLockRef.current) return;
+    recipientSmsSendLockRef.current = true;
+    setRecipientSmsPreview(null);
+    try {
+      const response = await sendNotificationIntent(churchId, preview.intentId, preview.approvalVersion);
+      if (preview.recipient) onRecipientSaved(preview.recipient);
       const attempt = response.attempt;
       if (!attempt) throw new Error(response.errorMessage || "The provider outcome is uncertain. Refresh delivery history before trying again.");
       setSmsDeliveryAttempts((current) => [
@@ -795,8 +827,15 @@ const IntakeManager = ({
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this SMS.");
     } finally {
+      recipientSmsSendLockRef.current = false;
       setRecipientActionKey("");
     }
+  };
+
+  const cancelRecipientSms = () => {
+    if (recipientSmsSendLockRef.current) return;
+    setRecipientSmsPreview(null);
+    setRecipientActionKey("");
   };
 
   const revokeRecipient = async (recipient: TeamIntakeRecipient) => {
@@ -2064,6 +2103,15 @@ const IntakeManager = ({
             ? renderSubmissionsPanel()
             : null}
       </CreatePanel>
+      {recipientSmsPreview ? <SmsConfirmationModal
+        isOpen
+        recipientName={recipientSmsPreview.recipientName}
+        phoneNumberSnapshot={recipientSmsPreview.phoneNumberSnapshot}
+        message={recipientSmsPreview.message}
+        segmentCount={recipientSmsPreview.segmentCount}
+        onCancel={cancelRecipientSms}
+        onSend={() => void confirmRecipientSms()}
+      /> : null}
     </div>
   );
 };

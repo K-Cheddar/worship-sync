@@ -103,13 +103,18 @@ const tomorrowService = service("svc-2", "2026-09-14T13:00:00.000Z");
 
 const mockedUseChat = jest.mocked(useChat);
 
-const renderViewer = (services: ServiceTime[], canViewTeams = false) => {
+const renderViewer = (
+  services: ServiceTime[],
+  canViewTeams = false,
+  contextOverrides: Record<string, unknown> = {},
+) => {
   store.dispatch(initiateServices(services));
   const context = createMockGlobalContext({
     churchId: "church-1",
     churchName: "Test Church",
     canViewServices: true,
     canViewTeams,
+    ...contextOverrides,
   });
   return render(
     <Provider store={store}>
@@ -246,6 +251,127 @@ describe("CurrentServiceViewer", () => {
       "svc-1@2026-09-13",
     );
     expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps branding and role-note filtering when the saved plan is unpublished", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    const unpublishedPlan: ServicePlan = {
+      ...plan,
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          teamNotes: [
+            ...plan.sections[0].elements[0].teamNotes!,
+            {
+              id: "role-note-1",
+              label: "Worship Team · Lead Vocal",
+              scope: "role",
+              positionId: "lead-vocal",
+              teamId: "worship",
+              teamName: "Worship Team",
+              note: {
+                blocks: [{ type: "paragraph", spans: [{ text: "Lead vocal cue." }] }],
+              },
+            },
+            {
+              id: "role-note-2",
+              label: "Worship Team · Drums",
+              scope: "role",
+              positionId: "drums",
+              teamId: "worship",
+              teamName: "Worship Team",
+              note: {
+                blocks: [{ type: "paragraph", spans: [{ text: "Drums cue." }] }],
+              },
+            },
+          ],
+        }],
+      }],
+    };
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan: unpublishedPlan,
+      snapshot: null,
+    });
+
+    renderViewer([morningService], true, {
+      churchBranding: {
+        mission: "",
+        vision: "",
+        logos: {
+          square: {
+            url: "https://res.cloudinary.com/example/image/upload/v1/church.png",
+            publicId: "church",
+          },
+        },
+        colors: [
+          { label: "Primary", value: "#112233" },
+          { label: "Accent", value: "#AABBCC" },
+        ],
+      },
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    expect(screen.getByText("Test Church")).toBeInTheDocument();
+    expect(screen.getByAltText("")).toHaveAttribute(
+      "src",
+      "https://res.cloudinary.com/example/image/upload/v1/church.png",
+    );
+    expect(screen.getByRole("heading", { name: "Worship" })).toHaveStyle({
+      color: "#AABBCC",
+    });
+    expect(screen.getByRole("combobox", { name: /Team notes/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filter role notes" })).toBeInTheDocument();
+    expect(screen.getByText("Lead vocal cue.")).toBeInTheDocument();
+    expect(screen.getByText("Drums cue.")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+    await user.click(screen.getByRole("button", { name: /Lead Vocal/ }));
+    expect(screen.getByText("Lead vocal cue.")).toBeInTheDocument();
+    expect(screen.queryByText("Drums cue.")).not.toBeInTheDocument();
+  });
+
+  it("uses the published server snapshot when one is available", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    const publishedSnapshot = buildServicePlanFlowSnapshot({
+      plan,
+      startsAt: "2026-09-13T13:00:00.000Z",
+      churchName: "Published Church",
+      branding: {
+        churchLogoUrl: "https://res.cloudinary.com/example/image/upload/published.png",
+        churchPrimaryColor: "#445566",
+        churchSecondaryColor: "#DDEEFF",
+      },
+    });
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan,
+      snapshot: publishedSnapshot,
+    });
+
+    renderViewer([morningService], false, {
+      churchBranding: {
+        mission: "",
+        vision: "",
+        logos: { square: null, wide: null },
+        colors: [],
+      },
+    });
+
+    expect(await screen.findByText("Published Church")).toBeInTheDocument();
+    expect(screen.getByAltText("")).toHaveAttribute(
+      "src",
+      "https://res.cloudinary.com/example/image/upload/published.png",
+    );
+    expect(screen.getByRole("heading", { name: "Worship" })).toHaveStyle({
+      color: "#DDEEFF",
+    });
   });
 
   it("shows a clear empty state when the selected service has no saved plan", async () => {

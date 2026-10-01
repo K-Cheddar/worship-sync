@@ -12,7 +12,7 @@ import type {
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
-import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
+import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, upgradeLegacyImportedDescriptionTitles } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
 import { copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
 import {
@@ -468,7 +468,6 @@ const reconcileImportedSourceAssignees = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
   previousLedBy: string,
-  acceptTitlePeople: boolean,
 ): { assignees: ServicePlanAssignee[]; managedAssignees: NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"] } => {
   const existing = getServicePlanElementAssignees(current).map((assignee) => ({ ...assignee }));
   const existingOwnership = current.servicePlanningImport?.managedAssignees || [];
@@ -485,12 +484,19 @@ const reconcileImportedSourceAssignees = (
       ownership: { id: assignee.id, fields: ["ledBy" as const], fingerprint: assigneeFingerprint(assignee) },
     }];
   });
-  const incomingTitle = acceptTitlePeople
-    ? getServicePlanElementAssignees(imported).flatMap((assignee) => {
-        const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
-        return ownership?.fields.includes("title") && !ownership.fields.includes("ledBy") ? [{ assignee, ownership }] : [];
-      })
-    : [];
+  const incomingTitle = getServicePlanElementAssignees(imported).flatMap((assignee) => {
+    const ownership = imported.servicePlanningImport?.managedAssignees?.find((item) => item.id === assignee.id);
+    if (!ownership?.fields.includes("title") || ownership.fields.includes("ledBy")) return [];
+    const priorTitleDecision = current.importAmbiguity?.parts.find((part) =>
+      (part.sourceField || "title") === "title" &&
+      (part.kind === "person" || part.kind === "description") &&
+      normalized(part.value) === normalized(assignee.name || ""),
+    );
+    // The saved destination belongs to this exact source value. A reviewed
+    // move away from assignees must survive unchanged-title refreshes.
+    if (priorTitleDecision && priorTitleDecision.destination !== "assignee") return [];
+    return [{ assignee, ownership }];
+  });
   const ownedOld = new Set<number>();
   const currentByIncoming = new Map<number, number>();
   const operatorOwnedMatches = new Set<number>();
@@ -942,7 +948,6 @@ const mergeElement = (
       current,
       imported,
       currentState.applied.ledBy,
-      changedAcceptedTitle,
     );
     if (JSON.stringify(reconciledAssignees.assignees) !== JSON.stringify(getServicePlanElementAssignees(current))) {
       next.assignees = reconciledAssignees.assignees;
@@ -1116,7 +1121,7 @@ const mergeElement = (
       status: "unresolved",
     };
   }
-  return next;
+  return upgradeLegacyImportedDescriptionTitles(next, imported);
 };
 
 /**

@@ -86,8 +86,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   // Any action that 401s (via the central API layer) shows the refresh toast,
   // even if the call site doesn't handle the error itself.
   useEffect(() => {
-    return registerAuthErrorHandler(() => showAuthErrorToast(showToast));
-  }, [showToast]);
+    return registerAuthErrorHandler(() =>
+      showAuthErrorToast(showToast, removeToast),
+    );
+  }, [removeToast, showToast]);
 
   useEffect(() => {
     return registerPresentationSyncErrorHandler((message) =>

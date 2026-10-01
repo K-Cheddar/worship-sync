@@ -643,7 +643,7 @@ const CurrentServiceWorkspace = () => {
   const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
   const microphoneMutationSeqRef = useRef(0);
   const iemMutationSeqRef = useRef(0);
-  const equipmentMutationSeqRef = useRef(0);
+  const equipmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const [timingPlan, setTimingPlan] =
     useState<ServicePlanTimingSource | null>(null);
 
@@ -1074,6 +1074,15 @@ const CurrentServiceWorkspace = () => {
     [assignmentRows, canLoadRoleData, roleTeams],
   );
 
+  const enqueueEquipmentSave = <T,>(task: () => Promise<T>) => {
+    const run = equipmentSaveQueueRef.current.then(task, task);
+    equipmentSaveQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
   /**
    * Day-level microphone allocation, saved straight to the owning schedule.
    * The response carries the updated schedule, so the roster and the plan's
@@ -1082,8 +1091,8 @@ const CurrentServiceWorkspace = () => {
   const saveScheduledMicrophones = useCallback(
     async (row: TeamsAssignmentSummaryRow, microphoneIds: string[]) => {
       if (!churchId || !row.scheduleId) return;
+      const scheduleId = row.scheduleId;
       const mutationSeq = ++microphoneMutationSeqRef.current;
-      const equipmentMutationSeq = ++equipmentMutationSeqRef.current;
       setSavingMicrophoneSlot(teamEquipmentSlotKey(row));
       // Success feedback is the toolbar Syncing → Synced chip (no toast).
       dispatch(
@@ -1092,24 +1101,24 @@ const CurrentServiceWorkspace = () => {
         ),
       );
       try {
-        const result = await updateTeamScheduleAssignmentMicrophones(
-          churchId,
-          row.scheduleId,
-          {
-            serviceId: row.occurrenceId,
-            positionSlotKey: row.columnKey,
-            microphoneIds,
-          },
+        const result = await enqueueEquipmentSave(() =>
+          updateTeamScheduleAssignmentMicrophones(
+            churchId,
+            scheduleId,
+            {
+              serviceId: row.occurrenceId,
+              positionSlotKey: row.columnKey,
+              microphoneIds,
+            },
+          ),
         );
-        if (equipmentMutationSeqRef.current === equipmentMutationSeq) {
-          setRoleScheduleSource((current) =>
-            current.map((schedule) =>
-              schedule.scheduleId === result.schedule.scheduleId
-                ? result.schedule
-                : schedule,
-            ),
-          );
-        }
+        setRoleScheduleSource((current) =>
+          current.map((schedule) =>
+            schedule.scheduleId === result.schedule.scheduleId
+              ? result.schedule
+              : schedule,
+          ),
+        );
       } catch (error) {
         showApiErrorToast(
           showToast,
@@ -1133,8 +1142,8 @@ const CurrentServiceWorkspace = () => {
   const saveScheduledIems = useCallback(
     async (row: TeamsAssignmentSummaryRow, iemIds: string[]) => {
       if (!churchId || !row.scheduleId) return;
+      const scheduleId = row.scheduleId;
       const mutationSeq = ++iemMutationSeqRef.current;
-      const equipmentMutationSeq = ++equipmentMutationSeqRef.current;
       setSavingIemSlot(teamEquipmentSlotKey(row));
       dispatch(
         autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -1142,24 +1151,24 @@ const CurrentServiceWorkspace = () => {
         ),
       );
       try {
-        const result = await updateTeamScheduleAssignmentIems(
-          churchId,
-          row.scheduleId,
-          {
-            serviceId: row.occurrenceId,
-            positionSlotKey: row.columnKey,
-            iemIds,
-          },
+        const result = await enqueueEquipmentSave(() =>
+          updateTeamScheduleAssignmentIems(
+            churchId,
+            scheduleId,
+            {
+              serviceId: row.occurrenceId,
+              positionSlotKey: row.columnKey,
+              iemIds,
+            },
+          ),
         );
-        if (equipmentMutationSeqRef.current === equipmentMutationSeq) {
-          setRoleScheduleSource((current) =>
-            current.map((schedule) =>
-              schedule.scheduleId === result.schedule.scheduleId
-                ? result.schedule
-                : schedule,
-            ),
-          );
-        }
+        setRoleScheduleSource((current) =>
+          current.map((schedule) =>
+            schedule.scheduleId === result.schedule.scheduleId
+              ? result.schedule
+              : schedule,
+          ),
+        );
       } catch (error) {
         showApiErrorToast(showToast, error, "Could not update team IEM assignments.");
       } finally {

@@ -23,6 +23,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import {
   getServicePlan,
   getServicePlanAssignments,
+  getServicePlanViewer,
   listServicePlans,
 } from "../../api/auth";
 import {
@@ -44,6 +45,7 @@ import { toTeamService } from "../Teams/teamsUtils";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
 import type { ServicePlan, ServicePlanSummary } from "../../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningImport";
+import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
   chooseControllerServicePlanKey,
   servicePlanToSummary,
@@ -90,6 +92,8 @@ export const useCurrentServicePlanSource = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
   const [plansLoaded, setPlansLoaded] = useState(false);
+  const [selectedPlanSnapshot, setSelectedPlanSnapshot] =
+    useState<PublicServiceFlowSnapshot | null>(null);
 
   const planRef = useRef<ServicePlan | null>(null);
   const selectedPlanKeyRef = useRef<string | null>(null);
@@ -170,6 +174,7 @@ export const useCurrentServicePlanSource = () => {
     returnOccurrenceToCurrent();
     automaticSelectionContextRef.current = undefined;
     planRef.current = null;
+    setSelectedPlanSnapshot(null);
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     dispatch(clearServicePlanningPreview());
@@ -184,6 +189,7 @@ export const useCurrentServicePlanSource = () => {
     // selected plan reconciliation below will rebuild the preview for the new
     // outline and its identity checks prevent old-outline writes.
     planRef.current = null;
+    setSelectedPlanSnapshot(null);
     dispatch(clearServicePlanningPreview());
   }, [dispatch, selectedOutlineId]);
 
@@ -196,6 +202,7 @@ export const useCurrentServicePlanSource = () => {
       // the operator was already in a manual override so a deleted automatic
       // plan does not masquerade as a manual choice.
       planRef.current = null;
+      setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = null;
       setSelectedPlanKey(null);
       setSavedPlans((current) =>
@@ -256,6 +263,7 @@ export const useCurrentServicePlanSource = () => {
       planListActiveRequestIdRef.current = null;
       manualSelectionRef.current = false;
       planRef.current = null;
+      setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = null;
       setSavedPlans([]);
       setPlansLoaded(false);
@@ -283,6 +291,7 @@ export const useCurrentServicePlanSource = () => {
     generationRef.current += 1;
     manualSelectionRef.current = false;
     planRef.current = null;
+    setSelectedPlanSnapshot(null);
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
@@ -436,15 +445,29 @@ export const useCurrentServicePlanSource = () => {
             .then((result) => ({ ok: true as const, result }))
             .catch((error: unknown) => ({ ok: false as const, error }))
         : Promise.resolve(null);
+      const viewerSnapshotPromise = planKeyAtStart
+        ? getServicePlanViewer(churchIdAtStart, planKeyAtStart)
+            .then((result) => ({
+              ok: true as const,
+              snapshot: result.snapshot,
+            }))
+            .catch((error: unknown) => ({ ok: false as const, error }))
+        : Promise.resolve(null);
 
       let request!: Promise<void>;
       request = (async () => {
         try {
-          const [planListResult, planResult, assignmentsResult] =
+          const [
+            planListResult,
+            planResult,
+            assignmentsResult,
+            snapshotResult,
+          ] =
             await Promise.all([
               planListPromise,
               planPromise,
               assignmentsPromise,
+              viewerSnapshotPromise,
             ]);
           if (!isCurrentRequest()) return;
 
@@ -489,6 +512,9 @@ export const useCurrentServicePlanSource = () => {
           }
 
           planRef.current = plan;
+          if (snapshotResult?.ok) {
+            setSelectedPlanSnapshot(snapshotResult.snapshot);
+          }
           await applyPlan(
             plan,
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
@@ -649,6 +675,7 @@ export const useCurrentServicePlanSource = () => {
       }
       generationRef.current += 1;
       planRef.current = null;
+      setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = planKey || null;
       setIsLoading(Boolean(planKey));
       dispatch(clearServicePlanningPreview());
@@ -677,6 +704,7 @@ export const useCurrentServicePlanSource = () => {
       // the plan may still be explicitly empty when no saved plan exists.
       generationRef.current += 1;
       planRef.current = null;
+      setSelectedPlanSnapshot(null);
       selectOccurrenceFromSchedule(occurrenceId);
       const nextPlanKey = getServicePlanKey(nextOccurrence);
       const hasSavedPlan = savedPlans.some(
@@ -695,6 +723,7 @@ export const useCurrentServicePlanSource = () => {
     currentVisitUrlSelectionRef.current = false;
     generationRef.current += 1;
     planRef.current = null;
+    setSelectedPlanSnapshot(null);
     automaticSelectionContextRef.current = undefined;
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
@@ -746,6 +775,17 @@ export const useCurrentServicePlanSource = () => {
         if (!churchId || !planRef.current) return;
         const plan = planRef.current;
         const generation = ++generationRef.current;
+        void getServicePlanViewer(churchId, plan.planKey)
+          .then((result) => {
+            if (
+              generation === generationRef.current &&
+              planRef.current === plan &&
+              selectedPlanKeyRef.current === plan.planKey
+            ) {
+              setSelectedPlanSnapshot(result.snapshot);
+            }
+          })
+          .catch(() => undefined);
         void getServicePlanAssignments(churchId, plan.planKey)
           .then((result) => {
             return applyPlan(
@@ -784,6 +824,16 @@ export const useCurrentServicePlanSource = () => {
       if (!isSelectedPlan) return;
       if (!churchId) return;
       planRef.current = event.servicePlan;
+      void getServicePlanViewer(churchId, event.servicePlan.planKey)
+        .then((result) => {
+          if (
+            generation === generationRef.current &&
+            selectedPlanKeyRef.current === event.servicePlan.planKey
+          ) {
+            setSelectedPlanSnapshot(result.snapshot);
+          }
+        })
+        .catch(() => undefined);
       void getServicePlanAssignments(churchId, event.servicePlan.planKey)
         .then((result) =>
           applyPlan(
@@ -847,6 +897,8 @@ export const useCurrentServicePlanSource = () => {
     selectedPlan,
     selectedPlanDetails:
       planRef.current?.planKey === selectedPlanKey ? planRef.current : null,
+    selectedPlanSnapshot:
+      planRef.current?.planKey === selectedPlanKey ? selectedPlanSnapshot : null,
     selectedPlanKey,
     selectPlan,
     occurrences,

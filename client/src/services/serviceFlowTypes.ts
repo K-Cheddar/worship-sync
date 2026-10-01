@@ -54,6 +54,19 @@ export type PublicServiceFlowMicrophoneAssignment = {
   holderName?: string;
 };
 
+export type PublicServiceFlowEquipment = {
+  id: string;
+  name: string;
+  category: "iem";
+  subtype?: string;
+  color?: string;
+};
+
+export type PublicServiceFlowEquipmentAssignment = {
+  equipment: PublicServiceFlowEquipment;
+  holderName?: string;
+};
+
 export type PublicServiceFlowItem = {
   id: string;
   title: string;
@@ -66,6 +79,8 @@ export type PublicServiceFlowItem = {
   notes: ServiceFlowRichText;
   teamNotes?: PublicServiceFlowTeamNote[];
   microphoneAssignments?: PublicServiceFlowMicrophoneAssignment[];
+  /** Controller-only equipment details; omitted from anonymous public views. */
+  equipmentAssignments?: PublicServiceFlowEquipmentAssignment[];
   creditName?: string;
 };
 

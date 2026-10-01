@@ -343,6 +343,7 @@ const ServicePlanningSyncFloatingWindow = ({
     savedPlans,
     selectedPlan,
     selectedPlanDetails,
+    selectedPlanSnapshot,
     selectedPlanKey,
     selectPlan,
     occurrence,
@@ -1154,6 +1155,7 @@ const ServicePlanningSyncFloatingWindow = ({
                 <ControllerServicePlanView
                   key={`${churchId}:${controllerProfile.id}`}
                   plan={selectedPlanDetails}
+                  snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}
                   controllerProfileId={controllerProfile.id}
                   activeItemId={activePlanElementId}

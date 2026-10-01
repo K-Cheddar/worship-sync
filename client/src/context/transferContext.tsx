@@ -11,6 +11,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { ArrowUpRight, ChevronDown, ChevronUp, Presentation, X } from "lucide-react";
 import Button from "../components/Button/Button";
+import Modal from "../components/Modal/Modal";
 import { useDispatch } from "../hooks";
 import { setRequestOpenMediaPanel } from "../store/preferencesSlice";
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
@@ -81,6 +82,7 @@ const TransferPanel = ({ transfers, setTransfers }: {
   setTransfers: React.Dispatch<React.SetStateAction<TransferItem[]>>;
 }) => {
   const [minimized, setMinimized] = useState(false);
+  const [transferToCancel, setTransferToCancel] = useState<CanvaTransfer | null>(null);
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const activeCount = transfers.filter((item) => item.kind === "upload"
@@ -88,14 +90,14 @@ const TransferPanel = ({ transfers, setTransfers }: {
     : !["completed", "partial", "failed", "cancelled"].includes(item.status)).length;
 
   const cancel = (job: CanvaTransfer) => {
-    if (!window.confirm(`Cancel importing “${job.title}”? Pages already saved in Media will remain available.`)) return;
-    job.controller?.abort();
+    setTransferToCancel(job);
   };
 
   const dismiss = (id: string) => setTransfers((current) => current.filter((item) => item.id !== id));
 
   if (!transfers.length) return null;
   return (
+    <>
     <aside aria-label="Transfers" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
         <div className="flex items-center gap-2">
@@ -174,6 +176,22 @@ const TransferPanel = ({ transfers, setTransfers }: {
         })}
       </ul> : <button className="w-full px-3 py-2 text-left text-xs text-gray-300" onClick={() => setMinimized(false)}>{activeCount ? `${activeCount} active transfer${activeCount === 1 ? "" : "s"}` : "Recent transfers"} · Expand</button>}
     </aside>
+    <Modal
+      isOpen={Boolean(transferToCancel)}
+      onClose={() => setTransferToCancel(null)}
+      title="Cancel this import?"
+      description={transferToCancel ? `Cancel importing “${transferToCancel.title}”? Pages already saved in Media will remain available.` : undefined}
+      size="sm"
+    >
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => setTransferToCancel(null)}>Keep importing</Button>
+        <Button onClick={() => {
+          transferToCancel?.controller?.abort();
+          setTransferToCancel(null);
+        }}>Cancel import</Button>
+      </div>
+    </Modal>
+    </>
   );
 };
 

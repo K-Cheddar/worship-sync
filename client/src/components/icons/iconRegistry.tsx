@@ -6,6 +6,15 @@ import { worshipSyncProductionIcons } from "./production";
 export type PositionGlyphProps = SVGProps<SVGSVGElement> & { size?: number | string };
 export type PositionGlyph = ComponentType<PositionGlyphProps>;
 
+export const formatPositionIconLabel = (name: string): string => {
+  const words = name
+    .replace(/[-_]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : name;
+};
+
 const lucideExports = LucideIcons as Record<string, unknown>;
 const excludedLucideExports = new Set([
   "createLucideIcon", "Icon", "icons", "LucideProps", "default",
@@ -119,7 +128,11 @@ let lucideCatalog: IconCatalogEntry[] | null = null;
 export const getLucidePositionIconCatalog = (): IconCatalogEntry[] => {
   lucideCatalog ??= Object.entries(lucideExports)
     .filter(([name, icon]) => /^[A-Z]/.test(name) && !name.startsWith("Lucide") && !excludedLucideExports.has(name) && isIconComponent(icon))
-    .map(([name]) => ({ ref: { source: "lucide", name }, label: name, searchTerms: [name, ...(lucideAliases[name] || [])] }));
+    .map(([name]) => ({
+      ref: { source: "lucide", name },
+      label: formatPositionIconLabel(name),
+      searchTerms: [name, ...(lucideAliases[name] || [])],
+    }));
   return lucideCatalog;
 };
 
@@ -129,7 +142,11 @@ const createTablerPositionIconCatalog = (
   .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
   .map((exportName) => {
     const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-    return { ref: { source: "tabler", name } as const, label: name, searchTerms: [name] };
+    return {
+      ref: { source: "tabler", name } as const,
+      label: formatPositionIconLabel(name),
+      searchTerms: [name],
+    };
   });
 
 let tablerCatalogPromise: Promise<IconCatalogEntry[]> | null = null;

@@ -8,7 +8,6 @@ import Modal from "../../../components/Modal/Modal";
 import DatePicker from "@/components/ui/DatePicker";
 import { clampPlainDateToMin } from "@/utils/plainDate";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import {
   filterServicesWithOccurrencesInRange,
@@ -40,7 +39,6 @@ import {
   isActive,
   scheduleDraftsMatch,
 } from "../teamsUtils";
-import { formatScheduleSaveToast } from "../teamsSaveToasts";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import {
   buildScheduleDraft,
@@ -194,8 +192,6 @@ const ScheduleEditForm = ({
     mode === "edit" && editingSchedule?.source === "generated-period";
   const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
   useTeamsUnsavedChanges(hasPendingChanges);
-  const currentEditorKey = editingSchedule?.scheduleId || draftKey;
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
 
   const suggestedName = useMemo(
     () =>
@@ -351,14 +347,6 @@ const ScheduleEditForm = ({
           ? { confirmedOccurrenceConflictFingerprint }
           : {}),
       };
-      const saveToastMessage = formatScheduleSaveToast(editingSchedule, payload, {
-        teamNameById: new Map(
-          activeTeams.map((team) => [team.teamId, team.name]),
-        ),
-        serviceNameById: new Map(
-          services.map((service) => [service.serviceId, service.name]),
-        ),
-      });
       setSaving(true);
       const localScheduleId =
         editingSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
@@ -399,8 +387,6 @@ const ScheduleEditForm = ({
         onScheduleSaved(response.schedule);
       }
       setSelectedScheduleId(response.schedule.scheduleId);
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(response.schedule.scheduleId, isCreate ? "create" : "update");
       setScheduleConflictWarning(null);
     } catch (error) {
       const details = (error as { details?: unknown } | null)?.details;
@@ -462,7 +448,7 @@ const ScheduleEditForm = ({
         >
           <h2 className="text-lg font-semibold">
             {mode === "create-custom"
-              ? "New custom schedule"
+              ? "New schedule"
               : mode === "copy"
                 ? "Copy schedule"
                 : isGeneratedPeriodSchedule
@@ -610,7 +596,6 @@ const ScheduleEditForm = ({
           entityLabel="schedule"
           isCreate={mode !== "edit"}
           isSaving={saving}
-          successMode={saveFeedback.successMode}
           onSave={() => void saveSchedule()}
           onCancel={onCancel}
           hasPendingChanges={hasPendingChanges}

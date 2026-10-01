@@ -19,7 +19,7 @@ import {
   scheduleMemberName,
 } from "../teamsUtils";
 import { isMemberAvailableOnDate } from "../memberPreferences";
-import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
@@ -183,12 +183,20 @@ const ScheduleBoardCell = memo(({
         )}
         onClick={handleActivate}
       >
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gray-900 text-cyan-200"
-          aria-hidden
-        >
-          {positionIcon ? <WorshipSyncIcon icon={positionIcon} className="h-4 w-4" /> : <User className="h-4 w-4" />}
-        </span>
+        {positionIcon ? (
+          <PositionIconBadge
+            icon={positionIcon}
+            className="h-8 w-8 rounded-md"
+            iconClassName="h-4 w-4"
+          />
+        ) : (
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gray-900 text-gray-300"
+            aria-hidden
+          >
+            <User className="h-4 w-4" />
+          </span>
+        )}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5 truncate text-xs font-medium text-gray-400">
             {positionLabel}

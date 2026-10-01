@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import type { TeamPosition } from "../../../api/authTypes";
-import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 
 type ScheduleMembersPositionFilterProps = {
   positions: TeamPosition[];
@@ -125,7 +125,11 @@ const ScheduleMembersPositionFilter = ({
                         {checked ? <Check className="h-3 w-3 stroke-3" /> : null}
                       </span>
                       {position.icon ? (
-                        <WorshipSyncIcon icon={position.icon} className="h-3.5 w-3.5 shrink-0 text-orange-300" />
+                        <PositionIconBadge
+                          icon={position.icon}
+                          className="h-5 w-5 rounded"
+                          iconClassName="h-3.5 w-3.5"
+                        />
                       ) : null}
                       <span className="min-w-0 truncate">
                         {position.name}

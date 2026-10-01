@@ -110,7 +110,7 @@ describe("PositionManager return navigation", () => {
     await user.click(screen.getAllByRole("button", { name: "Create position" })[1]);
     await waitFor(() => expect(createTeamPosition).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("heading", { name: "Edit position" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Created" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled();
 
     await user.clear(screen.getByLabelText(/^Name:?$/));
     await user.type(screen.getByLabelText(/^Name:?$/), "Renamed");

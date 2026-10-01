@@ -20,7 +20,7 @@ const destinations = [
   { value: "notes", label: "Shared notes" },
   { value: "scripture", label: "Scripture" },
   { value: "resource", label: "Resource link" },
-  { value: "unassigned", label: "Keep with source only" },
+  { value: "unassigned", label: "Don't add to plan" },
 ];
 
 const destinationsForPart = (kind: string, allowAssignee = false) => {
@@ -199,6 +199,11 @@ const ServicePlanAmbiguityReview = ({
                   />
                 </div>
               ))}
+              {ambiguity.parts.some((part, index) =>
+                (destinationsByPart[`${active.element.id}:${index}`] || part.destination) === "unassigned",
+              ) ? (
+                <p className="text-xs text-gray-400">This keeps the value in the source details for future imports without adding it as an assignee, attachment, or note.</p>
+              ) : null}
               {(ambiguity.songMappings || []).map((mapping, index) => {
                 const mappingKey = `${active.element.id}:${mapping.mappingId || JSON.stringify([mapping.sourceFingerprint, mapping.candidateOccurrenceIds, index])}`;
                 const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);

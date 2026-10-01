@@ -25,11 +25,9 @@ import EntityRow from "../components/EntityRow";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
-import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
@@ -167,7 +165,6 @@ const TeamRoleManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
-    const saveToastMessage = formatTeamRoleSaveToast(wasEditing, payload);
     const optimisticRole: TeamRole = {
       churchId,
       roleId: localRoleId,
@@ -187,8 +184,6 @@ const TeamRoleManager = ({
       if (!wasEditing) {
         onSaved(response.role, localRoleId);
       }
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(wasEditing?.roleId || response.role.roleId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         // The operator may have switched to a different role while this save was
@@ -234,7 +229,6 @@ const TeamRoleManager = ({
       })
       : JSON.stringify(draft) !==
       JSON.stringify({ teamId, name: "", description: "" });
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
@@ -344,7 +338,6 @@ const TeamRoleManager = ({
             entityLabel="role"
             isCreate={!editing}
             isSaving={isSavingCurrent}
-            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}

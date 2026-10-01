@@ -17,7 +17,6 @@ import {
 } from "../../../utils/phoneNumber";
 import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -66,7 +65,6 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
-import { formatMemberSaveToast } from "../teamsSaveToasts";
 import { hasMemberContactInfo } from "../memberContactInfo";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
@@ -687,16 +685,6 @@ const MemberManager = ({
         }
       }
 
-      const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
-        positionNameById: new Map(
-          positions.map((position) => [position.positionId, position.name]),
-        ),
-        teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
-        roleNameById: new Map(
-          data.teamRoles.map((role) => [role.roleId, role.name]),
-        ),
-        priorTeamIds: joinedTeamIds,
-      });
       const localMemberId =
         wasEditing?.memberId || `local-member-${generateRandomId()}`;
       const optimisticMember: TeamRosterMember = {
@@ -772,8 +760,6 @@ const MemberManager = ({
       // and schedule reflect the join or removal right away, rather than
       // waiting for the next stale-focus bootstrap.
       response.teams?.forEach((team) => onTeamSaved(team));
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(finalMember.memberId, wasEditing ? "update" : "create");
       if (profileImageUploadFailed) {
         showToast("You can choose the image again and save to retry.", "error");
       }
@@ -816,7 +802,6 @@ const MemberManager = ({
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
       JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
     Boolean(pendingProfileImage || pendingProfileImagePreviewUrl);
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
@@ -1201,7 +1186,6 @@ const MemberManager = ({
             entityLabel="member"
             isCreate={!editing}
             isSaving={isSavingCurrent}
-            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}

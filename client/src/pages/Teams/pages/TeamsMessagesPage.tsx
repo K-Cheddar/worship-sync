@@ -13,6 +13,7 @@ import {
 import type { NotificationBatch, NotificationIntent, NotificationIntentType } from "../../../api/authTypes";
 import { useTeamsPage } from "../TeamsPageContext";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
+import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { getAvailabilityRecipientRows } from "../availabilityRecipientSelection";
 import { dispatchReviewedAvailabilityBatch, prepareAvailabilityBatchForMembers } from "../availabilityBatchActions";
 
@@ -53,6 +54,16 @@ const TeamsMessagesPage = () => {
   const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [individualSmsPreview, setIndividualSmsPreview] = useState<{
+    churchId: string;
+    intentId: string;
+    approvalVersion: string;
+    recipientName: string;
+    phoneNumberSnapshot: string;
+    message: string;
+    segmentCount: number;
+  } | null>(null);
+  const individualSmsSendLockRef = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const didRestoreInitialBatchRef = useRef(false);
@@ -220,28 +231,70 @@ const TeamsMessagesPage = () => {
   };
 
   const sendIndividual = async (intent: NotificationIntent) => {
-    if (sending || loading) return;
+    if (sending || loading || individualSmsPreview) return;
     const ownerChurch = churchId;
     setError("");
     setSending(true);
     try {
       const prepared = await getNotificationIntentPreview(ownerChurch, intent.intentId);
+      if (churchIdRef.current !== ownerChurch) return;
       if (!prepared.preview.eligible) {
         setError("This volunteer is not currently eligible for SMS. Check the form, phone number, and consent.");
         await refreshIntents();
         return;
       }
       const member = members.find((item) => item.memberId === intent.memberId);
-      if (!window.confirm(`Send this message to ${member ? memberName(member) : "this volunteer"} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
-      const response = await sendNotificationIntent(ownerChurch, intent.intentId, prepared.preview.approvalVersion);
-      if (churchIdRef.current !== ownerChurch) return;
-      setNotice(response.success ? "SMS accepted by the provider." : response.errorMessage || "The SMS was not confirmed as sent.");
-      await refreshIntents();
+      setIndividualSmsPreview({
+        churchId: ownerChurch,
+        intentId: prepared.preview.intentId,
+        approvalVersion: prepared.preview.approvalVersion,
+        recipientName: member ? memberName(member) : "Volunteer",
+        phoneNumberSnapshot: prepared.preview.phoneNumberSnapshot,
+        message: prepared.preview.message,
+        segmentCount: prepared.preview.segmentCount,
+      });
     } catch (caught) {
       if (churchIdRef.current === ownerChurch) setError(caught instanceof Error ? caught.message : "Could not send this message.");
     } finally {
       if (churchIdRef.current === ownerChurch) setSending(false);
     }
+  };
+
+  const sendIndividualPreview = async () => {
+    const preview = individualSmsPreview;
+    if (!preview || individualSmsSendLockRef.current) return;
+    if (churchIdRef.current !== preview.churchId) {
+      setIndividualSmsPreview(null);
+      return;
+    }
+    individualSmsSendLockRef.current = true;
+    const ownerChurch = preview.churchId;
+    setIndividualSmsPreview(null);
+    setSending(true);
+    setError("");
+    try {
+      const response = await sendNotificationIntent(ownerChurch, preview.intentId, preview.approvalVersion);
+      if (churchIdRef.current !== ownerChurch) return;
+      setNotice(response.success ? "SMS accepted by the provider." : response.errorMessage || "The SMS was not confirmed as sent.");
+      try {
+        await refreshIntents();
+      } catch {
+        if (churchIdRef.current === ownerChurch) setError("The SMS outcome was recorded, but message history could not be refreshed.");
+      }
+    } catch (caught) {
+      if (churchIdRef.current === ownerChurch) {
+        setError(caught instanceof Error ? caught.message : "Could not confirm the SMS outcome. Check message history before retrying.");
+        try { await refreshIntents(); } catch { /* Preserve the send outcome message. */ }
+      }
+    } finally {
+      individualSmsSendLockRef.current = false;
+      if (churchIdRef.current === ownerChurch) setSending(false);
+    }
+  };
+
+  const cancelIndividualPreview = () => {
+    if (individualSmsSendLockRef.current) return;
+    setIndividualSmsPreview(null);
   };
 
   if (!canEditTeams) {
@@ -335,7 +388,7 @@ const TeamsMessagesPage = () => {
           return <article key={intent.intentId} className="space-y-2 rounded border border-gray-700 bg-gray-950/50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div><h3 className="font-medium text-white">{intentLabel(intent)} · {member ? memberName(member) : "Roster member"}</h3><p className="text-xs text-gray-400">{new Date(intent.createdAt).toLocaleString()} · {statusLabel[intent.status]}{intent.respondedAt ? " · responded" : " · waiting"}</p></div>
-              {actionable ? <Button disabled={sending || loading} isLoading={sending} onClick={() => void sendIndividual(intent)}>Send one SMS</Button> : null}
+              {actionable ? <Button disabled={sending || loading || Boolean(individualSmsPreview)} isLoading={sending} onClick={() => void sendIndividual(intent)}>Send one SMS</Button> : null}
             </div>
             {intent.messagePreview ? <p className="rounded bg-gray-900 px-3 py-2 text-sm text-gray-200">{intent.messagePreview}</p> : null}
             {intent.previewError ? <p className="text-sm text-amber-200">Not ready to send: {intent.previewError}</p> : null}
@@ -344,6 +397,17 @@ const TeamsMessagesPage = () => {
         })}
         {nextCursor ? <Button variant="secondary" disabled={loading || sending} isLoading={loading} onClick={() => void loadOlderIntents()}>Load older history</Button> : null}
       </section>
+
+      {individualSmsPreview ? <SmsConfirmationModal
+        isOpen
+        recipientName={individualSmsPreview.recipientName}
+        phoneNumberSnapshot={individualSmsPreview.phoneNumberSnapshot}
+        message={individualSmsPreview.message}
+        segmentCount={individualSmsPreview.segmentCount}
+        busy={sending}
+        onCancel={cancelIndividualPreview}
+        onSend={() => void sendIndividualPreview()}
+      /> : null}
 
       {confirmOpen && reviewedBatch ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation">

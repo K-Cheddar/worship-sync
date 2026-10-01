@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  FilePlus,
   Users,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
@@ -1127,7 +1128,7 @@ const TeamsPlansPage = () => {
     <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="shrink-0 space-y-4">
         <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
-          <div className="grid items-end gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
+          <div className="grid items-start gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
             {activeServices.length > 1 ? (
               <div className="min-w-0 max-md:col-span-2">
                 <span className="block p-1 text-sm font-semibold">Service:</span>
@@ -1176,22 +1177,9 @@ const TeamsPlansPage = () => {
               </div>
             ) : null}
 
-            {showOrganizeToggle ? (
-              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5">
-                <span className="px-0.5 text-sm font-semibold">Organize</span>
-                <SegmentedControl
-                  ariaLabel="Organize services"
-                  variant="compact"
-                  value={organizeMode}
-                  onChange={changeOrganizeMode}
-                  options={OCCURRENCE_ORGANIZE_OPTIONS}
-                />
-              </div>
-            ) : null}
-
             <div className={cn(
-              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5",
-              !showOrganizeToggle && "max-md:col-span-2",
+              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 pb-2 pt-1 max-md:col-span-2 max-md:px-2 max-md:pb-1.5 max-md:pt-1",
+              activeServices.length <= 1 && "md:col-span-2",
             )}>
               <RangeSelector
                 preset={rangePreset}
@@ -1204,138 +1192,79 @@ const TeamsPlansPage = () => {
         </div>
       </div>
 
-      {groups.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          No services occur in this date range. Add a service or widen the range
-          above.
-        </p>
-      ) : visibleGroups.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          No dates for this service in the selected range. Choose another
-          service or widen the range.
-        </p>
-      ) : effectiveOrganizeMode === "byDate" ? (
-        <div
-          className="space-y-4 rounded-xl border border-gray-700/80 bg-gray-950/80 pt-3 shadow-sm shadow-black/20"
-          {...(planStatusLoading
-            ? {
-              role: "status" as const,
-              "aria-busy": true,
-              "aria-label": "Loading plan status",
-            }
-            : {})}
-        >
-          <header className="space-y-3 border-b border-gray-800 px-3.5 pb-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-                <Icon
-                  svg={CalendarDays}
-                  size="sm"
-                  className="text-orange-300"
+      <section
+        aria-label="Service results"
+        className="min-w-0 space-y-3"
+      >
+        <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20">
+          <div className="flex min-w-0 flex-1 flex-wrap items-start gap-3">
+            {showOrganizeToggle ? (
+              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5">
+                <span className="px-0.5 text-sm font-semibold">Organize</span>
+                <SegmentedControl
+                  ariaLabel="Organize services"
+                  variant="compact"
+                  value={organizeMode}
+                  onChange={changeOrganizeMode}
+                  options={OCCURRENCE_ORGANIZE_OPTIONS}
                 />
               </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-base font-semibold text-gray-50">
-                  {serviceFilterLabel}
-                </h3>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                    {chronologicalEntries.length === 1
-                      ? "1 date"
-                      : `${chronologicalEntries.length} dates`}
-                  </span>
-                  {planStatusLoading ? (
-                    <span
-                      className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                      aria-hidden
-                    />
-                  ) : (
-                    <span
-                      className={cn(
-                        "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                        chronologicalPlannedCount > 0
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                          : "border-gray-700 bg-gray-900/70 text-gray-400",
-                      )}
-                    >
-                      {chronologicalPlannedCount === 0
-                        ? "None planned"
-                        : `${chronologicalPlannedCount} planned`}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {canEditServices ? (
-                <Button type="button" variant="tertiary" className="shrink-0" onClick={() => openBulkApply()}>
-                  Apply template
-                </Button>
-              ) : null}
+            ) : null}
+            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+              <Icon svg={CalendarDays} size="sm" className="text-orange-300" />
             </div>
-          </header>
-
-          <div className="space-y-4 bg-black/20 p-3">
-            {chronologicalMonths.map((month) => (
-              <div key={month.key} className="space-y-2">
-                <div className="flex items-center gap-2 px-0.5">
-                  <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
-                    {month.label}
-                  </h4>
-                  <div className="h-px flex-1 bg-gray-800" aria-hidden />
-                  <span className="text-[11px] text-gray-500">
-                    {month.occurrences.length}
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-base font-semibold text-gray-50">
+                {serviceFilterLabel}
+              </h3>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                  {chronologicalEntries.length === 1
+                    ? "1 date"
+                    : `${chronologicalEntries.length} dates`}
+                </span>
+                {planStatusLoading ? (
+                  <span
+                    className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                    aria-hidden
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                      chronologicalPlannedCount > 0
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                        : "border-gray-700 bg-gray-900/70 text-gray-400",
+                    )}
+                  >
+                    {chronologicalPlannedCount === 0
+                      ? "None planned"
+                      : `${chronologicalPlannedCount} planned`}
                   </span>
-                </div>
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                  {month.occurrences.map((occurrence) => {
-                    const entry = entryByOccurrenceId.get(
-                      occurrence.occurrenceId,
-                    );
-                    if (!entry) return null;
-                    const hasPlan =
-                      !planStatusLoading &&
-                      planKeysWithPlans.has(getServicePlanKey(occurrence));
-                    const isPast =
-                      getOccurrenceDate(occurrence) <
-                      formatPlainDate(new Date());
-                    return (
-                      <PlansOccurrenceTile
-                        key={occurrence.occurrenceId}
-                        occurrence={occurrence}
-                        shared={BY_DATE_TILE_SHARED}
-                        serviceName={
-                          selectedServiceIds.length !== 1
-                            ? entry.serviceName
-                            : undefined
-                        }
-                        hasPlan={hasPlan}
-                        isPast={isPast}
-                        isNextUpcoming={
-                          occurrence.occurrenceId === nextUpcomingOccurrenceId
-                        }
-                        planStatusLoading={planStatusLoading}
-                        onOpen={() => {
-                          setOpenServingTabOnSelection(false);
-                          setSelection({
-                            service: entry.service,
-                            occurrence,
-                          });
-                        }}
-                      />
-                    );
-                  })}
-                </ul>
+                )}
               </div>
-            ))}
+            </div>
           </div>
-        </div>
-      ) : (
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
+            {canEditServices &&
+            groups.length > 0 &&
+            visibleGroups.length > 0 &&
+            effectiveOrganizeMode === "byDate" ? (
+              <Button
+                type="button"
+                variant="primary"
+                svg={FilePlus}
+                iconSize="sm"
+                className="shrink-0"
+                onClick={() => openBulkApply()}
+              >
+                Apply template
+              </Button>
+            ) : null}
+          </div>
+        </header>
+
         <div
-          className={cn(
-            // Top padding leaves room for the absolute "Up next" / "Today" badge so the
-            // Plans scrollport does not clip it (same pattern as schedule board).
-            "grid grid-cols-1 items-start gap-4 pt-3",
-            visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
-          )}
           {...(planStatusLoading
             ? {
               role: "status" as const,
@@ -1344,159 +1273,246 @@ const TeamsPlansPage = () => {
             }
             : {})}
         >
-          {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
-            const shared = getSharedOccurrenceTiming(occurrences);
-            const plannedCount = occurrences.filter((occurrence) =>
-              planKeysWithPlans.has(getServicePlanKey(occurrence)),
-            ).length;
-            const months = groupOccurrencesByMonth(occurrences);
-            const timingLabel = serviceTimingLabel(shared);
-            const plannedRatio =
-              occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
-
-            return (
-              <section
-                key={key}
-                className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
-              >
-                <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-                      <Icon
-                        svg={CalendarDays}
-                        size="sm"
-                        className="text-orange-300"
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate text-base font-semibold text-gray-50">
-                        {name}
-                      </h3>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                          {occurrences.length === 1
-                            ? "1 date"
-                            : `${occurrences.length} dates`}
-                        </span>
-                        {planStatusLoading ? (
-                          <span
-                            className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                            aria-hidden
-                          />
-                        ) : (
-                          <span
-                            className={cn(
-                              "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                              plannedCount > 0
-                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                : "border-gray-700 bg-gray-900/70 text-gray-400",
-                            )}
-                          >
-                            {plannedCount === 0
-                              ? "None planned"
-                              : `${plannedCount} planned`}
-                          </span>
-                        )}
-                        {timingLabel ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
-                            <Icon
-                              svg={Clock}
-                              size="xs"
-                              className="text-amber-300"
-                            />
-                            {timingLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    {canEditServices ? (
-                      <Button type="button" variant="tertiary" className="shrink-0" onClick={() => openBulkApply(serviceIds)}>
-                        Apply template
-                      </Button>
-                    ) : null}
+        {groups.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            No services occur in this date range. Add a service or widen the range
+            above.
+          </p>
+        ) : visibleGroups.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            No dates for this service in the selected range. Choose another
+            service or widen the range.
+          </p>
+        ) : effectiveOrganizeMode === "byDate" ? (
+          <div
+            className="space-y-4 rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
+          >
+            <div className="space-y-4 bg-black/20 p-3">
+              {chronologicalMonths.map((month) => (
+                <div key={month.key} className="space-y-2">
+                  <div className="flex items-center gap-2 px-0.5">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                      {month.label}
+                    </h4>
+                    <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                    <span className="text-[11px] text-gray-500">
+                      {month.occurrences.length}
+                    </span>
                   </div>
-                  <div
-                    className={cn(
-                      "h-1 overflow-hidden rounded-full bg-gray-800",
-                      planStatusLoading && "animate-pulse",
-                    )}
-                    aria-hidden
-                  >
-                    {planStatusLoading ? (
-                      <div className="h-full w-2/5 rounded-full bg-white/10" />
-                    ) : (
-                      <div
-                        className={cn(
-                          "h-full rounded-full transition-[width]",
-                          plannedCount > 0
-                            ? "bg-emerald-400/80"
-                            : "bg-transparent",
-                        )}
-                        style={{
-                          width: `${Math.round(plannedRatio * 100)}%`,
-                        }}
-                      />
-                    )}
-                  </div>
-                </header>
-
-                <div className="space-y-4 bg-black/20 p-3">
-                  {months.map((month) => (
-                    <div key={month.key} className="space-y-2">
-                      <div className="flex items-center gap-2 px-0.5">
-                        <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
-                          {month.label}
-                        </h4>
-                        <div className="h-px flex-1 bg-gray-800" aria-hidden />
-                        <span className="text-[11px] text-gray-500">
-                          {month.occurrences.length}
-                        </span>
-                      </div>
-                      <ul
-                        className={cn(
-                          "grid grid-cols-2 gap-2 sm:grid-cols-3",
-                          visibleGroups.length > 1
-                            ? "xl:grid-cols-2 2xl:grid-cols-3"
-                            : "lg:grid-cols-4 xl:grid-cols-5",
-                        )}
-                      >
-                        {month.occurrences.map((occurrence) => {
-                          const hasPlan =
-                            !planStatusLoading &&
-                            planKeysWithPlans.has(
-                              getServicePlanKey(occurrence),
-                            );
-                          const isPast =
-                            getOccurrenceDate(occurrence) <
-                            formatPlainDate(new Date());
-                          return (
-                            <PlansOccurrenceTile
-                              key={occurrence.occurrenceId}
-                              occurrence={occurrence}
-                              shared={shared}
-                              hasPlan={hasPlan}
-                              isPast={isPast}
-                              isNextUpcoming={
-                                occurrence.occurrenceId ===
-                                nextUpcomingOccurrenceId
-                              }
-                              planStatusLoading={planStatusLoading}
-                              onOpen={() => {
-                                setOpenServingTabOnSelection(false);
-                                setSelection({ service, occurrence });
-                              }}
-                            />
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))}
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {month.occurrences.map((occurrence) => {
+                      const entry = entryByOccurrenceId.get(
+                        occurrence.occurrenceId,
+                      );
+                      if (!entry) return null;
+                      const hasPlan =
+                        !planStatusLoading &&
+                        planKeysWithPlans.has(getServicePlanKey(occurrence));
+                      const isPast =
+                        getOccurrenceDate(occurrence) <
+                        formatPlainDate(new Date());
+                      return (
+                        <PlansOccurrenceTile
+                          key={occurrence.occurrenceId}
+                          occurrence={occurrence}
+                          shared={BY_DATE_TILE_SHARED}
+                          serviceName={
+                            selectedServiceIds.length !== 1
+                              ? entry.serviceName
+                              : undefined
+                          }
+                          hasPlan={hasPlan}
+                          isPast={isPast}
+                          isNextUpcoming={
+                            occurrence.occurrenceId === nextUpcomingOccurrenceId
+                          }
+                          planStatusLoading={planStatusLoading}
+                          onOpen={() => {
+                            setOpenServingTabOnSelection(false);
+                            setSelection({
+                              service: entry.service,
+                              occurrence,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </ul>
                 </div>
-              </section>
-            );
-          })}
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            className={cn(
+              // Top padding leaves room for the absolute "Up next" / "Today" badge so the
+              // Plans scrollport does not clip it (same pattern as schedule board).
+              "grid grid-cols-1 items-start gap-4 pt-3",
+              visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
+            )}
+          >
+            {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
+              const shared = getSharedOccurrenceTiming(occurrences);
+              const plannedCount = occurrences.filter((occurrence) =>
+                planKeysWithPlans.has(getServicePlanKey(occurrence)),
+              ).length;
+              const months = groupOccurrencesByMonth(occurrences);
+              const timingLabel = serviceTimingLabel(shared);
+              const plannedRatio =
+                occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
+
+              return (
+                <section
+                  key={key}
+                  className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
+                >
+                  <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                        <Icon
+                          svg={CalendarDays}
+                          size="sm"
+                          className="text-orange-300"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-base font-semibold text-gray-50">
+                          {name}
+                        </h3>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                            {occurrences.length === 1
+                              ? "1 date"
+                              : `${occurrences.length} dates`}
+                          </span>
+                          {planStatusLoading ? (
+                            <span
+                              className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                              aria-hidden
+                            />
+                          ) : (
+                            <span
+                              className={cn(
+                                "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                                plannedCount > 0
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                  : "border-gray-700 bg-gray-900/70 text-gray-400",
+                              )}
+                            >
+                              {plannedCount === 0
+                                ? "None planned"
+                                : `${plannedCount} planned`}
+                            </span>
+                          )}
+                          {timingLabel ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
+                              <Icon
+                                svg={Clock}
+                                size="xs"
+                                className="text-amber-300"
+                              />
+                              {timingLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      {canEditServices ? (
+                        <Button
+                          type="button"
+                          variant="primary"
+                          svg={FilePlus}
+                          iconSize="sm"
+                          className="shrink-0 max-md:min-h-0"
+                          onClick={() => openBulkApply(serviceIds)}
+                        >
+                          Apply template
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div
+                      className={cn(
+                        "h-1 overflow-hidden rounded-full bg-gray-800",
+                        planStatusLoading && "animate-pulse",
+                      )}
+                      aria-hidden
+                    >
+                      {planStatusLoading ? (
+                        <div className="h-full w-2/5 rounded-full bg-white/10" />
+                      ) : (
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-[width]",
+                            plannedCount > 0
+                              ? "bg-emerald-400/80"
+                              : "bg-transparent",
+                          )}
+                          style={{
+                            width: `${Math.round(plannedRatio * 100)}%`,
+                          }}
+                        />
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="space-y-4 bg-black/20 p-3">
+                    {months.map((month) => (
+                      <div key={month.key} className="space-y-2">
+                        <div className="flex items-center gap-2 px-0.5">
+                          <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                            {month.label}
+                          </h4>
+                          <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                          <span className="text-[11px] text-gray-500">
+                            {month.occurrences.length}
+                          </span>
+                        </div>
+                        <ul
+                          className={cn(
+                            "grid grid-cols-2 gap-2 sm:grid-cols-3",
+                            visibleGroups.length > 1
+                              ? "xl:grid-cols-2 2xl:grid-cols-3"
+                              : "lg:grid-cols-4 xl:grid-cols-5",
+                          )}
+                        >
+                          {month.occurrences.map((occurrence) => {
+                            const hasPlan =
+                              !planStatusLoading &&
+                              planKeysWithPlans.has(
+                                getServicePlanKey(occurrence),
+                              );
+                            const isPast =
+                              getOccurrenceDate(occurrence) <
+                              formatPlainDate(new Date());
+                            return (
+                              <PlansOccurrenceTile
+                                key={occurrence.occurrenceId}
+                                occurrence={occurrence}
+                                shared={shared}
+                                hasPlan={hasPlan}
+                                isPast={isPast}
+                                isNextUpcoming={
+                                  occurrence.occurrenceId ===
+                                  nextUpcomingOccurrenceId
+                                }
+                                planStatusLoading={planStatusLoading}
+                                onOpen={() => {
+                                  setOpenServingTabOnSelection(false);
+                                  setSelection({ service, occurrence });
+                                }}
+                              />
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
         </div>
-      )}
+      </section>
       <Modal
         isOpen={bulkApplyOpen}
         onClose={() => { if (!bulkApplying) setBulkApplyOpen(false); }}

@@ -10,7 +10,7 @@ import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import type { MenuItemType } from "../../../types";
 import { cn } from "@/utils/cnHelper";
-import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import {
   teamsRowIconButtonClassName,
@@ -160,9 +160,7 @@ const EntityRow = ({
   const rowContent = (
     <>
       {icon ? (
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/30 bg-cyan-400/10 text-cyan-100">
-          <WorshipSyncIcon icon={icon} className="h-4 w-4" />
-        </span>
+        <PositionIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
       <div className="min-w-0 flex-1">
         {titleBlock}
@@ -180,9 +178,7 @@ const EntityRow = ({
   const stackedCardBody = (
     <>
       {icon ? (
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/30 bg-cyan-400/10 text-cyan-100">
-          <WorshipSyncIcon icon={icon} className="h-4 w-4" />
-        </span>
+        <PositionIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
       <div className="min-w-0 flex-1">
         {titleBlock}

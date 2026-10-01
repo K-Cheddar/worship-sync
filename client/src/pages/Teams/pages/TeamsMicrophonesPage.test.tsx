@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -14,6 +14,7 @@ import {
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 
 jest.mock("../../../api/auth", () => ({
+  AuthApiError: class AuthApiError extends Error {},
   getServicePlanMicrophones: jest.fn(),
   saveServicePlanMicrophones: jest.fn(),
   getServiceEquipment: jest.fn(),
@@ -80,6 +81,7 @@ const NavigationProbe = () => {
 };
 
 beforeEach(() => {
+  cleanup();
   jest.clearAllMocks();
   mockGetServicePlanMicrophones.mockResolvedValue({
     success: true,
@@ -102,6 +104,9 @@ describe("TeamsMicrophonesPage", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
+    expect(screen.queryByRole("heading", { name: "Equipment" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Microphones" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "In-Ear Monitors (IEMs)" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add microphone" }));
     expect(screen.getAllByRole("textbox", { name: "Name:" })).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -123,6 +128,48 @@ describe("TeamsMicrophonesPage", () => {
     expect(mockSaveServiceEquipment).not.toHaveBeenCalled();
   });
 
+  it("shows a pending and completed state for microphone saves", async () => {
+    const user = userEvent.setup();
+    let resolveSave: ((value: { success: true; microphones: ServicePlanMicrophone[]; audiences: [] }) => void) | undefined;
+    mockSaveServicePlanMicrophones.mockImplementation(
+      async (_churchId, microphones) => new Promise((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
+    await user.type(screen.getByRole("textbox", { name: "Name:" }), " updated");
+    await user.click(screen.getByRole("button", { name: "Save microphones" }));
+
+    expect(screen.getByRole("button", { name: "Saving microphones" })).toBeDisabled();
+    resolveSave?.({ success: true, microphones: [microphone({ name: "Handheld 1 updated" })], audiences: [] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved microphones" })).toBeDisabled());
+    expect(screen.getByTestId("microphone-save-success-icon")).toHaveClass("text-emerald-300");
+    expect(screen.queryByText("Microphone list saved.")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Name:" }), {
+      target: { value: "Handheld 1 revised" },
+    });
+    expect(screen.getByRole("button", { name: "Save microphones" })).toBeEnabled();
+  });
+
+  it("keeps microphone save errors visible and the draft actionable", async () => {
+    const user = userEvent.setup();
+    mockSaveServicePlanMicrophones.mockRejectedValue(new Error("Microphone save failed."));
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name:" }), {
+      target: { value: "Lead mic" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save microphones" }));
+
+    expect(await screen.findByText("Microphone save failed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save microphones" })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: "Name:" })).toHaveValue("Lead mic");
+  });
+
   it("keeps microphone and IEM edit modes independent", async () => {
     const user = userEvent.setup();
     mockGetServiceEquipment.mockResolvedValue({
@@ -136,10 +183,17 @@ describe("TeamsMicrophonesPage", () => {
     expect(screen.getByText("Blue")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save IEMs" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Edit IEMs" }));
-    expect(screen.getByRole("textbox", { name: "Name:" })).toHaveValue("Blue");
-    expect(screen.getByRole("button", { name: "Save IEMs" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add IEM" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Name")).toHaveValue("Blue");
+    expect(screen.getByRole("button", { name: "Saved IEMs" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add IEM" }));
+    expect(screen.getByRole("button", { name: "Save IEMs" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("textbox", { name: "Name:" })).not.toBeInTheDocument();
+    expect(screen.getByText("Blue")).toBeInTheDocument();
   });
 
   it("opens the navigation guard for unsaved microphone and IEM edits", async () => {
@@ -204,7 +258,10 @@ describe("TeamsMicrophonesPage", () => {
     await user.type(screen.getByRole("textbox", { name: "Name:" }), "Blue pack");
     await user.click(screen.getByRole("button", { name: "Save IEMs" }));
 
-    expect(await screen.findByText("Blue pack")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Name:" })).toHaveValue("Blue pack");
+    expect(screen.getByRole("button", { name: "Saved IEMs" })).toBeDisabled();
+    expect(screen.getByTestId("iem-save-success-icon")).toHaveClass("text-emerald-300");
+    expect(screen.queryByText("IEM list saved.")).not.toBeInTheDocument();
     expect(mockSaveServiceEquipment).toHaveBeenCalledWith("church-1", [expect.objectContaining({
       id: "iem-1",
       category: "iem",

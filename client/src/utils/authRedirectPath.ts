@@ -54,6 +54,14 @@ export function sanitizeAuthRedirectSearch(search: unknown): string {
   return trimmed;
 }
 
+export function sanitizeAuthRedirectHash(hash: unknown): string {
+  if (typeof hash !== "string") return "";
+  const trimmed = hash.trim();
+  if (!trimmed || !trimmed.startsWith("#")) return "";
+  if (trimmed.length > AUTH_REDIRECT_MAX_SEARCH_LENGTH) return "";
+  return trimmed;
+}
+
 /**
  * Pathname + optional search from AuthGate `Navigate state={{ from: location }}`.
  * Preserves deep-link query strings (e.g. `/controller/bible?search=John%203:16`).
@@ -68,12 +76,14 @@ export function getAuthRedirectToFromState(state: unknown): string | null {
   ) {
     return null;
   }
-  const from = (state as { from: { pathname?: unknown; search?: unknown } })
-    .from;
+  const from = (state as {
+    from: { pathname?: unknown; search?: unknown; hash?: unknown };
+  }).from;
   const pathname = sanitizeAuthRedirectPathname(from.pathname);
   if (!pathname) return null;
   const search = sanitizeAuthRedirectSearch(from.search);
-  return `${pathname}${search}`;
+  const hash = sanitizeAuthRedirectHash(from.hash);
+  return `${pathname}${search}${hash}`;
 }
 
 /** Pathname only (no query). Prefer `getAuthRedirectToFromState` when the search string matters. */
@@ -94,12 +104,15 @@ export const PUBLIC_SHELL_AUTH_RETURN_KEY =
   "worshipsync_public_shell_auth_return";
 
 const sanitizeStoredAuthReturnPath = (raw: string): string | null => {
-  const q = raw.indexOf("?");
-  const pathname = q === -1 ? raw : raw.slice(0, q);
-  const search = q === -1 ? "" : raw.slice(q);
+  const hashIndex = raw.indexOf("#");
+  const pathAndSearch = hashIndex === -1 ? raw : raw.slice(0, hashIndex);
+  const queryIndex = pathAndSearch.indexOf("?");
+  const pathname = queryIndex === -1 ? pathAndSearch : pathAndSearch.slice(0, queryIndex);
+  const search = queryIndex === -1 ? "" : pathAndSearch.slice(queryIndex);
   const safePath = sanitizeAuthRedirectPathname(pathname);
   if (!safePath) return null;
-  return `${safePath}${sanitizeAuthRedirectSearch(search)}`;
+  const hash = hashIndex === -1 ? "" : raw.slice(hashIndex);
+  return `${safePath}${sanitizeAuthRedirectSearch(search)}${sanitizeAuthRedirectHash(hash)}`;
 };
 
 export function setPublicShellAuthReturnPath(redirectTo: string): void {

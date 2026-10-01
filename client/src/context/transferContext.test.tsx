@@ -94,7 +94,6 @@ test("warns before a browser refresh while a Canva request is active", async () 
 });
 
 test("cancellation is explicit and waits for the job to stop", async () => {
-  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   let signal: AbortSignal | undefined;
   const SlowHarness = () => {
@@ -112,10 +111,11 @@ test("cancellation is explicit and waits for the job to stop", async () => {
   await user.click(screen.getByRole("button", { name: "Start cancellable import" }));
   await waitFor(() => expect(signal).toBeDefined());
   await user.click(screen.getByRole("button", { name: "Cancel Cancelable deck" }));
-  expect(confirm).toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "Cancel this import?" })).toBeInTheDocument();
+  expect(signal?.aborted).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Cancel import" }));
   expect(signal?.aborted).toBe(true);
   expect(await screen.findByText("Import cancelled")).toBeInTheDocument();
-  confirm.mockRestore();
 });
 
 test("deduplicates an identical Canva job while it is active or queued", async () => {
@@ -224,7 +224,6 @@ test("reports an unresolved Canva replacement as a failed page with recovery gui
 
 test("cancelling a queued Canva job prevents its export from starting", async () => {
   const gate = deferred<typeof result>();
-  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   const secondRun = jest.fn(async () => result);
   const QueuedHarness = () => {
@@ -238,15 +237,14 @@ test("cancelling a queued Canva job prevents its export from starting", async ()
   await user.click(screen.getByRole("button", { name: "Start first" }));
   await user.click(screen.getByRole("button", { name: "Start second" }));
   await user.click(screen.getByRole("button", { name: "Cancel Second deck" }));
+  await user.click(screen.getByRole("button", { name: "Cancel import" }));
   await act(async () => gate.resolve(result));
   expect(await screen.findByText("Import cancelled before any pages were saved.")).toBeInTheDocument();
   expect(secondRun).not.toHaveBeenCalled();
-  confirm.mockRestore();
 });
 
 test("cancelling between page saves keeps the first committed page", async () => {
   const gate = deferred<void>();
-  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   const FinalizingHarness = () => {
     const { startCanvaTransfer } = useTransfers();
@@ -266,10 +264,10 @@ test("cancelling between page saves keeps the first committed page", async () =>
   await user.click(screen.getByRole("button", { name: "Start finalizing import" }));
   await screen.findByText("1 of 2 pages processed · 50% of pages");
   await user.click(screen.getByRole("button", { name: "Cancel Finalizing deck" }));
+  await user.click(screen.getByRole("button", { name: "Cancel import" }));
   await act(async () => gate.resolve());
   expect(await screen.findByText(/Import cancelled after saving 1 page/)).toBeInTheDocument();
   expect(screen.getByText("1 of 2 pages processed · 50% of pages")).toBeInTheDocument();
-  confirm.mockRestore();
 });
 
 test("keeps successful pages and reports failed pages as a partial import", async () => {

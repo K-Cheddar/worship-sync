@@ -1,6 +1,11 @@
 import { AuthApiError } from "../api/auth";
 import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "./authUserMessages";
+import React from "react";
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { registerUserAuthRecoveryHandler } from "../api/authErrorBus";
 import {
+  AuthErrorToastAction,
   getApiErrorMessage,
   getPersistedFailureMessage,
   isAuthApiError,
@@ -40,7 +45,7 @@ describe("apiErrorToast", () => {
     );
   });
 
-  it("shows auth toast with refresh action for 401/403 errors", () => {
+  it("shows auth toast with a recovery action for 401/403 errors", () => {
     const showToast = jest.fn();
 
     showApiErrorToast(
@@ -58,6 +63,34 @@ describe("apiErrorToast", () => {
         children: expect.any(Function),
       }),
     );
+  });
+
+  it("offers session recovery from the auth toast", () => {
+    render(React.createElement(AuthErrorToastAction));
+
+    expect(screen.getByRole("button", { name: "Try again" })).toHaveClass(
+      "mx-auto",
+    );
+  });
+
+  it("disables duplicate recovery clicks and reports an uncertain result", async () => {
+    let resolveRecovery!: (result: "unknown") => void;
+    const unsubscribe = registerUserAuthRecoveryHandler(
+      () => new Promise((resolve) => { resolveRecovery = resolve; }),
+    );
+    const user = userEvent.setup();
+    render(React.createElement(AuthErrorToastAction));
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Checking your session");
+
+    await act(async () => resolveRecovery("unknown"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not confirm your session.",
+    );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    unsubscribe();
   });
 
   it("shows plain error toast for non-auth errors", () => {

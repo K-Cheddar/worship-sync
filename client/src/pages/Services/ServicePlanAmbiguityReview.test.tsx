@@ -63,7 +63,7 @@ describe("ServicePlanAmbiguityReview", () => {
     expect(changes.resources).toHaveLength(1);
     expect(changes.resources?.[0]).toMatchObject({
       type: "text",
-      title: "Imported description",
+      title: "Jasmine Williams",
     });
   });
 
@@ -142,6 +142,17 @@ describe("ServicePlanAmbiguityReview", () => {
 
     const overlayHost = within(screen.getByTestId("floating-window-overlay-host"));
     expect(overlayHost.getByRole("option", { name: "Content attachment" })).toBeInTheDocument();
+  });
+
+  it("explains the source-only destination when selected", async () => {
+    const user = userEvent.setup();
+    render(<ServicePlanAmbiguityReview sections={sections} elementIds={["element-1"]} prompt={false} onLater={jest.fn()} onResolve={jest.fn()} />);
+
+    await user.click(screen.getByRole("combobox", { name: /Destination for description 1/ }));
+    const sourceOnly = screen.getByRole("option", { name: "Don't add to plan" });
+    await user.click(sourceOnly);
+
+    expect(screen.getByText(/keeps the value in the source details for future imports/)).toBeInTheDocument();
   });
 
   it("acknowledges without applying any suggested field changes", async () => {
@@ -462,7 +473,7 @@ describe("ServicePlanAmbiguityReview", () => {
     const reviewed = applyReviewedServicePlanParts(element, element.importAmbiguity!.parts);
 
     expect(reviewed.element.assignees).toBeUndefined();
-    expect(reviewed.element.resources).toEqual([expect.objectContaining({ title: "Imported description" })]);
+    expect(reviewed.element.resources).toEqual([expect.objectContaining({ title: "Behind the pulpit" })]);
   });
 
   it("installs an explicitly reviewed description assignee during a source refresh", () => {

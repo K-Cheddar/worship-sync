@@ -58,6 +58,20 @@ describe("Login create church (dev)", () => {
     });
   });
 
+  it("shows the usable sign-in form after session state returns to idle", () => {
+    renderLogin({
+      loginState: "idle",
+      authServerStatus: "online",
+      authError: "",
+    });
+
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).toBeEnabled();
+    expect(screen.getByLabelText("Password")).toBeEnabled();
+    expect(screen.queryByText("Opening WorshipSync…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Signed in")).not.toBeInTheDocument();
+  });
+
   it("opens the create-church form from the sign-in screen", async () => {
     const user = userEvent.setup();
     renderLogin();

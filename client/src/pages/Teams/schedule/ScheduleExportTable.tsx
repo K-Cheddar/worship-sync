@@ -17,7 +17,7 @@ import {
   type ScheduleFocusedCell,
   type ScheduleGridLayout,
 } from "./scheduleUtils";
-import WorshipSyncIcon from "../../../components/icons/WorshipSyncIcon";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 
 /**
@@ -432,15 +432,23 @@ const ByDatePosition = ({
         cell.highlighted && p.cellHighlight,
       )}
     >
-      <span
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-lg",
-          p.byDateIcon,
-        )}
-        aria-hidden
-      >
-        {icon ? <WorshipSyncIcon icon={icon} className="size-4" /> : <User className="size-4" />}
-      </span>
+      {icon ? (
+        <PositionIconBadge
+          icon={icon}
+          className="size-8 rounded-lg"
+          iconClassName="size-4"
+        />
+      ) : (
+        <span
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-lg",
+            p.byDateIcon,
+          )}
+          aria-hidden
+        >
+          <User className="size-4" />
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <dt className={cn("text-xs font-medium", p.byDatePositionLabel)}>
           {label}

@@ -141,11 +141,29 @@ test("centralized intake SMS contains a personalized URL and exposes segment len
     churchName: "Grace Church",
     formName: "October availability",
     publicUrl: "https://www.worshipsync.net/a/r_123456789012345678901234",
+    collectsAvailability: true,
   });
-  assert.match(message.body, /Grace Church/);
-  assert.match(message.body, /October availability/);
-  assert.match(message.body, /\/a\/r_123456789012345678901234/);
+  assert.equal(
+    message.body,
+    "Grace Church: Please submit your October availability: https://www.worshipsync.net/a/r_123456789012345678901234 Reply STOP to opt out.",
+  );
   assert.doesNotMatch(message.body, /member_1|19545551234/);
+  assert.equal(message.segmentCount, 1);
+});
+
+test("availability reminders keep the concise form name and fit one typical GSM-7 segment", () => {
+  const message = buildTeamIntakeSms({
+    churchName: "Grace Church",
+    formName: "October availability",
+    publicUrl: "https://www.worshipsync.net/a/r_123456789012345678901234",
+    intentType: "availability_reminder",
+    collectsAvailability: true,
+  });
+  assert.equal(
+    message.body,
+    "Grace Church: Reminder: Please submit your October availability: https://www.worshipsync.net/a/r_123456789012345678901234 Reply STOP to opt out.",
+  );
+  assert.equal(message.encoding, "gsm7");
   assert.equal(message.segmentCount, 1);
 });
 
@@ -223,10 +241,10 @@ test("fake provider is deterministic and Twilio responses normalize inside the p
   );
 });
 
-test("production callback URL is explicit and proxy request data cannot change it", () => {
+test("production callback URL is explicit and proxy request data cannot change it", async () => {
   const env = {
     NODE_ENV: "production",
-    TWILIO_STATUS_CALLBACK_URL: "https://canonical.example/twilio/status",
+    TWILIO_STATUS_CALLBACK_URL: "https://status.worshipsync.com/twilio/status",
   };
   assert.equal(
     resolveTwilioStatusCallbackUrl({
@@ -243,6 +261,76 @@ test("production callback URL is explicit and proxy request data cannot change i
     () => resolveTwilioStatusCallbackUrl({ env: { NODE_ENV: "production" } }),
     /TWILIO_STATUS_CALLBACK_URL must be set in production/,
   );
+  assert.throws(
+    () => resolveTwilioStatusCallbackUrl({
+      env: { NODE_ENV: "production", TWILIO_STATUS_CALLBACK_URL: "http://localhost:5000/status" },
+    }),
+    /must be a valid public HTTPS URL in production/,
+  );
+  let created;
+  const provider = createTwilioSmsProvider({
+    accountSid: "AC123", authToken: "token", senderPhoneNumber: "+19545551234",
+    clientFactory: () => ({ messages: { create: async (input) => {
+      created = input;
+      return { sid: "SM123", status: "queued" };
+    } } }),
+  });
+  await provider.sendMessage({
+    to: "+19545550123",
+    body: "hello",
+    statusCallbackUrl: resolveTwilioStatusCallbackUrl({ env }),
+  });
+  assert.equal(created.statusCallback, env.TWILIO_STATUS_CALLBACK_URL);
+});
+
+test("development omits an unconfigured callback and accepts an explicit public tunnel", () => {
+  assert.equal(resolveTwilioStatusCallbackUrl({ env: { NODE_ENV: "development" } }), undefined);
+  assert.equal(
+    resolveTwilioStatusCallbackUrl({
+      env: { NODE_ENV: "development", TWILIO_STATUS_CALLBACK_URL: "https://worshipsync.ngrok-free.app/status" },
+    }),
+    "https://worshipsync.ngrok-free.app/status",
+  );
+});
+
+test("development private callback values are omitted from Twilio sends", async () => {
+  const created = [];
+  const provider = createTwilioSmsProvider({
+    accountSid: "AC123", authToken: "token", senderPhoneNumber: "+19545551234",
+    clientFactory: () => ({ messages: { create: async (input) => {
+      created.push(input);
+      return { sid: "SM123", status: "queued" };
+    } } }),
+  });
+  for (const callback of [
+    "http://localhost:5000/api/webhooks/twilio/sms-status",
+    "https://127.0.0.1/status",
+    "https://192.168.1.20/status",
+    "https://worshipsync.local/status",
+  ]) {
+    const statusCallbackUrl = resolveTwilioStatusCallbackUrl({
+      env: { NODE_ENV: "development", TWILIO_STATUS_CALLBACK_URL: callback },
+    });
+    await provider.sendMessage({ to: "+19545550123", body: "hello", statusCallbackUrl });
+  }
+  assert.equal(created.length, 4);
+  assert.ok(created.every((input) => !("statusCallback" in input)));
+});
+
+test("an explicit public development callback is sent to Twilio", async () => {
+  let created;
+  const provider = createTwilioSmsProvider({
+    accountSid: "AC123", authToken: "token", senderPhoneNumber: "+19545551234",
+    clientFactory: () => ({ messages: { create: async (input) => {
+      created = input;
+      return { sid: "SM123", status: "queued" };
+    } } }),
+  });
+  const statusCallbackUrl = resolveTwilioStatusCallbackUrl({
+    env: { NODE_ENV: "development", TWILIO_STATUS_CALLBACK_URL: "https://worshipsync.ngrok-free.app/status" },
+  });
+  await provider.sendMessage({ to: "+19545550123", body: "hello", statusCallbackUrl });
+  assert.equal(created.statusCallback, statusCallbackUrl);
 });
 
 test("Twilio webhook validation accepts the signed callback and rejects mutations", () => {

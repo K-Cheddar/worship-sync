@@ -19,7 +19,6 @@ import CreatePanel from "../CreatePanel";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
-import useFormSaveFeedback from "../components/useFormSaveFeedback";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import {
   EntityListFilterPanel,
@@ -32,7 +31,6 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
-import { formatTeamSaveToast } from "../teamsSaveToasts";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -204,11 +202,6 @@ const TeamManager = ({
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
     setSavingIds((prev) => new Set(prev).add(savingKey));
-    const saveToastMessage = formatTeamSaveToast(wasEditing, draft, {
-      memberNameById: new Map(
-        members.map((member) => [member.memberId, memberName(member)]),
-      ),
-    });
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const optimisticTeam: TeamRecord = {
       churchId,
@@ -232,8 +225,6 @@ const TeamManager = ({
       if (!wasEditing) {
         onSaved(response.team, localTeamId);
       }
-      if (saveToastMessage) showToast(saveToastMessage, "success");
-      saveFeedback.recordSuccess(wasEditing?.teamId || response.team.teamId, wasEditing ? "update" : "create");
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
       if (wasEditing) {
         // The operator may have switched to a different team while this save was
@@ -266,16 +257,16 @@ const TeamManager = ({
   const currentEditorKey = editing ? editing.teamId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
   const hasPendingChanges = editing
-    ? JSON.stringify(draft) !==
+    ? JSON.stringify({ ...draft, memberIds: [...draft.memberIds].sort() }) !==
       JSON.stringify({
         name: editing.name,
         description: editing.description || "",
         icon: editing.icon || "",
-        memberIds: editing.memberIds || [],
+        memberIds: [...(editing.memberIds || [])].sort(),
         usesMicrophoneAssignments: Boolean(editing.usesMicrophoneAssignments),
         usesIemAssignments: Boolean(editing.usesIemAssignments),
       })
-    : JSON.stringify(draft) !==
+    : JSON.stringify({ ...draft, memberIds: [...draft.memberIds].sort() }) !==
       JSON.stringify({
         name: "",
         description: "",
@@ -284,7 +275,6 @@ const TeamManager = ({
         usesMicrophoneAssignments: false,
         usesIemAssignments: false,
       });
-  const saveFeedback = useFormSaveFeedback(currentEditorKey, hasPendingChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const formatNameList = (names: string[]) =>
@@ -384,7 +374,6 @@ const TeamManager = ({
             entityLabel="team"
             isCreate={!editing}
             isSaving={isSavingCurrent}
-            successMode={saveFeedback.successMode}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
